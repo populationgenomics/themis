@@ -1,0 +1,101 @@
+name: review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+jobs:
+  review:
+    if: |
+      github.repository == 'populationgenomics/themis-internal'
+      && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      # Concatenate the per-concern instruction files into one prompt.
+      # When this is later replaced by an orchestrator that spawns one
+      # subagent per concern, each file becomes a subagent prompt as-is.
+      - name: Load review instructions
+        run: |
+          {
+            echo 'CONCERNS<<CONCERNS_EOF'
+            for f in .github/review/leak-screen.md .github/review/security.md .github/review/general.md; do
+              cat "$f"
+              echo
+            done
+            echo 'CONCERNS_EOF'
+          } >> "$GITHUB_ENV"
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are reviewing a pull request on `populationgenomics/themis-internal`,
+            the private working tree for the Themis platform. Every commit that
+            lands on `main` here gets mirrored 1:1 to the public
+            `populationgenomics/themis` repo, so part of your job is to catch
+            content that should not become public.
+
+            The contributor and reviewer are competent and acting in good faith.
+            You are the second pair of eyes that reminds a careful person about
+            something they didn't notice — not a defence against an adversarial
+            merger. Bias toward signalling clearly when something is worth a
+            look; do not invent problems where there are none.
+
+            This review covers three concerns: leak screening, security, and
+            general code quality. Each concern's full instructions follow under
+            "Concerns to look for". Give each concern its own attention — don't
+            let any one of them crowd out the others.
+
+            ## Scope rule
+
+            Focus on changes introduced by this PR. Don't re-flag content that
+            already exists in the base branch unchanged. Use `gh pr diff` to
+            see exactly what changed.
+
+            You can read other files in the working tree (Read / Grep / Glob)
+            to cross-check a change — e.g. to confirm whether a new endpoint
+            sits behind existing auth middleware, or whether a helper has the
+            semantics you expect. Doing so is encouraged when it sharpens a
+            finding; flag changes-in-context, not lines-in-isolation.
+
+            ## Dedup rule
+
+            Before posting an inline comment, run
+            `gh pr view --json comments,reviewComments` and check whether the
+            same concern has already been raised on the same line — by you on
+            a previous run, or by a human reviewer. If yes, whether resolved
+            or not, skip it. Do not repost.
+
+            ## Output rule
+
+            Post line-anchored review comments via the inline-comment MCP
+            tool. Each comment should name the concern (leak screening,
+            security, or general), quote the offending content briefly, and
+            suggest a concrete remediation. For security findings, also
+            include a severity rating (CRITICAL / HIGH / MEDIUM / LOW).
+
+            For deliberate content that triggers a finding (e.g. a fixture
+            with a participant-shaped ID), the canonical remedy is an inline
+            `screen-ignore: <reason>` marker — suggest that as the fix.
+
+            If you posted at least one inline finding, also post a single
+            top-level PR comment summarising the count, broken down by
+            concern. If you posted nothing, do not post a top-level comment.
+
+            ## Concerns to look for
+
+            ${{ env.CONCERNS }}
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"

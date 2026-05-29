@@ -1,0 +1,13 @@
+# Patterns the regex screen flags on added lines.
+#
+# Each entry needs a `name` (shown in failure output) and a `regex` (Python
+# re syntax, applied to each added line with `re.search`). Keep this list
+# focused on identifiers whose *shape* is reliable enough to match without
+# false positives — anything that needs judgement belongs in the LLM
+# screen instead.
+
+- name: cpg_internal_id
+  regex: '\b[CX]PG\d+\b'
+
+- name: do_not_submit
+  regex: '\bDO\s*NOT\s*(SUBMIT|MERGE|COMMIT|PUSH|SHIP|LAND)\b'

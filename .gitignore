@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Test / lint / type-check caches
+.pytest_cache/
+.ruff_cache/
+
+# Coverage output
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local environment files
+.env

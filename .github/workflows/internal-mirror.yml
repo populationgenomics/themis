@@ -1,0 +1,55 @@
+name: mirror
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    if: github.repository == 'populationgenomics/themis-internal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: mirror-public
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.MIRROR_APP_ID }}
+          private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
+          owner: populationgenomics
+          repositories: themis
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Push to public mirror (idempotent)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote add public "https://x-access-token:${GH_TOKEN}@github.com/populationgenomics/themis.git"
+          git fetch public main || true   # may be empty on first run
+
+          LOCAL=$(git rev-parse HEAD)
+          PUBLIC=$(git rev-parse FETCH_HEAD 2>/dev/null || echo "")
+
+          if [ -n "$PUBLIC" ] && [ "$LOCAL" = "$PUBLIC" ]; then
+            echo "Public already at $LOCAL; nothing to do."
+            exit 0
+          fi
+          if [ -n "$PUBLIC" ] && git merge-base --is-ancestor "$LOCAL" "$PUBLIC"; then
+            echo "Public is ahead of internal at this SHA (a later run already pushed); nothing to do."
+            exit 0
+          fi
+          if [ -n "$PUBLIC" ] && ! git merge-base --is-ancestor "$PUBLIC" "$LOCAL"; then
+            echo "ERROR: public main has diverged from internal at $PUBLIC." >&2
+            exit 1
+          fi
+
+          git push --follow-tags public HEAD:main

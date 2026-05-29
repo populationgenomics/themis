@@ -1,0 +1,25 @@
+diff --git a/src/app.py b/src/app.py
+index c5d726b..bcc65cf 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -2,0 +3,7 @@ def hello():
++
++A = "TST111"
++
++def goodbye():
++    return "bye"
++
++B = "TST222"
+diff --git a/src/new_file.py b/src/new_file.py
+new file mode 100644
+index 0000000..9bc3aaf
+--- /dev/null
++++ b/src/new_file.py
+@@ -0,0 +1 @@
++NEW_FILE_ID = "TST444"
+diff --git a/src/util.py b/src/util.py
+index 4693ad3..c3b9715 100644
+--- a/src/util.py
++++ b/src/util.py
+@@ -1,0 +2 @@ def add(a, b):
++    # TST333

@@ -1,0 +1,7 @@
+diff --git a/src/app.py b/src/app.py
+index c5d726b..7cd5d50 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -2,0 +3,2 @@ def hello():
++
++PARTICIPANT = "TST123"
