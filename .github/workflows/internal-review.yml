@@ -35,6 +35,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - uses: anthropics/claude-code-action@v1
+        id: claude
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
@@ -99,3 +100,16 @@ jobs:
             ${{ env.CONCERNS }}
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+      # The Actions console only shows the action's init + final result; the
+      # turn-by-turn transcript (tool calls, permission denials, the model's
+      # decision to post nothing) lives only in this file. Upload it so those
+      # questions are answerable from the record rather than inferred.
+      - name: Upload review execution log
+        # always() so we still capture the transcript when the review step fails.
+        if: always() && steps.claude.outputs.execution_file != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-execution-output
+          path: ${{ steps.claude.outputs.execution_file }}
+          retention-days: 14
