@@ -73,11 +73,20 @@ jobs:
 
             ## Dedup rule
 
-            Before posting an inline comment, run
-            `gh pr view --json comments,reviewComments` and check whether the
-            same concern has already been raised on the same line — by you on
-            a previous run, or by a human reviewer. If yes, whether resolved
-            or not, skip it. Do not repost.
+            Before posting an inline comment, check whether the same concern
+            has already been raised — by you on a previous run, or by a human
+            reviewer. Read both comment surfaces (`gh pr view` cannot return
+            inline review threads; the MCP tool is the only way to see them):
+
+            - Top-level comments and review summaries:
+              `gh pr view ${{ github.event.pull_request.number }} --json comments,reviews`
+            - Inline (line-anchored) review threads: the
+              `mcp__github__get_pull_request_review_comments` tool.
+
+            Skip your finding if the same concern already appears — whether it
+            was anchored to the same line, raised in a review summary, or raised
+            in the PR discussion, and whether or not it is marked resolved. Do
+            not repost.
 
             ## Output rule
 
@@ -99,7 +108,7 @@ jobs:
 
             ${{ env.CONCERNS }}
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_review_comments,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
 
       # The Actions console only shows the action's init + final result; the
       # turn-by-turn transcript (tool calls, permission denials, the model's
