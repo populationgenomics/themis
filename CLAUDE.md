@@ -31,6 +31,12 @@ model dispositions.
 Language-agnostic: [`docs/style/general.md`](docs/style/general.md). Python:
 [`docs/style/python.md`](docs/style/python.md).
 
+## Docs
+
+The primary audience for docs is a model reading them as context; humans second. Be
+terse: state each decision, mechanism, and rationale once — no rhetorical emphasis, no
+persuasion, no recaps. Every token written is re-paid on every future read.
+
 ## Committing
 
 - **Stage explicit paths**, not `git add -A` / `.`. Every tracked commit is mirrored 1:1
