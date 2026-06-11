@@ -66,17 +66,23 @@ not carry:
 - Roadmap, prioritisation, or budget discussion that is not intended
   for an external audience.
 
-**References to internal infrastructure.** Specifics of infrastructure
-that are not already public:
+**References to private infrastructure.** Resource identifiers are
+not credentials: access to the infrastructure this repo manages is
+governed by IAM, and its configuration is tracked here in the open
+(see [`docs/design/deployment.md`](../../docs/design/deployment.md)).
+Project IDs, bucket names, service-account emails, KMS key names, and
+the like are deliberate, reviewed content — don't flag an identifier
+for being concrete.
 
-- GCP project IDs, bucket names, dataset names, service-account
-  emails, or other resource identifiers that disclose the layout of
-  private infrastructure.
+Flag what discloses infrastructure that is *not* managed in the open:
+
+- CPG's data estate: data buckets, datasets, cohort storage,
+  Metamist / seqr instances and their identifiers.
 - Internal hostnames, IP ranges, VPN endpoints, or network topology.
 
-Generic references ("we deploy to GCP", "we use Metamist") are fine.
-The line is at concrete identifiers that name a specific private
-resource.
+Generic references ("we use Metamist") remain fine; the line is at
+concrete identifiers naming a specific resource of that private
+estate.
 
 **Embarrassing or unprofessional content.** Content that wouldn't be a
 security or privacy problem but would reflect badly on CPG if it

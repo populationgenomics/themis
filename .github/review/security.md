@@ -31,7 +31,8 @@ briefly, and suggest a concrete remediation.
 - **Sensitive data exposure.** Logging that includes credentials,
   tokens, or full request/response bodies. Error responses that echo
   back internal state (stack traces, query text). Secrets in
-  configuration files committed to the repo, even masked.
+  configuration files committed to the repo, unless encrypted to the
+  bar set under "Hardcoded secrets" — masking doesn't count.
 - **Security misconfiguration.** Permissive CORS, debug flags enabled
   by default in non-debug paths, dev/test endpoints reachable in
   production builds.
@@ -100,6 +101,17 @@ semver tag are also supply-chain risks — flag them.
 - Even if a string looks like a placeholder (`sk-xxx...`,
   `password123`), flag it — placeholders mistakenly real have been
   the source of every credential leak that ever happened.
+- Committed ciphertext can be fine — the bar is that the secret must
+  not be recoverable from repo contents alone. That means encryption
+  under a key held outside the repo and independently
+  access-controlled (e.g. envelope encryption with an IAM-gated
+  Cloud KMS key, which is how Pulumi `secure:` stack-config values
+  work — see
+  [`docs/design/deployment.md`](../../docs/design/deployment.md)).
+  Anything weaker fails the bar: base64 or other encodings,
+  hardcoded or repo-derivable keys, passphrase-based encryption that
+  can be brute-forced offline. A raw credential sitting where
+  ciphertext belongs is still a leak — flag it.
 
 **Anything else that seems risky.** If a change makes you uncomfortable
 from a security standpoint and doesn't fit cleanly above, say so.
