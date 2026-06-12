@@ -162,15 +162,15 @@ jobs:
       cancel-in-progress: false
     permissions: { contents: read, id-token: write }
     steps:
-      - uses: actions/create-github-app-token@v1
+      - uses: actions/create-github-app-token@v3
         id: app-token
         with:
-          app-id: ${{ vars.MIRROR_APP_ID }}
+          client-id: ${{ vars.MIRROR_APP_CLIENT_ID }}
           private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
           owner: populationgenomics
           repositories: themis
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
 
       - name: Push to public mirror (idempotent)
@@ -224,7 +224,7 @@ If we add a workflow that should run on the public mirror (none planned), we'll 
 
 ## Auth and secrets
 
-- **GitHub App for the mirror push.** A dedicated App in the `populationgenomics` org, installed on `themis` only, with `contents: write`. The App ID is exposed to workflows as the `MIRROR_APP_ID` repository variable on `themis-internal`; the private key as the `MIRROR_APP_PRIVATE_KEY` repository secret. `actions/create-github-app-token@v1` mints a short-lived installation token at the start of the mirror job.
+- **GitHub App for the mirror push.** A dedicated App in the `populationgenomics` org, installed on `themis` only, with `contents: write`. The App's Client ID is exposed to workflows as the `MIRROR_APP_CLIENT_ID` repository variable on `themis-internal`; the private key as the `MIRROR_APP_PRIVATE_KEY` repository secret. `actions/create-github-app-token@v3` mints a short-lived installation token at the start of the mirror job. Setup runbook: [`docs/runbooks/mirror-app-setup.md`](../runbooks/mirror-app-setup.md).
 - `ANTHROPIC_API_KEY` — for claude-code-action. Repository secret on `themis-internal`.
 - `GITHUB_TOKEN` — default. Permissions per workflow: regex job needs `pull-requests: write` and `statuses: write`; action job per its own docs. Mirror job needs `contents: read` (only to read the internal checkout) plus `id-token: write` for the App-token action. No workflow needs `contents: write` on the internal repo.
 
@@ -241,7 +241,7 @@ If we add a workflow that should run on the public mirror (none planned), we'll 
 
 - Add `screen / regex` and `Claude Code` to `required_status_checks.contexts` on `main`'s protection rule, with `strict: true`.
 - Disable Actions on `populationgenomics/themis`.
-- Create a GitHub App in the `populationgenomics` org (e.g. "themis-mirror"), install it on `themis` with `contents: write`, store the App ID as `MIRROR_APP_ID` (repo variable) and private key as `MIRROR_APP_PRIVATE_KEY` (repo secret) on `themis-internal`.
+- Create a GitHub App in the `populationgenomics` org (e.g. "themis-mirror"), install it on `themis` with `contents: write`, store the Client ID as `MIRROR_APP_CLIENT_ID` (repo variable) and private key as `MIRROR_APP_PRIVATE_KEY` (repo secret) on `themis-internal`. Step-by-step: [`docs/runbooks/mirror-app-setup.md`](../runbooks/mirror-app-setup.md).
 - Add `ANTHROPIC_API_KEY` as a repo secret on `themis-internal`.
 
 ## Verification
