@@ -20,7 +20,7 @@ security review policies are refined in step with this doc.
 | Deploy auth, local | Personal `gcloud` ADC, IAM-gated |
 | State backend | Versioned, private GCS bucket (Pulumi DIY backend) |
 | Secrets encryption | `gcpkms` secrets provider (Cloud KMS key, IAM-gated) |
-| Secret values | Runtime fetch from Secret Manager; Pulumi provisions containers and IAM bindings, not versions |
+| Secret values | OIDC/IAM-first: Anthropic API via WIF, Cloud SQL via IAM auth; only no-WIF-path credentials in Secret Manager |
 | Repo contents | Standard Pulumi layout incl. `Pulumi.<stack>.yaml`; no plaintext secrets, ever |
 
 ## Deploy authentication
@@ -71,16 +71,30 @@ pulumi stack init prod \
 
 ## Secret values
 
-App secrets (Anthropic API key, DB credentials, third-party tokens)
-live in Secret Manager, read at runtime via the workload SA
-(`roles/secretmanager.secretAccessor`). Pulumi provisions the
-`Secret` containers and IAM bindings, not the versions; versions are
-populated out of band. Rotation is a Secret Manager operation,
-invisible to IaC.
+OIDC/IAM-first — the workload authenticates with short-lived
+credentials, not stored secrets, wherever a federation path exists:
 
-Exception: values Pulumi needs at provision time (e.g. a generated
-Cloud SQL password via `RandomPassword`) are secret-tracked in state
-as KMS ciphertext.
+- **Anthropic API:** Workload Identity Federation; the workload SA's
+  GCP OIDC token is exchanged for short-lived Anthropic credentials.
+  No API key stored.
+- **Cloud SQL:** IAM database authentication via the workload SA. No
+  database password.
+- **GCP services:** the workload SA's IAM credentials from the
+  metadata server.
+
+The only Secret Manager secrets are credentials with no WIF path —
+currently the optional NCBI E-utilities key. Read at
+runtime via the workload SA (`roles/secretmanager.secretAccessor`);
+Pulumi provisions the `Secret` containers, IAM bindings, **and the
+versions** — each value a `gcpkms`-encrypted config secret in
+`Pulumi.<stack>.yaml` (inert without KMS access; safe on the mirror),
+pushed as a `SecretVersion`, so a fresh `pulumi up` self-provisions
+the secrets with no manual step. Rotation updates the config and
+re-applies; a value rotated out of band uses `ignoreChanges`.
+
+Nothing with a WIF path is stored. Pulumi-generated provision-time
+values (e.g. a `RandomPassword`) use the same gcpkms-encrypted path,
+currently unused while IAM auth covers Cloud SQL.
 
 ## What lives where
 
@@ -88,7 +102,8 @@ as KMS ciphertext.
 | --- | --- |
 | Pulumi program, `Pulumi.yaml`, `Pulumi.<stack>.yaml` | this repo; secret values only as KMS ciphertext |
 | State checkpoints | state bucket |
-| Runtime secrets | Secret Manager, populated out of band |
+| Credentials with no WIF path | Secret Manager; values as `gcpkms` config in `Pulumi.<stack>.yaml`, applied by Pulumi |
+| Anthropic / Cloud SQL / GCP access | short-lived WIF/IAM credentials; nothing stored |
 | KMS key | Cloud KMS, IAM-gated, audit-logged |
 
 Committing `Pulumi.<stack>.yaml` (secrets-provider URL, project ID,
