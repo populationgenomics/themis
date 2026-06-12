@@ -28,11 +28,13 @@ A future iteration may insert Copybara to rewrite content before mirroring (path
 
 Repo settings restrict merge methods so squash-merge is the only way to land a PR. Combined with linear history, every commit on `main` has exactly one parent and corresponds to one merged PR.
 
-Required status checks (added once the workflows land):
+Required status checks:
 
-- `screen / regex` — from the regex script.
-- `Claude Code` — the claude-code-action workflow run (required so an API outage or runner failure can't fail-open).
+- `regex screen` — from the regex script.
+- `review + LLM screen` — the claude-code-action workflow run (required so an API outage or runner failure can't fail-open).
 - `strict: true` ("Require branches to be up to date before merging") so the merge base equals the latest main when squash happens.
+
+A PR that modifies `internal-review.yml` itself fails `review + LLM screen` by design: claude-code-action refuses to run a workflow file that differs from the default branch (anti-tamper). To land such a PR, an admin temporarily removes that check from the required list, merges, and restores it.
 
 ## PR-time screen
 
@@ -83,7 +85,7 @@ jobs:
           --patterns .github/screen/patterns.yaml
 ```
 
-The job's success/failure becomes the `screen / regex` required status check.
+The job's success/failure becomes the `regex screen` required status check.
 
 ### Claude Code Action
 
@@ -121,7 +123,7 @@ jobs:
 - **Dedup rule**: "Before posting an inline comment, run `gh pr view --json comments,reviewComments` (or equivalent) and check whether the same concern has already been raised on the same line. If yes — resolved or not — skip it."
 - **Output rule**: post line-anchored review comments via the inline-comment MCP tool. If any inline findings were posted in this run, also post a single top-level PR comment summarising the findings count and pointing reviewers at them — so a reviewer skimming the PR sees clearly that there's something to look at, rather than relying on them noticing the Files tab. If no findings, do not post a top-level comment.
 
-The job's success/failure becomes the `Claude Code` required status check; this only fails if the action itself errors (API down, runner timeout) — review findings post as comments and the workflow exits successfully regardless. The *content* of findings gates via `required_conversation_resolution`.
+The job's success/failure becomes the `review + LLM screen` required status check; this only fails if the action itself errors (API down, runner timeout) — review findings post as comments and the workflow exits successfully regardless. The *content* of findings gates via `required_conversation_resolution`.
 
 ### Override flow
 
@@ -135,7 +137,7 @@ No `screen-override` label. No separate override workflow.
 
 - Author opens a draft PR → no screening runs.
 - Author marks ready / pushes a commit → both regex and action run on the head SHA. Status checks update on the PR.
-- Regex hits → `screen / regex` fails, merge blocked. Author fixes or adds a suppression marker.
+- Regex hits → `regex screen` fails, merge blocked. Author fixes or adds a suppression marker.
 - Action posts review comments → conversations need resolution before merge.
 - Reviewer approves + resolves conversations → merge button unlocks.
 - Author pushes again → dismiss-stale invalidates the approval; both workflows re-run; cycle repeats.

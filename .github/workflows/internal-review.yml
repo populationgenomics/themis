@@ -1,4 +1,4 @@
-name: review
+name: review + LLM screen
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
 
 jobs:
   review:
+    name: review + LLM screen
     if: |
       github.repository == 'populationgenomics/themis-internal'
       && !github.event.pull_request.draft
