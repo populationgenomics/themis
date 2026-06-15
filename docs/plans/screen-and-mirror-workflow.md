@@ -117,7 +117,7 @@ jobs:
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 ```
 
-`.github/screen/llm-instructions.md` is a structured instructions document with one section per concern (participant identifiers, internal-only documentation, references to infrastructure or systems, etc.). Each section describes what to look for and gives examples. The instructions also include:
+`.github/screen/llm-instructions.md` is a structured instructions document with one section per concern (participant identifiers, internal-only documentation, references to infrastructure or systems, concrete model identifiers, etc.). Each section describes what to look for and gives examples. The model-identifier concern is judgement, not regex: generic prose ("frontier models") and tooling names (`claude-code-action`) are fine; the leak is a concrete per-agent model id, which is secret-class (see [`deployment.md`](../design/deployment.md) § Confidential config). The instructions also include:
 
 - **Scope rule**: "Focus on changes introduced by this PR. Don't re-flag content that exists in the base branch unchanged. Use `gh pr diff` to see exactly what changed."
 - **Dedup rule**: "Before posting an inline comment, run `gh pr view --json comments,reviewComments` (or equivalent) and check whether the same concern has already been raised on the same line. If yes — resolved or not — skip it."

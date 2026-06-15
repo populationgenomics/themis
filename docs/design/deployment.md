@@ -21,6 +21,7 @@ security review policies are refined in step with this doc.
 | State backend | Versioned, private GCS bucket (Pulumi DIY backend) |
 | Secrets encryption | `gcpkms` secrets provider (Cloud KMS key, IAM-gated) |
 | Secret values | OIDC/IAM-first: Anthropic API via WIF, Cloud SQL via IAM auth; only no-WIF-path credentials in Secret Manager |
+| Model selection | Concrete per-agent model id is confidential config — gcpkms-encrypted in the Pulumi stack config, never plaintext in tracked files |
 | Repo contents | Standard Pulumi layout incl. `Pulumi.<stack>.yaml`; no plaintext secrets, ever |
 
 ## Deploy authentication
@@ -96,6 +97,17 @@ Nothing with a WIF path is stored. Pulumi-generated provision-time
 values (e.g. a `RandomPassword`) use the same gcpkms-encrypted path,
 currently unused while IAM auth covers Cloud SQL.
 
+## Confidential config
+
+The concrete **model selection** (which model id powers which agent)
+is not a credential but is secret-class confidential config. It lives
+as gcpkms-encrypted Pulumi stack config (ciphertext in the repo, safe
+on the mirror), read at runtime from a Secret Manager secret or an
+equivalent config blob — the choice is immaterial. Never plaintext in
+any tracked file (agent config, Pulumi program, docs); generic
+statements ("frontier models") stay public, the concrete id and
+per-agent assignment do not.
+
 ## What lives where
 
 | Artifact | Lives |
@@ -104,6 +116,7 @@ currently unused while IAM auth covers Cloud SQL.
 | State checkpoints | state bucket |
 | Credentials with no WIF path | Secret Manager; values as `gcpkms` config in `Pulumi.<stack>.yaml`, applied by Pulumi |
 | Anthropic / Cloud SQL / GCP access | short-lived WIF/IAM credentials; nothing stored |
+| Concrete model selection | gcpkms-encrypted Pulumi stack config; read at runtime (Secret Manager or config blob); never plaintext in tracked files |
 | KMS key | Cloud KMS, IAM-gated, audit-logged |
 
 Committing `Pulumi.<stack>.yaml` (secrets-provider URL, project ID,
