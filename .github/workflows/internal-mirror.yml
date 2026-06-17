@@ -37,7 +37,10 @@ jobs:
           git fetch public main || true   # may be empty on first run
 
           LOCAL=$(git rev-parse HEAD)
-          PUBLIC=$(git rev-parse FETCH_HEAD 2>/dev/null || echo "")
+          # --verify --quiet yields the SHA or empty string; without it a missing
+          # FETCH_HEAD makes plain `git rev-parse` echo the literal "FETCH_HEAD" to
+          # stdout, so PUBLIC would be non-empty on the first run (empty public repo).
+          PUBLIC=$(git rev-parse --verify --quiet FETCH_HEAD || true)
 
           if [ -n "$PUBLIC" ] && [ "$LOCAL" = "$PUBLIC" ]; then
             echo "Public already at $LOCAL; nothing to do."
