@@ -1,0 +1,16 @@
+# Dev environment. Prod is the same program with a Pulumi.prod.yaml carrying
+# cpg-themis-prod's project, hostname, access group, and KMS key — no program
+# change. State and KMS are isolated per environment.
+#
+# gcpkms secrets provider (Cloud KMS key, IAM-gated). The wrapped data key
+# (`encryptedkey`) is generated on the first secret encryption against the key
+# created by bootstrap; no secrets are stored yet.
+secretsprovider: gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi
+config:
+  gcp:project: cpg-themis-dev
+  gcp:region: australia-southeast1
+  themis:domain: themis-dev.populationgenomics.org.au
+  # IAP "may reach the app" gate. The group + roster live in
+  # cpg-infrastructure-private; this is the principal only (no PII).
+  themis:iapAccessGroup: themis-dev-access@populationgenomics.org.au
+encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=

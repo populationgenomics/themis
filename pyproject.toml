@@ -8,10 +8,24 @@ name = "themis"
 version = "0.0.0"
 requires-python = ">=3.13"
 
+# Supply-chain age gate: never resolve a release younger than 7 days. Declared
+# in-repo (not only in global uv config) so CI and contributors inherit the same
+# resolution — a global-only gate makes the lock unreproducible: uv detects
+# "removal of global exclude newer" off-machine and `--locked` fails. Relative,
+# not a fixed date: the intent is an ongoing "nothing younger than 7 days", not
+# a frozen cutoff. Consequence (per repo policy): a local re-lock rolls back any
+# committed version younger than the window; it self-heals as the version ages
+# past 7 days and Dependabot re-bumps it.
+[tool.uv]
+exclude-newer = "7 days"
+
 [dependency-groups]
 screen = ["pyyaml"]
 test = ["pytest", "pyyaml"]
-lint = ["ruff", "pyright", "pytest", "pyyaml", "types-PyYAML"]
+# Pulumi program deps (infra/). Also the venv Pulumi runs the program in
+# (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
+infra = ["pulumi", "pulumi-gcp"]
+lint = ["ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", { include-group = "infra" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -63,6 +77,9 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.isort]
+known-first-party = ["themis_infra"]
+
 # Complexity thresholds: roughly double the ruff defaults so the checks
 # fire on genuinely sprawling code but not on everyday parsers and
 # dispatcher functions.
@@ -78,5 +95,6 @@ max-locals = 25
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["tools", "tests"]
+include = ["tools", "tests", "infra"]
+extraPaths = ["infra"]
 typeCheckingMode = "standard"

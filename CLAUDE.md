@@ -14,6 +14,9 @@ model dispositions.
 - **Resist the minimal-diff reflex.** Don't reach for the smallest change that hides the
   symptom (special-casing, papering over root causes). Aim for the correct fix at the
   right complexity level — not the smallest, not gold-plated.
+- **Fail loudly and early.** Raise on a missing expected input or precondition; never fall
+  back to a default/placeholder to limp along. A placeholder is an explicit caller input,
+  never a code default.
 - **Push back; don't just comply.** When a design, name, or approach seems worse —
   including a shortcut you're asked to take — say so with reasoning, unprompted. The
   author owns the final call.
@@ -50,3 +53,7 @@ persuasion, no recaps. Every token written is re-paid on every future read.
 
 See [`docs/plans/screen-and-mirror-workflow.md`](docs/plans/screen-and-mirror-workflow.md)
 for the screen-and-mirror design.
+
+- **Pin third-party GitHub Actions to the latest stable release**: the moving major tag
+  (`@v3`) where the action publishes one, else the exact latest version (`@v8.2.0`). Verify
+  against the action's releases when adding or bumping one.

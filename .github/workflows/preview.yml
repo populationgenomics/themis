@@ -1,0 +1,60 @@
+name: preview
+
+# Read-only `pulumi preview` on PRs, posted as a comment to inform the single
+# PR-approval gate. Authenticates as the read-only preview SA via WIF (scoped to
+# pull_request tokens); write access is main-only (deploy.yml). PRs never deploy.
+# See docs/design/deployment.md.
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize, reopened]
+
+concurrency:
+  group: themis-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked --group infra --python 3.13
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: cpg-themis-dev
+          workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
+          service_account: themis-preview@cpg-themis-dev.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      # Diff against the live image so an infra PR doesn't show a spurious image
+      # change. No fallback: if the service doesn't exist yet (before the first
+      # deploy) or describe errors for any reason, this step fails and the
+      # preview is skipped — fine, since the first bring-up is a manual
+      # `pulumi up`, not a previewed PR.
+      - name: Resolve deployed image
+        run: |
+          IMAGE=$(gcloud run services describe themis-web \
+            --project=cpg-themis-dev --region=australia-southeast1 \
+            --format='value(spec.template.spec.containers[0].image)')
+          echo "THEMIS_WEB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - uses: pulumi/actions@v7
+        with:
+          command: preview
+          stack-name: dev
+          work-dir: infra
+          cloud-url: gs://cpg-themis-dev-pulumi-state
+          comment-on-pr: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

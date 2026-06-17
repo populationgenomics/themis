@@ -1,0 +1,13 @@
+name: themis
+runtime:
+  name: python
+  options:
+    # The program's deps live in the repo's uv environment (the `infra`
+    # dependency group); Pulumi uses that venv rather than managing its own.
+    # `uv sync --group infra` populates ../.venv before any pulumi command.
+    virtualenv: ../.venv
+description: Themis infrastructure — one Pulumi stack per environment (dev, prod), each its own GCP project.
+# No `backend:` here: state is isolated per environment (a stack must never
+# read another's state), and Pulumi.yaml is shared across stacks. The backend
+# is selected per environment instead — CI passes --cloud-url, locally
+# `pulumi login gs://cpg-themis-<env>-pulumi-state`. See ../README.md.

@@ -1,6 +1,6 @@
 # Design: Spike infrastructure and deployment
 
-**Status:** design — decisions landed; Pulumi program and runbook pending
+**Status:** design landed; walking-skeleton infra implemented (`infra/` + runbooks); Cloud SQL/GCS/audit/sandbox pending
 **Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1)
 **Related:** [`deployment.md`](deployment.md) decides *how* the infrastructure
 is managed (IaC, deploy auth, state, secrets); this doc decides *what* the
@@ -122,11 +122,13 @@ tier).
 ### 6. CI/CD pipeline
 
 Deploy auth and gating per [`deployment.md`](deployment.md): GitHub OIDC → WIF;
-deploys only on push to `main` / a protected environment; PRs get cloud-free
-validation only. Consequence: **no per-PR preview deploys** (PRs have no cloud
-access).
+**write** deploys only on push to `main`. PRs get a **read-only** preview
+identity that runs `pulumi preview` and posts it as a comment (informing the
+single PR-approval gate), plus cloud-free validation. No PR job can mutate cloud
+state — preview only, never apply.
 
-- PR: lint, type-check, unit tests (no cloud).
+- PR: lint, type-check, unit tests (no cloud), and a read-only `pulumi preview`
+  posted as a comment.
 - On squash-merge to `main`: **GitHub Actions builds the image(s)**, pushes to a
   **per-project Artifact Registry** (authenticated via WIF), then `pulumi up`
   points the Cloud Run service at the new image — deploying to
@@ -228,11 +230,13 @@ where we set the policy.
   (Cloud SQL/GCS) via custom tools / our MCP servers — the sandbox never
   touches the data store directly.
 - **Config + code execution:** the agent config — system prompt, tool list, MCP
-  server URLs — lives on the Agent object and is pushed at **deploy time via
-  `ant`** (control plane, §6), not bootstrapped per-poll; MCP credentials attach
-  per session via vaults. Generated analysis code is not squeezed through MCP —
-  it runs via the toolset's `bash`/file tools **in the self-hosted worker**,
-  under our egress policy.
+  server URLs, model id — lives on the Agent object and is pushed at **deploy
+  time via `ant`** (control plane, §6), not bootstrapped per-poll; MCP
+  credentials attach per session via vaults. The concrete per-agent model id is
+  secret-class confidential — see *Confidential config* in
+  [`deployment.md`](deployment.md). Generated analysis code is not squeezed
+  through MCP — it runs via the toolset's `bash`/file tools **in the self-hosted
+  worker**, under our egress policy.
 
 See [`agent-runtime.md`](agent-runtime.md) for the loop topology and the
 runtime-side of the self-hosted-sandbox / MCP-tunnel design.

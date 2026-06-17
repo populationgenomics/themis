@@ -31,27 +31,48 @@ to impersonate a deploy service account. No long-lived credential
 exists anywhere. The WIF provider name and deploy-SA email sit in
 the workflow file; GitHub holds no secrets.
 
-- The WIF attribute condition pins `attribute.repository ==
-  "populationgenomics/themis-internal"` and the deploying ref. OIDC
-  tokens name the requesting repository, so the public mirror (a
-  different repo, Actions disabled) cannot satisfy it.
-- Deploy jobs and `pulumi preview` against real state run only on
-  `push` to `main` / a protected environment, never on
-  `pull_request`. PR jobs (including agentic review) get no
-  `id-token: write` and no cloud access. Cloud-free validation
-  (lint, type-check, unit tests) runs on PRs.
+- The WIF provider's attribute condition pins `attribute.repository
+  == "populationgenomics/themis-internal"`; OIDC tokens name the
+  requesting repository, so the public mirror (a different repo,
+  Actions disabled) cannot satisfy it. Which SA a token may
+  impersonate is then scoped per SA: deploy to `refs/heads/main`
+  tokens, preview to `pull_request` tokens.
+- **Write** access (deploy) runs only on `push` to `main`, as the
+  deploy SA — its WIF binding is scoped to `refs/heads/main` tokens.
+  PRs get a **read-only** identity (the preview SA, WIF binding scoped
+  to `pull_request` tokens) used only to run `pulumi preview` and post
+  it as a comment, informing the single PR-approval gate. No PR job
+  can mutate cloud state. The read-only token is dev-scoped (synthetic
+  data); the residual malicious-PR risk is bounded by the private repo
+  and trusted membership. Cloud-free validation (lint, type-check,
+  unit tests) also runs on PRs.
+- "Read-only" ≠ "cannot read secrets": `pulumi preview` runs the PR's
+  own copy of the program and the preview SA can **decrypt** the
+  stack's gcpkms secrets (the secrets manager loads on every op), so a
+  malicious PR could run arbitrary code as that SA and exfiltrate any
+  secret in the previewed stack's state/config plus project-wide
+  `viewer` reads. Tolerable while the dev stack stores **no** secrets
+  and membership is trusted. Before either trigger flips — the first
+  `require_secret(...)` in a previewed stack, or prod adopting the same
+  preview-on-PR posture — reconsider granting `cryptoKeyDecrypter` to a
+  PR-triggered identity (e.g. drop decrypt and accept previews that
+  can't diff secret values, or gate preview behind manual approval).
 
 Local: `gcloud auth application-default login`; IAM grants to named
 individuals.
 
 ## State
 
-Dedicated private GCS bucket (`pulumi login gs://…`): uniform
-bucket-level access, object versioning, IAM limited to the deploy SA
-and developers. State may contain secret ciphertext; bucket privacy
-and the secrets provider are independent layers. `backend.url` is
-committed in `Pulumi.yaml` — a bucket name is an identifier, not a
-credential, and this removes per-machine backend setup.
+**Per-environment** private GCS bucket (`gs://cpg-themis-<env>-pulumi-state`),
+each in its own project — a stack must never read another's state.
+Uniform bucket-level access, object versioning, public-access
+prevention; IAM limited to that environment's deploy SA (read/write),
+preview SA (read), and developers. State may contain secret
+ciphertext; bucket privacy and the secrets provider are independent
+layers. `Pulumi.yaml` carries **no** `backend:` (it is shared across
+stacks, which would force a single bucket); the backend is selected
+per environment instead — CI passes `--cloud-url`, locally `pulumi
+login gs://cpg-themis-<env>-pulumi-state`.
 
 ## Secrets encryption
 
