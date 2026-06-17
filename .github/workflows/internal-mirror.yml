@@ -27,6 +27,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Don't persist GITHUB_TOKEN as an http.extraheader: it matches every
+          # github.com URL and would override the app-token credentials embedded
+          # in the `public` remote, pushing as github-actions[bot] (no access to
+          # the separate themis repo) → 403. The push uses the app token instead.
+          persist-credentials: false
 
       - name: Push to public mirror (idempotent)
         env:
