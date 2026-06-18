@@ -21,6 +21,7 @@ _REQUIRED_SERVICES = (
     'run.googleapis.com',
     'compute.googleapis.com',
     'iap.googleapis.com',
+    'storage.googleapis.com',
 )
 
 

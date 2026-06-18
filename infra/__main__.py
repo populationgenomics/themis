@@ -11,7 +11,7 @@ import os
 
 import pulumi
 
-from themis_infra import backend, baseline, web
+from themis_infra import backend, baseline, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -43,9 +43,17 @@ site = web.WebService(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 orchestrator = backend.OrchestratorBackend('themis', project=project)
+fulltext = storage.fulltext_bucket(
+    'themis',
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)
 pulumi.export('url', site.url)
 pulumi.export('backend_sa_email', orchestrator.service_account_email)
 pulumi.export('backend_sa_unique_id', orchestrator.service_account_unique_id)
+pulumi.export('fulltext_bucket', fulltext.name)
+pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))

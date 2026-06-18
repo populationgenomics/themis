@@ -14,10 +14,43 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `__main__.py` | Entrypoint: read config, compose the modules, export outputs. |
 | `themis_infra/baseline.py` | Enabled GCP services + the shared Artifact Registry. |
 | `themis_infra/web.py` | Cloud Run service + external HTTPS LB + IAP. |
+| `themis_infra/backend.py` | The orchestrator backend's runtime service account. |
+| `themis_infra/storage.py` | The literature full-text store bucket (durable GCS). |
 | `bootstrap/bootstrap.sh` | One-time substrate setup (below). Run locally, never CI. |
 
-Database, storage, and audit arrive as sibling modules under `themis_infra/`,
-composed in `__main__.py` — still one `pulumi up`.
+Database and audit arrive as sibling modules under `themis_infra/`, composed in
+`__main__.py` — still one `pulumi up`.
+
+## Storage
+
+The literature **full-text store** (per-paper PDFs/XML, derived markdown,
+figures, knowledge units — `docs/design/literature-evidence-layer.md` §2.1)
+lives in a per-environment GCS bucket, `gs://cpg-themis-<env>-fulltext`. It is
+the durable source of truth; Cloud SQL is a rebuildable projection of it. Named
+for its content (full text): it never expires live objects (so not the design
+doc's "cache"), and stays distinct from the 37M abstract *corpus* (in Cloud SQL,
+not a bucket). Policy:
+
+- **Private** — uniform bucket-level access + enforced public-access prevention
+  (it holds copyrighted source PDFs).
+- **Versioned, 30-day window** — live objects are additive and never overwritten,
+  so versioning is near-free; a superseded (noncurrent) version is kept 30 days
+  for accidental-overwrite/delete recovery, then GC'd. Live content is never
+  *auto-expired* — this bounds only the version history.
+- **Autoclass (terminal Archive)** — GCS moves cold objects toward Archive and
+  back to Standard on read, with no retrieval/early-deletion fees; the store is
+  large and read-rarely after ingestion, so this minimises idle storage cost.
+
+Deletion is a safeguard, not a lock: `force_destroy` is False so `pulumi destroy`
+won't drop a non-empty bucket, but intentional removal — a copyright takedown, a
+retraction — is always available manually (`gcloud storage rm`, or
+empty-then-destroy).
+
+A dedicated bucket per storage concern (not one shared bucket): these are
+bucket-level policies that can't be prefix-scoped, and the parquet/audit
+consumers the design anticipates need different whole-bucket profiles. Access is
+deferred — read/write grants attach when the ingestion writer and backend reader
+land; in dev, operators use their own IAM-gated `gcloud` ADC.
 
 ## Two tiers: bootstrap vs program
 
