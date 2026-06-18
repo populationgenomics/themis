@@ -52,10 +52,18 @@ gcloud iam service-accounts create themis-preview --project="${PROJECT}" \
   --display-name='Themis Pulumi preview (read-only; pull requests)' 2>/dev/null || true
 
 # Deploy SA: manage the program's resources. Broad within this isolated project;
-# tighten once the resource set is stable.
+# tighten once the resource set is stable. storage.admin is project-level (not
+# bucket-scoped) because the program creates its own buckets (e.g. fulltext) —
+# storage.buckets.create can't be granted on a bucket that doesn't exist yet.
 for role in \
-  roles/run.admin roles/compute.admin roles/iap.admin roles/artifactregistry.admin \
-  roles/iam.serviceAccountAdmin roles/iam.serviceAccountUser roles/serviceusage.serviceUsageAdmin; do
+  roles/artifactregistry.admin \
+  roles/compute.admin \
+  roles/iam.serviceAccountAdmin \
+  roles/iam.serviceAccountUser \
+  roles/iap.admin \
+  roles/run.admin \
+  roles/serviceusage.serviceUsageAdmin \
+  roles/storage.admin; do
   gcloud projects add-iam-policy-binding "${PROJECT}" \
     --member="serviceAccount:${DEPLOY_SA}" --role="${role}" --condition=None >/dev/null
 done
@@ -63,9 +71,8 @@ done
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${PREVIEW_SA}" --role=roles/viewer --condition=None >/dev/null
 
-# State bucket: deploy reads/writes state + locks; preview reads only.
-gcloud storage buckets add-iam-policy-binding "gs://${STATE_BUCKET}" \
-  --member="serviceAccount:${DEPLOY_SA}" --role=roles/storage.admin >/dev/null
+# State bucket: deploy reads/writes state + locks via project storage.admin above;
+# preview reads only (project viewer doesn't include object read).
 gcloud storage buckets add-iam-policy-binding "gs://${STATE_BUCKET}" \
   --member="serviceAccount:${PREVIEW_SA}" --role=roles/storage.objectViewer >/dev/null
 
