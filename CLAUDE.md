@@ -40,6 +40,13 @@ The primary audience for docs is a model reading them as context; humans second.
 terse: state each decision, mechanism, and rationale once — no rhetorical emphasis, no
 persuasion, no recaps. Every token written is re-paid on every future read.
 
+## Stored artifacts
+
+Every JSON stored artifact (cache files, `.jsonl` records, durable projections)
+carries a top-level integer `schema_version`. Readers switch on it and **fail
+loudly** on an unknown version; a schema change ships a migrate-on-read. Write-once
+artifacts can't be retrofitted, so the field is present from v1.
+
 ## Committing
 
 - **Stage explicit paths**, not `git add -A` / `.`. Every tracked commit is mirrored 1:1
