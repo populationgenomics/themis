@@ -16,6 +16,42 @@ a construct an enabled emitter cannot represent, so it *enforces* the translatab
 subset rather than leaving it to review; one source extends to OpenAPI/protobuf later
 without re-modelling.
 
+## Usage
+
+What works today: **JSON Schema emission** (S0.1) — a `.tsp` domain compiles to one
+bundled `jsonschema/<domain>.schema.json`, all types under `$defs`. Pydantic (S0.2),
+Zod (S0.3), and the freshness/compat CI gates (S0.4, S0.6) are staged, not yet built
+(see Staged adoption); until a target is built, only the JSON Schema is generated.
+
+### Authoring a schema
+
+- Edit `.tsp` under `schema/<domain>/`; `main.tsp` is the entry point that imports the
+  domain's files. File-splitting is covered in Authoring and layout, the translatable
+  subset in Authoring rules.
+- The Stage-0 feature corpus lives under `schema/tests/fixtures/<domain>/`, not the repo
+  `tests/` tree: TypeSpec resolves emitter packages by walking up from each `.tsp` file
+  to a `node_modules`, so every source must sit at or below the `schema/` Node toolchain.
+- Regenerate the committed artifacts with `uv run python -m tools.schema.regen` (one-time
+  toolchain install: `npm --prefix schema ci`). Generated code is **committed and never
+  hand-edited**; a `.tsp` change committed without regenerating fails CI (S0.4).
+
+### Using a schema from Python
+
+- Import the generated Pydantic models from `<pkg>/models/<domain>/` (built in S0.2).
+  Cross-field constraints that don't survive codegen live in a thin hand-written layer
+  over those models (see Authoring rules).
+- Validate at-rest bytes against `jsonschema/<domain>.schema.json` — the language-neutral
+  artifact, no toolchain at runtime.
+
+### Using a schema from TypeScript
+
+- Import the generated Zod schemas from the frontend `src/models/<domain>/` (built in
+  S0.3). Frontend Zod validates wire messages only, never at-rest artifacts.
+
+Consumers import committed generated code from their own tree; nothing depends on
+`schema/` (the authoring toolchain) at build or run time — the property the
+generated-code-is-committed policy (Code generation) buys.
+
 ## At-rest vs on-the-wire
 
 Two classes of serialized data. Both evolve **additively only** — breaking changes are
@@ -36,15 +72,24 @@ ruled out (see Schema evolution) — and differ only in their content model.
 ## Authoring and layout
 
 ```
-schema/                # .tsp sources — the primary artifact
-  tspconfig.yaml
-  litcache/
+schema/                # .tsp sources + the Node toolchain (authoring only)
+  package.json         # pins @typespec/compiler + emitters; lockfile alongside
+  tspconfig.yaml       # shared emitter config
+  node_modules/        # installed from the lockfile; gitignored
+  litcache/            # a real domain
     main.tsp           # entry point: imports the domain's files
     manifest.tsp
     knowledge_unit.tsp
     common.tsp         # types shared across the domain
   <other-domains>/...
+  tests/               # the Stage-0 feature corpus + its test, kept under
+    fixtures/          #   schema/ so node_modules stays an ancestor (see Usage)
+      <domain>/main.tsp
+    jsonschema/        # the corpus's committed generated schemas
 ```
+
+Real domains sit directly under `schema/`; the synthetic feature corpus sits under
+`schema/tests/`. Both are below the toolchain, which is what the emitter resolver needs.
 
 - **Split files by cohesion, not by a fixed rule.** A domain is a directory of `.tsp`
   files with `main.tsp` as the entry point that imports them. Co-locate a type with its

@@ -21,14 +21,18 @@ exclude-newer = "7 days"
 
 [dependency-groups]
 screen = ["pyyaml"]
-test = ["pytest", "pyyaml"]
+# check-jsonschema: the metaschema validator the schema tests shell out to
+# (schema/tests). Invoked as a CLI, never imported, so no type stubs.
+test = ["pytest", "pyyaml", "check-jsonschema"]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
 lint = ["ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", { include-group = "infra" }]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
+# the schema/ Node project so the emitter's node_modules resolution works.
+testpaths = ["tests", "schema/tests"]
 pythonpath = ["."]
 
 [tool.ruff]
@@ -73,6 +77,10 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]
+"schema/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -95,6 +103,6 @@ max-locals = 25
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["tools", "tests", "infra"]
+include = ["tools", "tests", "schema/tests", "infra"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"

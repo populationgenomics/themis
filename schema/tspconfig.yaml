@@ -1,0 +1,17 @@
+# Shared TypeSpec config for every domain compiled by the toolchain (the
+# Stage-0 corpus under schema/tests/fixtures/, and real domains later). The
+# regen orchestrator (tools/schema/regen.py) compiles one domain's main.tsp at
+# a time, overriding the per-domain bundleId and output path on the command
+# line; the options here are the parts common to every domain.
+#
+# emitAllModels: emit every model in the program, not just those reachable
+#   from a service — there is no service, the models are the artifact.
+# file-type json: emit .json, not .yaml.
+# bundleId: collapse the whole domain into one 2020-12 file with all types
+#   under $defs (the per-domain value is supplied by the orchestrator).
+emit:
+  - "@typespec/json-schema"
+options:
+  "@typespec/json-schema":
+    emitAllModels: true
+    file-type: json

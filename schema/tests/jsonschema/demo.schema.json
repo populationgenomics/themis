@@ -1,0 +1,49 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "demo.schema.json",
+    "$defs": {
+        "Catalogue": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Catalogue.json",
+            "type": "object",
+            "properties": {
+                "widgets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "Widget.json"
+                    }
+                }
+            },
+            "required": [
+                "widgets"
+            ]
+        },
+        "Widget": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Widget.json",
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "colour": {
+                    "$ref": "Colour.json"
+                }
+            },
+            "required": [
+                "name",
+                "colour"
+            ]
+        },
+        "Colour": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "Colour.json",
+            "type": "string",
+            "enum": [
+                "red",
+                "green",
+                "blue"
+            ]
+        }
+    }
+}
