@@ -17,10 +17,20 @@ missing input into a silent wrong answer. Validate and fail early.
 conclude "unknown"; the code feeding it must not manufacture that from
 absent data.
 
-## No code archaeology
+## Comments
 
-Write code and comments as if the current shape always existed. No
-history-narrating comments ("removed X", "no longer polls", "switched
-from Y") or commented-out former implementations. The rationale for
-*why* the current shape was chosen should be documented in design docs
-rather than in comments.
+Comment the non-obvious *mechanism* or *constraint*, tersely. The *why*
+(why this shape was chosen) belongs in a design doc or the docstring,
+not inline — and never duplicate what a doc already states. No history
+narration ("removed X", "switched from Y"), commented-out code, or
+persuasion: write as if the current shape always existed.
+
+```
+# Bad — rationale, persuasion, and the design doc already states this
+conn = connect(dsn)  # one connection not a pool: pooling adds reconnect
+# complexity we don't need yet, only pays off above N writers — the
+# whole point of staying simple ...
+
+# Good — one non-obvious fact; the why stays in the doc
+conn = connect(dsn)  # single connection: the writer is single-threaded
+```
