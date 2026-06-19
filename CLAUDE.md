@@ -31,14 +31,18 @@ model dispositions.
 
 ## Code style
 
-Language-agnostic: [`docs/style/general.md`](docs/style/general.md). Python:
-[`docs/style/python.md`](docs/style/python.md).
+@docs/style/general.md
 
 ## Docs
 
 The primary audience for docs is a model reading them as context; humans second. Be
 terse: state each decision, mechanism, and rationale once — no rhetorical emphasis, no
 persuasion, no recaps. Every token written is re-paid on every future read.
+
+`CLAUDE.md` and `.claude/rules/` go further: model-only context, not human docs. Include
+only what changes behavior — no maintainer notes, no describing harness mechanics (which
+rules load when, where files live). Such content costs tokens every session and changes
+nothing; human-facing explanation belongs in `docs/` or code.
 
 ## Stored artifacts
 
