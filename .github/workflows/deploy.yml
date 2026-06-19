@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   deploy:
+    # Never run on the public mirror (themis); the deploy SA's WIF is scoped to
+    # themis-internal regardless, but this keeps the gate intrinsic to the
+    # workflow rather than relying on Actions being disabled on the mirror.
+    if: github.repository == 'populationgenomics/themis-internal'
     runs-on: ubuntu-latest
     permissions:
       id-token: write

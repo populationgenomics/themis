@@ -8,7 +8,10 @@ on:
 
 jobs:
   pytest:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # Skip on the public mirror (themis), and skip draft PRs.
+    if: |
+      github.repository == 'populationgenomics/themis-internal'
+      && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     permissions:
       contents: read

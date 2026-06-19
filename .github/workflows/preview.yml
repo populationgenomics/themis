@@ -14,7 +14,10 @@ concurrency:
 
 jobs:
   preview:
-    if: ${{ !github.event.pull_request.draft }}
+    # Skip on the public mirror (themis), and skip draft PRs.
+    if: |
+      github.repository == 'populationgenomics/themis-internal'
+      && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     permissions:
       id-token: write
