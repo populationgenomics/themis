@@ -52,6 +52,9 @@ nothing; human-facing explanation belongs in `docs/` or code.
 - **Pre-commit runs lint/format/hygiene** (`.pre-commit-config.yaml`); pyright runs in CI.
   Ensure hooks are installed (`pre-commit install`) — if not, install or ask the author;
   never bypass with `--no-verify`.
+- **Correct a pushed branch with a new commit on top**, not amend + force-push. PRs
+  squash-merge, so `main` history stays linear regardless and intermediate fixups vanish
+  on merge. Reserve force-push for rebasing a branch onto `main`.
 
 ## CI and review
 
