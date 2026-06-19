@@ -33,10 +33,14 @@ not a bucket). Policy:
 
 - **Private** — uniform bucket-level access + enforced public-access prevention
   (it holds copyrighted source PDFs).
-- **Versioned, 30-day window** — live objects are additive and never overwritten,
-  so versioning is near-free; a superseded (noncurrent) version is kept 30 days
-  for accidental-overwrite/delete recovery, then GC'd. Live content is never
-  *auto-expired* — this bounds only the version history.
+- **Versioned, 30-day window; soft delete off** — recovery is object versioning:
+  a superseded (noncurrent) version is kept 30 days for accidental
+  delete/overwrite recovery, then GC'd by a lifecycle rule. Soft delete (GCS's
+  default 7-day guard) is explicitly disabled, because its window can't be
+  overridden — already-soft-deleted objects ride out the full window regardless
+  of policy, trapping a *deliberate* reclaim — whereas versioning lets an
+  intentional `gcloud storage rm --all-versions` reclaim immediately. Live
+  content is never auto-expired; this bounds only the version history.
 - **Autoclass (terminal Archive)** — GCS moves cold objects toward Archive and
   back to Standard on read, with no retrieval/early-deletion fees; the store is
   large and read-rarely after ingestion, so this minimises idle storage cost.
