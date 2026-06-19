@@ -28,7 +28,7 @@ jobs:
         run: |
           {
             echo 'CONCERNS<<CONCERNS_EOF'
-            for f in .github/review/leak-screen.md .github/review/security.md .github/review/general.md; do
+            for f in .github/review/leak-screen.md .github/review/security.md .github/review/general.md .github/review/context-budget.md; do
               cat "$f"
               echo
             done
@@ -62,8 +62,9 @@ jobs:
             merger. Bias toward signalling clearly when something is worth a
             look; do not invent problems where there are none.
 
-            This review covers three concerns: leak screening, security, and
-            general code quality. Each concern's full instructions follow under
+            This review covers four concerns: leak screening, security,
+            general code quality, and context budget. Each concern's full
+            instructions follow under
             "Concerns to look for". Give each concern its own attention — don't
             let any one of them crowd out the others.
 
@@ -100,9 +101,12 @@ jobs:
 
             Post line-anchored review comments via the inline-comment MCP
             tool. Each comment should name the concern (leak screening,
-            security, or general), quote the offending content briefly, and
-            suggest a concrete remediation. For security findings, also
-            include a severity rating (CRITICAL / HIGH / MEDIUM / LOW).
+            security, general, or context budget), quote the offending
+            content briefly, and suggest a concrete remediation. For
+            security findings, also include a severity rating
+            (CRITICAL / HIGH / MEDIUM / LOW). The context-budget concern is
+            informational — it reports an estimate, not a problem, and posts
+            per its own instructions (no remediation or severity framing).
 
             For deliberate content that triggers a finding (e.g. a fixture
             with a participant-shaped ID), the canonical remedy is an inline
