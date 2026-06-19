@@ -44,13 +44,6 @@ only what changes behavior — no maintainer notes, no describing harness mechan
 rules load when, where files live). Such content costs tokens every session and changes
 nothing; human-facing explanation belongs in `docs/` or code.
 
-## Stored artifacts
-
-Every JSON stored artifact (cache files, `.jsonl` records, durable projections)
-carries a top-level integer `schema_version`. Readers switch on it and **fail
-loudly** on an unknown version; a schema change ships a migrate-on-read. Write-once
-artifacts can't be retrofitted, so the field is present from v1.
-
 ## Committing
 
 - **Stage explicit paths**, not `git add -A` / `.`. Every tracked commit is mirrored 1:1

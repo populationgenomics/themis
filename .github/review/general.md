@@ -39,24 +39,21 @@ update; comments that describe what code did before, not what it does
 now; misleading or stale comments in the surrounding context that the
 PR touches.
 
-**Schema versioning and migrations.** Persistence formats that change
-without a versioning story. Look for:
+**Schema evolution.** Stored-artifact (JSON) schemas evolve
+**additively only** — breaking changes are ruled out (see
+`docs/design/typespec.md`). Look for:
 
-- New stored artifacts (JSON, msgpack, pickled blobs, etc.) without an
-  explicit integer schema version field at a known location (commonly
-  top-level `schema_version` or `_v`). Consumers need this to migrate
-  on read; backfills need this to know what they're upgrading from.
-- Schema changes (added / renamed / removed fields) to existing
-  artifacts without a documented migration path — how do old
-  artifacts get read by the new code? Forward-compat reads (tolerate
-  unknown future fields) and backward-compat writes (don't break
-  existing readers) should both be considered.
+- Non-additive changes to a stored-artifact schema: a removed,
+  renamed, or repurposed field; a narrowed value set (dropped enum
+  member, tightened pattern or range); or a field newly made required.
+  These break existing data or older readers and are not allowed —
+  deprecate in place (keep the field optional and ignored) instead. A
+  PR that trips the CI compat gate is not "add an override", it's
+  "model the change additively".
 - Database schema changes (column adds / drops / renames, type
   changes, new tables) without a migration file (Alembic-style or
-  whatever the project uses). Schemas should never drift between
-  environments.
-- Renamed or removed fields without a deprecation window — consumers
-  may still be reading the old shape.
+  whatever the project uses). Relational schemas should never drift
+  between environments.
 
 **Debugging leftovers.** Stray `print()` calls that look like they
 were added for debugging and forgotten (loud markers like
