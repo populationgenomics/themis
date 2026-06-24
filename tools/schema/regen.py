@@ -9,12 +9,20 @@ each through the pipeline:
    ``tools.schema.normalize`` — a #4084 workaround) — this is the committed
    ``<domain>.schema.json``;
 3. **Pydantic** v2 models from the normalized schema via
-   ``datamodel-code-generator``.
+   ``datamodel-code-generator``;
+4. **Zod** schemas direct from the ``.tsp`` via ``typespec-zod``, then
+   topologically reordered (see ``tools.schema.zod_reorder`` — an
+   ordering-bug workaround) — the committed ``<domain>.ts``.
+
+Zod is emitted straight from the ``.tsp``, not via the JSON Schema: it is
+frontend-wire-only and gains nothing from sharing the at-rest schema (see
+``docs/design/typespec.md``).
 
 In Stage 0 the only sources are the synthetic feature-coverage corpus under
-``schema/tests/fixtures/``; their schemas land in ``schema/tests/jsonschema/`` and
-their models in ``schema/tests/pydantic/``. Real domains (Stage 1+, e.g.
-``schema/litcache/``) get added as further roots when they land.
+``schema/tests/fixtures/``; their schemas land in ``schema/tests/jsonschema/``,
+their models in ``schema/tests/pydantic/``, and their Zod in
+``schema/tests/zod/``. Real domains (Stage 1+, e.g. ``schema/litcache/``) get
+added as further roots when they land.
 
 Run with ``uv run --group codegen python -m tools.schema.regen``. The Node
 toolchain under ``schema/`` must be installed (``npm --prefix schema ci``) and
@@ -22,8 +30,8 @@ toolchain under ``schema/`` must be installed (``npm --prefix schema ci``) and
 loudly if either is missing.
 
 This is the pure-generation step. Verification (metaschema validity, model
-import, backward compatibility) lives in tests and CI gates, not here. The direct
-Zod emitter is the next slice (S0.3).
+import, ``tsc`` compile of the Zod, backward compatibility) lives in tests and
+CI gates, not here.
 """
 
 from __future__ import annotations
@@ -33,8 +41,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 
-from tools.schema import normalize
+from tools.schema import normalize, zod_reorder
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCHEMA_DIR = _REPO_ROOT / 'schema'
@@ -47,8 +56,10 @@ _TSP_CONFIG = _SCHEMA_DIR / 'tspconfig.yaml'
 _CORPUS_DIR = _SCHEMA_DIR / 'tests' / 'fixtures'
 _OUTPUT_DIR = _SCHEMA_DIR / 'tests' / 'jsonschema'
 _PYDANTIC_DIR = _SCHEMA_DIR / 'tests' / 'pydantic'
+_ZOD_DIR = _SCHEMA_DIR / 'tests' / 'zod'
 
 _JSON_SCHEMA_EMITTER = '@typespec/json-schema'
+_ZOD_EMITTER = 'typespec-zod'
 
 
 def _discover_domains() -> list[str]:
@@ -120,6 +131,34 @@ def _emit_pydantic(domain: str, schema_path: pathlib.Path) -> None:
     subprocess.run(cmd, check=True)  # noqa: S603
 
 
+def _emit_zod(domain: str) -> None:
+    """Emit a domain's Zod schemas direct from its ``.tsp``, reordered.
+
+    ``typespec-zod`` writes a fixed ``models.ts`` whose declarations are not
+    dependency-ordered; emit to a temp dir, reorder (see
+    ``tools.schema.zod_reorder``), and write the committed ``<domain>.ts``.
+    """
+    entrypoint = _CORPUS_DIR.relative_to(_SCHEMA_DIR) / domain / 'main.tsp'
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [
+            str(_TSP_BIN),
+            'compile',
+            str(entrypoint),
+            '--emit',
+            _ZOD_EMITTER,
+            '--option',
+            f'{_ZOD_EMITTER}.emitter-output-dir={tmp}',
+        ]
+        # cwd is schema/ so the local node_modules resolves. No --config: that
+        # would also run the json-schema emit; Zod is a separate compile.
+        subprocess.run(cmd, cwd=_SCHEMA_DIR, check=True)  # noqa: S603
+        emitted = pathlib.Path(tmp) / 'models.ts'
+        reordered = zod_reorder.reorder(emitted.read_text())
+
+    _ZOD_DIR.mkdir(parents=True, exist_ok=True)
+    (_ZOD_DIR / f'{domain}.ts').write_text(reordered)
+
+
 def main() -> int:
     if not _TSP_BIN.exists():
         raise SystemExit(f'tsp binary not found at {_TSP_BIN}; run `npm --prefix schema ci` first')
@@ -128,11 +167,15 @@ def main() -> int:
 
     domains = _discover_domains()
     for domain in domains:
-        print(f'schema/regen: {domain} -> {_OUTPUT_DIR.name}/{domain}.schema.json + {_PYDANTIC_DIR.name}/{domain}.py')
+        print(
+            f'schema/regen: {domain} -> {_OUTPUT_DIR.name}/{domain}.schema.json'
+            f' + {_PYDANTIC_DIR.name}/{domain}.py + {_ZOD_DIR.name}/{domain}.ts'
+        )
         schema_path = _emit_schema(domain)
         _emit_pydantic(domain, schema_path)
+        _emit_zod(domain)
 
-    print(f'schema/regen: emitted {len(domains)} schema(s) + Pydantic models')
+    print(f'schema/regen: emitted {len(domains)} schema(s) + Pydantic models + Zod schemas')
     return 0
 
 

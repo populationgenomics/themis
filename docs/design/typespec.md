@@ -364,8 +364,8 @@ local to the wire models.
   shipped only as a Docker image). Node deps pinned via a `schema/` lockfile.
 - **Regen is a `tools/` Python orchestrator run as `uv run python -m tools.<name>`** —
   the repo has no task runner and this stays in the uv/Python ecosystem. It runs
-  `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON Schema → Pydantic.
-  CI runs it and checks for no diff.
+  `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON Schema → Pydantic,
+  and reorders the Zod (see appendix). CI runs it and checks for no diff.
 - **The compat gate is a separate CI step**: diff each committed
   `jsonschema/<domain>.schema.json` against its last released version through `chuckd`,
   fail hard on any incompatible delta (see Schema evolution).
@@ -398,9 +398,12 @@ toolchain before any schema we care about exists is the point of this ordering.
 
 - gRPC vs REST/JSON for RPC — defers the wire-emitter choice.
 - Generated-code review burden on the public mirror (diff volume/noise).
-- `typespec-zod` maturity — a community emitter, not first-party. Stage 0 must confirm
-  it covers the feature corpus; fallback is JSON Schema + `json-schema-to-zod` with the
-  dereference pass.
+- ~~`typespec-zod` maturity~~ — **resolved in S0.3**: the emitter (pinned `0.0.0-68`,
+  internal name `efv2-zod-sketch`) covers the corpus and emits faithful named schemas,
+  but mis-orders declarations across files, so it needs the reorder pass (appendix). It
+  is a pre-release sketch; the fallback (JSON Schema + `json-schema-to-zod` + a dereference
+  pass that de-names every reused subschema) stays on the shelf if a fuller corpus
+  surfaces emitter bugs the reorder pass can't absorb.
 
 ## Appendix: emitter behaviour
 
@@ -449,6 +452,15 @@ need a dereference pass to inline every ref before conversion. A direct tsp→Zo
 (`typespec-zod`) reads the source models and sidesteps the converter entirely — no
 dereference pass. Zod is frontend-wire-only, so it gains nothing from sharing the
 at-rest JSON Schema.
+
+The emitter's one defect (S0.3) is declaration order: it emits each model as
+`export const <name> = …` but a schema can land before another it references, which
+Zod's eager evaluation rejects at compile time (`TS2448`/`TS2454`, used before
+declaration). A deterministic **reorder pass** (`tools/schema/zod_reorder.py`) parses
+the emission, builds the reference graph, and re-emits the declarations
+dependency-first — the Zod analogue of the JSON Schema normalize pass, an automated
+transform over generated code. The reliable subset forbids recursion, so the graph is
+acyclic; a cycle (which Zod expresses only via `z.lazy`) fails loud.
 
 **Protobuf constraints (for the deferred wire-emitter path).** Proto enums are integer
 with a forced `0` member and identifier-only names, so a string vocabulary with hyphens

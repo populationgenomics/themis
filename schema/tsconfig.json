@@ -1,0 +1,13 @@
+{
+  "// purpose": "Smoke test (S0.3): typecheck the committed Zod under tests/zod/. No JS is emitted; `tsc` failing means the generated Zod is not valid TypeScript.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["tests/zod/**/*.ts"]
+}
