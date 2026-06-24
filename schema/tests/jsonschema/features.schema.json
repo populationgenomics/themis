@@ -1,0 +1,184 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "features.schema.json",
+    "$defs": {
+        "EnumHolder": {
+            "type": "object",
+            "properties": {
+                "colour": {
+                    "$ref": "#/$defs/Colour"
+                }
+            },
+            "required": [
+                "colour"
+            ]
+        },
+        "Colour": {
+            "type": "string",
+            "enum": [
+                "red",
+                "green",
+                "blue"
+            ]
+        },
+        "OptionalHolder": {
+            "type": "object",
+            "properties": {
+                "required_field": {
+                    "type": "string"
+                },
+                "optional_field": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "required_field"
+            ]
+        },
+        "DefaultHolder": {
+            "type": "object",
+            "properties": {
+                "flagged": {
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "LiteralHolder": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "const": "widget"
+                }
+            },
+            "required": [
+                "kind"
+            ]
+        },
+        "FreeToRead": {
+            "type": "object",
+            "properties": {
+                "access": {
+                    "type": "string",
+                    "const": "free-to-read"
+                }
+            },
+            "required": [
+                "access"
+            ]
+        },
+        "Licensed": {
+            "type": "object",
+            "properties": {
+                "access": {
+                    "type": "string",
+                    "const": "licensed"
+                },
+                "publisher": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "access",
+                "publisher"
+            ]
+        },
+        "AccessHolder": {
+            "type": "object",
+            "properties": {
+                "access": {
+                    "$ref": "#/$defs/Access"
+                }
+            },
+            "required": [
+                "access"
+            ]
+        },
+        "Access": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/FreeToRead"
+                },
+                {
+                    "$ref": "#/$defs/Licensed"
+                }
+            ]
+        },
+        "Inner": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "value"
+            ]
+        },
+        "Outer": {
+            "type": "object",
+            "properties": {
+                "inner": {
+                    "$ref": "#/$defs/Inner"
+                }
+            },
+            "required": [
+                "inner"
+            ]
+        },
+        "ArrayHolder": {
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "palette": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/Colour"
+                    }
+                }
+            },
+            "required": [
+                "tags",
+                "palette"
+            ]
+        },
+        "ScalarHolder": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "minimum": -2147483648,
+                    "maximum": 2147483647
+                },
+                "ratio": {
+                    "type": "number"
+                },
+                "when": {
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "day": {
+                    "type": "string",
+                    "format": "date"
+                },
+                "link": {
+                    "type": "string",
+                    "format": "uri"
+                }
+            },
+            "required": [
+                "count",
+                "ratio",
+                "when",
+                "day",
+                "link"
+            ]
+        }
+    }
+}

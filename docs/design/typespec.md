@@ -163,8 +163,14 @@ the compiler enforces most, these cover the rest:
   inheritance. The named union enforces the constraint in every target; inheritance
   does not survive codegen (appendix).
 - **Backtick reserved identifiers** (e.g. `` `unknown` ``).
-- **Avoid:** heterogeneous/tuple arrays, deep recursion, `patternProperties`, and
-  `anyOf`/`oneOf` of unrelated shapes.
+- **Avoid:** heterogeneous/tuple arrays, deep recursion, `patternProperties`,
+  `anyOf`/`oneOf` of unrelated shapes, and `int64` (TypeSpec encodes it as a JSON string
+  for JS number precision, so JSON Schema/Pydantic see `string` while `typespec-zod`
+  emits `z.bigint()` — an inconsistent cross-target shape).
+
+The reliable subset is pinned concretely by the feature-coverage corpus under
+`schema/tests/fixtures/features/` — one `.tsp` per construct, each verified to round-trip
+to all three targets (S0.5).
 
 Constraints that can't be expressed structurally are **not** generated — they live in
 the hand-written layer over the generated models.

@@ -117,6 +117,8 @@ def _emit_pydantic(domain: str, schema_path: pathlib.Path) -> None:
         '--use-standard-collections',  # list[X], not typing.List[X]
         '--use-union-operator',  # X | None, not Optional[X]
         '--use-specialized-enum',  # StrEnum / IntEnum, not bare Enum
+        '--field-constraints',  # int = Field(ge=…, le=…), not conint(…): a call in
+        # type position that pyright (standard) rejects
         # Don't emit a model for the root schema element. Our bundle root is always
         # a $defs-only container (S0.1) with no type, so datamodel-codegen would
         # otherwise emit a meaningless `class Model(RootModel[Any])` for it. Real

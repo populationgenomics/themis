@@ -7,6 +7,11 @@ trips). The authoritative check that the Zod is *valid* TypeScript is ``tsc``
 (``npm run smoke:zod``), which needs Node and runs in CI (S0.4); these run in
 the ordinary pytest job. Freshness against the ``.tsp`` sources is the same S0.4
 gate.
+
+The ``test_features_*`` cases are the Zod half of the S0.5 round-trip verification:
+each construct in the feature-coverage corpus (``schema/tests/fixtures/features/``)
+projects to its expected Zod combinator. The JSON Schema and Pydantic halves live in
+``test_committed_schemas`` and ``test_generated_pydantic``.
 """
 
 from __future__ import annotations
@@ -40,3 +45,26 @@ def test_is_dependency_ordered(zod_path: pathlib.Path) -> None:
     # is declared before one it references — the TS2448 the pass exists to fix.
     source = zod_path.read_text()
     assert zod_reorder.reorder(source) == source
+
+
+# Per-feature Zod projections. Substring checks, not a parser: tsc (npm run
+# smoke:zod) is the authoritative validity gate; these only confirm each corpus
+# construct reached its expected Zod combinator.
+@pytest.mark.parametrize(
+    'fragment',
+    [
+        'export const colour = z.enum(["red", "green", "blue"]);',  # string enum
+        'optional_field: z.string().optional(),',  # optional
+        'flagged: z.boolean().optional().default(false),',  # optional-with-default
+        'kind: z.literal("widget"),',  # literal
+        'export const access = z.union([freeToRead, licensed]);',  # named union
+        'inner: inner,',  # nested model ref
+        'tags: z.array(z.string()),',  # array
+        'palette: z.array(colour),',  # array of enum refs
+        'when: z.coerce.date(),',  # utcDateTime scalar format
+        'link: z.string().url(),',  # url scalar format
+    ],
+)
+def test_features_projects_each_construct(fragment: str) -> None:
+    source = (_ZOD_DIR / 'features.ts').read_text()
+    assert fragment in source
