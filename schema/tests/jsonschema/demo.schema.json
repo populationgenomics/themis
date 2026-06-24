@@ -3,14 +3,12 @@
     "$id": "demo.schema.json",
     "$defs": {
         "Catalogue": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "Catalogue.json",
             "type": "object",
             "properties": {
                 "widgets": {
                     "type": "array",
                     "items": {
-                        "$ref": "Widget.json"
+                        "$ref": "#/$defs/Widget"
                     }
                 }
             },
@@ -19,15 +17,13 @@
             ]
         },
         "Widget": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "Widget.json",
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string"
                 },
                 "colour": {
-                    "$ref": "Colour.json"
+                    "$ref": "#/$defs/Colour"
                 }
             },
             "required": [
@@ -36,8 +32,6 @@
             ]
         },
         "Colour": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "Colour.json",
             "type": "string",
             "enum": [
                 "red",

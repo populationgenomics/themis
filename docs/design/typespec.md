@@ -18,10 +18,11 @@ without re-modelling.
 
 ## Usage
 
-What works today: **JSON Schema emission** (S0.1) — a `.tsp` domain compiles to one
-bundled `jsonschema/<domain>.schema.json`, all types under `$defs`. Pydantic (S0.2),
-Zod (S0.3), and the freshness/compat CI gates (S0.4, S0.6) are staged, not yet built
-(see Staged adoption); until a target is built, only the JSON Schema is generated.
+What works today: **JSON Schema + Pydantic** — a `.tsp` domain compiles to one bundled
+`jsonschema/<domain>.schema.json` (all types under `$defs`, S0.1), which is normalized
+(S0.2) and run through `datamodel-code-generator` to Pydantic v2 models. Zod (S0.3) and
+the freshness/compat CI gates (S0.4, S0.6) are staged, not yet built (see Staged
+adoption); until a target is built, it is not generated.
 
 ### Authoring a schema
 
