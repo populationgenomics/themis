@@ -18,11 +18,12 @@ without re-modelling.
 
 ## Usage
 
-What works today: **JSON Schema + Pydantic** — a `.tsp` domain compiles to one bundled
-`jsonschema/<domain>.schema.json` (all types under `$defs`, S0.1), which is normalized
-(S0.2) and run through `datamodel-code-generator` to Pydantic v2 models. Zod (S0.3) and
-the freshness/compat CI gates (S0.4, S0.6) are staged, not yet built (see Staged
-adoption); until a target is built, it is not generated.
+What works today: **JSON Schema + Pydantic + Zod**, with the freshness (S0.4) and
+backward-compat (S0.6) CI gates in place — a `.tsp` domain compiles to one bundled
+`jsonschema/<domain>.schema.json` (all types under `$defs`, S0.1), normalized (S0.2),
+run through `datamodel-code-generator` to Pydantic v2 models (S0.2), and emitted to Zod
+direct from the `.tsp` (S0.3). All of Stage 0's rails are built; Stage 1 (the litcache
+domain) is the next unit (see Staged adoption).
 
 ### Authoring a schema
 
@@ -309,17 +310,35 @@ is not allowed. So there is **no schema version, no migration, and no version di
 the current schema reads every artifact ever written, and a reader validates against it
 directly. A field is never removed, only deprecated in place (kept optional, ignored).
 
-If a change ever genuinely cannot be expressed additively, that is an out-of-band,
-manual, one-off — explicitly outside this system, not a supported schema operation.
+A genuinely necessary breaking change — e.g. removing a field once every artifact has been
+migrated off it — is an out-of-band, manual one-off: it is performed by deliberately merging
+a PR with a red `schema-compat`, as a reviewed decision, not via any in-tool flag. The gate
+is a **sign, not a cop**: advisory, never a merge-blocking required check, so a red is a
+conscious human call that keeps breaking changes loud rather than routine. Unlike proto
+there is no reserved-field-id bookkeeping (JSON fields aren't positional) — you just delete
+the field from the `.tsp`; the only cost is operational, since the closed at-rest schema
+rejects any lingering artifact that still carries the removed field, so removal is safe only
+once none remain.
 
-- **CI compat gate.** Each change to a committed `jsonschema/<domain>.schema.json` is
-  checked against the last released version with **`chuckd`** (Confluent's JSON Schema
-  compatibility rules) in **`BACKWARD`** mode, and **fails hard on any incompatible
-  delta — there is no override.** One tool covers both structural breaks *and*
-  value-domain narrowing (enum-member removal, pattern/range tightening — the narrowing a
-  string-projecting check like proto misses). `BACKWARD`, not `FULL`: `FULL` forbids
-  adding a field at all, so it's unusable; the wire's forward tolerance comes from
-  lenient readers.
+- **CI compat gate** (`tools/schema/compat.py` + `schema-compat.yml`, S0.6). Each change
+  to a committed `jsonschema/<domain>.schema.json` is checked against its baseline with
+  **`chuckd`** (Confluent's JSON Schema compatibility rules) in **`BACKWARD`** mode, and
+  **fails (red) on any incompatible delta — no in-tool override; clearing a red is the
+  deliberate out-of-band merge above, not a flag.** One tool covers both
+  structural breaks *and* value-domain narrowing (enum-member removal, pattern/range
+  tightening — the narrowing a string-projecting check like proto misses). `BACKWARD`,
+  not `FULL`: `FULL` forbids adding a field at all, so it's unusable; the wire's forward
+  tolerance comes from lenient readers.
+  - **Baseline** is the schema on the PR base branch (`HEAD^` on a push to main) — the
+    Stage-0 stand-in for "last released version", there being no release/tag process; the
+    released line is `main` under additive-only evolution.
+  - **Diffed per-type, not as the bundle.** `chuckd` diffs from a schema's *root*, and the
+    bundle's root is a `$defs` container that references nothing — diffed as-is it compares
+    two empty roots and passes every change. So `compat.py` promotes each `$def` to a root
+    (its body + an absolute `$id` + the whole `$defs` retained so `#/$defs` refs resolve)
+    and diffs each changed type on its own (appendix). A type present in the baseline but
+    gone from the new bundle is a removal/rename — invisible to `chuckd` (it diffs per
+    surviving type), so `compat.py` flags it directly as a hard finding.
   - **Content model sets the verdict on adding a field** (validated against `chuckd`,
     appendix): **at-rest closed** (`additionalProperties:false`) — add-optional is clean,
     removal and narrowing fail, and an unknown field fails loud as drift; **wire open** —
@@ -372,9 +391,11 @@ local to the wire models.
   the repo has no task runner and this stays in the uv/Python ecosystem. It runs
   `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON Schema → Pydantic,
   and reorders the Zod (see appendix). CI runs it and checks for no diff.
-- **The compat gate is a separate CI step**: diff each committed
-  `jsonschema/<domain>.schema.json` against its last released version through `chuckd`,
-  fail hard on any incompatible delta (see Schema evolution).
+- **The compat gate is a separate CI step** (`schema-compat.yml`): a Python orchestrator
+  (`tools/schema/compat.py`) diffs each committed `jsonschema/<domain>.schema.json`
+  against its baseline through a pinned `chuckd` Docker image (per-type, see Schema
+  evolution), failing hard on any incompatible delta. `chuckd` is JVM/Docker-only, so the
+  orchestrator shells out to `docker run`; the pure logic is unit-tested without Docker.
 
 ## Staged adoption
 
@@ -506,6 +527,23 @@ tool. (3) Closed models give clean additive semantics (add-optional OK, removal/
 break) — hence at-rest closed. (4) `FULL` fails every field addition regardless of
 content model, so the gate runs `BACKWARD`. Exit code is the count of incompatibilities
 (0 = compatible). chuckd is a JVM tool, Docker-only (no PyPI).
+
+That matrix ran on **standalone per-type** draft-07 schemas. Building the real gate
+(S0.6) surfaced two facts the matrix didn't:
+
+- **`chuckd` diffs only from a schema's root.** The committed bundle's root is a `$defs`
+  container with no `properties`/`$ref`, so the diff reaches nothing and reports *every*
+  change compatible — the gate is a silent no-op on the bundle. Fix: promote each `$def`
+  to a root (its body + an absolute `$id` + the whole `$defs` retained so `#/$defs` refs
+  resolve) and diff each on its own. A breaking change lives in exactly the type whose
+  body changed (a referenced type's change surfaces in its own diff), so only
+  changed-body types are run.
+- **jsonsKema (chuckd's loader) rejects a relative `$id`** (`URI is not absolute`). The
+  bundle root's `$id` is the relative `bundleId`; the per-type extraction sets an absolute
+  `$id` (a reserved `.invalid` host, never dereferenced — all refs are local).
+- **Output is `{errorType:"X", description:"…"}` per finding** (chuckd 0.6.0,
+  `anentropic/chuckd`), not the `Difference{…type=…}` form the README shows; parsed by
+  `errorType`. `PROPERTY_ADDED_TO_OPEN_CONTENT_MODEL` is the one downgraded to a warning.
 
 **Bundle → normalize → Pydantic (verified end to end).** A multi-file domain (four
 `.tsp` files, cross-file refs, an enum, an optional field) compiled with
