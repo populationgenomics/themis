@@ -1,0 +1,49 @@
+name: schema-freshness
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  regen-is-fresh:
+    # Skip on the public mirror (themis), and skip draft PRs.
+    if: |
+      github.repository == 'populationgenomics/themis-internal'
+      && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      # Node toolchain for tsp / json-schema / typespec-zod, installed from the
+      # committed schema/package-lock.json (pinned deps).
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: schema/package-lock.json
+      - run: npm --prefix schema ci
+
+      # Python codegen deps: datamodel-code-generator (+ black/isort) for the
+      # Pydantic emission step of the orchestrator.
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group codegen --python 3.13
+
+      - run: uv run --group codegen python -m tools.schema.regen
+
+      # The committed artifacts must equal what the orchestrator just produced.
+      # `git add -A` stages edits, new files, and deletions (node_modules and
+      # .tsp-out are gitignored, so scratch never counts); a non-empty staged
+      # diff means a .tsp (or a tool) changed without regenerating.
+      - name: Fail if committed artifacts are stale
+        run: |
+          git add -A
+          if ! git diff --cached --exit-code; then
+            echo "::error::Schema artifacts are stale. Run 'npm --prefix schema ci && uv run --group codegen python -m tools.schema.regen' and commit the result."
+            exit 1
+          fi
