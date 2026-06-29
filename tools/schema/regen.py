@@ -24,10 +24,10 @@ their models in ``schema/tests/pydantic/``, and their Zod in
 ``schema/tests/zod/``. Real domains (Stage 1+, e.g. ``schema/litcache/``) get
 added as further roots when they land.
 
-Run with ``uv run --group codegen python -m tools.schema.regen``. The Node
-toolchain under ``schema/`` must be installed (``npm --prefix schema ci``) and
-``datamodel-code-generator`` available (the ``codegen`` uv group); this fails
-loudly if either is missing.
+Run with ``uv run --group codegen python -m tools.schema.regen``. The TypeSpec
+toolchain under ``schema/`` must be installed with Bun (``bun install`` from
+``schema/``; ``tsp`` runs on the Bun runtime) and ``datamodel-code-generator``
+available (the ``codegen`` uv group); this fails loudly if either is missing.
 
 This is the pure-generation step. Verification (metaschema validity, model
 import, ``tsc`` compile of the Zod, backward compatibility) lives in tests and
@@ -79,6 +79,7 @@ def _emit_schema(domain: str) -> pathlib.Path:
     out_path = _OUTPUT_DIR / bundle_name
     entrypoint = _CORPUS_DIR.relative_to(_SCHEMA_DIR) / domain / 'main.tsp'
     cmd = [
+        'bun',
         str(_TSP_BIN),
         'compile',
         str(entrypoint),
@@ -143,6 +144,7 @@ def _emit_zod(domain: str) -> None:
     entrypoint = _CORPUS_DIR.relative_to(_SCHEMA_DIR) / domain / 'main.tsp'
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [
+            'bun',
             str(_TSP_BIN),
             'compile',
             str(entrypoint),
@@ -163,7 +165,7 @@ def _emit_zod(domain: str) -> None:
 
 def main() -> int:
     if not _TSP_BIN.exists():
-        raise SystemExit(f'tsp binary not found at {_TSP_BIN}; run `npm --prefix schema ci` first')
+        raise SystemExit(f'tsp binary not found at {_TSP_BIN}; run `bun install` in schema/ first')
     if shutil.which('datamodel-codegen') is None:
         raise SystemExit('datamodel-codegen not found; run via `uv run --group codegen python -m tools.schema.regen`')
 

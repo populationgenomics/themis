@@ -17,14 +17,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      # Node toolchain for tsp / json-schema / typespec-zod, installed from the
-      # committed schema/package-lock.json (pinned deps).
-      - uses: actions/setup-node@v6
+      # Bun toolchain for tsp / json-schema / typespec-zod (tsp runs on the Bun
+      # runtime), installed from the committed schema/bun.lock (pinned deps).
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: schema/package-lock.json
-      - run: npm --prefix schema ci
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+        working-directory: schema
       # Python codegen deps: datamodel-code-generator (+ black/isort) for the
       # Pydantic emission step of the orchestrator.
       - uses: astral-sh/setup-uv@v8.2.0
@@ -40,6 +39,6 @@ jobs:
         run: |-
           git add -A
           if ! git diff --cached --exit-code; then
-            echo "::error::Schema artifacts are stale. Run 'npm --prefix schema ci && uv run --group codegen python -m tools.schema.regen' and commit the result."
+            echo "::error::Schema artifacts are stale. Run 'bun install --cwd schema && uv run --group codegen python -m tools.schema.regen' and commit the result."
             exit 1
           fi

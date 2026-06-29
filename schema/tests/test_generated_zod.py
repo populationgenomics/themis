@@ -1,12 +1,11 @@
 """Validate the committed Zod schemas under schema/tests/zod/.
 
-Guards the S0.3 invariants without the Node toolchain: every committed ``.ts``
+Guards the S0.3 invariants without the JS toolchain: every committed ``.ts``
 imports Zod and is already in dependency-first declaration order (proven by the
 reorder pass being a no-op on it — if regen emitted a mis-ordered file, this
 trips). The authoritative check that the Zod is *valid* TypeScript is ``tsc``
-(``npm run smoke:zod``), which needs Node and runs in CI (S0.4); these run in
-the ordinary pytest job. Freshness against the ``.tsp`` sources is the same S0.4
-gate.
+(``bun run smoke:zod``); these substring checks run without it in the ordinary
+pytest job. Freshness against the ``.tsp`` sources is the S0.4 gate.
 
 The ``test_features_*`` cases are the Zod half of the S0.5 round-trip verification:
 each construct in the feature-coverage corpus (``schema/tests/fixtures/features/``)
@@ -47,7 +46,7 @@ def test_is_dependency_ordered(zod_path: pathlib.Path) -> None:
     assert zod_reorder.reorder(source) == source
 
 
-# Per-feature Zod projections. Substring checks, not a parser: tsc (npm run
+# Per-feature Zod projections. Substring checks, not a parser: tsc (bun run
 # smoke:zod) is the authoritative validity gate; these only confirm each corpus
 # construct reached its expected Zod combinator.
 @pytest.mark.parametrize(

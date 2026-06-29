@@ -32,9 +32,9 @@ domain) is the next unit (see Staged adoption).
   subset in Authoring rules.
 - The Stage-0 feature corpus lives under `schema/tests/fixtures/<domain>/`, not the repo
   `tests/` tree: TypeSpec resolves emitter packages by walking up from each `.tsp` file
-  to a `node_modules`, so every source must sit at or below the `schema/` Node toolchain.
+  to a `node_modules`, so every source must sit at or below the `schema/` Bun toolchain.
 - Regenerate the committed artifacts with `uv run python -m tools.schema.regen` (one-time
-  toolchain install: `npm --prefix schema ci`). Generated code is **committed and never
+  toolchain install: `bun install` in `schema/`). Generated code is **committed and never
   hand-edited**; a `.tsp` change committed without regenerating fails CI (S0.4).
 
 ### Using a schema from Python
@@ -74,7 +74,7 @@ ruled out (see Schema evolution) — and differ only in their content model.
 ## Authoring and layout
 
 ```
-schema/                # .tsp sources + the Node toolchain (authoring only)
+schema/                # .tsp sources + the Bun toolchain (authoring only)
   package.json         # pins @typespec/compiler + emitters; lockfile alongside
   tspconfig.yaml       # shared emitter config
   node_modules/        # installed from the lockfile; gitignored
@@ -383,10 +383,10 @@ local to the wire models.
 
 ## Tooling
 
-- Node toolchain in CI for `tsp compile` (the `@typespec/json-schema` and `typespec-zod`
+- Bun toolchain in CI for `tsp compile` (the `@typespec/json-schema` and `typespec-zod`
   emitters); a Python dev dep (`codegen` uv group) on `datamodel-code-generator`. The
   compat gate (see Schema evolution) runs `chuckd` as a pinned CI container (it is a JVM tool,
-  shipped only as a Docker image). Node deps pinned via a `schema/` lockfile.
+  shipped only as a Docker image). JS deps pinned via the committed `schema/` Bun lockfile.
 - **Regen is a `tools/` Python orchestrator run as `uv run python -m tools.<name>`** —
   the repo has no task runner and this stays in the uv/Python ecosystem. It runs
   `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON Schema → Pydantic,
@@ -403,7 +403,7 @@ local to the wire models.
 toolchain before any schema we care about exists is the point of this ordering.
 
 0. **Settle the toolchain and the reliable feature subset — no litcache.** Stand up
-   `schema/` (npm deps, `tspconfig.yaml`), the JSON Schema normalize pass, the Pydantic
+   `schema/` (Bun deps, `tspconfig.yaml`), the JSON Schema normalize pass, the Pydantic
    generator and the direct Zod emitter (Zod generated and `tsc`-smoke-tested, no consumer yet),
    the `tools/` regen orchestrator, and the CI gates (freshness + compat gate). The
    driver is a **feature-coverage corpus of schemas in a `tests/` directory** — one per
