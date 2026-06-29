@@ -20,7 +20,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
-
       # Concatenate the per-concern instruction files into one prompt.
       # When this is later replaced by an orchestrator that spawns one
       # subagent per concern, each file becomes a subagent prompt as-is.
@@ -34,7 +33,6 @@ jobs:
             done
             echo 'CONCERNS_EOF'
           } >> "$GITHUB_ENV"
-
       - uses: anthropics/claude-code-action@v1
         id: claude
         with:
@@ -121,7 +119,6 @@ jobs:
             ${{ env.CONCERNS }}
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_review_comments,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
-
       # The Actions console only shows the action's init + final result; the
       # turn-by-turn transcript (tool calls, permission denials, the model's
       # decision to post nothing) lives only in this file. Upload it so those

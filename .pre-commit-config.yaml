@@ -1,3 +1,5 @@
+# Type checking runs in CI (pyright). Skipped from pre-commit because
+# pyright is slower than is comfortable for a per-commit hook.
 default_language_version:
   python: python3.13
 
@@ -20,5 +22,8 @@ repos:
       - id: ruff
       - id: ruff-format
 
-  # Type checking runs in CI (pyright). Skipped from pre-commit because
-  # pyright is slower than is comfortable for a per-commit hook.
+  # YAML formatter (Biome can't format YAML).
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt

@@ -23,7 +23,6 @@ jobs:
           private-key: ${{ secrets.MIRROR_APP_PRIVATE_KEY }}
           owner: populationgenomics
           repositories: themis
-
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -32,11 +31,10 @@ jobs:
           # in the `public` remote, pushing as github-actions[bot] (no access to
           # the separate themis repo) → 403. The push uses the app token instead.
           persist-credentials: false
-
       - name: Push to public mirror (idempotent)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
+        run: |-
           set -euo pipefail
           git remote add public "https://x-access-token:${GH_TOKEN}@github.com/populationgenomics/themis.git"
           git fetch public main || true   # may be empty on first run

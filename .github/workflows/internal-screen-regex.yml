@@ -20,15 +20,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-
       - uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
-
       - run: uv sync --locked --group screen --python 3.13
-
       - name: Run regex screen
-        run: |
+        run: |-
           uv run python tools/screen/regex_screen.py \
             --head ${{ github.event.pull_request.head.sha }} \
             --base ${{ github.event.pull_request.base.sha }} \

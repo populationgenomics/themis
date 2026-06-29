@@ -21,11 +21,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-
       # Baseline = the released line. For a PR that is the base branch tip; on a
       # push to main it is the previous commit. (chuckd is invoked via a pinned
       # `docker run` inside the orchestrator; Docker is preinstalled on the runner.)
@@ -39,5 +37,4 @@ jobs:
           else
             echo "ref=HEAD^" >> "$GITHUB_OUTPUT"
           fi
-
       - run: uv run python -m tools.schema.compat --baseline-ref "${{ steps.baseline.outputs.ref }}"
