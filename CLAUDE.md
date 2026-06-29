@@ -28,6 +28,10 @@ model dispositions.
 - **Explain non-obvious changes first.** For a change whose rationale isn't self-evident,
   give the why before showing or applying the diff.
 - **Ask when unsure** rather than assume intent.
+- **No intensifiers or emphasis filler.** Drop words and phrases that add emphasis but no
+  information — "that's the key", "crucially", "importantly", "the key insight", "it's
+  worth noting". State the point plainly. Applies to all prose: chat replies, PR/review
+  comments, commit messages, and docs.
 
 ## Code style
 
