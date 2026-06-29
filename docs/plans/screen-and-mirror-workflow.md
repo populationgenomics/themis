@@ -256,3 +256,7 @@ If we add a workflow that should run on the public mirror (none planned), we'll 
 8. **Mirror push**: merge a passing PR; confirm `internal-mirror.yml` runs and the commit appears on public `themis` with identical SHA. Re-run the same workflow run; confirm the second run is a no-op ("Public already at ..."). Push a tagged commit; confirm the tag appears on public.
 9. **Mirror divergence guard**: manually push a different commit to public `themis` `main`; confirm the next internal mirror run fails with the "diverged" error rather than silently overwriting.
 10. **Action error fail-closed**: temporarily break the action workflow (e.g. invalid API key); confirm the `Claude Code` status fails and the merge button is disabled even with all conversations resolved.
+
+## Related
+
+The scheduled doc-gardening agent ([`doc-garden.md`](doc-garden.md)) is a sibling automation built on this machinery: its fix-up PRs pass through the same PR-time screen and branch protection before they can merge and mirror.

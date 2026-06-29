@@ -1,0 +1,130 @@
+name: doc garden
+
+on:
+  schedule:
+    # Midnight Sydney/Melbourne on workdays. GitHub cron is UTC with no DST:
+    # 00:00 Mon–Fri AEST (UTC+10) = 14:00 the previous day UTC, i.e. Sun–Thu.
+    # During AEDT (UTC+11, ~Oct–Apr) this fires at 01:00 local — accepted slip.
+    - cron: "0 14 * * 0-4"
+  workflow_dispatch: {}
+
+jobs:
+  doc-garden:
+    name: doc garden
+    if: github.repository == 'populationgenomics/themis-internal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: doc-garden
+      cancel-in-progress: false
+    permissions:
+      contents: read # the App token (below) does the writing
+      id-token: write # WIF token exchange for the Claude API
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.DOC_GARDEN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DOC_GARDEN_APP_PRIVATE_KEY }}
+          owner: populationgenomics
+          repositories: themis-internal
+
+      - uses: actions/checkout@v6
+        with:
+          # Full history so the agent can read `git log` when judging whether a
+          # "coming soon" note is stale. Check out with the App token so the
+          # later push is authored by the App: a PR opened by the default
+          # GITHUB_TOKEN does not emit pull_request events, so the required
+          # `regex screen` / `review + LLM screen` checks would never run.
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      # Concatenate the instruction file into the prompt (the action has no
+      # prompt_file input). Mirrors internal-review.yml's CONCERNS pattern.
+      - name: Load doc-garden instructions
+        run: |
+          {
+            echo 'INSTRUCTIONS<<INSTRUCTIONS_EOF'
+            cat .github/doc-garden/instructions.md
+            echo
+            echo 'INSTRUCTIONS_EOF'
+          } >> "$GITHUB_ENV"
+
+      - uses: anthropics/claude-code-action@v1
+        id: claude
+        with:
+          # WIF, not a stored key (a static key outranks federation and silently
+          # wins). Reuses the cpg-themis-ci-review svac via an added rule pinned
+          # to the schedule/main-ref subject. See docs/runbooks/claude-api-wif.md
+          # Path C.
+          anthropic_federation_rule_id: fdrl_01KdBLWjujcYsH9s9j1K63Wb
+          anthropic_organization_id: 0c504942-5311-4fc0-a3a3-1f6a53666205
+          anthropic_service_account_id: svac_01KJXbuSvwDHvT8PFQkU7nef
+          anthropic_workspace_id: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+          prompt: |
+            REPO: ${{ github.repository }}
+
+            You are the scheduled documentation-gardening agent for
+            `populationgenomics/themis-internal`, the private working tree for
+            the Themis platform. Every commit that lands on `main` mirrors 1:1
+            to the public `populationgenomics/themis` repo.
+
+            Audit the repo's tracked documentation against the real code and
+            tree, and fix the drift you can confidently fix — editing files in
+            place. A later workflow step turns your edits into a pull request:
+            you do not open or modify pull requests, and you do not run mutating
+            git.
+
+            Full instructions follow.
+
+            ${{ env.INSTRUCTIONS }}
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(rg:*),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*)"
+
+      - name: Publish fix-up PR (only if drift was fixed)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          # Authoring new docs is out of scope; an untracked file means the agent
+          # created something. Fail loudly rather than dropping it past `add -u`.
+          untracked="$(git ls-files --others --exclude-standard)"
+          if [ -n "$untracked" ]; then
+            echo "ERROR: agent left untracked files (authoring is out of scope):" >&2
+            printf '%s\n' "$untracked" >&2
+            exit 1
+          fi
+
+          if git diff --quiet; then
+            echo "No drift found; nothing to publish."
+            exit 0
+          fi
+
+          git config user.name  "themis-doc-garden[bot]"
+          git config user.email "themis-doc-garden[bot]@users.noreply.github.com"
+
+          # doc-garden/rolling is bot-owned and reset from main each run, so the
+          # force-push is its normal update; the concurrency group serialises
+          # runs, so there is no concurrent writer to clobber.
+          git checkout -B doc-garden/rolling
+          git add -u
+          git commit -m "docs: scheduled doc-gardening fix-ups"
+          git push --force origin doc-garden/rolling
+
+          # One rolling PR: the force-push already updated an open one; open a
+          # new PR only when none is open.
+          if [ -z "$(gh pr list --head doc-garden/rolling --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head doc-garden/rolling \
+              --title "docs: scheduled doc-gardening fix-ups" \
+              --body-file .github/doc-garden/pr-body.md
+          fi
+
+      - name: Upload doc-garden execution log
+        # always() so the transcript is captured even when a step above fails.
+        if: always() && steps.claude.outputs.execution_file != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: claude-doc-garden-execution-output
+          path: ${{ steps.claude.outputs.execution_file }}
+          retention-days: 14

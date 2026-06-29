@@ -1,11 +1,15 @@
 # Runbook: Claude API auth via Workload Identity Federation
 
-Two workloads call the Claude API and authenticate by **WIF** — no stored
+Three workloads call the Claude API and authenticate by **WIF** — no stored
 `ANTHROPIC_API_KEY` (see [`spike-infrastructure.md`](../design/spike-infrastructure.md)
 §4/§8):
 
 1. **GitHub Actions** — the `claude-code-action` PR review (`internal-review.yml`).
 2. **GCP Cloud Run** — the orchestrator backend (the Managed-Agents client).
+3. **GitHub Actions, scheduled** — the doc-gardening agent
+   (`internal-doc-garden.yml`); reuses workload 1's service account via a second
+   federation rule (Path C), since a scheduled run's OIDC subject differs from a
+   PR's.
 
 Each exchanges an OIDC token from its own identity provider for a short-lived
 Anthropic token bound to a **service account** in the Anthropic org. Configure
@@ -50,6 +54,7 @@ and CI `pulumi up`). The concrete values:
 | Workspace `cpg-themis` | `wrkspc_014YcYcGz7XBbARzLRHwvhZt` |
 | svac `cpg-themis-ci-review` (Path A) | `svac_01KJXbuSvwDHvT8PFQkU7nef` |
 | rule `cpg-themis-ci-review-rule` (Path A) | `fdrl_01PkjWwWtFLfGFoRXboKaLjR` |
+| rule `cpg-themis-ci-review-main-rule` (Path C, same svac) | `fdrl_01KdBLWjujcYsH9s9j1K63Wb` |
 | svac `cpg-themis-dev-backend` (Path B) | `svac_016aD6ph1LAeJQKpB4tJjjks` |
 | rule `cpg-themis-dev-backend-rule` (Path B) | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P` |
 
@@ -66,9 +71,11 @@ For the `claude-code-action` review in `internal-review.yml`.
    ```json
    {
      "match": {
-       "subject_prefix": "repo:populationgenomics/themis-internal:pull_request",
        "audience": "https://api.anthropic.com",
-       "claims": { "repository_owner": "populationgenomics" }
+       "claims": {
+         "sub": "repo:populationgenomics/themis-internal:pull_request",
+         "repository_owner": "populationgenomics"
+       }
      },
      "target": { "type": "service_account", "service_account_id": "svac_01KJXbuSvwDHvT8PFQkU7nef" },
      "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
@@ -77,9 +84,10 @@ For the `claude-code-action` review in `internal-review.yml`.
    }
    ```
    `internal-review.yml` triggers on `pull_request`, so the OIDC `sub` is exactly
-   `repo:populationgenomics/themis-internal:pull_request`. The full subject plus
-   `repository_owner` block any other repo or event type. (Private repo + no
-   external forks bounds the PR-token vector.)
+   `repo:populationgenomics/themis-internal:pull_request`. Match it exactly (not a
+   prefix — see Path C); the full subject plus `repository_owner` block any other
+   repo or event type. (Private repo + no external forks bounds the PR-token
+   vector.)
 4. **Wire the workflow** — in `internal-review.yml`: grant `id-token: write`,
    pass the federation inputs inline (identifiers, not secrets), and drop the key
    (a static key outranks federation in the SDK credential precedence and
@@ -144,6 +152,45 @@ against the existing `themis-web@…`).
    `themis:anthropicWorkspaceId`) and sets them as Cloud Run env vars
    (`ANTHROPIC_FEDERATION_RULE_ID` etc.) — read identically by local and CI
    `pulumi up`. Ensure `ANTHROPIC_API_KEY` is unset (it outranks federation).
+
+## Path C — GitHub Actions (scheduled, `main` ref) → Claude API
+
+For the scheduled doc-gardening agent in `internal-doc-garden.yml`. It runs on
+`schedule` / `workflow_dispatch`, not `pull_request`, so its OIDC `sub` is
+`repo:populationgenomics/themis-internal:ref:refs/heads/main` — Path A's rule,
+pinned to the `…:pull_request` subject, rejects it (`400 invalid_grant`).
+
+Reuse the Path A service account `cpg-themis-ci-review`
+(`svac_01KJXbuSvwDHvT8PFQkU7nef`) and add **one more rule** targeting it (a svac
+carries multiple rules). Do not widen Path A's rule to cover both subjects — that
+loosens the PR-review pin.
+
+Federation rule `cpg-themis-ci-review-main-rule` — pin to this repo's `main`-ref
+runs:
+```json
+{
+  "match": {
+    "audience": "https://api.anthropic.com",
+    "claims": {
+      "sub": "repo:populationgenomics/themis-internal:ref:refs/heads/main",
+      "repository_owner": "populationgenomics"
+    }
+  },
+  "target": { "type": "service_account", "service_account_id": "svac_01KJXbuSvwDHvT8PFQkU7nef" },
+  "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
+  "oauth_scope": "workspace:developer",
+  "token_lifetime_seconds": 600
+}
+```
+Match the **exact** `sub`, not a prefix: `schedule` always runs on `main` and a
+`workflow_dispatch` on `main` carries this exact subject, while any other branch's
+ref differs and is rejected. A `subject_prefix` here would be a footgun —
+`…:ref:refs/heads/main` is a prefix of `…/maintenance`, `…/main-experiment`, etc.,
+so those branches would satisfy it. (In the Console UI the subject is exact by
+default; a trailing `*` turns it into a prefix — do not add one.) The rule's id
+(`fdrl_01KdBLWjujcYsH9s9j1K63Wb`) is wired into `internal-doc-garden.yml` as
+`anthropic_federation_rule_id`; the other three inputs (org, svac, workspace) are
+the Path A values above.
 
 ## Verify
 
