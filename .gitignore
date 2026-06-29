@@ -26,3 +26,8 @@ venv/
 node_modules/
 # Scratch TypeSpec output; committed artifacts live in schema/tests/jsonschema/
 schema/.tsp-out/
+
+# chuckd compat-gate scratch (bind-mounted into the chuckd container; kept
+# repo-local so it sits inside the Docker runtime's host mount — see
+# tools/schema/compat.py)
+.chuckd-*/

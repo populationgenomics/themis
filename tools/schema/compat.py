@@ -108,7 +108,12 @@ def _run_chuckd(new_schema: dict, baseline_schema: dict) -> tuple[str, int]:
     Returns ``(combined_output, returncode)``. New schema is left-most per
     ``chuckd``'s CLI (``new`` then older versions).
     """
-    with tempfile.TemporaryDirectory() as tmp:
+    # chuckd reads new/old.json from a bind mount, so the scratch dir must sit
+    # inside the Docker runtime's host mount. Colima/Lima mount $HOME but not
+    # /tmp or /var/folders (tempfile's default), where the mount is empty in the
+    # container — so keep scratch under the repo ($HOME, mounted by Colima,
+    # Docker Desktop, and Linux CI alike).
+    with tempfile.TemporaryDirectory(dir=_REPO_ROOT, prefix='.chuckd-') as tmp:
         scratch = pathlib.Path(tmp)
         (scratch / 'new.json').write_text(json.dumps(new_schema))
         (scratch / 'old.json').write_text(json.dumps(baseline_schema))
