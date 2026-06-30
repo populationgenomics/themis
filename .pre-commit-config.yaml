@@ -22,6 +22,20 @@ repos:
       - id: ruff
       - id: ruff-format
 
+  # Biome lint+format for the Next.js web app, via the project's Bun toolchain.
+  # Requires `bun install` in apps/web — the hook fails with a hint if its
+  # node_modules is missing. Verify-only (matches CI `bun run lint`); run
+  # `bun run format` to fix. Whole-app check (pass_filenames: false): fine while
+  # the app is small; switch to per-file if it grows.
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome (apps/web; needs `bun install` in apps/web)
+        entry: "bash -c 'cd apps/web && { [ -d node_modules ] || { echo \"apps/web/node_modules missing — run: bun install --cwd apps/web\"; exit 1; }; } && bun run lint'"
+        language: system
+        files: ^apps/web/
+        pass_filenames: false
+
   # YAML formatter (Biome can't format YAML).
   - repo: https://github.com/google/yamlfmt
     rev: v0.21.0

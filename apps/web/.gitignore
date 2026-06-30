@@ -1,0 +1,19 @@
+# Next.js build output
+/.next/
+/out/
+/build
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Test coverage
+/coverage
+
+# Vercel
+.vercel
+
+# Local env files
+.env*
+
+# node_modules is ignored repo-wide; bun.lock is committed.

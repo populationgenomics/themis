@@ -1,0 +1,12 @@
+# Build the image from sources only; deps and .next are rebuilt inside the image.
+node_modules
+.next
+out
+build
+.git
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+.env*
+*.log

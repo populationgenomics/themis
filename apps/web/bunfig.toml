@@ -1,0 +1,6 @@
+# Supply-chain age gate: refuse dependency versions published less than 7 days ago,
+# so a compromised fresh release is filtered before it can be installed (the repo-wide
+# policy). Applies to direct and transitive deps; carve out trusted packages via
+# minimumReleaseAgeExcludes if ever needed.
+[install]
+minimumReleaseAge = 604800  # 7 days, in seconds
