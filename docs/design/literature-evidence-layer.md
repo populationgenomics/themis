@@ -149,15 +149,6 @@ rebuildable projection of these directories.
   plain, inspectable JSON with **no protobuf dependency**, while in-corpus and
   external papers (e.g. bioRxiv, synthesised into the same schema) stay uniform
   downstream.
-- **Schema versioning.** Every JSON stored artifact — `manifest.json`,
-  `metadata.json`, the `knowledge_units.jsonl` / `entities.jsonl` records, the
-  grounding overlay, and the Cloud SQL `knowledge_unit` row (§2.3) — carries a
-  top-level integer **`schema_version`**. Readers switch on it and **fail loudly**
-  on an unknown version; a schema change ships a migrate-on-read. This is
-  load-bearing because Layer 1 is **write-once** (a record can't be retrofitted, so
-  the field is present from v1) and the Cloud SQL rebuild (§2.3) re-reads every
-  historical generation at once. The worked-example records in §4.2 and the row in
-  §2.3 are the draft schemas; each gains a `schema_version`.
 
 ### 2.2 Identity — canonical id + external-id crosswalk
 
@@ -215,7 +206,7 @@ substrate. Draft row:
 
 ```
 knowledge_unit(
-  id uuid pk, schema_version int, doc_id uuid, version text,  -- source anchor (§4.2)
+  id uuid pk, doc_id uuid, version text,  -- source anchor (§4.2)
   spans jsonb,                                  -- [{start,end}] offsets, no text
   assertion text,                               -- expression-stripped, ~250 B
   type text, epistemic text, confidence real,
@@ -503,7 +494,7 @@ assertion plus raw, unresolved mention strings, no entity ids:
 
 ```jsonc
 // knowledge_units.jsonl  (Layer 1 — write-once, exactly as the model emits it)
-{ "schema_version": 1, "id": "u17",
+{ "id": "u17",
   "assertion": "Gain-of-function mutations in KCNJ11 or ABCC8 cause neonatal diabetes",
   "mentions": ["KCNJ11", "ABCC8", "neonatal diabetes"],   // raw strings, unresolved
   "type": "gene-disease-association",
