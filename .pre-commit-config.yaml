@@ -36,6 +36,20 @@ repos:
         files: ^apps/web/
         pass_filenames: false
 
+  # Markdown formatter (Biome can't format Markdown). mdformat is CommonMark-strict, so
+  # intraword `_` (snake_case identifiers) stays literal and fenced code (mermaid, yaml/
+  # json examples) is left untouched. Plugins: gfm (tables, strikethrough, task lists,
+  # autolinks); frontmatter (YAML headers in .claude/rules/*.md). Prose wrapped at 120.
+  - repo: https://github.com/hukkin/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        args: ["--wrap", "120"]
+        additional_dependencies:
+          - mdformat-gfm==1.0.0
+          - mdformat-frontmatter==2.1.2
+        exclude: ^tests/.*/fixtures/ # committed fixtures are verbatim test data
+
   # YAML formatter (Biome can't format YAML).
   - repo: https://github.com/google/yamlfmt
     rev: v0.21.0
