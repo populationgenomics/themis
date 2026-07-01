@@ -12,10 +12,11 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-# APIs the Pulumi program itself calls. Bootstrap enables only the APIs it needs
-# to create the state bucket, KMS key, and WIF pool; the program owns the rest
-# so a fresh environment converges in one `pulumi up`. New concern modules add
-# their APIs here.
+# APIs the program's resources need; a new concern module adds its API here, so a
+# fresh environment converges in one `pulumi up`. Bootstrap enables the substrate
+# (state bucket, KMS, WIF) plus the meta-APIs the program can't turn on for itself:
+# serviceusage (to enable these) and cloudresourcemanager (project IAM — e.g. the
+# deploy and ingest role grants).
 _REQUIRED_SERVICES = (
     'artifactregistry.googleapis.com',
     'run.googleapis.com',

@@ -51,29 +51,12 @@ gcloud iam service-accounts create themis-deploy --project="${PROJECT}" \
 gcloud iam service-accounts create themis-preview --project="${PROJECT}" \
   --display-name='Themis Pulumi preview (read-only; pull requests)' 2>/dev/null || true
 
-# Deploy SA: manage the program's resources. Broad within this isolated project;
-# tighten once the resource set is stable. storage.admin is project-level (not
-# bucket-scoped) because the program creates its own buckets (e.g. fulltext) —
-# storage.buckets.create can't be granted on a bucket that doesn't exist yet.
-# projectIamAdmin lets the program grant project-level roles to the workload SAs
-# it owns (dataflow.worker now; cloudsql.client and others as they land) — there
-# is no per-resource form for those, and no way to scope setIamPolicy to a role
-# subset. Safe because this SA is WIF-scoped to refs/heads/main (reviewed merges
-# only), not PRs.
-for role in \
-  roles/artifactregistry.admin \
-  roles/compute.admin \
-  roles/iam.serviceAccountAdmin \
-  roles/iam.serviceAccountUser \
-  roles/iap.admin \
-  roles/resourcemanager.projectIamAdmin \
-  roles/run.admin \
-  roles/secretmanager.admin \
-  roles/serviceusage.serviceUsageAdmin \
-  roles/storage.admin; do
-  gcloud projects add-iam-policy-binding "${PROJECT}" \
-    --member="serviceAccount:${DEPLOY_SA}" --role="${role}" --condition=None >/dev/null
-done
+# The deploy SA's other build-time roles are program-managed (deploy_iam.py);
+# these two can't be: storage.admin reads its own state, projectIamAdmin grants the rest.
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${DEPLOY_SA}" --role=roles/resourcemanager.projectIamAdmin --condition=None >/dev/null
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${DEPLOY_SA}" --role=roles/storage.admin --condition=None >/dev/null
 # Preview SA: read-only — enough to diff the proposed change, never to mutate.
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${PREVIEW_SA}" --role=roles/viewer --condition=None >/dev/null

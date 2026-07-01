@@ -11,7 +11,7 @@ import os
 
 import pulumi
 
-from themis_infra import backend, baseline, ingest, secrets, storage, web
+from themis_infra import backend, baseline, deploy_iam, ingest, secrets, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -34,6 +34,9 @@ if not web_image:
         f'{_WEB_IMAGE_ENV} is not set. Set it to the web image to deploy. CI sets the '
         'pushed image ref; for a first bring-up use gcr.io/cloudrun/hello. See infra/README.md.'
     )
+
+# The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
+deploy_iam.grant_deploy_roles('themis', project=project)
 
 base = baseline.Baseline('themis', project=project, region=region)
 site = web.WebService(

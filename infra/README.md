@@ -6,18 +6,19 @@ all differences live in `Pulumi.<stack>.yaml`.
 
 ## Layout
 
-| Path                       | What                                                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `Pulumi.yaml`              | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below). |
-| `Pulumi.<stack>.yaml`      | Per-environment config + `gcpkms` secrets provider.                                                         |
-| `__main__.py`              | Entrypoint: read config, compose the modules, export outputs.                                               |
-| `themis_infra/baseline.py` | Enabled GCP services + the shared Artifact Registry.                                                        |
-| `themis_infra/web.py`      | Cloud Run service + external HTTPS LB + IAP.                                                                |
-| `themis_infra/backend.py`  | The orchestrator backend's runtime service account.                                                         |
-| `themis_infra/storage.py`  | The literature full-text store bucket (durable GCS).                                                        |
-| `themis_infra/secrets.py`  | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                   |
-| `themis_infra/ingest.py`   | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                |
-| `bootstrap/bootstrap.sh`   | One-time substrate setup (below). Run locally, never CI.                                                    |
+| Path                         | What                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `Pulumi.yaml`                | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below). |
+| `Pulumi.<stack>.yaml`        | Per-environment config + `gcpkms` secrets provider.                                                         |
+| `__main__.py`                | Entrypoint: read config, compose the modules, export outputs.                                               |
+| `themis_infra/baseline.py`   | Enabled GCP services + the shared Artifact Registry.                                                        |
+| `themis_infra/web.py`        | Cloud Run service + external HTTPS LB + IAP.                                                                |
+| `themis_infra/backend.py`    | The orchestrator backend's runtime service account.                                                         |
+| `themis_infra/storage.py`    | The literature full-text store bucket (durable GCS).                                                        |
+| `themis_infra/secrets.py`    | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                   |
+| `themis_infra/ingest.py`     | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                |
+| `themis_infra/deploy_iam.py` | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                      |
+| `bootstrap/bootstrap.sh`     | One-time substrate setup (below). Run locally, never CI.                                                    |
 
 Database and audit arrive as sibling modules under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
 
