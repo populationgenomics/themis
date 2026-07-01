@@ -55,12 +55,18 @@ gcloud iam service-accounts create themis-preview --project="${PROJECT}" \
 # tighten once the resource set is stable. storage.admin is project-level (not
 # bucket-scoped) because the program creates its own buckets (e.g. fulltext) —
 # storage.buckets.create can't be granted on a bucket that doesn't exist yet.
+# projectIamAdmin lets the program grant project-level roles to the workload SAs
+# it owns (dataflow.worker now; cloudsql.client and others as they land) — there
+# is no per-resource form for those, and no way to scope setIamPolicy to a role
+# subset. Safe because this SA is WIF-scoped to refs/heads/main (reviewed merges
+# only), not PRs.
 for role in \
   roles/artifactregistry.admin \
   roles/compute.admin \
   roles/iam.serviceAccountAdmin \
   roles/iam.serviceAccountUser \
   roles/iap.admin \
+  roles/resourcemanager.projectIamAdmin \
   roles/run.admin \
   roles/secretmanager.admin \
   roles/serviceusage.serviceUsageAdmin \

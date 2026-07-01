@@ -15,6 +15,8 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/web.py`      | Cloud Run service + external HTTPS LB + IAP.                                                                |
 | `themis_infra/backend.py`  | The orchestrator backend's runtime service account.                                                         |
 | `themis_infra/storage.py`  | The literature full-text store bucket (durable GCS).                                                        |
+| `themis_infra/secrets.py`  | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                   |
+| `themis_infra/ingest.py`   | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                |
 | `bootstrap/bootstrap.sh`   | One-time substrate setup (below). Run locally, never CI.                                                    |
 
 Database and audit arrive as sibling modules under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
@@ -43,9 +45,9 @@ intentional removal — a copyright takedown, a retraction — is always availab
 empty-then-destroy).
 
 A dedicated bucket per storage concern (not one shared bucket): these are bucket-level policies that can't be
-prefix-scoped, and the parquet/audit consumers the design anticipates need different whole-bucket profiles. Access is
-deferred — read/write grants attach when the ingestion writer and backend reader land; in dev, operators use their own
-IAM-gated `gcloud` ADC.
+prefix-scoped, and the parquet/audit consumers the design anticipates need different whole-bucket profiles. The
+ingestion runtime's read/write grant is in `themis_infra/ingest.py`; the backend reader grant is still deferred. In dev,
+operators use their own IAM-gated `gcloud` ADC.
 
 ## Two tiers: bootstrap vs program
 

@@ -11,7 +11,7 @@ import os
 
 import pulumi
 
-from themis_infra import backend, baseline, secrets, storage, web
+from themis_infra import backend, baseline, ingest, secrets, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -59,6 +59,13 @@ semantic_scholar = secrets.semantic_scholar_secret(
     api_key=semantic_scholar_api_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+ingestion = ingest.IngestionRuntime(
+    'themis',
+    project=project,
+    fulltext_bucket=fulltext.name,
+    secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, semantic_scholar]),
+)
 
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)
@@ -68,3 +75,5 @@ pulumi.export('backend_sa_unique_id', orchestrator.service_account_unique_id)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
+pulumi.export('ingest_sa_email', ingestion.service_account_email)
+pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)

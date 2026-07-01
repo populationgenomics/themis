@@ -23,6 +23,7 @@ _REQUIRED_SERVICES = (
     'iap.googleapis.com',
     'storage.googleapis.com',
     'secretmanager.googleapis.com',
+    'dataflow.googleapis.com',
 )
 
 
