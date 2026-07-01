@@ -112,8 +112,9 @@ single PR-approval gate), plus cloud-free validation. No PR job can mutate cloud
   Artifact Registry by copy — **no rebuild** — and deploys. Full project isolation; prod never reads dev's registry.
 
 The deployables and their boundaries — boxed is inside our GCP project; orange marks a public endpoint, green
-internal-only (no public ingress). Auth labels each hop. The MCP path is shown now (direct, vault-bearer) and at the end
-state (behind the `cloudflared` tunnel); the MCP server is public now and moves internal once the tunnel lands.
+internal-only (no public ingress). Auth labels each hop. The MCP path is shown for the spike (direct, vault-bearer
+public endpoint); the end-state reachability is an open choice
+([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §2), not shown here.
 
 ```mermaid
 flowchart TB
@@ -122,29 +123,26 @@ flowchart TB
   subgraph gcp["GCP project · cpg-themis-dev"]
     web["web app · Cloud Run (themis-web)<br/>BFF + webhook receiver<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
     mcp["MCP tool server · Cloud Run (Python)<br/>id: Cloud SQL write · agent data plane"]
-    cf["cloudflared + Anthropic proxy<br/>(end state only)"]
     sql[("Cloud SQL")]
   end
   browser -->|"IAP / HTTPS LB"| web
   web -->|"WIF Path B · sessions, events"| ma
   ma -->|"HMAC · session-end (IAP-exempt)"| web
-  ma -->|"vault-bearer · now: direct"| mcp
-  ma -.->|"end state: via tunnel"| cf
-  cf -.-> mcp
+  ma -->|"vault-bearer"| mcp
   web -->|"Cloud SQL IAM"| sql
   mcp -->|"Cloud SQL IAM"| sql
 
   classDef public fill:#ffe8cc,stroke:#d9480f,color:#000
   classDef internal fill:#d3f9d8,stroke:#2b8a3e,color:#000
   class web,mcp public
-  class sql,cf internal
+  class sql internal
 ```
 
 ### 7. Local dev environment
 
 The agent loop and tools run in the **cloud** (the dev project + Anthropic's Managed Agents); the tools depend on real
 data, so emulating them locally adds no signal. Local dev is therefore two fast paths against dev, not a local clone.
-The **MCP tunnel** (§8) is an end-state cloud egress control, not a local-dev requirement: the tool tier stays deployed
+The **MCP tunnel** (§8) is one end-state reachability option, not a local-dev requirement: the tool tier stays deployed
 in dev, reached by the managed loop, so there is nothing to tunnel or host per developer.
 
 - **Tool / agent iteration:** edit locally, then push to **dev** through a dev-only fast path — apply the
@@ -189,17 +187,22 @@ plane. The dependency that does exist is Anthropic's (beta) agent API. Alternati
 
 Execution sandbox — target is **self-hosted**, for egress control. The Anthropic-hosted **cloud** sandbox gets the first
 version running, **gated so self-hosted lands before any real (non-synthetic) data**; the cloud→self-hosted move is
-mostly **additive** (add the worker, MCP tunnels, egress policy), not rework, because the web app, agent YAML, CI, and
-data plane are **sandbox-agnostic**. The near-term target is a **self-hosted sandbox** (`config: type=self_hosted`):
-tool execution (bash, the public-endpoint lookups) runs in a container **in our infra**, driven by a worker that **wakes
-on a thin signed webhook** (`session.status_run_started`) and then claims work by **outbound poll** — so the worker
-**scales to zero** and work/results flow outbound (the only inbound is the signed wake notification). The egress
-controls (deny-by-default VPC egress, allowlist to the public lookup endpoints / local mirrors) exist either way; under
-the Anthropic-hosted cloud sandbox they are configured on Anthropic's side, and **self-hosting moves that configuration
-to our boundary** — egress for the agent's own bash/generated code is then governed where we set the policy.
+mostly **additive** (add the worker and egress policy; the end-state MCP reachability is a separate open choice, §8),
+not rework, because the web app, agent YAML, CI, and data plane are **sandbox-agnostic**. The near-term target is a
+**self-hosted sandbox** (`config: type=self_hosted`): tool execution (bash, the public-endpoint lookups) runs in a
+container **in our infra**, driven by a worker that **wakes on a thin signed webhook** (`session.status_run_started`)
+and then claims work by **outbound poll** — so the worker **scales to zero** and work/results flow outbound (the only
+inbound is the signed wake notification). The egress controls (deny-by-default VPC egress, allowlist to the public
+lookup endpoints / local mirrors) exist either way; under the Anthropic-hosted cloud sandbox they are configured on
+Anthropic's side, and **self-hosting moves that configuration to our boundary** — egress for the agent's own
+bash/generated code is then governed where we set the policy.
 
-- **Tools via MCP tunnels:** the lookup/tool MCP servers run in our network and are reached by the managed loop through
-  **MCP tunnels** — no public endpoint exposed.
+- **Tool reachability (end state, open choice):** either **MCP tunnels** — `cloudflared` + an Anthropic proxy in our
+  network reach the lookup/tool MCP servers with no public endpoint (a beta preview needing access approval) — or
+  **ditch MCP** and have the self-hosted worker call our **internal APIs directly** (no MCP, no tunnel), the credential
+  injected by a sandbox-local proxy so the agent never holds it
+  ([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §2). Neither is needed for the spike's
+  public vault-bearer endpoint.
 - **Sandbox container:** under self-hosted we build and harden it — minimal base, curated **binary allowlist** (no
   egress/network tools, no runtime package manager), tracked manifest under CODEOWNERS + security review. Under the
   interim cloud sandbox this is Anthropic's.
@@ -219,8 +222,7 @@ to our boundary** — egress for the agent's own bash/generated code is then gov
   *Confidential config* in [`deployment.md`](deployment.md). Generated analysis code is not squeezed through MCP — it
   runs via the toolset's `bash`/file tools **in the self-hosted worker**, under our egress policy.
 
-See [`agent-runtime.md`](agent-runtime.md) for the loop topology and the runtime-side of the self-hosted-sandbox /
-MCP-tunnel design.
+See [`agent-runtime.md`](agent-runtime.md) for the loop topology and the runtime-side of the self-hosted-sandbox design.
 
 ## Constraints
 
