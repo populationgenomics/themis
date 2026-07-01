@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  ruff:
+  pre-commit:
+    # Runs every hook in .pre-commit-config.yaml — the whole static-check gate.
     # Skip on the public mirror (themis), and skip draft PRs.
     if: |
       github.repository == 'populationgenomics/themis-internal'
@@ -20,22 +21,16 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-      - run: uv sync --locked --group lint --python 3.13
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-
-  pyright:
-    # Skip on the public mirror (themis), and skip draft PRs.
-    if: |
-      github.repository == 'populationgenomics/themis-internal'
-      && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: oven-sh/setup-bun@v2
         with:
-          enable-cache: true
+          bun-version: "1.3.14"
+      # biome + tsc hooks need apps/web/node_modules.
+      - run: bun install --frozen-lockfile
+        working-directory: apps/web
+      # Pre-sync the lint env so the pyright hook's `uv run` is a no-op.
       - run: uv sync --locked --group lint --python 3.13
-      - run: uv run pyright
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: uv run pre-commit run --all-files --show-diff-on-failure

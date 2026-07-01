@@ -1,5 +1,6 @@
-# Type checking runs in CI (pyright). Skipped from pre-commit because
-# pyright is slower than is comfortable for a per-commit hook.
+# lint.yml runs `pre-commit run --all-files`, so this config is the CI gate too:
+# a hook added here is gated in CI with no workflow edit. pytest (tests.yml) and
+# the web build (web.yml) stay separate CI jobs — too slow for the per-commit path.
 default_language_version:
   python: python3.13
 
@@ -22,16 +23,33 @@ repos:
       - id: ruff
       - id: ruff-format
 
-  # Biome lint+format for the Next.js web app, via the project's Bun toolchain.
-  # Requires `bun install` in apps/web — the hook fails with a hint if its
-  # node_modules is missing. Verify-only (matches CI `bun run lint`); run
-  # `bun run format` to fix. Whole-app check (pass_filenames: false): fine while
-  # the app is small; switch to per-file if it grows.
+  # pyright needs the project deps (pydantic, pulumi) to resolve imports, so it
+  # runs in the lint env via `uv run`; `--group lint` provisions it on demand.
+  # Whole-project, so pass_filenames: false; fires on any staged .py.
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run --group lint pyright
+        language: system
+        files: \.py$
+        pass_filenames: false
+
+  # Web app checks via the project's Bun toolchain: biome (lint+format) and tsc
+  # --noEmit. Both need `bun install` in apps/web — each hook prints a hint if
+  # node_modules is missing. biome is verify-only; run `bun run format` to fix.
+  # Whole-app checks (pass_filenames: false): fine while the app is small.
   - repo: local
     hooks:
       - id: biome
         name: biome (apps/web; needs `bun install` in apps/web)
         entry: "bash -c 'cd apps/web && { [ -d node_modules ] || { echo \"apps/web/node_modules missing — run: bun install --cwd apps/web\"; exit 1; }; } && bun run lint'"
+        language: system
+        files: ^apps/web/
+        pass_filenames: false
+      - id: typecheck-web
+        name: tsc --noEmit (apps/web; needs `bun install` in apps/web)
+        entry: "bash -c 'cd apps/web && { [ -d node_modules ] || { echo \"apps/web/node_modules missing — run: bun install --cwd apps/web\"; exit 1; }; } && bun run typecheck'"
         language: system
         files: ^apps/web/
         pass_filenames: false

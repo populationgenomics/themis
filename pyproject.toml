@@ -32,10 +32,13 @@ test = ["pytest", "pyyaml", "check-jsonschema", "pydantic"]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
-# pydantic: pyright type-checks schema/tests (the generated models and their
-# tests) which import pydantic; absent it, pyright can't resolve pydantic.* and
-# the pyright job fails on symbols the test env (which has pydantic) resolves fine.
-lint = ["ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "pydantic", { include-group = "infra" }]
+# pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
+# config is the single source of truth for static checks — CI can't drift from
+# what runs locally. pydantic: pyright (now a hook) type-checks schema/tests (the
+# generated models and their tests) which import pydantic; absent it, pyright
+# can't resolve pydantic.* and fails on symbols the env (which has pydantic)
+# resolves fine.
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "pydantic", { include-group = "infra" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
