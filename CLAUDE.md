@@ -50,6 +50,13 @@ every session and changes nothing; human-facing explanation belongs in `docs/` o
 - **Correct a pushed branch with a new commit on top**, not amend + force-push. PRs squash-merge, so `main` history
   stays linear regardless and intermediate fixups vanish on merge. Reserve force-push for rebasing a branch onto `main`.
 
+## Worktrees
+
+Worktrees go in `.claude/worktrees/` (gitignored), never `../` siblings.
+
+- **New branch** → the Claude Code worktree command.
+- **Existing branch** → `git worktree add .claude/worktrees/<name> <branch>` (the command only cuts fresh branches).
+
 ## CI and review
 
 See [`docs/plans/screen-and-mirror-workflow.md`](docs/plans/screen-and-mirror-workflow.md) for the screen-and-mirror

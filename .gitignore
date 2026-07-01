@@ -19,6 +19,9 @@ venv/
 .idea/
 .vscode/
 
+# Claude Code worktrees (project-managed, created under .claude/ per CLAUDE.md)
+.claude/worktrees/
+
 # Local environment files
 .env
 
