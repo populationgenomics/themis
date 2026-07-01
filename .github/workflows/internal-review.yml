@@ -44,6 +44,7 @@ jobs:
           anthropic_organization_id: 0c504942-5311-4fc0-a3a3-1f6a53666205
           anthropic_service_account_id: svac_01KJXbuSvwDHvT8PFQkU7nef
           anthropic_workspace_id: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+          allowed_bots: themis-doc-garden
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
