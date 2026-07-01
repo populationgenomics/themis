@@ -32,22 +32,34 @@ jobs:
       - uses: actions/checkout@v6
         with:
           # Full history so the agent can read `git log` when judging whether a
-          # "coming soon" note is stale. Check out with the App token so the
-          # later push is authored by the App: a PR opened by the default
-          # GITHUB_TOKEN does not emit pull_request events, so the required
-          # `regex screen` / `review + LLM screen` checks would never run.
+          # "coming soon" note is stale. persist-credentials: false keeps any
+          # token out of the working tree's .git/config — the agent step runs
+          # next and must not be able to reach a push-capable credential. The
+          # default GITHUB_TOKEN (contents: read) is enough to check out; the
+          # publish step supplies the App token explicitly for its push, and the
+          # PR is opened via the App token in `gh` (what makes the required
+          # pull_request checks fire — the default GITHUB_TOKEN would not emit
+          # those events).
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
-      # Concatenate the instruction file into the prompt (the action has no
-      # prompt_file input). Mirrors internal-review.yml's CONCERNS pattern.
-      - name: Load doc-garden instructions
+      # Concatenate the instruction file and a fresh broken-link report into the
+      # prompt (the action has no prompt_file input). Mirrors internal-review.yml.
+      - name: Prepare doc-garden prompt inputs
         run: |
           {
             echo 'INSTRUCTIONS<<INSTRUCTIONS_EOF'
             cat .github/doc-garden/instructions.md
             echo
             echo 'INSTRUCTIONS_EOF'
+          } >> "$GITHUB_ENV"
+          # check_links.py exits non-zero when it finds broken links (the
+          # expected case); `|| true` keeps that from failing the step, so its
+          # report is still captured into LINK_REPORT.
+          {
+            echo 'LINK_REPORT<<LINK_REPORT_EOF'
+            python3 tools/check_links.py || true
+            echo 'LINK_REPORT_EOF'
           } >> "$GITHUB_ENV"
 
       - uses: anthropics/claude-code-action@v1
@@ -75,15 +87,25 @@ jobs:
             you do not open or modify pull requests, and you do not run mutating
             git.
 
+            A broken-link and dead-anchor report from `tools/check_links.py`,
+            run over the current tree, follows. Use it as the candidate list for
+            the broken-link and stale-anchor classes; judge each hit per the
+            instructions (some may be intentional forward references).
+
+            <link-report>
+            ${{ env.LINK_REPORT }}
+            </link-report>
+
             Full instructions follow.
 
             ${{ env.INSTRUCTIONS }}
           claude_args: |
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(rg:*),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*)"
+            --allowedTools "Read,Grep,Glob,Edit(*.md),Write(*.md),Bash(rg:*),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*)"
 
       - name: Publish fix-up PR (only if drift was fixed)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           set -euo pipefail
 
@@ -96,9 +118,27 @@ jobs:
             exit 1
           fi
 
+          # The agent's final message is its per-run notes (best-guess fixes,
+          # drift left for the author). Echo it to the job log unconditionally so
+          # a report-only run — which opens no PR — still records its findings
+          # here, not only in the 14-day execution-log artifact.
+          report="$(jq -r '(.[] | select(.type == "result") | .result) // ""' "$EXEC_FILE" 2>/dev/null || true)"
+          if [ -n "$report" ]; then
+            printf '::group::doc-garden agent notes\n%s\n::endgroup::\n' "$report"
+          fi
+
+          # A report-only run (drift found, none editable) leaves no diff, so
+          # there is nothing to open a PR against; the notes above are its record.
           if git diff --quiet; then
-            echo "No drift found; nothing to publish."
+            echo "No drift fixed; nothing to publish."
             exit 0
+          fi
+
+          # PR body = fixed preamble + the same notes.
+          body_file="$(mktemp)"
+          cat .github/doc-garden/pr-body.md > "$body_file"
+          if [ -n "$report" ]; then
+            { printf '\n---\n\n'; printf '%s\n' "$report"; } >> "$body_file"
           fi
 
           git config user.name  "themis-doc-garden[bot]"
@@ -106,18 +146,25 @@ jobs:
 
           # doc-garden/rolling is bot-owned and reset from main each run, so the
           # force-push is its normal update; the concurrency group serialises
-          # runs, so there is no concurrent writer to clobber.
+          # runs, so there is no concurrent writer to clobber. Push with the App
+          # token inline (the checkout did not persist it); the token is masked
+          # in logs by create-github-app-token.
           git checkout -B doc-garden/rolling
           git add -u
           git commit -m "docs: scheduled doc-gardening fix-ups"
-          git push --force origin doc-garden/rolling
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            doc-garden/rolling
 
-          # One rolling PR: the force-push already updated an open one; open a
-          # new PR only when none is open.
-          if [ -z "$(gh pr list --head doc-garden/rolling --state open --json number --jq '.[].number')" ]; then
+          # One rolling PR: the force-push already refreshed the diff of any open
+          # one; refresh its body too, or open a new PR when none is open.
+          num="$(gh pr list --head doc-garden/rolling --state open --json number --jq '.[0].number // ""')"
+          if [ -z "$num" ]; then
             gh pr create --base main --head doc-garden/rolling \
               --title "docs: scheduled doc-gardening fix-ups" \
-              --body-file .github/doc-garden/pr-body.md
+              --body-file "$body_file"
+          else
+            gh pr edit "$num" --body-file "$body_file"
           fi
 
       - name: Upload doc-garden execution log

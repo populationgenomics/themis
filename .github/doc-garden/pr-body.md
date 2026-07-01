@@ -1,10 +1,13 @@
-Scheduled documentation-gardening run: fixes for documentation that has drifted from the code or the tree — broken links
-and paths, stale status markers, behavioural claims the code contradicts, terminology drift.
+Scheduled documentation-gardening run. The `doc garden` workflow audits the tracked docs against the code and tree and
+opens this PR with the drift it could fix; the agent's per-run notes follow below the line.
 
-This PR is opened and maintained by the `doc garden` workflow. Its branch, `doc-garden/rolling`, is reset from `main`
-and force-updated on each run, so review the **current** diff — earlier states are not preserved. The agent's notes on
-anything it found but did not fix (e.g. a referenced file that is genuinely missing) are in the run's
-`claude-doc-garden-execution-output` artifact.
+The diff may mix two kinds of edit: confident fixes, and **best-guess** fixes where the drift is real but the exact
+wording was a judgement call. The best guesses, and any drift the agent found but could *not* fix (e.g. a link whose
+target exists nowhere), are listed in the notes below — those want your input.
 
-It is screened and reviewed like any other PR: the regex and LLM screens plus CODEOWNERS approval gate it before it can
-merge and mirror to public.
+To resolve: point an agent at this PR, answer the open questions, let it update the branch, and merge. The branch
+`doc-garden/rolling` is reset from `main` and force-updated each run, so review the **current** diff — earlier states
+are not preserved.
+
+Screened and reviewed like any other PR: the regex and LLM screens plus CODEOWNERS approval gate it before it can merge
+and mirror to public.

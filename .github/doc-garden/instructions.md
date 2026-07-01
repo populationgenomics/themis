@@ -11,6 +11,12 @@ Surfaces to audit: every tracked Markdown file in the repo — all of it is proj
 `README.md`, `GLOSSARY.md`, `CLAUDE.md`, `.claude/rules/`, `.github/**/*.md`). Enumerate with `git ls-files '*.md'`; do
 not maintain a path allowlist that drifts as docs move.
 
+For the link and anchor classes, a report from `tools/check_links.py` (run over the current tree) is provided in your
+prompt: every broken relative link and dead `#anchor` across all tracked Markdown, as `file:line -> target  (reason)`.
+Use it as the candidate list rather than checking links by hand; treat each hit as something to judge, not a confirmed
+defect — a design doc may deliberately link a sibling it proposes but has not yet authored (see the plans/design rule
+below).
+
 #### Drift to find and fix
 
 - **Broken relative links** — a `[text](path)` whose target file does not exist. Repoint to the intended target if you
@@ -20,9 +26,9 @@ not maintain a path allowlist that drifts as docs move.
 - **Stale section / anchor references** — "see §4", a `#heading-anchor`, or a named-section reference pointing at a
   heading that no longer exists in the target. Repoint or report.
 - **Behavioural claims the code contradicts** — a doc stating the code does X (a flag, default, endpoint, schema field,
-  CLI argument, file layout) where the code does Y. Read the code to confirm before changing. Fix only when the correct
-  statement is unambiguous from the code; if reconciling them needs an author's intent, leave the doc and report it.
-  "Unknown" is a valid result — never manufacture a fix.
+  CLI argument, file layout) where the code does Y. Read the code to confirm before changing. Where the correct
+  statement is unambiguous from the code, fix it; where reconciling them is a judgement call, handle it by the
+  confidence tiers below rather than skipping it outright. "Unknown" is a valid result — never manufacture a fix.
 - **Stale status markers** — "TODO", "coming soon", "not yet built", "planned" for something the tree shows now exists
   (or the reverse). Update the status; do not delete a TODO that is still open.
 - **Terminology drift** — a term used in a sense that conflicts with its `GLOSSARY.md` or `docs/PRODUCT.md` definition,
@@ -39,6 +45,26 @@ cross-references between docs, terminology): a broken link is wrong whatever the
 just path — a `docs/design/` doc describing a *built* system is current; garden it normally. When unsure whether a claim
 is unbuilt or wrong, leave it and report.
 
+#### Confidence: fix, propose, or report
+
+Sort every drift you find into one of three tiers by how sure you are of the correct text. The PR is the handoff: an
+author points an agent at it, resolves the open questions, and merges — so a flagged best guess is useful, a silent
+wrong guess is not.
+
+- **Fix** — the correct text is unambiguous from the code or tree (a moved file's new path, a "not yet built" marker for
+  something that now exists, a renamed heading). Edit it in place; no flag needed.
+- **Propose (best guess)** — the drift is real and the tree shows the fix *direction*, but the exact wording is a
+  judgement call (how to classify a new top-level directory in a structure table; whether a named tool should now read
+  differently). Make your best edit *and* flag it in the PR description's best-guess section with the open question, so
+  the author can correct it on review.
+- **Report only** — the correct content is not knowable from the tree: a broken link whose target exists nowhere, a
+  contradiction whose resolution needs a decision you cannot derive. Do not invent a target or a fact. Leave the file
+  and list it in the PR description's needs-input section.
+
+The line between *propose* and *report* is whether a best guess would be *grounded* (the directory demonstrably exists,
+so a row describing it is grounded) or *manufactured* (a link target that exists nowhere, so any path is invention).
+When you cannot tell which, report — never manufacture.
+
 #### How to fix
 
 - Size the edit to the drift: a one-character link fix or a multi-sentence rewrite, whichever the drift needs. Rewriting
@@ -50,9 +76,16 @@ is unbuilt or wrong, leave it and report.
   needs an author's design intent). Restructuring an *existing* section to fix drift is in scope.
 - One drift, one fix — do not bundle unrelated changes.
 
-#### Report what you did not fix
+#### Your final message is the PR description
 
-For drift you found but did not fix (target genuinely missing, behavioural contradiction needing an author's intent),
-leave the file untouched and list it plainly at the end of your run: file, location, what is wrong, and why you left it.
-If you fixed everything you found, say so. These notes are the run's record — they are read from the execution log, not
-posted to a PR.
+The workflow publishes your edits as a pull request and uses your final message verbatim as the body (after a fixed
+preamble). Write it as the PR description:
+
+- A one-line summary of what you changed.
+- `## Best-guess fixes (please verify)` — one bullet per *propose*-tier edit: `file:line` — what you changed and the
+  open question for the author. Omit the section if there were none.
+- `## Found but not fixed (needs your input)` — one bullet per *report*-tier item: `file:line` — what is wrong and what
+  you need to resolve it. Omit if none.
+
+If you made no edits at all, say so plainly: the workflow then opens no PR, and any report-only items remain only in
+this execution log.
