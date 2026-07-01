@@ -22,6 +22,7 @@ _REQUIRED_SERVICES = (
     'compute.googleapis.com',
     'iap.googleapis.com',
     'storage.googleapis.com',
+    'secretmanager.googleapis.com',
 )
 
 

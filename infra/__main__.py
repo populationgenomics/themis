@@ -11,7 +11,7 @@ import os
 
 import pulumi
 
-from themis_infra import backend, baseline, storage, web
+from themis_infra import backend, baseline, secrets, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -22,6 +22,9 @@ project = gcp_config.require('project')
 region = gcp_config.require('region')
 domain = config.require('domain')
 iap_access_group = config.require('iapAccessGroup')
+# Third-party ingestion key (no keyless/WIF path); the value is encrypted stack
+# config. Provisioned into Secret Manager below; its runtime reader lands later.
+semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
 
 # Per-run input, not committed config: CI sets the pushed ref; a first bring-up
 # uses gcr.io/cloudrun/hello so the registry and edge come up before any build.
@@ -49,6 +52,13 @@ fulltext = storage.fulltext_bucket(
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+semantic_scholar = secrets.semantic_scholar_secret(
+    'themis',
+    project=project,
+    region=region,
+    api_key=semantic_scholar_api_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)
@@ -57,3 +67,4 @@ pulumi.export('backend_sa_email', orchestrator.service_account_email)
 pulumi.export('backend_sa_unique_id', orchestrator.service_account_unique_id)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
+pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)

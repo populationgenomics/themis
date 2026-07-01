@@ -60,8 +60,10 @@ IAM-gated `gcloud` ADC.
 - **State is isolated per environment** — `gs://cpg-themis-<env>-pulumi-state`, each in its own project. `Pulumi.yaml`
   has no `backend:` (it's shared across stacks); the backend is selected per environment instead: CI passes
   `--cloud-url`, locally `pulumi login gs://cpg-themis-dev-pulumi-state`.
-- **Secrets** use the `gcpkms` provider (per-stack KMS key). The skeleton stores none; when one lands, use
-  `config.require_secret(...)` / encrypted config.
+- **Secrets** use the `gcpkms` provider (per-stack KMS key): the value goes in encrypted stack config
+  (`pulumi config set --secret themis:<key>`), the program reads it with `config.require_secret(...)`, and — for a
+  runtime credential — provisions it into Secret Manager (`themis_infra/secrets.py`) so the workload reads it there, not
+  from Pulumi config. First one landed: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret.
 
 ## Config
 

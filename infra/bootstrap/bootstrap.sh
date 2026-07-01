@@ -62,6 +62,7 @@ for role in \
   roles/iam.serviceAccountUser \
   roles/iap.admin \
   roles/run.admin \
+  roles/secretmanager.admin \
   roles/serviceusage.serviceUsageAdmin \
   roles/storage.admin; do
   gcloud projects add-iam-policy-binding "${PROJECT}" \

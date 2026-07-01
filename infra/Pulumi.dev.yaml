@@ -13,4 +13,6 @@ config:
   # IAP "may reach the app" gate. The group + roster live in
   # cpg-infrastructure-private; this is the principal only (no PII).
   themis:iapAccessGroup: themis-dev-access@populationgenomics.org.au
+  themis:semanticScholarApiKey:
+    secure: v1:R9mnb/QAg1sWkuIY:Qa4GUnAvokKtLhkzwa1BRjuQlfbPiN6O0EGVvzK0XYNPQBYrKeDyB4UX8aB23eRebq232Hyju/xDX0OJQpvCzc4d9ag=
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=
