@@ -11,7 +11,7 @@ import os
 
 import pulumi
 
-from themis_infra import backend, baseline, deploy_iam, ingest, secrets, storage, web
+from themis_infra import baseline, deploy_iam, ingest, secrets, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -48,7 +48,6 @@ site = web.WebService(
     iap_member=f'group:{iap_access_group}',
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-orchestrator = backend.OrchestratorBackend('themis', project=project)
 fulltext = storage.fulltext_bucket(
     'themis',
     project=project,
@@ -73,8 +72,8 @@ ingestion = ingest.IngestionRuntime(
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)
 pulumi.export('url', site.url)
-pulumi.export('backend_sa_email', orchestrator.service_account_email)
-pulumi.export('backend_sa_unique_id', orchestrator.service_account_unique_id)
+pulumi.export('web_sa_email', site.service_account_email)
+pulumi.export('web_sa_unique_id', site.service_account_unique_id)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)

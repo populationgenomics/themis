@@ -29,6 +29,12 @@ class WebService(pulumi.ComponentResource):
         ip_address: The load balancer's reserved global IP. The environment's
             hostname A record points here (added out of band).
         url: The service URL once DNS and the certificate are live.
+        service_account_email: The runtime SA's email — the `email` claim the
+            Anthropic WIF federation pins (the web app is the Managed-Agents
+            client; see ../../docs/runbooks/claude-api-wif.md).
+        service_account_unique_id: The runtime SA's numeric unique ID — the
+            stable `sub` claim the federation pins (never reused, so it survives
+            a delete/recreate of the same email).
     """
 
     def __init__(
@@ -45,15 +51,20 @@ class WebService(pulumi.ComponentResource):
         super().__init__('themis:infra:WebService', name, None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
-        # Dedicated runtime identity. No project roles yet (the placeholder
-        # serves a static page); data-access grants attach here as they land.
+        # Dedicated runtime identity for the web app — it is the Managed-Agents
+        # (Anthropic) client and reads display rows from Cloud SQL. The Anthropic
+        # WIF federation pins this SA's email/unique_id
+        # (../../docs/runbooks/claude-api-wif.md); Anthropic and Cloud SQL read
+        # grants attach here as they land.
         service_account = gcp.serviceaccount.Account(
             f'{name}-runtime',
             project=project,
             account_id=f'{name}-web',
-            display_name='Themis web service runtime',
+            display_name='Themis web service runtime (Managed Agents client)',
             opts=child,
         )
+        self.service_account_email = service_account.email
+        self.service_account_unique_id = service_account.unique_id
 
         self._service = gcp.cloudrunv2.Service(
             f'{name}-service',
@@ -106,7 +117,14 @@ class WebService(pulumi.ComponentResource):
 
         self.ip_address = self._build_load_balancer(name, project, region, domain, iap_member, child)
         self.url = pulumi.Output.format('https://{0}', domain)
-        self.register_outputs({'ip_address': self.ip_address, 'url': self.url})
+        self.register_outputs(
+            {
+                'ip_address': self.ip_address,
+                'url': self.url,
+                'service_account_email': self.service_account_email,
+                'service_account_unique_id': self.service_account_unique_id,
+            }
+        )
 
     def _build_load_balancer(
         self,

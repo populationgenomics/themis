@@ -4,7 +4,7 @@ Three workloads call the Claude API and authenticate by **WIF** — no stored `A
 [`spike-infrastructure.md`](../design/spike-infrastructure.md) §4/§8):
 
 1. **GitHub Actions** — the `claude-code-action` PR review (`internal-review.yml`).
-1. **GCP Cloud Run** — the orchestrator backend (the Managed-Agents client).
+1. **GCP Cloud Run** — the web app (`themis-web`), the Managed-Agents client.
 1. **GitHub Actions, scheduled** — the doc-gardening agent (`internal-doc-garden.yml`); reuses workload 1's service
    account via a second federation rule (Path C), since a scheduled run's OIDC subject differs from a PR's.
 
@@ -23,15 +23,15 @@ not namespace its name. The Anthropic org spans the whole hosting institute (wid
 full **`cpg-themis-`** product prefix to be unambiguous org-wide (unlike GCP SA emails, where the `cpg-themis-dev`
 project already scopes the name):
 
-- Env-scoped workloads (the backend — dev and prod attribute usage and rate limits separately) **encode the env**:
-  `cpg-themis-dev-backend`.
+- Env-scoped workloads (the web app — dev and prod attribute usage and rate limits separately) **encode the env**:
+  `cpg-themis-dev-web`.
 - Repo-scoped workloads (the PR review — one process regardless of deploy target) stay env-neutral:
   `cpg-themis-ci-review`.
 
 The Themis **workspace is a single `cpg-themis`**, not per-env — so the env boundary rides on the svac name, not the
 workspace; the federation rule's `workspace_id` is the same for both paths. (Split to a per-env workspace later only if
 dev/prod need separate workspace-level rate limits.) GCP service-account emails stay env-neutral because the project
-encodes the env: `themis-backend@cpg-themis-dev.iam.gserviceaccount.com`.
+encodes the env: `themis-web@cpg-themis-dev.iam.gserviceaccount.com`.
 
 The `wrkspc_…` / `svac_…` / `fdrl_…` / `fdis_…` and the **organization ID** are identifiers, **not credentials** — an
 exchange still requires a matching OIDC token, which can't be forged for this repo. So they are tracked **plaintext**,
@@ -45,8 +45,8 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | svac `cpg-themis-ci-review` (Path A)                      | `svac_01KJXbuSvwDHvT8PFQkU7nef`        |
 | rule `cpg-themis-ci-review-rule` (Path A)                 | `fdrl_01PkjWwWtFLfGFoRXboKaLjR`        |
 | rule `cpg-themis-ci-review-main-rule` (Path C, same svac) | `fdrl_01KdBLWjujcYsH9s9j1K63Wb`        |
-| svac `cpg-themis-dev-backend` (Path B)                    | `svac_016aD6ph1LAeJQKpB4tJjjks`        |
-| rule `cpg-themis-dev-backend-rule` (Path B)               | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P`        |
+| svac `cpg-themis-dev-web` (Path B)                        | `svac_016aD6ph1LAeJQKpB4tJjjks`        |
+| rule `cpg-themis-dev-web-rule` (Path B)                   | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P`        |
 
 ## Path A — GitHub Actions → Claude API
 
@@ -92,27 +92,28 @@ For the `claude-code-action` review in `internal-review.yml`.
 
 ## Path B — GCP Cloud Run → Claude API
 
-For the orchestrator backend (the Managed-Agents control-plane client). Forward-looking — the backend is not built yet;
-target its runtime SA (a dedicated `themis-backend@cpg-themis-dev.iam.gserviceaccount.com`, or test against the existing
-`themis-web@…`).
+For the web app (`themis-web`), the Managed-Agents control-plane client. Its identity is the web service's runtime SA,
+`themis-web@cpg-themis-dev.iam.gserviceaccount.com` (provisioned by the `web` module); the Anthropic client lands when
+the BFF does.
 
 1. **Issuer** (once): `gcp`, issuer URL `https://accounts.google.com`, JWKS = discovery (covers all GCP surfaces).
-1. **Service account**: `cpg-themis-dev-backend` (`svac_016aD6ph1LAeJQKpB4tJjjks`); add to the `cpg-themis` workspace.
-1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`backend` module), so read it from the stack
-   output (or `gcloud`):
+1. **Service account**: `cpg-themis-dev-web` (`svac_016aD6ph1LAeJQKpB4tJjjks`); add to the `cpg-themis` workspace.
+1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`web` module), so read it from the stack output
+   (or `gcloud`):
    ```sh
-   pulumi stack output backend_sa_unique_id   # or: gcloud iam service-accounts describe <email> --format='value(uniqueId)'
+   pulumi stack output web_sa_unique_id   # or: gcloud iam service-accounts describe <email> --format='value(uniqueId)'
    ```
-   For `cpg-themis-dev` this is currently `117178440698289482995`.
-1. **Federation rule** `cpg-themis-dev-backend-rule` (`fdrl_01JXLFyrG8PnJ62qPFzTmp4P`) — match `sub` + `email` (Google's
+   For `cpg-themis-dev` this is currently `111207962341197569515` — a snapshot; the `pulumi stack output` above is the
+   source of truth (the literal can drift if the SA is recreated).
+1. **Federation rule** `cpg-themis-dev-web-rule` (`fdrl_01JXLFyrG8PnJ62qPFzTmp4P`) — match `sub` + `email` (Google's
    `sub` has no stable prefix; never use `subject_prefix`):
    ```json
    {
      "match": {
        "audience": "https://api.anthropic.com",
        "claims": {
-         "sub": "117178440698289482995",
-         "email": "themis-backend@cpg-themis-dev.iam.gserviceaccount.com"
+         "sub": "111207962341197569515",
+         "email": "themis-web@cpg-themis-dev.iam.gserviceaccount.com"
        }
      },
      "target": { "type": "service_account", "service_account_id": "svac_016aD6ph1LAeJQKpB4tJjjks" },
@@ -123,13 +124,13 @@ target its runtime SA (a dedicated `themis-backend@cpg-themis-dev.iam.gserviceac
    ```
    `sub` (the never-reused unique ID) survives a delete/recreate-with-same-email; `email` is the readable pin. The SA
    must be user-managed (not the GCE default).
-1. **Runtime** — the backend builds the Anthropic client with `WorkloadIdentityCredentials`, whose token provider
+1. **Runtime** — the web app builds the Anthropic client with `WorkloadIdentityCredentials`, whose token provider
    fetches the Google ID token from the metadata server with `audience=https://api.anthropic.com&format=full`
-   (`format=full` is required so the token carries the `email` claim). When the backend lands, its Pulumi component
-   reads these four IDs from **plaintext stack config** in `Pulumi.<stack>.yaml` (`themis:anthropicFederationRuleId`,
-   `themis:anthropicOrganizationId`, `themis:anthropicServiceAccountId`, `themis:anthropicWorkspaceId`) and sets them as
-   Cloud Run env vars (`ANTHROPIC_FEDERATION_RULE_ID` etc.) — read identically by local and CI `pulumi up`. Ensure
-   `ANTHROPIC_API_KEY` is unset (it outranks federation).
+   (`format=full` is required so the token carries the `email` claim). When the Anthropic client lands, the `web` Pulumi
+   component reads these four IDs from **plaintext stack config** in `Pulumi.<stack>.yaml`
+   (`themis:anthropicFederationRuleId`, `themis:anthropicOrganizationId`, `themis:anthropicServiceAccountId`,
+   `themis:anthropicWorkspaceId`) and sets them as Cloud Run env vars (`ANTHROPIC_FEDERATION_RULE_ID` etc.) — read
+   identically by local and CI `pulumi up`. Ensure `ANTHROPIC_API_KEY` is unset (it outranks federation).
 
 ## Path C — GitHub Actions (scheduled, `main` ref) → Claude API
 

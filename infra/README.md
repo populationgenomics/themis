@@ -12,8 +12,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `Pulumi.<stack>.yaml`        | Per-environment config + `gcpkms` secrets provider.                                                         |
 | `__main__.py`                | Entrypoint: read config, compose the modules, export outputs.                                               |
 | `themis_infra/baseline.py`   | Enabled GCP services + the shared Artifact Registry.                                                        |
-| `themis_infra/web.py`        | Cloud Run service + external HTTPS LB + IAP.                                                                |
-| `themis_infra/backend.py`    | The orchestrator backend's runtime service account.                                                         |
+| `themis_infra/web.py`        | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.          |
 | `themis_infra/storage.py`    | The literature full-text store bucket (durable GCS).                                                        |
 | `themis_infra/secrets.py`    | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                   |
 | `themis_infra/ingest.py`     | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                |
@@ -47,7 +46,7 @@ empty-then-destroy).
 
 A dedicated bucket per storage concern (not one shared bucket): these are bucket-level policies that can't be
 prefix-scoped, and the parquet/audit consumers the design anticipates need different whole-bucket profiles. The
-ingestion runtime's read/write grant is in `themis_infra/ingest.py`; the backend reader grant is still deferred. In dev,
+ingestion runtime's read/write grant is in `themis_infra/ingest.py`; the reader grant is still deferred. In dev,
 operators use their own IAM-gated `gcloud` ADC.
 
 ## Two tiers: bootstrap vs program
@@ -96,5 +95,14 @@ Add `Pulumi.prod.yaml` (its project, hostname, access group, KMS key) and run
 ## Local development
 
 `uv sync --group infra` populates `../.venv` (the venv Pulumi runs the program in). Then
-`pulumi login gs://cpg-themis-<env>-pulumi-state`, `pulumi preview`. Local operations use your own `gcloud` ADC
-(`gcloud auth application-default login`), IAM-gated.
+`pulumi login gs://cpg-themis-<env>-pulumi-state` and preview. The deployed image is a required input (no default — fail
+loud), so pin it to the live image rather than the placeholder, mirroring `preview.yml`:
+
+```sh
+THEMIS_WEB_IMAGE=$(gcloud run services describe themis-web \
+  --project=cpg-themis-dev --region=australia-southeast1 \
+  --format='value(spec.template.spec.containers[0].image)') \
+  pulumi preview
+```
+
+Local operations use your own `gcloud` ADC (`gcloud auth application-default login`), IAM-gated.

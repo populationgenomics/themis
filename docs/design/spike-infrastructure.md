@@ -103,23 +103,56 @@ single PR-approval gate), plus cloud-free validation. No PR job can mutate cloud
 - On squash-merge to `main`: **GitHub Actions builds the image(s)**, pushes to a **per-project Artifact Registry**
   (authenticated via WIF), then `pulumi up` points the Cloud Run service at the new image — deploying to
   **cpg-themis-dev**.
-- Two images once self-hosted (§8): the **orchestrator/web-app** (Cloud Run) and the **sandbox worker** (runs in our
-  infra with controlled egress; platform TBD). Agent and environment definitions are version-controlled YAML applied via
-  the **`ant` CLI** from CI (control plane).
+- **Separate Cloud Run services, sized and scaled independently** (distinct images and identities): the **web app**
+  (`themis-web` — the IAP-fronted UI/BFF) and the **Python MCP tool server** (the agent's data-plane mediator, holding
+  the GCP/Cloud SQL identity — §8). The MCP endpoint is the tool server's, not the web app's. The self-hosted phase (§8)
+  adds a third deployable, the **sandbox worker** (runs in our infra with controlled egress; platform TBD). Agent and
+  environment definitions are version-controlled YAML applied via the **`ant` CLI** from CI (control plane).
 - Prod (later): a **gated GitHub Environment** (required approval) promotes the *same validated image* into prod's
   Artifact Registry by copy — **no rebuild** — and deploys. Full project isolation; prod never reads dev's registry.
+
+The deployables and their boundaries — boxed is inside our GCP project; orange marks a public endpoint, green
+internal-only (no public ingress). Auth labels each hop. The MCP path is shown now (direct, vault-bearer) and at the end
+state (behind the `cloudflared` tunnel); the MCP server is public now and moves internal once the tunnel lands.
+
+```mermaid
+flowchart TB
+  browser["Curator browser"]
+  ma["Anthropic Managed Agents · external"]
+  subgraph gcp["GCP project · cpg-themis-dev"]
+    web["web app · Cloud Run (themis-web)<br/>BFF + webhook receiver<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
+    mcp["MCP tool server · Cloud Run (Python)<br/>id: Cloud SQL write · agent data plane"]
+    cf["cloudflared + Anthropic proxy<br/>(end state only)"]
+    sql[("Cloud SQL")]
+  end
+  browser -->|"IAP / HTTPS LB"| web
+  web -->|"WIF Path B · sessions, events"| ma
+  ma -->|"HMAC · session-end (IAP-exempt)"| web
+  ma -->|"vault-bearer · now: direct"| mcp
+  ma -.->|"end state: via tunnel"| cf
+  cf -.-> mcp
+  web -->|"Cloud SQL IAM"| sql
+  mcp -->|"Cloud SQL IAM"| sql
+
+  classDef public fill:#ffe8cc,stroke:#d9480f,color:#000
+  classDef internal fill:#d3f9d8,stroke:#2b8a3e,color:#000
+  class web,mcp public
+  class sql,cf internal
+```
 
 ### 7. Local dev environment
 
 The agent loop and tools run in the **cloud** (the dev project + Anthropic's Managed Agents); the tools depend on real
 data, so emulating them locally adds no signal. Local dev is therefore two fast paths against dev, not a local clone.
+The **MCP tunnel** (§8) is an end-state cloud egress control, not a local-dev requirement: the tool tier stays deployed
+in dev, reached by the managed loop, so there is nothing to tunnel or host per developer.
 
 - **Tool / agent iteration:** edit locally, then push to **dev** through a dev-only fast path — apply the
   agent/environment YAML with `ant`, redeploy the tool MCP server / sandbox worker to dev — and run a session there,
   inspecting the resulting trace. (Dev-only; the gated `main`→deploy pipeline in §6 is unchanged.)
-- **UI iteration:** run the frontend and backend **locally**, with the local backend connected to **dev Cloud SQL**
-  (Cloud SQL Auth Proxy or the Python connector, IAM auth) and **dev GCS**. The frontend talks to the local backend; the
-  backend reads real dev data. The proxy is IAM-gated and TLS — no public DB exposure, no password, no Docker.
+- **UI iteration:** run the **web app locally** against **dev Cloud SQL** (via the Cloud SQL Auth Proxy, IAM auth) and
+  **dev GCS** — it reads real dev display data. The proxy is IAM-gated and TLS — no public DB exposure, no password, no
+  Docker.
 - **Hermetic tests:** schema and logic tests must run with **no cloud** (PRs get no cloud access — §6), so they use an
   **embedded Postgres** (pip-installed binary, no daemon) and the storage interface's filesystem blob backend. There is
   no official Cloud SQL emulator — it is managed Postgres, so (unlike Pub/Sub or Firestore) the faithful local
@@ -143,21 +176,21 @@ fine as long as it runs as a local process, as most GCP emulators do. The Spike'
 ### 8. Agent runtime and execution sandbox
 
 Runtime direction: **Managed Agents** — Anthropic runs the agent loop and emits the per-session event stream (which
-feeds the trace); the Themis backend is the orchestrator/client. The framework choice is ratified in
+feeds the trace); the Themis **web app** is the orchestrator/session-client. The framework choice is ratified in
 [`agent-runtime.md`](agent-runtime.md) (currently being revised from the earlier Agent-SDK draft); recorded here for its
 infra consequences.
 
 Why Managed Agents for the Spike: it skips building and operating the agent loop, the execution sandbox, per-session
 state, and the event stream — so we get results fast, the Spike's goal. This is **not** meaningful lock-in: the parts we
-build — the tool/MCP servers and the orchestrator's data-plane mediation — are runtime-independent and carry over
-unchanged, so moving to a custom loop later swaps only the orchestration layer, not our tools or data plane. The
-dependency that does exist is Anthropic's (beta) agent API. Alternatives are weighed in
+build — the tool/MCP servers (the data-plane mediation) and the web app's session client — are runtime-independent and
+carry over unchanged, so moving to a custom loop later swaps only the session/orchestration layer, not our tools or data
+plane. The dependency that does exist is Anthropic's (beta) agent API. Alternatives are weighed in
 [`agent-runtime.md`](agent-runtime.md).
 
 Execution sandbox — target is **self-hosted**, for egress control. The Anthropic-hosted **cloud** sandbox gets the first
 version running, **gated so self-hosted lands before any real (non-synthetic) data**; the cloud→self-hosted move is
-mostly **additive** (add the worker, MCP tunnels, egress policy), not rework, because the orchestrator, agent YAML, CI,
-and data plane are **sandbox-agnostic**. The near-term target is a **self-hosted sandbox** (`config: type=self_hosted`):
+mostly **additive** (add the worker, MCP tunnels, egress policy), not rework, because the web app, agent YAML, CI, and
+data plane are **sandbox-agnostic**. The near-term target is a **self-hosted sandbox** (`config: type=self_hosted`):
 tool execution (bash, the public-endpoint lookups) runs in a container **in our infra**, driven by a worker that **wakes
 on a thin signed webhook** (`session.status_run_started`) and then claims work by **outbound poll** — so the worker
 **scales to zero** and work/results flow outbound (the only inbound is the signed wake notification). The egress
@@ -171,8 +204,15 @@ to our boundary** — egress for the agent's own bash/generated code is then gov
   egress/network tools, no runtime package manager), tracked manifest under CODEOWNERS + security review. Under the
   interim cloud sandbox this is Anthropic's.
 - **Isolation:** the sandbox holds no GCP credentials and no metadata-server access; egress is deny-by-default at our
-  boundary. The orchestrator (which holds the GCP/Anthropic identity) mediates access to private data (Cloud SQL/GCS)
-  via custom tools / our MCP servers — the sandbox never touches the data store directly.
+  boundary. **Our MCP servers hold the GCP identity** and mediate the agent's access to private data (Cloud SQL/GCS) —
+  the sandbox never touches the data store directly.
+- **Write boundary — by identity, not read-vs-write.** The MCP tool tier is the **sole writer of agent-authored
+  content** — the working document, later typed claims — each write grant-bound to its Analysis
+  ([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §5). The **web app** writes the
+  **control-plane / session rows** it owns (Analysis, membership, the per-session grant, the session-end trace/source
+  projection), reads display rows, and takes **curator-initiated writes** — a paper upload is a normal web-app→**GCS**
+  write, not agent-authored content. Admitting any source (an upload, a `web_fetch` page, the corpus) into an agent's
+  context is a separate retrieval-trust question, orthogonal to which identity wrote the blob.
 - **Config + code execution:** the agent config — system prompt, tool list, MCP server URLs, model id — lives on the
   Agent object and is pushed at **deploy time via `ant`** (control plane, §6), not bootstrapped per-poll; MCP
   credentials attach per session via vaults. The concrete per-agent model id is secret-class confidential — see
@@ -197,7 +237,7 @@ MCP-tunnel design.
   Artifact Registry, audit log bucket/sink, Secret Manager secrets).
 - The CI/CD workflow (build → AR → `pulumi up` on `main`; gated prod promotion; agent/environment YAML applied via
   `ant`).
-- The Managed Agents wiring: the orchestrator/client and, in the self-hosted phase, the sandbox worker image +
+- The Managed Agents wiring: the web app's session client and, in the self-hosted phase, the sandbox worker image +
   binary-allowlist manifest and egress policy (§8).
 - The local dev setup: the tool/agent fast-path to dev, Cloud SQL Auth Proxy config for local UI against dev, and the
   embedded-Postgres test harness (§7).

@@ -28,8 +28,9 @@ stays inside CPG's network ([`spike-infrastructure.md`](spike-infrastructure.md)
   the workspace UI and write the trace). It is a thin client, **not** a workflow conductor: it starts the session and
   observes; it does not sequence the agents.
 
-There is no orchestrator in our code. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 calls the backend
-the "orchestrator/client," it means this session client and data-plane mediator — not a conductor.
+There is no orchestrator in our code. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 calls the web app
+the "orchestrator/session-client," it means this session client — not a conductor; the data-plane mediation is the MCP
+tier's (above).
 
 ## Decision: Managed Agents, coordinator-driven
 
