@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "pulumi-delegation@pulumi-agent-skills": true,
+    "pulumi@pulumi-agent-skills": true
+  }
+}
