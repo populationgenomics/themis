@@ -66,7 +66,10 @@ repos:
         additional_dependencies:
           - mdformat-gfm==1.0.0
           - mdformat-frontmatter==2.1.2
-        exclude: ^tests/.*/fixtures/ # committed fixtures are verbatim test data
+        # Verbatim payloads mdformat must not reflow: test data under tests/, and the
+        # doc-garden workflow payloads (pr-body.md is posted as-is — hard wraps would
+        # render as `<br>` in GitHub's PR view, which breaks on single newlines).
+        exclude: '^(tests/|\.github/doc-garden/)'
 
   # YAML formatter (Biome can't format YAML).
   - repo: https://github.com/google/yamlfmt
