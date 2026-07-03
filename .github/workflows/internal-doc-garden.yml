@@ -102,6 +102,36 @@ jobs:
           claude_args: |
             --allowedTools "Read,Grep,Glob,Edit(*.md),Write(*.md),Bash(rg:*),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*)"
 
+      # mdformat is not run by the agent, but the PR's lint gate runs the same
+      # hook and rejects unformatted docs. Set up uv and cache the hook env so
+      # the format step below is a fast, config-pinned pass.
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: doc-garden-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Format the agent's edits with mdformat
+        run: |
+          set -euo pipefail
+          # Run the pinned mdformat hook via the lockfile-pinned lint env (as
+          # lint.yml does), so both the pre-commit runner and mdformat come from
+          # the lockfile, not a floating resolve; .pre-commit-config.yaml stays
+          # the source of truth for mdformat's version, plugins and wrap width.
+          mapfile -t changed < <(git diff --name-only)
+          if [ ${#changed[@]} -eq 0 ]; then
+            echo "No agent edits; nothing to format."
+            exit 0
+          fi
+          uv sync --locked --group lint --python 3.13
+          # First pass rewrites files and exits non-zero (expected); the second
+          # must be a clean no-op, surfacing a genuine mdformat failure rather
+          # than masking it behind the first pass's tolerated exit.
+          uv run pre-commit run mdformat --files "${changed[@]}" || true
+          uv run pre-commit run mdformat --files "${changed[@]}"
+
       - name: Publish fix-up PR (only if drift was fixed)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
