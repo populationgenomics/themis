@@ -70,8 +70,9 @@ operators use their own IAM-gated `gcloud` ADC.
 ## Config
 
 Per-environment (in `Pulumi.<stack>.yaml`): `gcp:project`, `gcp:region`, `themis:domain`, `themis:iapAccessGroup`. The
-deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to the image to deploy —
-required, no default (fail loud).
+deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to deploy a specific image
+(`deploy.yml` sets the freshly-pushed ref). With no override the program pins to the service's live image, so a preview
+shows no spurious diff — except on a first bring-up, when no live service exists yet and the override is required.
 
 ## Lifecycle (a fresh environment)
 
@@ -95,14 +96,8 @@ Add `Pulumi.prod.yaml` (its project, hostname, access group, KMS key) and run
 ## Local development
 
 `uv sync --group infra` populates `../.venv` (the venv Pulumi runs the program in). Then
-`pulumi login gs://cpg-themis-<env>-pulumi-state` and preview. The deployed image is a required input (no default — fail
-loud), so pin it to the live image rather than the placeholder, mirroring `preview.yml`:
-
-```sh
-THEMIS_WEB_IMAGE=$(gcloud run services describe themis-web \
-  --project=cpg-themis-dev --region=australia-southeast1 \
-  --format='value(spec.template.spec.containers[0].image)') \
-  pulumi preview
-```
+`pulumi login gs://cpg-themis-<env>-pulumi-state` and `pulumi preview`. With no `THEMIS_WEB_IMAGE` override the program
+pins to the service's live image (the resolution `preview.yml` relies on), so a plain preview shows no spurious image
+diff. Set `THEMIS_WEB_IMAGE` only to preview a specific image.
 
 Local operations use your own `gcloud` ADC (`gcloud auth application-default login`), IAM-gated.

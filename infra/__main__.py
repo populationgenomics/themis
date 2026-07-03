@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 import pulumi
+import pulumi_gcp as gcp
 
 from themis_infra import baseline, deploy_iam, ingest, secrets, storage, web
 
@@ -26,14 +27,22 @@ iap_access_group = config.require('iapAccessGroup')
 # config. Provisioned into Secret Manager below; its runtime reader lands later.
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
 
-# Per-run input, not committed config: CI sets the pushed ref; a first bring-up
-# uses gcr.io/cloudrun/hello so the registry and edge come up before any build.
-web_image = os.environ.get(_WEB_IMAGE_ENV)
-if not web_image:
-    raise RuntimeError(
-        f'{_WEB_IMAGE_ENV} is not set. Set it to the web image to deploy. CI sets the '
-        'pushed image ref; for a first bring-up use gcr.io/cloudrun/hello. See infra/README.md.'
-    )
+
+def _service_image(env_var: str, service_name: str) -> str:
+    """The image to deploy for a Cloud Run service.
+
+    An explicit override wins: `deploy.yml` sets the freshly-pushed ref, and a
+    first bring-up passes `gcr.io/cloudrun/hello`. With no override — a PR
+    `pulumi preview`, or a steady-state `up` — pin to the service's live image
+    so the plan shows no spurious image change. Reading the live image requires
+    the service to already exist, so a first bring-up must pass the override.
+    """
+    override = os.environ.get(env_var)
+    if override:
+        return override
+    live = gcp.cloudrunv2.get_service(name=service_name, location=region, project=project)
+    return live.templates[0].containers[0].image
+
 
 # The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
 deploy_iam.grant_deploy_roles('themis', project=project)
@@ -44,7 +53,7 @@ site = web.WebService(
     project=project,
     region=region,
     domain=domain,
-    image=web_image,
+    image=_service_image(_WEB_IMAGE_ENV, 'themis-web'),
     iap_member=f'group:{iap_access_group}',
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
