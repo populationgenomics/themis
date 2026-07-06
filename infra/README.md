@@ -13,13 +13,14 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `__main__.py`                | Entrypoint: read config, compose the modules, export outputs.                                               |
 | `themis_infra/baseline.py`   | Enabled GCP services + the shared Artifact Registry.                                                        |
 | `themis_infra/web.py`        | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.          |
+| `themis_infra/sql.py`        | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                       |
 | `themis_infra/storage.py`    | The literature full-text store bucket (durable GCS).                                                        |
 | `themis_infra/secrets.py`    | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                   |
 | `themis_infra/ingest.py`     | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                |
 | `themis_infra/deploy_iam.py` | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                      |
 | `bootstrap/bootstrap.sh`     | One-time substrate setup (below). Run locally, never CI.                                                    |
 
-Database and audit arrive as sibling modules under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
+Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
 
 ## Storage
 

@@ -24,6 +24,7 @@ import pulumi_gcp as gcp
 # Roles the deploy SA needs to create/manage the program's resources.
 _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/artifactregistry.admin',
+    'roles/cloudsql.admin',
     'roles/compute.admin',
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
@@ -32,6 +33,18 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/secretmanager.admin',
     'roles/serviceusage.serviceUsageAdmin',
 )
+
+
+def deploy_sa_email(project: str) -> str:
+    """The CI deploy SA's deterministic email (created by `bootstrap.sh`).
+
+    Args:
+        project: The GCP project; fixes the SA's email.
+
+    Returns:
+        `themis-deploy@<project>.iam.gserviceaccount.com`.
+    """
+    return f'themis-deploy@{project}.iam.gserviceaccount.com'
 
 
 def grant_deploy_roles(
@@ -47,8 +60,7 @@ def grant_deploy_roles(
         project: The GCP project; also fixes the deploy SA's deterministic email.
         opts: Resource options (dependency wiring).
     """
-    # Deterministic email set by bootstrap.sh (themis-deploy@<project>...).
-    member = f'serviceAccount:themis-deploy@{project}.iam.gserviceaccount.com'
+    member = f'serviceAccount:{deploy_sa_email(project)}'
     for role in _DEPLOY_ROLES:
         slug = role.removeprefix('roles/').replace('.', '-')
         gcp.projects.IAMMember(

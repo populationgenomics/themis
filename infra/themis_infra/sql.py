@@ -1,0 +1,193 @@
+"""Cloud SQL (Postgres): the per-environment instance and the IAM DB-user helper.
+
+IAM database authentication only. The runtime SAs' read/write split is enforced
+by table GRANTs in the migrations, not here. `grant_iam_service_account` is called
+from each service module, not this constructor — the instance can't depend on the
+services' SAs (they need its connection name), so attaching the user here would
+cycle. See `docs/plans/managed-agents-wiring.md` §8.
+"""
+
+from __future__ import annotations
+
+import pulumi
+import pulumi_gcp as gcp
+
+# Smallest shared-core tier; Cloud SQL has no scale-to-zero.
+_TIER = 'db-f1-micro'
+_DATABASE_VERSION = 'POSTGRES_16'
+_DISK_SIZE_GB = 10
+_RETAINED_DAILY_BACKUPS = 30
+_PITR_LOG_RETENTION_DAYS = 7
+_DATABASE_NAME = 'themis'
+# Cloud SQL IAM SA login names are the SA email without this domain suffix
+# (Postgres truncates the `.gserviceaccount.com` tail).
+_IAM_SA_EMAIL_SUFFIX = '.gserviceaccount.com'
+
+# Project-level roles each service SA needs over the connector: `client` opens the
+# connection (Admin-API ephemeral cert), `instanceUser` authenticates as its IAM DB
+# user. Neither has an instance-scoped IAM form — both granted at the project.
+_CLOUD_SQL_CLIENT_ROLE = 'roles/cloudsql.client'
+_CLOUD_SQL_INSTANCE_USER_ROLE = 'roles/cloudsql.instanceUser'
+
+
+class CloudSqlDatabase(pulumi.ComponentResource):
+    """A Postgres instance with IAM auth, daily backups, and 7-day PITR.
+
+    Attributes:
+        instance: The `DatabaseInstance`; passed to `grant_iam_service_account`
+            when a service attaches its SA as a DB user.
+        instance_connection_name: The `project:region:instance` string the Cloud
+            SQL connector dials (set as a container env var on each service).
+        instance_name: The bare instance name.
+        database: The application `Database` inside the instance.
+        database_name: The application database's name.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        project: str,
+        region: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        super().__init__('themis:infra:CloudSqlDatabase', name, None, opts)
+        child = pulumi.ResourceOptions(parent=self)
+
+        self.instance = gcp.sql.DatabaseInstance(
+            f'{name}-sql',
+            project=project,
+            # Explicit, stable name: referenced by the connector's connection
+            # string and the console, not auto-generated.
+            name=f'{name}-sql',
+            region=region,
+            database_version=_DATABASE_VERSION,
+            # Provider-layer guard: refuse a destroy/replace that would drop the
+            # data. A deliberate teardown edits this off first.
+            deletion_protection=True,
+            settings=gcp.sql.DatabaseInstanceSettingsArgs(
+                # API-level guard: blocks an out-of-band `gcloud sql instances
+                # delete`, which the provider-level flag above does not.
+                deletion_protection_enabled=True,
+                tier=_TIER,
+                edition='ENTERPRISE',
+                # Single zone, no HA — shared-core tiers can't do HA anyway.
+                availability_type='ZONAL',
+                disk_size=_DISK_SIZE_GB,
+                disk_autoresize=True,
+                # Enables IAM database authentication — the SA `sql.User`s below
+                # log in through this; no password users.
+                database_flags=[
+                    gcp.sql.DatabaseInstanceSettingsDatabaseFlagArgs(
+                        name='cloudsql.iam_authentication',
+                        value='on',
+                    ),
+                ],
+                backup_configuration=gcp.sql.DatabaseInstanceSettingsBackupConfigurationArgs(
+                    enabled=True,
+                    # PITR for Postgres is WAL archiving (not MySQL binary logs);
+                    # `transaction_log_retention_days` sizes the recovery window.
+                    point_in_time_recovery_enabled=True,
+                    transaction_log_retention_days=_PITR_LOG_RETENTION_DAYS,
+                    start_time='03:00',
+                    backup_retention_settings=gcp.sql.DatabaseInstanceSettingsBackupConfigurationBackupRetentionSettingsArgs(
+                        retained_backups=_RETAINED_DAILY_BACKUPS,
+                        retention_unit='COUNT',
+                    ),
+                ),
+                # Public IP but no authorized networks: an empty authorizedNetworks
+                # list makes Cloud SQL's firewall refuse every direct connection.
+                # The connector reaches the instance out-of-band via an Admin-API
+                # ephemeral cert (IAM-gated mTLS), not an IP allowlist.
+                ip_configuration=gcp.sql.DatabaseInstanceSettingsIpConfigurationArgs(
+                    ipv4_enabled=True,
+                ),
+            ),
+            # protect: refuse a Pulumi-layer destroy/replace (defense-in-depth with
+            # the two deletion_protection flags above). ignore_changes:
+            # disk_autoresize floats the disk above disk_size, so pinning it forces
+            # a shrink-back diff every `up` — the path is the camelCase schema name,
+            # not snake_case.
+            opts=pulumi.ResourceOptions.merge(
+                child, pulumi.ResourceOptions(protect=True, ignore_changes=['settings.diskSize'])
+            ),
+        )
+        self.instance_connection_name = self.instance.connection_name
+        self.instance_name = self.instance.name
+
+        self.database = gcp.sql.Database(
+            f'{name}-db',
+            project=project,
+            instance=self.instance.name,
+            name=_DATABASE_NAME,
+            # Delete-guard the database too: dropping/replacing it drops every table.
+            opts=pulumi.ResourceOptions.merge(child, pulumi.ResourceOptions(protect=True)),
+        )
+        self.database_name = self.database.name
+
+        self.register_outputs(
+            {
+                'instance_connection_name': self.instance_connection_name,
+                'instance_name': self.instance_name,
+                'database_name': self.database_name,
+            }
+        )
+
+
+def grant_iam_service_account(
+    name: str,
+    *,
+    project: str,
+    instance: gcp.sql.DatabaseInstance,
+    service_account_email: pulumi.Input[str],
+    opts: pulumi.ResourceOptions | None = None,
+) -> gcp.sql.User:
+    """Attach a service account as an IAM database user on `instance`.
+
+    Two layers: `sql.User(type=CLOUD_IAM_SERVICE_ACCOUNT)` creates the Postgres
+    role the GCP SA logs in as (without it the SA has no DB principal); the two
+    project IAM roles do a different job — `cloudsql.client` opens the connection
+    (Admin-API ephemeral cert), `cloudsql.instanceUser` authenticates as the IAM DB
+    user. Table privileges come from the migrations, not here. "The connector" is
+    the Cloud SQL Language Connector (`@google-cloud/cloud-sql-connector` for the
+    BFF, `google-cloud-sql-connector` for the store server).
+
+    Called from the consuming service module so the user + grants nest under that
+    service; pass its `child` options as `opts`.
+
+    Args:
+        name: Resource-name prefix (the consuming service's stack name + role,
+            e.g. `themis-web`).
+        project: The GCP project holding the instance and the IAM policy.
+        instance: The Cloud SQL instance to create the login on.
+        service_account_email: The SA's email; the DB user name is this with the
+            `.gserviceaccount.com` suffix removed (Postgres IAM SA convention),
+            and the project role bindings' member is `serviceAccount:<email>`.
+        opts: Resource options (parent/dependency wiring from the caller).
+
+    Returns:
+        The `sql.User` login for this SA.
+    """
+    user = gcp.sql.User(
+        f'{name}-sql-user',
+        project=project,
+        instance=instance.name,
+        name=pulumi.Output.from_input(service_account_email).apply(
+            lambda email: email.removesuffix(_IAM_SA_EMAIL_SUFFIX)
+        ),
+        type='CLOUD_IAM_SERVICE_ACCOUNT',
+        opts=opts,
+    )
+    member = pulumi.Output.concat('serviceAccount:', service_account_email)
+    for role_slug, role in (
+        ('cloudsql-client', _CLOUD_SQL_CLIENT_ROLE),
+        ('cloudsql-instance-user', _CLOUD_SQL_INSTANCE_USER_ROLE),
+    ):
+        gcp.projects.IAMMember(
+            f'{name}-{role_slug}',
+            project=project,
+            role=role,
+            member=member,
+            opts=opts,
+        )
+    return user

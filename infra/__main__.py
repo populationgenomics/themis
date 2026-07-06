@@ -12,7 +12,7 @@ import os
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import baseline, deploy_iam, ingest, secrets, storage, web
+from themis_infra import baseline, deploy_iam, ingest, secrets, sql, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 
@@ -48,6 +48,23 @@ def _service_image(env_var: str, service_name: str) -> str:
 deploy_iam.grant_deploy_roles('themis', project=project)
 
 base = baseline.Baseline('themis', project=project, region=region)
+database = sql.CloudSqlDatabase(
+    'themis',
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+# The CI deploy SA as the migrations' owner — a Cloud SQL IAM DB user distinct
+# from both runtime SAs. deploy.yml runs the migrations as it, so every table is
+# owned by an identity neither runtime SA can impersonate; a table owner bypasses
+# GRANTs, so the runtime SAs get only the table-level GRANTs the migrations apply.
+migrator_sql_user = sql.grant_iam_service_account(
+    'themis-migrator',
+    project=project,
+    instance=database.instance,
+    service_account_email=deploy_iam.deploy_sa_email(project),
+    opts=pulumi.ResourceOptions(depends_on=[database]),
+)
 site = web.WebService(
     'themis',
     project=project,
@@ -83,6 +100,11 @@ pulumi.export('lb_ip', site.ip_address)
 pulumi.export('url', site.url)
 pulumi.export('web_sa_email', site.service_account_email)
 pulumi.export('web_sa_unique_id', site.service_account_unique_id)
+pulumi.export('sql_connection_name', database.instance_connection_name)
+pulumi.export('sql_database', database.database_name)
+# The deploy SA's DB login — the identity the deploy.yml migrate step authenticates
+# as (the migrations' owner).
+pulumi.export('migrator_sql_user', migrator_sql_user.name)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
