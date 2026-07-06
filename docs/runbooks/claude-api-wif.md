@@ -28,10 +28,13 @@ project already scopes the name):
 - Repo-scoped workloads (the PR review — one process regardless of deploy target) stay env-neutral:
   `cpg-themis-ci-review`.
 
-The Themis **workspace is a single `cpg-themis`**, not per-env — so the env boundary rides on the svac name, not the
-workspace; the federation rule's `workspace_id` is the same for both paths. (Split to a per-env workspace later only if
-dev/prod need separate workspace-level rate limits.) GCP service-account emails stay env-neutral because the project
-encodes the env: `themis-web@cpg-themis-dev.iam.gserviceaccount.com`.
+Themis uses **per-env workspaces** so dev and prod carry separate workspace-level spend and rate limits:
+**`cpg-themis-dev`** now, a separate **`cpg-themis-prod`** when prod lands. Env-scoped workloads (the web app) live in
+their env's workspace — the env boundary rides on the **workspace**, and each federation rule carries that env's
+`workspace_id`. Repo-scoped workloads (the PR review, doc-garden) run regardless of deploy target and sit in
+`cpg-themis-dev`, so every rule below carries `cpg-themis-dev`'s `workspace_id` until the prod web app adds its
+`cpg-themis-prod` counterpart. GCP service-account emails stay env-neutral because the project encodes the env:
+`themis-web@cpg-themis-dev.iam.gserviceaccount.com`.
 
 The `wrkspc_…` / `svac_…` / `fdrl_…` / `fdis_…` and the **organization ID** are identifiers, **not credentials** — an
 exchange still requires a matching OIDC token, which can't be forged for this repo. So they are tracked **plaintext**,
@@ -41,12 +44,15 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | What                                                      | ID                                     |
 | --------------------------------------------------------- | -------------------------------------- |
 | Organization                                              | `0c504942-5311-4fc0-a3a3-1f6a53666205` |
-| Workspace `cpg-themis`                                    | `wrkspc_014YcYcGz7XBbARzLRHwvhZt`      |
+| Workspace `cpg-themis-dev`                                | `wrkspc_014YcYcGz7XBbARzLRHwvhZt`      |
 | svac `cpg-themis-ci-review` (Path A)                      | `svac_01KJXbuSvwDHvT8PFQkU7nef`        |
 | rule `cpg-themis-ci-review-rule` (Path A)                 | `fdrl_01PkjWwWtFLfGFoRXboKaLjR`        |
 | rule `cpg-themis-ci-review-main-rule` (Path C, same svac) | `fdrl_01KdBLWjujcYsH9s9j1K63Wb`        |
 | svac `cpg-themis-dev-web` (Path B)                        | `svac_016aD6ph1LAeJQKpB4tJjjks`        |
 | rule `cpg-themis-dev-web-rule` (Path B)                   | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P`        |
+
+These rows are the **dev** set. CI (the review and doc-garden) is repo-scoped and only ever runs against dev, so prod
+adds no ci-review counterpart — just its own `cpg-themis-prod` workspace and `cpg-themis-prod-web` svac + rule.
 
 ## Path A — GitHub Actions → Claude API
 
@@ -54,7 +60,7 @@ For the `claude-code-action` review in `internal-review.yml`.
 
 1. **Issuer** (skip if already registered): `github-actions`, issuer URL `https://token.actions.githubusercontent.com`,
    JWKS = discovery.
-1. **Service account**: `cpg-themis-ci-review` (`svac_01KJXbuSvwDHvT8PFQkU7nef`); add to the `cpg-themis` workspace.
+1. **Service account**: `cpg-themis-ci-review` (`svac_01KJXbuSvwDHvT8PFQkU7nef`); add to the `cpg-themis-dev` workspace.
 1. **Federation rule** `cpg-themis-ci-review-rule` (`fdrl_01PkjWwWtFLfGFoRXboKaLjR`) — pin to this repo's PR runs:
    ```json
    {
@@ -97,7 +103,7 @@ For the web app (`themis-web`), the Managed-Agents control-plane client. Its ide
 the BFF does.
 
 1. **Issuer** (once): `gcp`, issuer URL `https://accounts.google.com`, JWKS = discovery (covers all GCP surfaces).
-1. **Service account**: `cpg-themis-dev-web` (`svac_016aD6ph1LAeJQKpB4tJjjks`); add to the `cpg-themis` workspace.
+1. **Service account**: `cpg-themis-dev-web` (`svac_016aD6ph1LAeJQKpB4tJjjks`); add to the `cpg-themis-dev` workspace.
 1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`web` module), so read it from the stack output
    (or `gcloud`):
    ```sh
