@@ -15,4 +15,6 @@ config:
   themis:iapAccessGroup: themis-dev-access@populationgenomics.org.au
   themis:semanticScholarApiKey:
     secure: v1:R9mnb/QAg1sWkuIY:Qa4GUnAvokKtLhkzwa1BRjuQlfbPiN6O0EGVvzK0XYNPQBYrKeDyB4UX8aB23eRebq232Hyju/xDX0OJQpvCzc4d9ag=
+  themis:anthropicEnvironmentKey:
+    secure: v1:V+8CUcyzFKaD2KMn:M4TeNL3dd5Lt64SFUehLx4xLiDQEQwV/EvKknrjCdSxPp1MP+6tAX0+4mIuccyas1PRnT8M2xIGhppV0FNXvl3HyleLHAt62h1t4/UwK0oeuL53eYfHqj4KMSkmvuN3xzrC8y4HsC3D7CEr0V8cUWJ7i/4DIYZ2IOE2w/g==
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=
