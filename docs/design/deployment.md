@@ -80,8 +80,8 @@ exists:
 - **Cloud SQL:** IAM database authentication via the workload SA. No database password.
 - **GCP services:** the workload SA's IAM credentials from the metadata server.
 
-The only Secret Manager secrets are credentials with no WIF path — currently the optional NCBI E-utilities key. Read at
-runtime via the workload SA (`roles/secretmanager.secretAccessor`); Pulumi provisions the `Secret` containers, IAM
+The only Secret Manager secrets are credentials with no WIF path — currently the optional Semantic Scholar API key. Read
+at runtime via the workload SA (`roles/secretmanager.secretAccessor`); Pulumi provisions the `Secret` containers, IAM
 bindings, **and the versions** — each value a `gcpkms`-encrypted config secret in `Pulumi.<stack>.yaml` (inert without
 KMS access; safe on the mirror), pushed as a `SecretVersion`, so a fresh `pulumi up` self-provisions the secrets with no
 manual step. Rotation updates the config and re-applies; a value rotated out of band uses `ignoreChanges`.

@@ -68,8 +68,8 @@ follow-up — the Spike is synthetic-only.
 ### 4. Secret inventory + rotation
 
 OIDC/IAM-first (see [`deployment.md`](deployment.md)): Anthropic API via WIF, Cloud SQL via IAM auth, GCP via the
-workload SA. A secret is stored only where there is **no WIF path** — currently just the optional **NCBI E-utilities
-key** (raises the ClinVar/literature rate limit; not strictly required).
+workload SA. A secret is stored only where there is **no WIF path** — currently just the optional **Semantic Scholar API
+key** (raises the litcache id-resolver's rate limit; not strictly required).
 
 No DB password (IAM auth), no Anthropic key (WIF), no IAP OAuth client secret (Google-managed IAP for Cloud Run), no app
 session key (the app trusts the IAP JWT per request, stateless).
