@@ -32,9 +32,9 @@ surface is deferred.
 | Identity                  | Random **uuid4** per paper = directory name. Deterministic ids rejected (preprints/supplements have no external id; late-binding).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Atomic mint               | **Cloud SQL crosswalk table** (in the instance themis runs anyway). Workers mint against a shared `crosswalk(external_id UNIQUE, doc_id)` table: one transaction inserts *all* of a paper's ids (DOI, PMID, PMCID, …) under the constraint, minting a fresh uuid4 if none collide. Multi-id atomicity is native to the single transaction. A collision adopts the incumbent `doc_id`. The table is **persistent but safe to drop** — rebuildable from manifests (scan + invert), so it holds no irreplaceable state. The manifest is the system of record and the commit; the DB row is the mint lock.                                                                                                             |
 | Equivalence               | Native multi-id claim removes the write-race edge case. An edge now arises only from a **genuine cross-paper link** — a paper's ids resolving to >1 distinct incumbent `doc_id` in one transaction (the late-binding case, §2.2) — detected atomically. The edge is written into the involved **manifests** (durable, rebuildable), never DB-only. Canonical uuid = lowest in the class; dedup/counting key on canonical (consumers deferred). Rare in a single-source seed.                                                                                                                                                                                                                                       |
-| Version vs rendering      | `version` = **source snapshot** (raw bytes), e.g. `pmc-v2`. A **rendering** = one converter's markdown of that snapshot. **Converter is not part of version identity** — re-converting adds a rendering, never a version.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Source anchors            | Durable anchor = the extractor's **verbatim quote `{quote, exact}`** (write-once, boundary-side). Offsets are **recomputable** per `(ku_id, rendering)` by re-aligning the quote; never the source of truth. Recovering a quote's **bounding box in a pdf-derived rendering** needs the pdf's character layer, so ingestion records `char_addressable` per pdf source (below) to surface problem papers early; XML-backed papers map to the XML instead. (KU/extraction itself is deferred, but the cache layout reserves `knowledge_units.jsonl` and pins this contract.)                                                                                                                                         |
-| Licence/access            | **Per-version** (`versions[]`): **raw `licence` + `licence_basis`** (`artifact`\|`asserted`) as litfetch returns them, plus an `access` named-union tag (publisher required iff licensed, structurally). Policy booleans (`redistributable`, …) derived at read time by normalizing the raw licence to an SPDX id — not stored. Retraction = **paper-level** flag.                                                                                                                                                                                                                                                                                                                                                 |
+| Source vs rendering       | A **source** is a primary-artifact lineage (the pdf, the xml) with a stable `handle` and append-only `revisions[]`; an update is a new revision, not a paper-wide version. A **rendering** = one converter's markdown of one revision, content-addressed and keyed by its hash. **Converter is not part of source identity** — re-converting adds a rendering. See [ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md).                                                                                                                                                                                                                                                                             |
+| Source anchors            | Durable anchor = the extractor's **verbatim quote `{quote, exact}`** (write-once, boundary-side). Offsets are **recomputable** per `(ku_id, rendering)` by re-aligning the quote; never the source of truth. Recovering a quote's **bounding box in a rendering derived from a pdf** needs the pdf's character layer, so ingestion records `has_text_layer` per pdf source (below) to surface problem papers early; XML-backed papers map to the XML instead. (KU/extraction itself is deferred, but the cache layout reserves `knowledge_units.jsonl` and pins this contract.)                                                                                                                                    |
+| Licence/access            | **Per-source-lineage** (`sources[]`): **raw `licence` + `licence_basis`** (`artifact`\|`asserted`) as litfetch returns them, plus an `access` named-union tag (publisher required iff licensed, structurally). Varies between lineages (a CC-BY xml vs a restricted pdf), stable across a lineage's revisions. Policy booleans (`redistributable`, …) derived at read time by normalizing the raw licence to an SPDX id — not stored. Retraction = **paper-level** flag.                                                                                                                                                                                                                                           |
 | Provenance vs entitlement | **Capture-side provenance** recorded now (per paper, no user-ID needed). **Read-side entitlement** deferred — there is no themis user/affiliation system yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Ingestion policy          | **Ingest everything** (OA / non-OA / unknown-basis); record what's known; quarantine nobody; serving not a concern at this stage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | S0 infra                  | **GCS holds the only irreplaceable state** — directories + manifests. The mint crosswalk table lives in themis's Cloud SQL instance and is rebuildable from manifests, so it is **persistent but safe to drop**. The durable serving projection (KU rows, embeddings, …) is still deferred — only the crosswalk lands now. The **manifest write is the commit point**; the resumability checkpoint is the written manifests, not the crosswalk.                                                                                                                                                                                                                                                                    |
@@ -47,12 +47,10 @@ gs://cpg-themis-dev-fulltext/
   papers/{uuid}/
     manifest.json
     metadata.json
-    versions/{version}/
-      sources/{source_id}.{xml,pdf}          # immutable; seed bytes copied in (ingest/ is transient); manifest cites by paper-relative path + hash
-      renderings/{converter}-{cver}/
-        markdown.md                          # immutable per rendering; markdown_hash
-        docling.json                         # docling converter output (when converter=docling)
-      knowledge_units.jsonl                  # write-once; reserved (KU layer, deferred)
+    sources/{handle}/{hex}.{xml,pdf}         # immutable, content-addressed; seed bytes copied in (ingest/ is transient)
+    renderings/{hex}.md                      # immutable; the markdown hash is the manifest map key
+    renderings/{hex}.docling.json            # docling converter output (when converter=docling)
+    knowledge_units.jsonl                    # write-once; reserved (KU layer, deferred)
     figures/        {hash}.{ext}             # content-addressed blobs
     supplementary/  {hash}.{ext}
 ```
@@ -77,27 +75,28 @@ litfetch repo.
   "claim_key": "doi:10.…",                  // precedence-primary external id (the mint key)
   "equivalence": { "edges": [], "canonical_doc_id": "9f3a-…" },
   "retraction": { "retracted": false, "source": null, "date": null },  // paper-level (§6.1)
-  "versions": [
-    { "version": "published",               // source snapshot (version of record)
+  "sources": [                              // primary-artifact lineages; licence/access live here (per-lineage)
+    { "handle": "pdf", "media_type": "pdf",
       "licence": "https://creativecommons.org/licenses/by/4.0/ …",  // raw, as litfetch returned it
-      "licence_basis": "artifact",          // artifact = from the bytes | asserted = from Unpaywall
+      "licence_basis": "asserted",          // seed pdf carries no embedded licence → asserted to the work's terms
+      "access": { "access": "free-to-read" },
+      "revisions": [                        // append-only; latest captured_at = current. bytes at sources/{handle}/{hex}.{ext}
+        { "hash": "…", "kind": "seed", "captured_at": "2026-…", "has_text_layer": true } ] },
+    { "handle": "xml", "media_type": "xml",
+      "licence": "https://creativecommons.org/licenses/by/4.0/ …",
+      "licence_basis": "artifact",          // read from the JATS <license>
       "access": { "access": "free-to-read" },   // tagged union; licensed → { "access":"licensed","publisher":"…" }
-      "capture": { "route": "seed", "captured_at": "2026-…" },
-      "sources": [                          // a version may hold several source artifacts
-        { "id": "pdf", "kind": "seed",      "format": "pdf", "hash": "sha256:…",
-          "path": "versions/published/sources/pdf.pdf" },    // relative to the paper dir; seed bytes copied in (ingest/ is transient)
-        { "id": "xml", "kind": "pmc_oa_s3", "format": "xml", "hash": "sha256:…",
-          "path": "versions/published/sources/xml.xml",
-          "origin_url": "https://…" }      // origin_url = external provenance; OA fetch only
-      ],
-      "renderings": [                        // seed writes one (OA→litdown here); a list because later converters add to it
-        { "converter": "litdown", "converter_version": "0.3.1", "from_source": "xml",
-          "quality_tag": "xml-faithful", "markdown_hash": "sha256:…", "created_at": "2026-…" }
-      ] }
+      "revisions": [
+        { "hash": "…", "kind": "pmc_oa_s3", "captured_at": "2026-…",
+          "origin_url": "https://…" } ] }   // origin_url = external provenance; OA fetch only
   ],
-  "default_rendering": { "version": "published", "converter": "litdown", "converter_version": "0.3.1" },
+  "renderings": {                            // keyed by the markdown's content hash; append-only — old keys resolve old cites
+    "…": { "from_source": "xml", "from_revision": "…",  // handle + the source revision it rendered
+      "converter": "litdown", "converter_version": "0.3.1",
+      "created_at": "2026-…" }   // canonical rendering is DERIVED at read time (media_type+converter policy), not stored
+  },
   "files": [                                 // every KNOWN associated file, even un-fetched (lazy fetch)
-    { "role": "figure", "name": "fig1.jpg", "source_url": "https://…", "blob_hash": null }
+    { "role": "figure", "name": "fig1.jpg", "source_url": "https://…", "path": null }
   ]
 }
 ```
@@ -124,27 +123,43 @@ cache-writer's models), the committed `jsonschema/litcache.schema.json` — the 
 `schema-compat` baseline — and Zod. Cross-field rules that survive codegen are enforced structurally (the `access` named
 union); the rest live in a thin hand-written layer over the generated models (the policy mapping below).
 
-**Licence is stored raw, not as an SPDX id.** litfetch returns the licence verbatim with a `licence_basis` (`artifact` =
-extracted from the fetched bytes — JATS `<license>`, Elsevier; `asserted` = stated by an access authority like Unpaywall
-when the bytes carry none); normalizing to an SPDX id is the consumer's, done at read time for the policy table. Storing
-the raw string keeps the exact terms and their provenance — litfetch can't know the SPDX id, so the boundary puts the
-mapping here.
+**The model is per-source-lineage, not per-version-snapshot**
+([`../adr/0002-manifest-renderings-and-reference-model.md`](../adr/0002-manifest-renderings-and-reference-model.md)). A
+`Source` is a primary-artifact lineage (the pdf, the xml) keyed by a stable `handle`, carrying its own licence/access
+and an append-only `revisions[]`; updates land as a new revision, not a whole-paper version. `renderings` is a
+content-addressed map keyed by the markdown hash, so re-rendering appends and old cites keep resolving. There is no
+stored `default_rendering`: the canonical rendering is derived at read time (a fidelity preference over
+`(media_type, converter)`, on the latest revision — no stored quality tag).
+
+**Licence is stored raw, not as an SPDX id, and lives on the lineage.** litfetch returns the licence verbatim with a
+`licence_basis` (`artifact` = extracted from the fetched bytes — JATS `<license>`, Elsevier; `asserted` = stated by an
+access authority like Unpaywall, or asserted to the work's terms for a retained seed pdf that carries none); normalizing
+to an SPDX id is the consumer's, done at read time for the policy table. It sits on `Source` because it varies between
+lineages (a CC-BY xml vs a restricted pdf) but is stable across a lineage's revisions.
 
 ```tsp
-// version.tsp — a source snapshot plus its renderings, licence, and access.
-model Version {
-  version: string;            // snapshot token, e.g. "published", "pmc-v1"
+// source.tsp — a primary-artifact lineage with append-only revisions.
+model Source {
+  handle: string;             // lineage identity, stable across updates: "pdf" | "jats-xml" | "scraped-html"
+  media_type: SourceFormat;
   licence: string;            // raw, as litfetch returned it (not an SPDX id)
   licence_basis: LicenceBasis;
   access: Access;             // named union — publisher required iff licensed
-  capture: Capture;
-  sources: Source[];          // ≥1 source artifact (pdf, xml, …)
-  renderings: Rendering[];
+  revisions: Revision[];      // ≥1, append-only, ordered by captured_at
+}
+
+// One fetched byte-set of a lineage; content-addressed at sources/{handle}/{hex}.{ext}.
+model Revision {
+  hash: string;               // sha256 hex digest of the raw source bytes
+  origin_url?: string;        // external provenance (the OA fetch URL); omitted for seed/upload
+  kind: SourceKind;
+  captured_at: utcDateTime;   // recency signal — NOT array order
+  has_text_layer?: boolean; // pdf only: pypdfium2 recovers positioned characters; omitted when xml is the source of truth
 }
 
 enum LicenceBasis {
   artifact: "artifact",       // extracted from the fetched bytes
-  asserted: "asserted",       // asserted by an access authority (Unpaywall)
+  asserted: "asserted",       // asserted by an access authority (Unpaywall) or to the work's terms
 }
 
 // access-iff-publisher holds structurally in every target — typespec.md worked
@@ -156,34 +171,21 @@ model InstitutionCaptured { access: "institution-captured"; }
 model UnknownAccess       { access: "unknown"; }
 union Access { FreeToRead, Licensed, InstitutionCaptured, UnknownAccess }
 
-enum CaptureRoute { seed: "seed", fetch: "fetch", upload: "upload" }
-model Capture {
-  route: CaptureRoute;
-  captured_at: utcDateTime;
-}
-
 enum SourceKind {
   pmc_oa_s3: "pmc_oa_s3", europe_pmc: "europe_pmc", elsevier_oa: "elsevier_oa",
   biorxiv: "biorxiv", upload: "upload", seed: "seed",
 }
+// Scraped html is converted to xml upstream and enters under a distinct handle —
+// html is not a media type here.
 enum SourceFormat { xml: "xml", pdf: "pdf" }
-model Source {
-  id: string;                 // stable within the version, e.g. "pdf", "xml"
-  kind: SourceKind;
-  format: SourceFormat;
-  hash: string;               // "sha256:…" of the raw source bytes
-  path: string;               // bytes' location, relative to the paper dir — keeps a paper movable
-  origin_url?: string;        // external provenance (e.g. the OA fetch URL); omitted for seed-derived
-  char_addressable?: boolean; // pdf only: pypdfium2 recovers positioned characters (quote→bbox feasible). set for pdf-derived papers; omitted when XML is the source of truth
-}
+enum Converter { litdown: "litdown", docling: "docling", llm_ocr: "llm-ocr" }
 
-enum QualityTag { xml_faithful: "xml-faithful", pdf_derived: "pdf-derived" }
 model Rendering {
-  converter: string;          // generator name, e.g. "litdown" | "docling"
+  from_source: string;        // Source.handle (an open id namespace, not an enum)
+  from_revision: string;      // the Revision.hash this markdown was produced from
+  converter: Converter;
   converter_version: string;
-  from_source: string;        // Source.id this markdown was produced from
-  quality_tag: QualityTag;
-  markdown_hash: string;      // "sha256:…"
+  `model`?: string;           // free-text LLM id (e.g. "claude-opus-4-8"); required iff converter == llm-ocr
   created_at: utcDateTime;
 }
 
@@ -194,8 +196,8 @@ model Manifest {
   claim_key: string;          // precedence-primary external id, e.g. "doi:10.…"
   equivalence: Equivalence;
   retraction: Retraction;
-  versions: Version[];
-  default_rendering: RenderingRef;
+  sources: Source[];          // primary-artifact lineages
+  renderings: Record<Rendering>;   // key = the markdown's content hash (sha256 hex)
   files: AssociatedFile[];
 }
 model ExternalIds { doi?: string; pmid?: string; pmcid?: string; arxiv?: string; biorxiv?: string; }
@@ -204,13 +206,13 @@ model Equivalence {
   canonical_doc_id: string;   // lowest uuid in the class
 }
 model Retraction { retracted?: boolean = false; source?: string; date?: string; }
+enum AssociatedFileRole { figure: "figure", supplementary: "supplementary" }
 model AssociatedFile {
-  role: string;               // "figure" | "supplementary" | …
+  role: AssociatedFileRole;
   name: string;
   source_url?: string;
-  blob_hash?: string;         // absent until fetched (content-addressed)
+  path?: string;              // content-addressed location, paper-relative; absent until fetched
 }
-model RenderingRef { version: string; converter: string; converter_version: string; }
 
 // The crosswalk is a Cloud SQL mint table derived from manifests, not an at-rest
 // artifact, so it carries no TypeSpec model on the additive-only rails.
@@ -281,19 +283,19 @@ commercial use); the table localises that decision to one cell.
 - **Metadata resolution.** litcache resolves the identifier → bibliographic `metadata.json` (DOI → Crossref; PMID →
   PubMed / Europe PMC) and the cross-ids (DOI↔PMID↔PMCID) — bibliographic metadata is litcache's, not litfetch's.
   **Licence + access come from litfetch**: it returns the **raw `licence` + `licence_basis`** (`artifact` extracted from
-  the bytes, else `asserted` via Unpaywall) and the OA `access`; litcache stores them verbatim into `versions[]` and
-  normalizes to SPDX only at read time (policy table). `unknown` where unresolved.
+  the bytes, else `asserted` via Unpaywall) and the OA `access`; litcache stores them verbatim onto the matching
+  `Source` lineage and normalizes to SPDX only at read time (policy table). `unknown` where unresolved.
 - **Conversion (branch on OA).** If the paper is in PMC / otherwise OA and XML is obtainable via the `litfetch` ladder
-  (PMC-OA / Europe PMC), convert the XML with `litdown` (`converter=litdown`, `xml-faithful`). Otherwise generate
-  markdown from the seed Docling json via `docling-core` `export_to_markdown()` (`converter=docling`, `pdf-derived`).
-  Either way the pdf is retained as source bytes. Seed ingestion writes **one rendering** per paper (the branch outcome)
-  and `default_rendering` points at it; `renderings[]` stays a list because later versions/converters add to it
-  (additive).
-- **PDF text-layer check (pdf-derived only).** On the non-OA branch, probe the pdf with `pypdfium2` and record
-  `char_addressable` on the pdf source — whether positioned characters are recoverable (not image-only). This is the
+  (PMC-OA / Europe PMC), convert the XML with `litdown` (`converter=litdown`). Otherwise generate markdown from the seed
+  Docling json via `docling-core` `export_to_markdown()` (`converter=docling`). Either way the pdf is retained as a
+  source lineage (on the OA branch its licence is asserted to the work's terms — it carries none of its own). Seed
+  ingestion writes **one rendering** per paper (the branch outcome) into the content-addressed `renderings` map; the
+  canonical rendering is derived at read time, and later converters (e.g. `llm-ocr`) append to the map.
+- **PDF text-layer check (pdf sources only).** On the non-OA branch, probe the pdf with `pypdfium2` and record
+  `has_text_layer` on the pdf source — whether positioned characters are recoverable (not image-only). This is the
   precondition for recovering quote bounding boxes from the pdf at reconciliation time (Source anchors). **Skipped when
   XML is present** — the XML is the source of truth offsets map back to. Recorded now as a diagnostic; the fix for any
-  `char_addressable=false` paper (stored bboxes / OCR) is deferred. Expected count: ~none.
+  `has_text_layer=false` paper (stored bboxes / OCR) is deferred. Expected count: ~none.
 - **Resumability.** The checkpoint is **manifest existence in GCS**, not the table: a run skips any paper whose manifest
   is already written. Idempotent, spot-preemption-safe, and safe to **re-run incrementally**. A half-minted paper (claim
   row, no manifest) self-heals — the re-run reprocesses it, reuses the claimed uuid, and writes the manifest. The table
@@ -314,10 +316,10 @@ exported from this json; OA papers are rendered from fetched XML instead (Conver
 
 Per-paper pipeline (idempotent, resumable, safe to re-run incrementally): determine canonical ids (classify key +
 docling origin) → claim uuid in the crosswalk (dedup / equivalence) → skip if the manifest already exists → convert
-(OA/PMC: litfetch XML → litdown, `xml-faithful`; else Docling → markdown, `pdf-derived`, + flag pdf `char_addressable`
-via pypdfium2) → resolve bibliographic metadata (PubMed ingestion or public API) → set up the paper dir +
-`metadata.json` → move the pdf and other files into place → write manifest (**the commit**). Built as a **Dataflow**
-pipeline reading/writing GCS and claiming crosswalk ids in Cloud SQL.
+(OA/PMC: litfetch XML → litdown; else Docling → markdown, + flag pdf `has_text_layer` via pypdfium2) → resolve
+bibliographic metadata (PubMed ingestion or public API) → set up the paper dir + `metadata.json` → move the pdf and
+other files into place → write manifest (**the commit**). Built as a **Dataflow** pipeline reading/writing GCS and
+claiming crosswalk ids in Cloud SQL.
 
 ```mermaid
 flowchart TD
@@ -332,9 +334,9 @@ flowchart TD
   G --> H
   H -- yes --> Z["Skip — already cached"]
   H -- no --> I{"In PMC / OA?"}
-  I -- yes --> J["litfetch OA XML → litdown (xml-faithful)"]
-  I -- no --> K["Docling json → markdown (pdf-derived)"]
-  K --> K2["Check pdf char-addressability (pypdfium2); flag if not recoverable"]
+  I -- yes --> J["litfetch OA XML → litdown"]
+  I -- no --> K["Docling json → markdown"]
+  K --> K2["Check pdf text layer (pypdfium2); flag if not recoverable"]
   J --> L["Resolve bibliographic metadata: PubMed ingestion, else public API (Crossref / PubMed / Europe PMC)"]
   K2 --> L
   L --> M["Set up paper dir + write metadata.json"]

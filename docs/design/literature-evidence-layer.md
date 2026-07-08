@@ -98,11 +98,13 @@ split a later data migration — filter the redistributable objects out — not 
 Each paper is a **GCS directory** holding all its artifacts: source `xml` and/or `pdf`, derived `markdown`, extracted
 `figures/` (images), `supplementary/` files, the write-once `knowledge_units.jsonl` (Layer 1 model output, §4.2), and
 the derived `entities.jsonl` (the entity→KU map — stable entity ids + mention clustering, rebuildable, §4.2).
-**Revisions are additive**: a new version (preprint→published, PMC article version, PubMed revision) is collected as an
-**additional `(version)` set of source + `markdown` artifacts in the same directory** — existing version artifacts are
-**never overwritten**, so a knowledge unit that cites a given `(doc_id, version)` markdown always resolves to the exact,
-unchanged text it was extracted from (§2.2). **GCS is the durable source of truth**; everything in Cloud SQL (§2.3) is a
-rebuildable projection of these directories.
+**Revisions are additive and content-addressed** ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)):
+an updated source (a re-fetch, a PMC article-version bump, a PubMed revision) is collected as an **additional revision
+of that source lineage**, and a re-conversion as an **additional content-addressed rendering** — existing bytes are
+**never overwritten**, so a knowledge unit that cites a given rendering hash always resolves to the exact, unchanged
+text it was extracted from (§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s
+linked by an equivalence edge, §2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud
+SQL (§2.3) is a rebuildable projection of these directories.
 
 - **`manifest.json`** describes the directory: this UUID, all known external ids (§2.2), any equivalence edges linking
   it to other UUIDs of the same work + the resulting canonical UUID (§2.2), the licence, access, and quality tags (§2),
@@ -160,13 +162,14 @@ The knowledge-unit table is the one worth sizing, since it is the per-fact subst
 
 ```
 knowledge_unit(
-  id uuid pk, doc_id uuid, version text,  -- source anchor (§4.2)
-  spans jsonb,                                  -- [{start,end}] offsets, no text
+  id uuid pk, doc_id uuid, document_id text,  -- anchor: document_id = rendering hash (§4.2)
+  quote text, exact bool,                       -- verbatim supporting quote; stripped on export. NO offsets here
   assertion text,                               -- expression-stripped, ~250 B
   type text, epistemic text, confidence real,
   supersedes uuid null, prov jsonb,
   created_at timestamptz)
--- entity/grounding live in sibling tables keyed by id (Layer 2, recomputable)
+-- entity/grounding + the resolved-offsets cache ((cite, rendering_hash) -> spans)
+-- live in sibling tables keyed by id (Layer 2 / derived, recomputable)
 ```
 
 **Napkin math.** Extraction is confined to the cached RD-relevant subset (§5), not the 37M corpus — order ~100k papers —
@@ -430,33 +433,41 @@ variant anchor as a CURIE (`HGVS:NM_000525.4:c.602G>A`, or `dbSNP:rs104894157`) 
 is what "grounding is an overlay, not a gate" (§4.2) buys: `u17`/`u41` stay queryable as free-form facts even before any
 IRI resolves, and improving the ontology never disturbs the extracted assertions.
 
-#### Source anchors — offsets, never quotes
+#### Source anchors — the quote is durable, offsets are a cache
 
-A unit's `cite` records **`(doc_id, version, spans)`** — the paper id, the exact markdown version it was extracted from,
-and one or more **character-offset ranges** into that version. It stores **no source text**.
+A unit's `cite` records **`(doc_id, document_id, quote, exact)`** — the paper id, the **rendering hash** the quote was
+made against (`document_id` is a content hash, not a converter-named version), the **verbatim supporting quote**, and
+whether the alignment that produced it was exact. The quote is the durable, boundary-side anchor; offsets are **not** in
+the cite — they are a recomputable cache ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)).
 
-- **Producing the offsets.** The extractor emits a verbatim supporting quote (models quote far better than they count
-  characters); an alignment step locates that quote in the pinned markdown — exact match first, fuzzy/edit-distance on
-  near-misses, with an explicit *unlocatable* outcome — and records the resulting span(s). The quote is then
-  **discarded**: only the offsets persist. So a shared unit is an expression-stripped assertion plus numeric pointers —
-  it reproduces nothing copyrightable (§4.3). **Multiple spans** cover a fact assembled from non-contiguous sentences
-  (e.g. a methods sentence plus a results sentence).
-- **The markdown is the coordinate system, so it is immutable and pinned.** A version artifact is never overwritten
-  (§2.1); the **markdown-converter version is part of the version's identity** (re-converting mints a new version); a
-  version with live units is never garbage-collected. Offsets are codepoint indices over a frozen Unicode normal form.
-- **Version lift-over — two kinds.** *Mechanical* (same text, new markdown from a better converter): slice the original
-  span by its offsets and relocate it in the new version — deterministic, the old version is the bridge, the original
-  anchor retained. *Semantic* (a published version superseding a preprint, where peer review may reword, add, or drop):
-  the prior version's KUs **seed** the new version's extraction (the two-stage shape of §4.5), partitioning its output
-  into **new** assertions; **lifted** facts — a superseding unit (`supersedes`) anchored to the new version, **only if
-  its supporting span actually relocates there** (an unconfirmable lift is not lifted); and a **silent residual** — a
-  prior fact the new version doesn't carry persists, prior-version-cited (dropped-in-revision is indistinguishable from
-  extractor-miss). A contradiction surfaces as an ordinary *negative* unit on the new version. Either kind runs on the
-  gated plane (it needs the text) and never edits the original unit's assertion.
-- **Resolution is gated.** Turning spans back into text means slicing the gated markdown, so grounding is visible
-  exactly where the reader is already entitled to that paper (§3) — OA to everyone, licensed/captured to entitled
-  readers only. An unentitled consumer of the shared substrate gets an assertion verifiable by us but not by them; that
-  is intended.
+- **Why the quote, not offsets.** Offsets are valid only against one exact byte sequence, so re-rendering (a better
+  converter, a re-fetch) invalidates them; the quote survives, because it re-aligns into any rendering that still
+  contains the text. Models also quote far better than they count characters. **Multiple spans** (when resolved) cover a
+  fact assembled from non-contiguous sentences.
+- **Resolved-offsets cache.** A derived `(cite, rendering_hash) -> spans` table with status
+  `exact | fuzzy | unlocatable`. Fast path: if the rendering hash still matches, verify the quote at the cached span
+  (O(quote)); else re-align (exact -> fuzzy -> unlocatable). Any offset hint lives here, never in the write-once cite.
+- **Converter is not part of version identity.** Re-converting a source adds a rendering (a new content-addressed
+  `renderings[hash]` entry), not a version; old rendering hashes keep resolving old cites. The markdown a quote was made
+  against is immutable because it is content-addressed, not because a converter is pinned into an identity.
+- **Export strips the quote.** A shared cite is `(doc_id, document_id, ref_id)`; the quote stays in the KU record and is
+  stripped on export, so the share reproduces nothing copyrightable (§4.3).
+- **Two mint paths.** Offline KU extraction aligns its quote against the body markdown it read. Online agent cite-back:
+  the read tool serves markdown bundled with its rendering hash and **verifies the agent's quote verbatim** against the
+  served bytes (rejecting hallucinations), mints the durable anchor, and seeds the offsets cache for free (the rendering
+  is known and current).
+- **Lift-over across renderings and works.** *Re-render* (same text, a better converter, e.g. `llm-ocr` over `docling`):
+  the quote re-aligns into the new rendering via the offsets cache — `unlocatable` is the explicit "the source changed
+  under me" signal. *Cross-work supersession* (a published paper superseding a preprint — a **distinct work**, distinct
+  `doc_id`, linked by an equivalence edge, not a version): the prior work's KUs **seed** the new work's extraction (the
+  two-stage shape of §4.5), partitioning into **new** assertions; **lifted** facts (a `supersedes` unit anchored to the
+  new work, only if its quote actually re-aligns there); and a **silent residual** — a prior fact the new work doesn't
+  carry persists, cited against the prior work. A contradiction surfaces as an ordinary *negative* unit. Both run on the
+  gated plane and never edit the original unit.
+- **Resolution is gated.** Turning a quote/spans back into rendered text means slicing the gated markdown, so grounding
+  is visible exactly where the reader is already entitled to that paper (§3) — OA to everyone, licensed/captured to
+  entitled readers only. An unentitled consumer of the shared substrate gets an assertion verifiable by us but not by
+  them; that is intended.
 
 ### 4.3 Knowledge-unit substrate shares; sources do not
 
