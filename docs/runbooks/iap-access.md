@@ -29,9 +29,9 @@ the principal).
 
 ## OAuth consent (one-time, per project)
 
-IAP uses a **Google-managed OAuth client** — no client secret is created or stored (`deployment.md` §4). The project
-still needs an OAuth consent screen (brand) configured once; confirm with central infra whether it exists for the
-project or needs creating.
+IAP uses a **Google-managed OAuth client** — no client secret is created or stored (`spike-infrastructure.md` §4). The
+project still needs an OAuth consent screen (brand) configured once; confirm with central infra whether it exists for
+the project or needs creating.
 
 ## External members
 

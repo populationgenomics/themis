@@ -1,7 +1,7 @@
 # Design: Spike infrastructure and deployment
 
-**Status:** design landed; walking-skeleton infra implemented (`infra/` + runbooks); Cloud SQL/GCS/audit/sandbox pending
-**Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
+**Status:** design landed; walking-skeleton infra implemented (`infra/` + runbooks); audit/sandbox pending **Parent
+epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
 [`deployment.md`](deployment.md) decides *how* the infrastructure is managed (IaC, deploy auth, state, secrets); this
 doc decides *what* the Spike needs and the GCP-setup choices around it. The agent runtime/sandbox choices here track
 [`agent-runtime.md`](agent-runtime.md).

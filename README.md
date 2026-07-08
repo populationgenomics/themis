@@ -44,7 +44,7 @@ uv lock
 Without uv, install the same packages with pip and drop the `uv run` prefix:
 
 ```
-pip install pytest pyyaml ruff pyright types-PyYAML
+pip install pytest pyyaml check-jsonschema pydantic ruff pyright types-PyYAML
 ```
 
 Optional: install [pre-commit](https://pre-commit.com/) and enable hooks to run lint/format checks on every commit:
