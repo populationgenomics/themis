@@ -18,17 +18,42 @@ requires-python = ">=3.13"
 # past 7 days and Dependabot re-bumps it.
 [tool.uv]
 exclude-newer = "7 days"
+# litfetch, litdown, and pubmed-proto are CPG-owned and first-party: we cut the
+# releases, so the supply-chain window the global gate guards against (a compromised
+# third-party upload) doesn't apply. `0 days` (relative, prior-to-now) exempts them
+# so a just-cut release is resolvable. Removing the age cushion is paired with an
+# exact pin on each (dependency-groups below): with no cushion, the pin is what
+# stops a re-lock from silently adopting a new — possibly account-compromised —
+# release; a bump is then an explicit, reviewed pyproject edit. Keep this list and
+# those pins in lock-step: anything exempted here must be exact-pinned.
+exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days" }
 
 [dependency-groups]
 screen = ["pyyaml"]
+# litcache runtime (litcache/), one clause per dep: google-cloud-storage — GCS
+# Storage backend; psycopg[binary] — Cloud SQL crosswalk mint; docling-core —
+# non-OA Docling-json→markdown; pypdfium2 — pdf char-addressability probe;
+# litfetch — OA fetch + raw licence; litdown — JATS/Elsevier XML→markdown from
+# bytes (the OA branch calls it directly on the fetched bytes, added in 0.4);
+# pubmed_proto — bibliographic metadata.json. The three are exact-pinned because
+# they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
+# explicit choice, not a re-lock side effect. Runtime group, not a CLI.
+litcache = ["google-cloud-storage", "psycopg[binary]", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0"]
 # Schema codegen: datamodel-code-generator turns the normalized JSON Schema into
 # Pydantic v2 models (tools/schema/regen.py). A CLI, never imported.
 codegen = ["datamodel-code-generator"]
+# Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
+# Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
+# gcsio requires (co-resolves with litcache in the worker).
+dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
 # check-jsonschema: the metaschema validator the schema tests shell out to
 # (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
 # import-check the generated models in schema/tests (the codegen group provides
-# the generator; the runtime import needs pydantic itself).
-test = ["pytest", "pyyaml", "check-jsonschema", "pydantic"]
+# the generator; the runtime import needs pydantic itself). testcontainers: the
+# crosswalk tests mint against a throwaway Postgres (never a mock — the
+# UNIQUE-in-one-txn semantics are the thing under test), gated on a reachable
+# Docker daemon.
+test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -37,8 +62,9 @@ infra = ["pulumi", "pulumi-gcp"]
 # what runs locally. pydantic: pyright (now a hook) type-checks schema/tests (the
 # generated models and their tests) which import pydantic; absent it, pyright
 # can't resolve pydantic.* and fails on symbols the env (which has pydantic)
-# resolves fine.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "pydantic", { include-group = "infra" }]
+# resolves fine. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
+# pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
@@ -55,7 +81,7 @@ target-version = "py313"
 # reformat would fight the freshness gate. Real-domain model dirs join this list
 # when they land (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so
 # this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["schema/tests/pydantic"]
+extend-exclude = ["schema/tests/pydantic", "litcache/models/litcache.py"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -121,6 +147,6 @@ max-locals = 25
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["tools", "tests", "schema/tests", "infra"]
+include = ["tools", "tests", "schema/tests", "infra", "litcache"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"
