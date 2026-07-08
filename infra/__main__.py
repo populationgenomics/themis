@@ -58,11 +58,18 @@ database = sql.CloudSqlDatabase(
 # from both runtime SAs. deploy.yml runs the migrations as it, so every table is
 # owned by an identity neither runtime SA can impersonate; a table owner bypasses
 # GRANTs, so the runtime SAs get only the table-level GRANTs the migrations apply.
-migrator_sql_user = sql.grant_iam_service_account(
+migrator_email = deploy_iam.deploy_sa_email(project)
+migrator_sql_user = sql.iam_db_user(
     'themis-migrator',
     project=project,
     instance=database.instance,
-    service_account_email=deploy_iam.deploy_sa_email(project),
+    service_account_email=migrator_email,
+    opts=pulumi.ResourceOptions(depends_on=[database]),
+)
+sql.grant_cloudsql_connect(
+    'themis-migrator',
+    project=project,
+    service_account_email=migrator_email,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 site = web.WebService(
@@ -90,9 +97,10 @@ semantic_scholar = secrets.semantic_scholar_secret(
 ingestion = ingest.IngestionRuntime(
     'themis',
     project=project,
+    sql_instance=database.instance,
     fulltext_bucket=fulltext.name,
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
-    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, semantic_scholar]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
 )
 
 pulumi.export('image_registry', base.image_prefix)
@@ -110,3 +118,5 @@ pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.n
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
+# The ingestion SA's DB login — the identity the Dataflow worker mints as.
+pulumi.export('ingest_sql_user', ingestion.sql_user.name)

@@ -1,10 +1,11 @@
 """Cloud SQL (Postgres): the per-environment instance and the IAM DB-user helper.
 
 IAM database authentication only. The runtime SAs' read/write split is enforced
-by table GRANTs in the migrations, not here. `grant_iam_service_account` is called
-from each service module, not this constructor — the instance can't depend on the
-services' SAs (they need its connection name), so attaching the user here would
-cycle. See `docs/plans/managed-agents-wiring.md` §8.
+by table GRANTs in the migrations, not here. `iam_db_user` (the login) and
+`grant_cloudsql_connect` (the project roles to reach the instance) are called from
+each service module, not this constructor — the instance can't depend on the
+services' SAs (they need its connection name), so attaching from here would cycle.
+See `docs/plans/managed-agents-wiring.md` §8.
 """
 
 from __future__ import annotations
@@ -34,8 +35,8 @@ class CloudSqlDatabase(pulumi.ComponentResource):
     """A Postgres instance with IAM auth, daily backups, and 7-day PITR.
 
     Attributes:
-        instance: The `DatabaseInstance`; passed to `grant_iam_service_account`
-            when a service attaches its SA as a DB user.
+        instance: The `DatabaseInstance`; passed to `iam_db_user`
+            when a service creates its SA's DB login.
         instance_connection_name: The `project:region:instance` string the Cloud
             SQL connector dials (set as a container env var on each service).
         instance_name: The bare instance name.
@@ -134,7 +135,7 @@ class CloudSqlDatabase(pulumi.ComponentResource):
         )
 
 
-def grant_iam_service_account(
+def iam_db_user(
     name: str,
     *,
     project: str,
@@ -142,33 +143,33 @@ def grant_iam_service_account(
     service_account_email: pulumi.Input[str],
     opts: pulumi.ResourceOptions | None = None,
 ) -> gcp.sql.User:
-    """Attach a service account as an IAM database user on `instance`.
+    """Create the Cloud SQL IAM database user a service account logs in as.
 
-    Two layers: `sql.User(type=CLOUD_IAM_SERVICE_ACCOUNT)` creates the Postgres
-    role the GCP SA logs in as (without it the SA has no DB principal); the two
-    project IAM roles do a different job — `cloudsql.client` opens the connection
-    (Admin-API ephemeral cert), `cloudsql.instanceUser` authenticates as the IAM DB
-    user. Table privileges come from the migrations, not here. "The connector" is
-    the Cloud SQL Language Connector (`@google-cloud/cloud-sql-connector` for the
-    BFF, `google-cloud-sql-connector` for the store server).
+    A `sql.User(type=CLOUD_IAM_SERVICE_ACCOUNT)` is the Postgres role the GCP SA
+    authenticates as (without it the SA has no DB principal). Its login name is the
+    SA email with the `.gserviceaccount.com` suffix removed (the Postgres IAM SA
+    convention). This does **not** grant the project roles a connection needs —
+    call `grant_cloudsql_connect` for that; a login and the roles to reach it are
+    separate concerns (a user can exist before, or be reused across, grants).
+    Table privileges come from the migrations, not here.
 
-    Called from the consuming service module so the user + grants nest under that
-    service; pass its `child` options as `opts`.
+    Called from the consuming service module so the user nests under that service;
+    the instance can't depend on the services' SAs (they need its connection name),
+    so the user attaches from the caller. Pass its `child` options as `opts`.
 
     Args:
         name: Resource-name prefix (the consuming service's stack name + role,
             e.g. `themis-web`).
-        project: The GCP project holding the instance and the IAM policy.
+        project: The GCP project holding the instance.
         instance: The Cloud SQL instance to create the login on.
         service_account_email: The SA's email; the DB user name is this with the
-            `.gserviceaccount.com` suffix removed (Postgres IAM SA convention),
-            and the project role bindings' member is `serviceAccount:<email>`.
+            `.gserviceaccount.com` suffix removed.
         opts: Resource options (parent/dependency wiring from the caller).
 
     Returns:
         The `sql.User` login for this SA.
     """
-    user = gcp.sql.User(
+    return gcp.sql.User(
         f'{name}-sql-user',
         project=project,
         instance=instance.name,
@@ -178,6 +179,30 @@ def grant_iam_service_account(
         type='CLOUD_IAM_SERVICE_ACCOUNT',
         opts=opts,
     )
+
+
+def grant_cloudsql_connect(
+    name: str,
+    *,
+    project: str,
+    service_account_email: pulumi.Input[str],
+    opts: pulumi.ResourceOptions | None = None,
+) -> None:
+    """Grant a service account the project roles to reach the instance.
+
+    `cloudsql.client` opens the connection (Admin-API ephemeral cert),
+    `cloudsql.instanceUser` authenticates as the IAM DB user. Neither has an
+    instance-scoped IAM form, so both bind at the project. Independent of the DB
+    user itself (`iam_db_user`): the same SA needs both, but the login and these
+    connect roles are granted separately so either can vary — e.g. two SAs can
+    reach the instance without both owning a DB user.
+
+    Args:
+        name: Resource-name prefix (the consuming service's stack name + role).
+        project: The GCP project holding the IAM policy.
+        service_account_email: The SA to grant; the member is `serviceAccount:<email>`.
+        opts: Resource options (parent/dependency wiring from the caller).
+    """
     member = pulumi.Output.concat('serviceAccount:', service_account_email)
     for role_slug, role in (
         ('cloudsql-client', _CLOUD_SQL_CLIENT_ROLE),
@@ -190,4 +215,3 @@ def grant_iam_service_account(
             member=member,
             opts=opts,
         )
-    return user
