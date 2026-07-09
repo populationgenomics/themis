@@ -48,7 +48,7 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | svac `cpg-themis-ci-review` (Path A)                      | `svac_01KJXbuSvwDHvT8PFQkU7nef`        |
 | rule `cpg-themis-ci-review-rule` (Path A)                 | `fdrl_01PkjWwWtFLfGFoRXboKaLjR`        |
 | rule `cpg-themis-ci-review-main-rule` (Path C, same svac) | `fdrl_01KdBLWjujcYsH9s9j1K63Wb`        |
-| svac `cpg-themis-dev-web` (Path B)                        | `svac_016aD6ph1LAeJQKpB4tJjjks`        |
+| svac `cpg-themis-dev-web` (Path B)                        | `svac_01ELDvWbrGpDNhcDdAaYniGJ`        |
 | rule `cpg-themis-dev-web-rule` (Path B)                   | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P`        |
 
 These rows are the **dev** set. CI (the review and doc-garden) is repo-scoped and only ever runs against dev, so prod
@@ -103,7 +103,7 @@ For the web app (`themis-web`), the Managed-Agents control-plane client. Its ide
 the BFF does.
 
 1. **Issuer** (once): `gcp`, issuer URL `https://accounts.google.com`, JWKS = discovery (covers all GCP surfaces).
-1. **Service account**: `cpg-themis-dev-web` (`svac_016aD6ph1LAeJQKpB4tJjjks`); add to the `cpg-themis-dev` workspace.
+1. **Service account**: `cpg-themis-dev-web` (`svac_01ELDvWbrGpDNhcDdAaYniGJ`); add to the `cpg-themis-dev` workspace.
 1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`web` module), so read it from the stack output
    (or `gcloud`):
    ```sh
@@ -122,7 +122,7 @@ the BFF does.
          "email": "themis-web@cpg-themis-dev.iam.gserviceaccount.com"
        }
      },
-     "target": { "type": "service_account", "service_account_id": "svac_016aD6ph1LAeJQKpB4tJjjks" },
+     "target": { "type": "service_account", "service_account_id": "svac_01ELDvWbrGpDNhcDdAaYniGJ" },
      "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
      "oauth_scope": "workspace:developer",
      "token_lifetime_seconds": 600
