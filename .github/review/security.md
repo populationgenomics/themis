@@ -14,7 +14,11 @@ offending content briefly, and suggest a concrete remediation.
   data.
 - **Broken authentication / authorisation.** New endpoints, RPCs, or cloud functions that don't authenticate their
   caller, or authenticate but don't authorise (anyone-authenticated reading a resource that should be project-scoped).
-  Session/token handling mistakes.
+  Session/token handling mistakes. In the data plane specifically, every `themis/services/*` gRPC servicer method must
+  authorise its request by resolving the session (`require_session`) before touching scoped state — flag a method that
+  reads or writes per-session/per-analysis data without it. A method that genuinely needs no session or project is
+  usually not accessing scoped information (the check is self-reinforcing), so call out any exception explicitly rather
+  than assuming it.
 - **Tenant / user / group isolation.** This is a multi-tenant system; per-user (and per-group) data isolation is
   load-bearing. Flag: endpoints that scope to "authenticated user" but don't further scope to "*this user's* resources"
   (e.g. a report-fetch endpoint that returns any report given a known ID); SQL/queries that cross tenant boundaries
