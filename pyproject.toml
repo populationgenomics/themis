@@ -39,9 +39,10 @@ screen = ["pyyaml"]
 # they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
 litcache = ["google-cloud-storage", "psycopg[binary]", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0"]
-# Schema codegen: datamodel-code-generator turns the normalized JSON Schema into
-# Pydantic v2 models (tools/schema/regen.py). A CLI, never imported.
-codegen = ["datamodel-code-generator"]
+# Schema codegen (tools/schema/regen.py): datamodel-code-generator turns the
+# normalized JSON Schema into Pydantic v2 models; grpcio-tools' protoc turns a
+# real domain's .proto into the committed themis/rpc/ gRPC stubs. Both are CLIs.
+codegen = ["datamodel-code-generator", "grpcio-tools"]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
@@ -76,12 +77,13 @@ pythonpath = ["."]
 line-length = 120
 target-version = "py313"
 
-# Generated Pydantic models (tools/schema/regen.py): committed, never hand-edited,
-# so linting them is noise (e.g. the datamodel-codegen header trips ERA001) and a
-# reformat would fight the freshness gate. Real-domain model dirs join this list
-# when they land (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so
-# this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["schema/tests/pydantic", "litcache/models/litcache.py"]
+# Generated code (tools/schema/regen.py): committed, never hand-edited, so linting
+# it is noise (the datamodel-codegen header trips ERA001; protoc output is not
+# lint-clean) and a reformat would fight the freshness gate. `themis/rpc` is the
+# generated proto/gRPC stubs. Real-domain model dirs join this list when they land
+# (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so this holds even
+# when pre-commit hands ruff explicit paths.
+extend-exclude = ["schema/tests/pydantic", "litcache/models/litcache.py", "themis/rpc"]
 
 [tool.ruff.format]
 quote-style = "single"

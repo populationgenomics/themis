@@ -79,9 +79,9 @@ The server subclasses `<domain>_pb2_grpc.<Service>Servicer` and implements each 
 message type is a static (pyright) error, and server and caller exchange the *same* generated message classes — so the
 runtime API cannot drift from the contract, and there is no separate contract test — a generated servicer is the real
 forced interface, not a stand-in for one. Backward-compatibility is the separate `buf breaking` gate:
-[`tools/schema/compat.py`](../../tools/schema/compat.py) diffs each committed `.proto` against its base-branch baseline
-through a pinned `buf` Docker image — advisory (a sign, not a merge cop), the same posture as the at-rest `chuckd` gate.
-See [`typespec.md`](typespec.md), "Schema evolution".
+[`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) diffs each committed `.proto` against its base-branch
+baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop), the same posture as the at-rest
+`chuckd` gate. See [`typespec.md`](typespec.md), "Schema evolution".
 
 ## Adapters: a port protocol + pluggable backends
 

@@ -1,9 +1,10 @@
-"""Backward-compatibility gate for the committed JSON Schema artifacts (S0.6).
+"""Backward-compatibility gate for the committed JSON Schema bundles (S0.6).
 
-Diffs each committed ``jsonschema/<domain>.schema.json`` against its baseline
-with ``chuckd`` in ``BACKWARD`` mode and fails on any incompatible delta —
-additive-only evolution, no override (``docs/design/typespec.md`` "Schema
-evolution").
+Diffs each committed ``jsonschema/<domain>.schema.json`` against its baseline with
+``chuckd`` in ``BACKWARD`` mode, failing on any incompatible delta — additive-only
+evolution, no override (``docs/design/typespec.md`` "Schema evolution"). The
+sibling ``tools.schema.buf_compat`` gates the ``.proto`` wire contracts the same
+way with ``buf breaking``.
 
 **Baseline.** The design says "last released version"; there is no release
 process yet, so the Stage-0 stand-in is the schema on the PR base branch (``main``
@@ -28,7 +29,7 @@ other finding fails hard.
 ``chuckd`` is a JVM tool shipped only as a Docker image; this shells out to a
 pinned ``docker run``. Runs in CI (Docker present on the runner); locally needs
 Docker and a baseline ref:
-``uv run python -m tools.schema.compat --baseline-ref main``.
+``uv run python -m tools.schema.chuckd_compat --baseline-ref main``.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ import subprocess
 import sys
 import tempfile
 from typing import NamedTuple
+
+from tools.schema import baseline
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Two DISTINCT schema sets (not one emitted twice): the synthetic feature-coverage
@@ -175,42 +178,6 @@ def diff_bundles(new_bundle: dict, baseline_bundle: dict) -> tuple[list[Finding]
     return hard, soft
 
 
-def _require_ref(ref: str) -> None:
-    """Fail loud unless ``ref`` resolves to a commit.
-
-    Separates a genuinely-new domain (path absent at a *valid* baseline, a correct
-    skip in ``_git_show``) from an unresolvable baseline ref (typo, unfetched
-    branch, detached state) — an operational error that must not degrade to a
-    silent green pass.
-    """
-    result = subprocess.run(  # noqa: S603
-        ['git', 'rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}'],  # noqa: S607
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise SystemExit(f'baseline ref {ref!r} does not resolve to a commit (unfetched branch, typo, or detached?)')
-
-
-def _git_show(ref: str, repo_rel_path: str) -> str | None:
-    """Return the file's content at ``<ref>:<path>``, or ``None`` if absent there.
-
-    Assumes ``ref`` is already known to resolve (see ``_require_ref``), so a
-    non-zero exit means the path doesn't exist at that ref — a brand-new domain
-    with nothing to be incompatible with.
-    """
-    result = subprocess.run(  # noqa: S603
-        ['git', 'show', f'{ref}:{repo_rel_path}'],  # noqa: S607
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.stdout if result.returncode == 0 else None
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -223,7 +190,7 @@ def main() -> int:
     if shutil.which('docker') is None:
         raise SystemExit('docker not found; chuckd is shipped only as a Docker image')
 
-    _require_ref(args.baseline_ref)
+    baseline.require_ref(args.baseline_ref)
 
     schemas = sorted(path for directory in _JSONSCHEMA_DIRS for path in directory.glob('*.schema.json'))
     if not schemas:
@@ -232,7 +199,7 @@ def main() -> int:
     hard_total = 0
     for path in schemas:
         repo_rel = str(path.relative_to(_REPO_ROOT))
-        baseline_text = _git_show(args.baseline_ref, repo_rel)
+        baseline_text = baseline.show_at_ref(args.baseline_ref, repo_rel)
         if baseline_text is None:
             print(f'compat: {path.name}: not present at {args.baseline_ref}; no baseline, skipping')
             continue

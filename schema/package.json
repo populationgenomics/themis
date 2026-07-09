@@ -2,7 +2,7 @@
   "name": "themis-schema",
   "version": "0.0.0",
   "private": true,
-  "description": "TypeSpec schema sources and the emitters that generate JSON Schema and Zod from them.",
+  "description": "TypeSpec schema sources and the emitters that generate proto, JSON Schema, Pydantic, and Zod from them.",
   "type": "module",
   "scripts": {
     "compile": "tsp compile",
@@ -11,6 +11,7 @@
   "dependencies": {
     "@typespec/compiler": "1.13.0",
     "@typespec/json-schema": "1.13.0",
+    "@typespec/protobuf": "0.83.0",
     "typespec-zod": "0.0.0-68"
   },
   "devDependencies": {

@@ -40,4 +40,4 @@ def docker_daemon() -> None:
     tests that request it, and only when they actually run.
     """
     if not _docker_is_responsive():
-        pytest.skip('chuckd needs a reachable Docker daemon')
+        pytest.skip('this test needs a reachable Docker daemon')

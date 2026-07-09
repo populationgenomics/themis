@@ -292,7 +292,7 @@ reserved-field-id bookkeeping (JSON fields aren't positional) — you just delet
 is operational, since the closed at-rest schema rejects any lingering artifact that still carries the removed field, so
 removal is safe only once none remain.
 
-- **CI compat gate** (`tools/schema/compat.py` + `schema-compat.yml`, S0.6). Each change to a committed
+- **CI compat gate** (`tools/schema/chuckd_compat.py` + `schema-compat.yml`, S0.6). Each change to a committed
   `jsonschema/<domain>.schema.json` is checked against its baseline with **`chuckd`** (Confluent's JSON Schema
   compatibility rules) in **`BACKWARD`** mode, and **fails (red) on any incompatible delta — no in-tool override;
   clearing a red is the deliberate out-of-band merge above, not a flag.** One tool covers both structural breaks *and*
@@ -302,11 +302,11 @@ removal is safe only once none remain.
   - **Baseline** is the schema on the PR base branch (`HEAD^` on a push to main) — the Stage-0 stand-in for "last
     released version", there being no release/tag process; the released line is `main` under additive-only evolution.
   - **Diffed per-type, not as the bundle.** `chuckd` diffs from a schema's *root*, and the bundle's root is a `$defs`
-    container that references nothing — diffed as-is it compares two empty roots and passes every change. So `compat.py`
-    promotes each `$def` to a root (its body + an absolute `$id` + the whole `$defs` retained so `#/$defs` refs resolve)
-    and diffs each changed type on its own (appendix). A type present in the baseline but gone from the new bundle is a
-    removal/rename — invisible to `chuckd` (it diffs per surviving type), so `compat.py` flags it directly as a hard
-    finding.
+    container that references nothing — diffed as-is it compares two empty roots and passes every change. So
+    `chuckd_compat.py` promotes each `$def` to a root (its body + an absolute `$id` + the whole `$defs` retained so
+    `#/$defs` refs resolve) and diffs each changed type on its own (appendix). A type present in the baseline but gone
+    from the new bundle is a removal/rename — invisible to `chuckd` (it diffs per surviving type), so `chuckd_compat.py`
+    flags it directly as a hard finding.
   - **Content model sets the verdict on adding a field** (validated against `chuckd`, appendix): **at-rest closed**
     (`additionalProperties:false`) — add-optional is clean, removal and narrowing fail, and an unknown field fails loud
     as drift; **wire open** — a reader tolerates added fields, so `chuckd`'s `PROPERTY_ADDED_TO_OPEN_CONTENT_MODEL` on
@@ -346,10 +346,11 @@ appendix).
 - **Regen is a `tools/` Python orchestrator run as `uv run python -m tools.<name>`** — the repo has no task runner and
   this stays in the uv/Python ecosystem. It runs `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON
   Schema → Pydantic, and reorders the Zod (see appendix). CI runs it and checks for no diff.
-- **The compat gate is a separate CI step** (`schema-compat.yml`): a Python orchestrator (`tools/schema/compat.py`)
-  diffs each committed `jsonschema/<domain>.schema.json` against its baseline through a pinned `chuckd` Docker image
-  (per-type, see Schema evolution), failing hard on any incompatible delta. `chuckd` is JVM/Docker-only, so the
-  orchestrator shells out to `docker run`; the pure logic is unit-tested without Docker.
+- **The compat gate is a separate CI workflow** (`schema-compat.yml`), split into two independent jobs that fail
+  separately: `chuckd` (`tools/schema/chuckd_compat.py`) diffs each committed `jsonschema/<domain>.schema.json` against
+  its baseline per-type (see Schema evolution), and `buf` (`tools/schema/buf_compat.py`) diffs each committed `.proto`
+  with `buf breaking` (see Wire and RPC). Both shell out to a pinned Docker image and fail hard on any incompatible
+  delta; the pure logic is unit-tested without Docker.
 
 ## Staged adoption
 
