@@ -10,8 +10,8 @@ One source of truth for data shapes, authored in **TypeSpec** (`.tsp`), generati
 definitions kept in sync by hand.
 
 TypeSpec over hand-authored JSON Schema: terser and readable; the compiler errors when a construct an enabled emitter
-cannot represent, so it *enforces* the translatable subset rather than leaving it to review; one source extends to
-OpenAPI/protobuf later without re-modelling.
+cannot represent, so it *enforces* the translatable subset rather than leaving it to review; one source extends to the
+protobuf wire emitter without re-modelling.
 
 ## Usage
 
@@ -50,15 +50,15 @@ build or run time — the property the generated-code-is-committed policy (Code 
 ## At-rest vs on-the-wire
 
 Two classes of serialized data. Both evolve **additively only** — breaking changes are ruled out (see Schema evolution)
-— and differ only in their content model.
+— and differ in kind: at-rest is closed JSON (validated by JSON Schema), the wire is proto.
 
 - **At-rest (durable).** litcache GCS artifacts — `manifest.json`, the write-once `knowledge_units.jsonl`, crosswalk
   objects. **JSON by design** (not proto): readable, diffable, and validated by the same generated JSON Schema the
   compat gate diffs. Schemas are **closed** content models (`additionalProperties:false`): the current schema reads
   every artifact ever written, additive changes stay compatible, and an unknown field fails loud as drift.
 - **On-the-wire (ephemeral).** RPC messages between themis components. Components do not roll out atomically, so several
-  schema generations are in flight during any rolling deploy; additive-only evolution plus tolerant readers keeps that
-  skew safe. Schemas are **open** content models so a reader ignores fields a newer producer adds. Transport undecided.
+  message generations are in flight during any rolling deploy; additive-only evolution plus proto's tolerant readers
+  (unknown fields ignored) keeps that skew safe. The wire transport is gRPC (see Wire and RPC).
 
 ## Authoring and layout
 
@@ -320,27 +320,22 @@ artifact, or dispatching on version.
 
 ## Wire and RPC
 
-Components don't roll out atomically, so a rolling deploy always has several schema generations in flight. Additive-only
-evolution plus tolerant readers makes that skew safe; strict lockstep isn't a real property and isn't required.
+The wire transport is **gRPC** (HTTP/2, binary protobuf). Shapes are authored once in TypeSpec and emitted to `.proto`
+with `@typespec/protobuf`; [`services.md`](services.md) is the service pattern built on it (the servicer base, the
+`themis.rpc.<domain>` stubs, the deploy). Components don't roll out atomically, so a rolling deploy always has several
+message generations in flight; additive-only evolution plus proto's tolerant readers keeps that skew safe.
 
-- **Forward tolerance:** wire models are open, so an older consumer ignores fields a newer producer adds.
-- **Additive only:** new fields are optional; never remove, repurpose, or narrow a field (the same rule as at-rest — see
-  Schema evolution).
-- **Enforce in CI** with the same `chuckd` `BACKWARD` gate; on an open wire schema a field addition is downgraded to a
-  warning (see Schema evolution).
-- **No in-payload version:** the transport carries message-type identity (a schema id in the Confluent wire format, the
-  message type in gRPC/proto, route + content type in REST), so there is no `schema_version` on the wire.
+- **Forward tolerance:** a proto reader ignores fields a newer producer adds — no lockstep required.
+- **Additive only:** add a field with a fresh `@field` number; never renumber, remove, or repurpose one (retire with
+  `@reserve`). The same additive rule as at-rest (see Schema evolution).
+- **Enforce in CI** with `buf breaking` against the base-branch `.proto` (advisory, the same posture as the at-rest
+  `chuckd` gate) — it catches the field-number reuse/removal and type changes a JSON-Schema view cannot see.
+- **No in-payload version:** the message type identifies the shape on the wire, so there is no `schema_version` field.
 
-**Transport is undecided.** Shapes are defined once in TypeSpec regardless:
-
-- **REST/JSON:** add `@typespec/http` + `@typespec/openapi3` → OpenAPI → clients.
-- **gRPC:** add `@typespec/protobuf` → `.proto` + stubs.
-
-**Protobuf is deferred, not excluded.** No durable data uses proto (at-rest is JSON) and no transport is chosen, so
-proto is not a target today. If gRPC is adopted, add the protobuf emitter **scoped to the specific wire models**,
-authored to proto's constraints (string fields for hyphenated/dotted vocabularies; explicit `@field` numbers; literals
-dropped — appendix). The durable/shared schema never targets proto, so it keeps the richer enums and literals the kept
-targets use; adding proto later is local to the wire models.
+Proto is the **wire** target only. The durable/shared at-rest schema stays JSON (JSON Schema + Pydantic + Zod): proto's
+integer enums and absent literals would lose the richer vocabularies those targets carry. The wire models are authored
+to proto's constraints (string fields for hyphenated/dotted vocabularies; explicit `@field` numbers; no literals —
+appendix).
 
 ## Tooling
 
@@ -375,23 +370,21 @@ about exists is the point of this ordering.
 1. Add the hand-written load/dump facade + golden fixtures (a corpus of historical artifacts the current schema must
    still validate).
 1. Bring further domains under TypeSpec as they appear.
-1. Add a wire emitter (proto or OpenAPI) once the RPC transport is decided.
+1. The wire emitter is `@typespec/protobuf` (gRPC); services build on it (see [`services.md`](services.md)).
 
 ## Open questions
 
-- gRPC vs REST/JSON for RPC — defers the wire-emitter choice.
 - Generated-code review burden on the public mirror (diff volume/noise).
-- ~~`typespec-zod` maturity~~ — **resolved in S0.3**: the emitter (pinned `0.0.0-68`, internal name `efv2-zod-sketch`)
-  covers the corpus and emits faithful named schemas, but mis-orders declarations across files, so it needs the reorder
-  pass (appendix). It is a pre-release sketch; the fallback (JSON Schema + `json-schema-to-zod` + a dereference pass
-  that de-names every reused subschema) stays on the shelf if a fuller corpus surfaces emitter bugs the reorder pass
-  can't absorb.
+- Whether the pre-release `typespec-zod` emitter (pinned `0.0.0-68`, internal name `efv2-zod-sketch`) holds up as the
+  corpus grows: it covers the corpus and emits faithful named schemas but mis-orders declarations across files, so it
+  needs the reorder pass (appendix). The fallback (JSON Schema + `json-schema-to-zod` + a dereference pass that de-names
+  every reused subschema) stays on the shelf if a fuller corpus surfaces emitter bugs the reorder pass can't absorb.
 
 ## Appendix: emitter behaviour
 
 Validated end to end (TypeSpec 1.13 → `@typespec/json-schema` → JSON Schema → `datamodel-code-generator` → Pydantic v2;
 `typespec-zod` → Zod direct from `.tsp`; `@typespec/protobuf` → proto). Records the why behind the authoring rules and
-the proto deferral.
+the wire (proto) constraints.
 
 **Cross-target feature coverage:**
 
@@ -435,12 +428,13 @@ graph, and re-emits the declarations dependency-first — the Zod analogue of th
 transform over generated code. The reliable subset forbids recursion, so the graph is acyclic; a cycle (which Zod
 expresses only via `z.lazy`) fails loud.
 
-**Protobuf constraints (for the deferred wire-emitter path).** Proto enums are integer with a forced `0` member and
+**Protobuf constraints (the wire authoring rules).** Proto enums are integer with a forced `0` member and
 identifier-only names, so a string vocabulary with hyphens or dots (SPDX licences, access kinds) cannot be a proto enum
-— model it as a `string` field (set-validation then lives in code, which lockstep/compatible-evolution does not need on
-the wire). Proto has no `const`; a literal discriminant (e.g. a union tag) becomes a plain field validated in code.
-Every message property needs an explicit `@field(n)`. None of these block proto; they are why proto is kept off the
-shared/durable schema and added scoped to wire models only.
+— model it as a `string` field (set-validation then lives in code, which compatible-evolution does not need on the
+wire). Proto has no `const`; a literal discriminant (e.g. a union tag) becomes a plain field validated in code. Every
+message property needs an explicit `@field(n)`; a paramless op maps to `google.protobuf.Empty`; streaming is `@stream`.
+These are why proto is the **wire** target only, kept off the shared/durable at-rest schema (which keeps the richer
+enums and literals).
 
 **`@typespec/versioning`.** With the json-schema emitter it does not produce per-version schemas — it merges all
 `@added`/`@removed` annotations into one shape. Per-version emission is an OpenAPI-emitter feature. Not needed here:
