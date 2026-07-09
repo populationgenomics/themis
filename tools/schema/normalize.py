@@ -28,6 +28,9 @@ _DEFS = '$defs'
 _ID = '$id'
 _SCHEMA = '$schema'
 _JSON_SUFFIX = '.json'
+_PROPERTIES = 'properties'
+_ADDITIONAL = 'additionalProperties'
+_UNEVALUATED = 'unevaluatedProperties'
 
 
 def _rewrite_refs(node: _Json) -> None:
@@ -45,6 +48,69 @@ def _rewrite_refs(node: _Json) -> None:
     elif isinstance(node, list):
         for item in node:
             _rewrite_refs(item)
+
+
+def _rewrite_record_maps(node: _Json) -> None:
+    """Rewrite TypeSpec ``Record<T>`` maps to the ``additionalProperties`` form, in place.
+
+    The emitter writes ``Record<T>`` as ``{type: object, properties: {},
+    unevaluatedProperties: <T>}``. ``datamodel-code-generator`` does not honour
+    ``unevaluatedProperties`` (a 2020-12 keyword) and would emit an empty model;
+    with no fixed properties the map is equivalent to ``additionalProperties: <T>``,
+    which it renders as ``dict[str, T]``. Only rewrite when ``properties`` is
+    empty/absent, so a model carrying both fixed and unevaluated properties is left
+    untouched.
+    """
+    if isinstance(node, dict):
+        unevaluated = node.get(_UNEVALUATED)
+        if unevaluated is not None and not node.get(_PROPERTIES):
+            node[_ADDITIONAL] = unevaluated
+            node.pop(_UNEVALUATED, None)
+            node.pop(_PROPERTIES, None)
+        for value in node.values():
+            _rewrite_record_maps(value)
+    elif isinstance(node, list):
+        for item in node:
+            _rewrite_record_maps(item)
+
+
+def seal(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``schema`` with every object ``$def`` closed.
+
+    Sets ``additionalProperties: false`` on each ``$def`` that is an object type,
+    giving the at-rest closed content model (docs/design/typespec.md "At-rest vs
+    on-the-wire"): the current schema reads every artifact ever written, additive
+    changes stay compatible, and an unknown field fails loud as drift. Applied
+    only to at-rest domains; wire schemas stay open for forward-tolerant readers.
+
+    Union containers (an ``anyOf`` of variant ``$ref``s, no ``properties``) carry
+    no ``type: object`` and are left open — their variant models are the objects
+    that get sealed. A typed map (``Record<T>``, already carrying an
+    ``additionalProperties`` schema after ``normalize``) is left untouched —
+    sealing it to ``additionalProperties: false`` would reject every key.
+
+    Args:
+        schema: A normalized bundle (a ``$defs`` of types).
+
+    Returns:
+        A new dict with every object ``$def`` sealed.
+
+    Raises:
+        ValueError: If the schema has no ``$defs`` object.
+    """
+    defs = schema.get(_DEFS)
+    if not isinstance(defs, dict):
+        raise ValueError(f'schema has no {_DEFS} object; not a bundled TypeSpec emission')
+
+    result = copy.deepcopy(schema)
+    for subschema in result[_DEFS].values():
+        # Scalar 'object' is complete here: a $def for a model is always a plain
+        # object type. TypeSpec expresses nullability at reference sites (a
+        # property's schema), never on the $def itself, so the list form
+        # (type: ['object','null']) does not arise for a top-level $def.
+        if isinstance(subschema, dict) and subschema.get('type') == 'object' and _ADDITIONAL not in subschema:
+            subschema[_ADDITIONAL] = False
+    return result
 
 
 def normalize(schema: dict[str, Any]) -> dict[str, Any]:
@@ -75,4 +141,5 @@ def normalize(schema: dict[str, Any]) -> dict[str, Any]:
             subschema.pop(_SCHEMA, None)
 
     _rewrite_refs(result)
+    _rewrite_record_maps(result)
     return result

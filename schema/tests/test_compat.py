@@ -12,7 +12,6 @@ from __future__ import annotations
 import copy
 import json
 import pathlib
-import shutil
 
 import pytest
 
@@ -88,13 +87,13 @@ def test_classify_downgrades_only_open_content_model_addition() -> None:
     assert [f.error_type for f in soft] == [compat._OPEN_CONTENT_ADDED]
 
 
-# End-to-end: the real chuckd image. These encode the ADR's S0.6 acceptance
-# criteria directly, so they also prove the per-type extraction actually defeats
-# chuckd's root-only traversal of the $defs bundle.
-_docker = pytest.mark.skipif(shutil.which('docker') is None, reason='chuckd is shipped only as a Docker image')
+# End-to-end: the real chuckd image (via the `docker_daemon` fixture, which skips
+# when no daemon is reachable). These encode the ADR's S0.6 acceptance criteria
+# directly, so they also prove the per-type extraction actually defeats chuckd's
+# root-only traversal of the $defs bundle.
 
 
-@_docker
+@pytest.mark.usefixtures('docker_daemon')
 def test_enum_member_removal_is_a_hard_failure() -> None:
     baseline = _features_bundle()
     new = copy.deepcopy(baseline)
@@ -105,7 +104,7 @@ def test_enum_member_removal_is_a_hard_failure() -> None:
     assert soft == []
 
 
-@_docker
+@pytest.mark.usefixtures('docker_daemon')
 def test_optional_field_addition_is_tolerated_on_open_content_model() -> None:
     baseline = _features_bundle()
     new = copy.deepcopy(baseline)
@@ -116,7 +115,7 @@ def test_optional_field_addition_is_tolerated_on_open_content_model() -> None:
     assert [f.error_type for f in soft] == [compat._OPEN_CONTENT_ADDED]
 
 
-@_docker
+@pytest.mark.usefixtures('docker_daemon')
 def test_unchanged_bundle_has_no_findings() -> None:
     bundle = _features_bundle()
     hard, soft = compat.diff_bundles(copy.deepcopy(bundle), bundle)

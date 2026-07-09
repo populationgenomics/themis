@@ -75,3 +75,77 @@ def test_does_not_mutate_the_input() -> None:
     # The input still carries its pre-normalize form: per-$def $id and relative refs.
     assert bundle['$defs']['Widget']['$id'] == 'Widget.json'
     assert bundle['$defs']['Catalogue']['properties']['widgets']['items']['$ref'] == 'Widget.json'
+
+
+def test_rewrites_record_maps_to_additional_properties() -> None:
+    # @typespec/json-schema emits Record<T> as {type: object, properties: {},
+    # unevaluatedProperties: <T>}; datamodel-code-generator ignores
+    # unevaluatedProperties, so normalize rewrites it to additionalProperties.
+    bundle = {
+        '$schema': _DRAFT_2020_12,
+        '$id': 'demo.schema.json',
+        '$defs': {
+            'RecordWidget': {'type': 'object', 'properties': {}, 'unevaluatedProperties': {'$ref': 'Widget.json'}},
+            'Widget': {'type': 'object', 'properties': {'colour': {'type': 'string'}}},
+        },
+    }
+    rec = normalize.normalize(bundle)['$defs']['RecordWidget']
+    assert rec['additionalProperties'] == {'$ref': '#/$defs/Widget'}  # ref rewritten too
+    assert 'unevaluatedProperties' not in rec
+    assert 'properties' not in rec
+
+
+def test_rewrite_record_maps_leaves_mixed_properties_untouched() -> None:
+    # A $def carrying BOTH fixed properties and unevaluatedProperties is not a
+    # plain Record<T>; collapsing it to additionalProperties would drop the fixed
+    # fields, so normalize leaves it as-is (the inner $ref is still rewritten).
+    bundle = {
+        '$schema': _DRAFT_2020_12,
+        '$id': 'demo.schema.json',
+        '$defs': {
+            'Mixed': {
+                'type': 'object',
+                'properties': {'name': {'type': 'string'}},
+                'unevaluatedProperties': {'$ref': 'Widget.json'},
+            },
+            'Widget': {'type': 'object', 'properties': {'colour': {'type': 'string'}}},
+        },
+    }
+    mixed = normalize.normalize(bundle)['$defs']['Mixed']
+    assert 'additionalProperties' not in mixed  # not collapsed to a map
+    assert mixed['properties'] == {'name': {'type': 'string'}}  # fixed fields kept
+    assert mixed['unevaluatedProperties'] == {'$ref': '#/$defs/Widget'}  # kept; ref still rewritten
+
+
+def test_seal_closes_object_defs() -> None:
+    schema = {'$defs': {'Widget': {'type': 'object', 'properties': {'a': {'type': 'string'}}}}}
+    sealed = normalize.seal(schema)
+    assert sealed['$defs']['Widget']['additionalProperties'] is False
+
+
+def test_seal_leaves_a_typed_map_open() -> None:
+    # A Record<T> map (normalize already gave it an additionalProperties schema)
+    # must not be sealed to additionalProperties: false — that rejects every key.
+    schema = {'$defs': {'RecordWidget': {'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Widget'}}}}
+    sealed = normalize.seal(schema)
+    assert sealed['$defs']['RecordWidget']['additionalProperties'] == {'$ref': '#/$defs/Widget'}
+
+
+def test_seal_leaves_a_union_container_open() -> None:
+    # A named union is an anyOf of variant $refs with no type: object — sealing it
+    # to additionalProperties: false would reject every variant. Only the member
+    # models get sealed; the container stays open.
+    schema = {'$defs': {'Access': {'anyOf': [{'$ref': '#/$defs/FreeToRead'}, {'$ref': '#/$defs/Licensed'}]}}}
+    sealed = normalize.seal(schema)
+    assert 'additionalProperties' not in sealed['$defs']['Access']
+
+
+def test_seal_does_not_mutate_the_input() -> None:
+    schema = {'$defs': {'Widget': {'type': 'object', 'properties': {}}}}
+    normalize.seal(schema)
+    assert 'additionalProperties' not in schema['$defs']['Widget']
+
+
+def test_seal_raises_when_not_a_bundle() -> None:
+    with pytest.raises(ValueError, match=r'\$defs'):
+        normalize.seal({'$schema': _DRAFT_2020_12, 'type': 'string'})

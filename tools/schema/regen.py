@@ -1,7 +1,6 @@
 """Regenerate the committed code-generation artifacts from the TypeSpec sources.
 
-Discovers every domain (a directory holding a ``main.tsp`` entry point) and runs
-each through the pipeline:
+Runs each registered domain (see ``_DOMAINS``) through the pipeline:
 
 1. **compile** with ``@typespec/json-schema`` to one bundled 2020-12 file, all
    types under ``$defs``;
@@ -18,11 +17,15 @@ Zod is emitted straight from the ``.tsp``, not via the JSON Schema: it is
 frontend-wire-only and gains nothing from sharing the at-rest schema (see
 ``docs/design/typespec.md``).
 
-In Stage 0 the only sources are the synthetic feature-coverage corpus under
-``schema/tests/fixtures/``; their schemas land in ``schema/tests/jsonschema/``,
-their models in ``schema/tests/pydantic/``, and their Zod in
-``schema/tests/zod/``. Real domains (Stage 1+, e.g. ``schema/litcache/``) get
-added as further roots when they land.
+Domains are registered explicitly (``_DOMAINS``) because each carries its own
+committed-output locations and target set. The synthetic feature-coverage corpus
+(``schema/tests/fixtures/features/``) emits all three targets — it exists to
+verify every construct round-trips — and stays **open** (no consumer; wire-style).
+Real domains declare ``at_rest`` (seal the JSON Schema to a closed content model)
+and whether they emit Zod: an at-rest-only domain (litcache — GCS artifacts, no
+wire/frontend consumer) emits JSON Schema + Pydantic only; Zod is frontend-wire
+(docs/design/typespec.md "At-rest vs on-the-wire"), so it is skipped until a wire
+consumer exists.
 
 Run with ``uv run --group codegen python -m tools.schema.regen``. The TypeSpec
 toolchain under ``schema/`` must be installed with Bun (``bun install`` from
@@ -36,6 +39,7 @@ CI gates, not here.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import shutil
@@ -50,34 +54,63 @@ _SCHEMA_DIR = _REPO_ROOT / 'schema'
 _TSP_BIN = _SCHEMA_DIR / 'node_modules' / '.bin' / 'tsp'
 _TSP_CONFIG = _SCHEMA_DIR / 'tspconfig.yaml'
 
-# Stage-0 corpus: source domains and the matching committed artifacts. All sit
-# under schema/ so the toolchain's node_modules stays an ancestor of every
-# .tsp source (TypeSpec resolves emitters by walking up from the source file).
-_CORPUS_DIR = _SCHEMA_DIR / 'tests' / 'fixtures'
-_OUTPUT_DIR = _SCHEMA_DIR / 'tests' / 'jsonschema'
-_PYDANTIC_DIR = _SCHEMA_DIR / 'tests' / 'pydantic'
-_ZOD_DIR = _SCHEMA_DIR / 'tests' / 'zod'
-
 _JSON_SCHEMA_EMITTER = '@typespec/json-schema'
 _ZOD_EMITTER = 'typespec-zod'
 
 
-def _discover_domains() -> list[str]:
-    """Return the names of every domain directory holding a ``main.tsp``."""
-    domains = sorted(path.parent.name for path in _CORPUS_DIR.glob('*/main.tsp'))
-    if not domains:
-        raise SystemExit(f'no domains found under {_CORPUS_DIR} (expected at least one <domain>/main.tsp)')
-    return domains
+@dataclasses.dataclass(frozen=True)
+class Domain:
+    """A registered schema domain and the committed artifacts it emits.
+
+    Each domain sits under ``schema/`` so the toolchain's ``node_modules`` stays
+    an ancestor of its ``.tsp`` sources (TypeSpec resolves emitters by walking up
+    from the source file). Paths are absolute; outputs may live outside ``schema/``
+    (a real domain's models go with their consumer).
+
+    Attributes:
+        name: The domain name; the bundle is ``<name>.schema.json``.
+        main_tsp: The domain's ``main.tsp`` entry point.
+        schema_out: The committed normalized JSON Schema.
+        pydantic_out: The committed Pydantic v2 module.
+        zod_out: The committed Zod module, or ``None`` to skip Zod (an at-rest
+            domain with no wire consumer).
+        at_rest: Seal the JSON Schema to a closed content model
+            (``additionalProperties: false``); leave open (wire-style) if false.
+    """
+
+    name: str
+    main_tsp: pathlib.Path
+    schema_out: pathlib.Path
+    pydantic_out: pathlib.Path
+    zod_out: pathlib.Path | None
+    at_rest: bool
 
 
-def _emit_schema(domain: str) -> pathlib.Path:
+_DOMAINS: list[Domain] = [
+    # Feature-coverage corpus: emits all three targets to verify every construct
+    # round-trips; open (no consumer, wire-style) so its committed artifacts are
+    # unaffected by the at-rest seal.
+    Domain(
+        name='features',
+        main_tsp=_SCHEMA_DIR / 'tests' / 'fixtures' / 'features' / 'main.tsp',
+        schema_out=_SCHEMA_DIR / 'tests' / 'jsonschema' / 'features.schema.json',
+        pydantic_out=_SCHEMA_DIR / 'tests' / 'pydantic' / 'features.py',
+        zod_out=_SCHEMA_DIR / 'tests' / 'zod' / 'features.ts',
+        at_rest=False,
+    ),
+]
+
+
+def _emit_schema(domain: Domain) -> None:
     """Compile a domain's ``main.tsp`` to its normalized, committed JSON Schema.
 
-    Returns the path of the written ``<domain>.schema.json``.
+    Normalizes the #4084 ``$id``-relative refs; an at-rest domain is additionally
+    sealed to a closed content model.
     """
-    bundle_name = f'{domain}.schema.json'
-    out_path = _OUTPUT_DIR / bundle_name
-    entrypoint = _CORPUS_DIR.relative_to(_SCHEMA_DIR) / domain / 'main.tsp'
+    bundle_name = f'{domain.name}.schema.json'
+    out_dir = domain.schema_out.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    entrypoint = domain.main_tsp.relative_to(_SCHEMA_DIR)
     cmd = [
         'bun',
         str(_TSP_BIN),
@@ -88,25 +121,26 @@ def _emit_schema(domain: str) -> pathlib.Path:
         '--option',
         f'{_JSON_SCHEMA_EMITTER}.bundleId={bundle_name}',
         '--option',
-        f'{_JSON_SCHEMA_EMITTER}.emitter-output-dir={_OUTPUT_DIR}',
+        f'{_JSON_SCHEMA_EMITTER}.emitter-output-dir={out_dir}',
     ]
     # cwd is schema/ so the local node_modules resolves.
     subprocess.run(cmd, cwd=_SCHEMA_DIR, check=True)  # noqa: S603
 
-    schema = normalize.normalize(json.loads(out_path.read_text()))
+    schema = normalize.normalize(json.loads(domain.schema_out.read_text()))
+    if domain.at_rest:
+        schema = normalize.seal(schema)
     # Trailing newline so the committed bytes match end-of-file-fixer and the
     # freshness gate (S0.4) stays green.
-    out_path.write_text(json.dumps(schema, indent=4) + '\n')
-    return out_path
+    domain.schema_out.write_text(json.dumps(schema, indent=4) + '\n')
 
 
-def _emit_pydantic(domain: str, schema_path: pathlib.Path) -> None:
+def _emit_pydantic(domain: Domain) -> None:
     """Generate Pydantic v2 models for a domain from its normalized JSON Schema."""
-    model_path = _PYDANTIC_DIR / f'{domain}.py'
+    model_path = domain.pydantic_out
     cmd = [
         'datamodel-codegen',
         '--input',
-        str(schema_path),
+        str(domain.schema_out),
         '--input-file-type',
         'jsonschema',
         '--output',
@@ -130,18 +164,21 @@ def _emit_pydantic(domain: str, schema_path: pathlib.Path) -> None:
         'black',
         'isort',
     ]
-    _PYDANTIC_DIR.mkdir(parents=True, exist_ok=True)
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(cmd, check=True)  # noqa: S603
 
 
-def _emit_zod(domain: str) -> None:
+def _emit_zod(domain: Domain) -> None:
     """Emit a domain's Zod schemas direct from its ``.tsp``, reordered.
 
     ``typespec-zod`` writes a fixed ``models.ts`` whose declarations are not
     dependency-ordered; emit to a temp dir, reorder (see
-    ``tools.schema.zod_reorder``), and write the committed ``<domain>.ts``.
+    ``tools.schema.zod_reorder``), and write the committed ``<domain>.ts``. A
+    no-op for a domain with ``zod_out=None`` (no wire consumer).
     """
-    entrypoint = _CORPUS_DIR.relative_to(_SCHEMA_DIR) / domain / 'main.tsp'
+    if domain.zod_out is None:
+        return
+    entrypoint = domain.main_tsp.relative_to(_SCHEMA_DIR)
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [
             'bun',
@@ -159,8 +196,8 @@ def _emit_zod(domain: str) -> None:
         emitted = pathlib.Path(tmp) / 'models.ts'
         reordered = zod_reorder.reorder(emitted.read_text())
 
-    _ZOD_DIR.mkdir(parents=True, exist_ok=True)
-    (_ZOD_DIR / f'{domain}.ts').write_text(reordered)
+    domain.zod_out.parent.mkdir(parents=True, exist_ok=True)
+    domain.zod_out.write_text(reordered)
 
 
 def main() -> int:
@@ -169,17 +206,16 @@ def main() -> int:
     if shutil.which('datamodel-codegen') is None:
         raise SystemExit('datamodel-codegen not found; run via `uv run --group codegen python -m tools.schema.regen`')
 
-    domains = _discover_domains()
-    for domain in domains:
-        print(
-            f'schema/regen: {domain} -> {_OUTPUT_DIR.name}/{domain}.schema.json'
-            f' + {_PYDANTIC_DIR.name}/{domain}.py + {_ZOD_DIR.name}/{domain}.ts'
-        )
-        schema_path = _emit_schema(domain)
-        _emit_pydantic(domain, schema_path)
+    for domain in _DOMAINS:
+        targets = f'{domain.schema_out.name} + {domain.pydantic_out.name}'
+        if domain.zod_out is not None:
+            targets += f' + {domain.zod_out.name}'
+        print(f'schema/regen: {domain.name} -> {targets}')
+        _emit_schema(domain)
+        _emit_pydantic(domain)
         _emit_zod(domain)
 
-    print(f'schema/regen: emitted {len(domains)} schema(s) + Pydantic models + Zod schemas')
+    print(f'schema/regen: emitted {len(_DOMAINS)} domain(s)')
     return 0
 
 

@@ -44,7 +44,12 @@ import tempfile
 from typing import NamedTuple
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_JSONSCHEMA_DIR = _REPO_ROOT / 'schema' / 'tests' / 'jsonschema'
+# Two DISTINCT schema sets (not one emitted twice): the synthetic feature-coverage
+# corpus under schema/tests/jsonschema/ (features.schema.json — exercises every
+# TypeSpec construct) and the real at-rest domains at the repo root
+# (jsonschema/<domain>.schema.json). The gate covers both — on the rails PR the
+# corpus is the only committed schema; real domains land later at the root.
+_JSONSCHEMA_DIRS = [_REPO_ROOT / 'schema' / 'tests' / 'jsonschema', _REPO_ROOT / 'jsonschema']
 
 # chuckd 0.6.0, multi-arch index digest (resolves per-platform on the runner).
 # JVM tool, Docker-only (no PyPI); pinned by digest, not a moving tag.
@@ -131,7 +136,9 @@ def _run_chuckd(new_schema: dict, baseline_schema: dict) -> tuple[str, int]:
             'new.json',
             'old.json',
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+        # timeout so an unreachable/wedged daemon fails loud instead of hanging
+        # the gate; chuckd itself runs in seconds against a warm daemon.
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)  # noqa: S603
     return result.stdout + result.stderr, result.returncode
 
 
@@ -218,9 +225,9 @@ def main() -> int:
 
     _require_ref(args.baseline_ref)
 
-    schemas = sorted(_JSONSCHEMA_DIR.glob('*.schema.json'))
+    schemas = sorted(path for directory in _JSONSCHEMA_DIRS for path in directory.glob('*.schema.json'))
     if not schemas:
-        raise SystemExit(f'no committed schemas under {_JSONSCHEMA_DIR}')
+        raise SystemExit(f'no committed schemas under {", ".join(str(d) for d in _JSONSCHEMA_DIRS)}')
 
     hard_total = 0
     for path in schemas:
