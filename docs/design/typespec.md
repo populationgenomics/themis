@@ -5,60 +5,66 @@
 
 ## Purpose
 
-One source of truth for data shapes, authored in **TypeSpec** (`.tsp`), generating typed models in every language we use
-(Python/Pydantic, TypeScript/Zod) plus the JSON Schema that validates durable artifacts. Replaces per-language model
-definitions kept in sync by hand.
+One source of truth for data shapes, authored in **TypeSpec** (`.tsp`), generating typed models in every target we use:
+**proto** for authored machine-to-machine data — durable at-rest artifacts and inter-service RPC (→ Python stubs,
+optionally Pydantic sourced from proto) — and **Zod** for the browser-facing view model. Replaces per-language model
+definitions kept in sync by hand. The serialization posture — which data is proto, which is JSON — is
+[ADR 0003](../adr/0003-serialization-posture.md).
 
-TypeSpec over hand-authored JSON Schema: terser and readable; the compiler errors when a construct an enabled emitter
-cannot represent, so it *enforces* the translatable subset rather than leaving it to review; one source extends to the
-protobuf wire emitter without re-modelling.
+TypeSpec over hand-authored `.proto`: terser and readable; the compiler errors when a construct an enabled emitter
+cannot represent, so it *enforces* the translatable subset rather than leaving it to review; one source emits both
+targets without re-modelling.
 
 ## Usage
 
-What works today: **JSON Schema + Pydantic + Zod**, with the freshness (S0.4) and backward-compat (S0.6) CI gates in
-place — a `.tsp` domain compiles to one bundled `jsonschema/<domain>.schema.json` (all types under `$defs`, S0.1),
-normalized (S0.2), run through `datamodel-code-generator` to Pydantic v2 models (S0.2), and emitted to Zod direct from
-the `.tsp` (S0.3). All of Stage 0's rails are built; Stage 1 (the litcache domain) is the next unit (see Staged
-adoption).
+Two authored targets: **proto** (→ committed `.proto` → `protoc`/grpcio-tools Python stubs; RPC uses this already, e.g.
+`schema/proto/themis/rpc/auth.proto`, #91) and **Zod** (emitted direct from the `.tsp`), with the freshness (S0.4) and
+`buf breaking` compat (S0.6) CI gates in place. The at-rest litcache domain is being re-cut from the retired closed-JSON
+rails onto this proto path (ADR 0003; see Staged adoption).
 
 ### Authoring a schema
 
 - Edit `.tsp` under `schema/<domain>/`; `main.tsp` is the entry point that imports the domain's files. File-splitting is
   covered in Authoring and layout, the translatable subset in Authoring rules.
-- The Stage-0 feature corpus lives under `schema/tests/fixtures/<domain>/`, not the repo `tests/` tree: TypeSpec
-  resolves emitter packages by walking up from each `.tsp` file to a `node_modules`, so every source must sit at or
-  below the `schema/` Bun toolchain.
+- The feature corpus lives under `schema/tests/fixtures/<domain>/`, not the repo `tests/` tree: TypeSpec resolves
+  emitter packages by walking up from each `.tsp` file to a `node_modules`, so every source must sit at or below the
+  `schema/` Bun toolchain.
 - Regenerate the committed artifacts with `uv run python -m tools.schema.regen` (one-time toolchain install:
   `bun install` in `schema/`). Generated code is **committed and never hand-edited**; a `.tsp` change committed without
   regenerating fails CI (S0.4).
 
 ### Using a schema from Python
 
-- Import the generated Pydantic models from `<pkg>/models/<domain>/` (built in S0.2). Cross-field constraints that don't
-  survive codegen live in a thin hand-written layer over those models (see Authoring rules).
-- Validate at-rest bytes against `jsonschema/<domain>.schema.json` — the language-neutral artifact, no toolchain at
-  runtime.
+- Import the generated proto stubs (`<pkg>/models/<domain>/…_pb2`); parse/serialize the `.pb` bytes directly. If a
+  domain wants Pydantic ergonomics, source the models **from proto**, not from a reintroduced JSON Schema (ADR 0003).
+- Cross-field constraints that don't survive codegen live in a thin hand-written layer over the generated models (see
+  Authoring rules); declared-field constraints move to `protovalidate`.
 
 ### Using a schema from TypeScript
 
-- Import the generated Zod schemas from the frontend `src/models/<domain>/` (built in S0.3). Frontend Zod validates wire
-  messages only, never at-rest artifacts.
+- Import the generated Zod schemas from the frontend `src/models/<domain>/` (built in S0.3). Zod is the **browser-facing
+  view model** (BFF↔frontend), never a durable at-rest artifact.
 
 Consumers import committed generated code from their own tree; nothing depends on `schema/` (the authoring toolchain) at
 build or run time — the property the generated-code-is-committed policy (Code generation) buys.
 
-## At-rest vs on-the-wire
+## Three serialization buckets
 
-Two classes of serialized data. Both evolve **additively only** — breaking changes are ruled out (see Schema evolution)
-— and differ in kind: at-rest is closed JSON (validated by JSON Schema), the wire is proto.
+Serialized data falls into three buckets by *who owns the schema* and *who consumes it* (ADR 0003). All authored data
+evolves **additively only** — breaking changes are ruled out (see Schema evolution).
 
-- **At-rest (durable).** litcache GCS artifacts — `manifest.json`, the write-once `knowledge_units.jsonl`, crosswalk
-  objects. **JSON by design** (not proto): readable, diffable, and validated by the same generated JSON Schema the
-  compat gate diffs. Schemas are **closed** content models (`additionalProperties:false`): the current schema reads
-  every artifact ever written, additive changes stay compatible, and an unknown field fails loud as drift.
-- **On-the-wire (ephemeral).** RPC messages between themis components. Components do not roll out atomically, so several
-  message generations are in flight during any rolling deploy; additive-only evolution plus proto's tolerant readers
-  (unknown fields ignored) keeps that skew safe. The wire transport is gRPC (see Wire and RPC).
+1. **Authored, internal machine-to-machine → binary proto**, gated by `buf breaking`. Both durable litcache artifacts
+   (`manifest.pb`, the write-once per-paper `knowledge_units.pb`, `metadata.pb`) and inter-service RPC over gRPC (see
+   Wire and RPC). Proto's open readers ignore fields a newer producer adds — the skew tolerance a rolling deploy needs —
+   and, decisively, binary proto **retains unknown fields** through a parse→modify→serialize round trip, so
+   read-modify-write can't silently drop a field an older component didn't model. That immunity is why at-rest is
+   *binary* proto, not a name-keyed text projection (proto-JSON, pbtxt).
+1. **Authored, browser-facing → JSON + Zod.** The BFF↔frontend view model. Zod types gate it; no separate compat tool.
+1. **Externally-defined, ingested → JSON, modelled as a subset view.** Raw upstream payloads we cache (Crossref,
+   Unpaywall). We store the upstream's JSON as-is and model only the fields we read, tolerant of extras; we never
+   round-trip it through a lossy typed write (ADR 0003, "External data").
+
+Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque bytes, outside all three.
 
 ## Authoring and layout
 
@@ -73,10 +79,10 @@ schema/                # .tsp sources + the Bun toolchain (authoring only)
     knowledge_unit.tsp
     common.tsp         # types shared across the domain
   <other-domains>/...
-  tests/               # the Stage-0 feature corpus + its test, kept under
+  tests/               # the feature corpus + its test, kept under
     fixtures/          #   schema/ so node_modules stays an ancestor (see Usage)
       <domain>/main.tsp
-    jsonschema/        # the corpus's committed generated schemas
+    proto/             # the corpus's committed generated .proto (+ zod/)
 ```
 
 Real domains sit directly under `schema/`; the synthetic feature corpus sits under `schema/tests/`. Both are below the
@@ -93,36 +99,26 @@ toolchain, which is what the emitter resolver needs.
 
 ## Code generation
 
-`.tsp` is the single source of truth; every target is emitted from it directly. JSON Schema is one such target, not a
-hub the others pass through. `<domain>` in the output paths is the `schema/<domain>/` directory: compiling its
-`main.tsp` entry point emits one bundled schema for the whole domain (everything `main.tsp` imports), not one file per
-type.
+`.tsp` is the single source of truth. Proto and Zod are emitted from it **directly**; the Python stubs are the one
+two-step path (standard `protoc` over the committed `.proto`), not a JSON-Schema hub the others pass through. `<domain>`
+in the output paths is the `schema/<domain>/` directory: compiling its `main.tsp` entry point emits one artifact for the
+whole domain (everything `main.tsp` imports), not one file per type.
 
-| Target      | Emitter / tool                                | Output                              | Consumer                                                      |
-| ----------- | --------------------------------------------- | ----------------------------------- | ------------------------------------------------------------- |
-| JSON Schema | `@typespec/json-schema`                       | `jsonschema/<domain>.schema.json`   | at-rest validation; source for Pydantic; compat-gate baseline |
-| Pydantic v2 | `datamodel-code-generator` (from JSON Schema) | `<pkg>/models/<domain>/*.py`        | Python backend                                                |
-| Zod         | direct tsp→Zod emitter (`typespec-zod`)       | frontend `src/models/<domain>/*.ts` | TS frontend (wire messages)                                   |
+| Target       | Emitter / tool                          | Output                              | Consumer                                        |
+| ------------ | --------------------------------------- | ----------------------------------- | ----------------------------------------------- |
+| proto        | `@typespec/protobuf`                    | `schema/proto/<domain>/*.proto`     | at-rest artifacts + RPC; `buf breaking` gate    |
+| Python stubs | `protoc` / grpcio-tools (from `.proto`) | `<pkg>/models/<domain>/*_pb2.py`    | Python backend (optionally Pydantic-from-proto) |
+| Zod          | direct tsp→Zod emitter (`typespec-zod`) | frontend `src/models/<domain>/*.ts` | browser view model (BFF↔frontend)               |
 
-JSON Schema has two independent jobs: it is the **committed, language-neutral at-rest validation artifact**, and it is
-the **codegen source for Pydantic** — no mature direct tsp→Pydantic emitter exists, and the schema is needed for at-rest
-validation regardless. Validation of durable bytes therefore has two tsp-derived routes — the JSON Schema and the
-Pydantic models — neither of which involves Zod.
+Proto is the authored-data format for bucket 1 (at-rest + RPC); the committed `.proto` is both the compat-gate baseline
+and the `protoc` source for the Python stubs. Declared-field constraints ride along as `protovalidate` options. If a
+domain wants Pydantic ergonomics, source the models **from proto** (a proto→pydantic generator, or `betterproto`), never
+by reintroducing JSON Schema as a hub (ADR 0003).
 
-Zod does **not** pass through JSON Schema. The frontend validates wire messages, never durable artifacts, so Zod need
-not share the at-rest schema; emitting it straight from `.tsp` keeps it as faithful to the source as any other target
-and avoids `json-schema-to-zod`, which doesn't resolve `$ref`s to `#/$defs/…` — the named, reused subschemas TypeSpec
-emits for every model (not inline-nested objects, which it handles) — silently emitting `z.any()` for them and otherwise
-forcing a dereference pass. The trade is leaning on a community tsp→Zod emitter instead of the more widely used
-JSON-Schema converter — a maturity bet, not an architectural compromise, since the emitter reads the same `.tsp`.
-
-The JSON Schema passes through one transform before `datamodel-code-generator`:
-
-- **Normalize** — the emitter's `bundleId` produces one 2020-12 file with all types under `$defs`, but inter-type refs
-  are `$id`-relative (`"$ref": "AccessKind.json"`), which `datamodel-code-generator` reads as a file path and can't
-  resolve (TypeSpec Discussion #4084). Normalize rewrites them to `#/$defs/…` and drops the per-`$def` `$id`. The
-  committed JSON Schema is this normalized single-file form. Required only as a workaround for #4084; droppable if the
-  emitter fixes it. Worked through, verified end to end, in the appendix.
+Zod is emitted straight from `.tsp`, not via `json-schema-to-zod`, which doesn't resolve `$ref`s to `#/$defs/…` — the
+named, reused subschemas TypeSpec emits for every model (not inline-nested objects, which it handles) — silently
+emitting `z.any()` for them and otherwise forcing a dereference pass. The trade is leaning on a community tsp→Zod
+emitter — a maturity bet, not an architectural compromise, since the emitter reads the same `.tsp`.
 
 Policy:
 
@@ -133,224 +129,132 @@ Policy:
 
 ## Authoring rules
 
-The subset that round-trips cleanly to the kept targets (JSON Schema, Pydantic, Zod); the compiler enforces most, these
+The subset that round-trips cleanly to the kept targets (proto → Python stubs, Zod); the compiler enforces most, these
 cover the rest:
 
-- **snake_case identifiers**, so emitted JSON property names match the wire format directly (no per-field rename).
+- **snake_case identifiers**, so emitted property names match the proto/JSON field names directly (no per-field rename).
 - **A field with a default must be optional:** `flagged?: boolean = false`. A required field with a default keeps the
   default out of the generated model.
-- **Express a cross-field "X iff Y" constraint as a named union** of per-variant models, each carrying a `const`
-  discriminant — not `@discriminator` model inheritance. The named union enforces the constraint in every target;
-  inheritance does not survive codegen (appendix).
+- **A cross-field "X iff Y" constraint** cannot be structural at rest: `@typespec/protobuf` emits no `oneof` (unions are
+  rejected). Model the discriminant flat (a `string` field + the conditional field) and enforce the invariant with a
+  `protovalidate` rule (worked example). A named union is still the right shape for a Zod **view model** — it emits a
+  discriminated union — where the structural guarantee is wanted browser-side.
 - **Backtick reserved identifiers** (e.g. `` `unknown` ``).
-- **Avoid:** heterogeneous/tuple arrays, deep recursion, `patternProperties`, `anyOf`/`oneOf` of unrelated shapes, and
-  `int64` (TypeSpec encodes it as a JSON string for JS number precision, so JSON Schema/Pydantic see `string` while
-  `typespec-zod` emits `z.bigint()` — an inconsistent cross-target shape).
+- **Avoid:** heterogeneous/tuple arrays, deep recursion, `anyOf`/`oneOf` of unrelated shapes, and `int64` (TypeSpec
+  encodes it as a JSON string for JS number precision, so the proto-JSON/Python view sees `string` while `typespec-zod`
+  emits `z.bigint()` — an inconsistent cross-target shape).
 
 The reliable subset is pinned concretely by the feature-coverage corpus under `schema/tests/fixtures/features/` — one
-`.tsp` per construct, each verified to round-trip to all three targets (S0.5).
+`.tsp` per construct, each verified to round-trip to the kept targets (S0.5).
 
 Constraints that can't be expressed structurally are **not** generated — they live in the hand-written layer over the
 generated models.
 
-## Worked example — litcache `Version`
+## Worked example — the `access`-iff-`publisher` rule
 
-The `access_publisher`-iff-`licensed` rule has two modelling options. Both shown with their verbatim emitted JSON
-Schema, Pydantic, and Zod — the pattern reviewers will see in PRs.
-
-### (a) Flat — rule enforced in the hand-written layer
-
-```tsp
-enum AccessKind {
-  free_to_read: "free-to-read", licensed: "licensed",
-  institution_captured: "institution-captured", `unknown`: "unknown",
-}
-model Version {
-  version: string;
-  source_hash: string;
-  licence: Licence;
-  access: AccessKind;
-  access_publisher?: string;     // iff access == licensed — NOT enforced by the schema
-  renderings: Rendering[];
-}
-model Manifest { doc_id: string; versions: Version[]; }
-```
-
-```jsonc
-// JSON Schema — Version
-{ "type": "object",
-  "properties": {
-    "version": {"type":"string"}, "source_hash": {"type":"string"},
-    "licence": {"$ref":"#/$defs/Licence"}, "access": {"$ref":"#/$defs/AccessKind"},
-    "access_publisher": {"type":"string"},
-    "renderings": {"type":"array","items":{"$ref":"#/$defs/Rendering"}} },
-  "required": ["version","source_hash","licence","access","renderings"] }
-```
-
-```python
-# Pydantic
-class AccessKind(StrEnum):
-    free_to_read = 'free-to-read'
-    licensed = 'licensed'
-    institution_captured = 'institution-captured'
-    unknown = 'unknown'
-
-class Version(BaseModel):
-    version: str
-    source_hash: str
-    licence: Licence
-    access: AccessKind
-    access_publisher: str | None = None   # free-floating; invariant in a hand-written validator
-    renderings: list[Rendering]
-
-class Manifest(BaseModel):
-    doc_id: str
-    versions: list[Version]
-```
-
-```ts
-// Zod
-export const VersionSchema = z.object({
-  version: z.string(),
-  source_hash: z.string(),
-  licence: z.enum(["CC-BY-4.0","publisher-proprietary","unknown"]),
-  access: z.enum(["free-to-read","licensed","institution-captured","unknown"]),
-  access_publisher: z.string().optional(),
-  renderings: z.array(z.object({ converter: z.string(), converter_version: z.string() })),
-})
-```
-
-`access_publisher` is free-floating; nothing stops `access=licensed` with no publisher. That invariant is a hand-written
-`@model_validator`.
-
-### (b) Named union — rule enforced structurally
+`Access` is at-rest (bucket 1), so the target is **proto** — and `@typespec/protobuf` **cannot emit a `oneof`**: a
+union-typed field is rejected outright and there is no `oneof` decorator (verified against 0.83.0 and the 0.84 dev
+line). So a cross-field "X iff Y" invariant cannot hold *structurally* in proto. The at-rest model is **flat** — a
+`string` discriminant plus the conditional field — with the invariant enforced by `protovalidate`:
 
 ```tsp
-model FreeToRead          { access: "free-to-read"; }
-model Licensed            { access: "licensed"; publisher: string; }
-model InstitutionCaptured { access: "institution-captured"; }
-model UnknownAccess       { access: "unknown"; }
-union Access { FreeToRead, Licensed, InstitutionCaptured, UnknownAccess }
-model VersionDU { version: string; source_hash: string; access: Access; }
+model Access {
+  @field(1) access: string;      // "free-to-read" | "licensed" | "institution-captured" | "unknown"
+  @field(2) publisher?: string;  // present iff access == "licensed"
+}
 ```
 
-```jsonc
-// JSON Schema — Access is an anyOf; the licensed variant requires publisher
-"Access":   { "anyOf": [ {"$ref":"#/$defs/FreeToRead"}, {"$ref":"#/$defs/Licensed"},
-                         {"$ref":"#/$defs/InstitutionCaptured"}, {"$ref":"#/$defs/UnknownAccess"} ] }
-"Licensed": { "type":"object",
-              "properties": {"access":{"type":"string","const":"licensed"},"publisher":{"type":"string"}},
-              "required": ["access","publisher"] }
+```proto
+message Access {
+  string access = 1;
+  optional string publisher = 2;
+}
 ```
 
-```python
-# Pydantic
-class Licensed(BaseModel):
-    access: Literal['licensed']
-    publisher: str                        # required exactly when access == licensed
+Nothing structural stops `access = "licensed"` with no `publisher`; the invariant is a `protovalidate` CEL rule on the
+message (fail-loud at construction, ADR 0003):
 
-class Access(RootModel[FreeToRead | Licensed | InstitutionCaptured | UnknownAccess]):
-    root: FreeToRead | Licensed | InstitutionCaptured | UnknownAccess
-
-class VersionDU(BaseModel):
-    version: str
-    source_hash: str
-    access: Access                         # read the variant via version.access.root
+```text
+(this.access == "licensed") == has(this.publisher)
 ```
+
+Giving up the `oneof` costs nothing durable: on the wire a set `oneof` member encodes identically to a standalone field,
+so `oneof` is codegen sugar (mutual-exclusion + `WhichOneof`), not a wire/at-rest distinction. A **browser view model**
+(bucket 2) that surfaces access *can* keep the structural form — Zod is the target there, and `typespec-zod` does emit a
+discriminated union from a named union:
 
 ```ts
-// Zod
-export const VersionDUSchema = z.object({
-  version: z.string(),
-  source_hash: z.string(),
-  access: z.union([
-    z.object({ access: z.literal("free-to-read") }),
-    z.object({ access: z.literal("licensed"), publisher: z.string() }),
-    z.object({ access: z.literal("institution-captured") }),
-    z.object({ access: z.literal("unknown") }),
-  ]),
-})
+// Zod (bucket 2) — the structural guarantee holds where Zod is the target
+export const AccessSchema = z.discriminatedUnion("access", [
+  z.object({ access: z.literal("free-to-read") }),
+  z.object({ access: z.literal("licensed"), publisher: z.string() }),
+  z.object({ access: z.literal("institution-captured") }),
+  z.object({ access: z.literal("unknown") }),
+])
 ```
 
-The invariant holds in all three targets with no hand-written validator (`access=licensed` without `publisher` is
-rejected). Cost: in Python the field is a `RootModel`, read via `version.access.root`. Use (b) where the guarantee must
-hold in every language; (a) where a simpler schema is worth a hand-written check.
+(The only way to a proto `oneof` is `Extern` to a hand-authored `.proto` — see "Escape hatch" in the appendix — not
+worth it for a rule `protovalidate` covers.)
 
 ## Schema evolution
 
-**Breaking changes are ruled out.** A schema evolves in place, **additively only** — add optional fields, add enum
-members. Anything that could invalidate existing data or an older reader (removing or renaming a field, narrowing a
-value set, tightening a pattern) is not allowed. So there is **no schema version, no migration, and no version
-dispatch**: the current schema reads every artifact ever written, and a reader validates against it directly. A field is
-never removed, only deprecated in place (kept optional, ignored).
+**Breaking changes are ruled out.** A schema evolves in place, **additively only** — add a field (with a fresh `@field`
+number), add enum members. Anything that could invalidate existing data or an older reader (removing, renaming, or
+renumbering a field, repurposing a number, narrowing a value set) is not allowed. So there is **no schema version, no
+migration, and no version dispatch**: a reader parses every artifact ever written, and proto's unknown-field retention
+means an older reader round-trips a newer writer's fields untouched (ADR 0003). A field is never removed, only
+deprecated in place (kept, ignored); a retired number is fenced with `reserved` so it's never reused.
 
-A genuinely necessary breaking change — e.g. removing a field once every artifact has been migrated off it — is an
-out-of-band, manual one-off: it is performed by deliberately merging a PR with a red `schema-compat`, as a reviewed
-decision, not via any in-tool flag. The gate is a **sign, not a cop**: advisory, never a merge-blocking required check,
-so a red is a conscious human call that keeps breaking changes loud rather than routine. Unlike proto there is no
-reserved-field-id bookkeeping (JSON fields aren't positional) — you just delete the field from the `.tsp`; the only cost
-is operational, since the closed at-rest schema rejects any lingering artifact that still carries the removed field, so
-removal is safe only once none remain.
+A genuinely necessary breaking change — removing a field once every artifact has been migrated off it — is an
+out-of-band, manual one-off: deliberately merge a PR with a red `schema-compat`, as a reviewed decision, not via any
+in-tool flag. The gate is a **sign, not a cop**: advisory, never a merge-blocking required check, so a red is a
+conscious human call that keeps breaking changes loud rather than routine. Unlike the retired JSON path, proto carries
+**reserved-field-id bookkeeping** — the retired number goes in a `reserved` statement (fields are positional), so a
+lingering artifact that still carries it stays readable rather than misparsing.
 
-- **CI compat gate** (`tools/schema/chuckd_compat.py` + `schema-compat.yml`, S0.6). Each change to a committed
-  `jsonschema/<domain>.schema.json` is checked against its baseline with **`chuckd`** (Confluent's JSON Schema
-  compatibility rules) in **`BACKWARD`** mode, and **fails (red) on any incompatible delta — no in-tool override;
-  clearing a red is the deliberate out-of-band merge above, not a flag.** One tool covers both structural breaks *and*
-  value-domain narrowing (enum-member removal, pattern/range tightening — the narrowing a string-projecting check like
-  proto misses). `BACKWARD`, not `FULL`: `FULL` forbids adding a field at all, so it's unusable; the wire's forward
-  tolerance comes from lenient readers.
-  - **Baseline** is the schema on the PR base branch (`HEAD^` on a push to main) — the Stage-0 stand-in for "last
-    released version", there being no release/tag process; the released line is `main` under additive-only evolution.
-  - **Diffed per-type, not as the bundle.** `chuckd` diffs from a schema's *root*, and the bundle's root is a `$defs`
-    container that references nothing — diffed as-is it compares two empty roots and passes every change. So
-    `chuckd_compat.py` promotes each `$def` to a root (its body + an absolute `$id` + the whole `$defs` retained so
-    `#/$defs` refs resolve) and diffs each changed type on its own (appendix). A type present in the baseline but gone
-    from the new bundle is a removal/rename — invisible to `chuckd` (it diffs per surviving type), so `chuckd_compat.py`
-    flags it directly as a hard finding.
-  - **Content model sets the verdict on adding a field** (validated against `chuckd`, appendix): **at-rest closed**
-    (`additionalProperties:false`) — add-optional is clean, removal and narrowing fail, and an unknown field fails loud
-    as drift; **wire open** — a reader tolerates added fields, so `chuckd`'s `PROPERTY_ADDED_TO_OPEN_CONTENT_MODEL` on
-    an open schema is downgraded to a warning ("a lenient reader tolerates an added field" is an invariant, not a
-    judgment). Removal and narrowing trip *different* findings and still fail.
-- **Golden fixtures.** A corpus of historical artifacts under `tests/fixtures/` that the current schema must still
-  validate — a regression test that additive-only really held.
+- **CI compat gate** (`buf breaking`, `schema-compat.yml`, S0.6). Each change to a committed `.proto` is diffed against
+  its baseline with **`buf breaking`** and **fails (red) on any incompatible delta — no in-tool override**; it catches
+  field-number reuse/removal, renumbering, and type changes. `buf breaking` is the **sole** authored-data gate, covering
+  both at-rest and RPC proto (the chuckd / JSON-Schema gate is retired, ADR 0003).
+  - **Baseline** is the `.proto` on the PR base branch (`HEAD^` on a push to main) — the stand-in for "last released
+    version", there being no release/tag process; the released line is `main` under additive-only evolution.
+- **Golden fixtures.** A corpus of historical artifacts under `tests/fixtures/` that the current schema must still parse
+  — a regression test that additive-only really held.
 
-The cost is that schemas only grow — deprecated fields linger — in exchange for never migrating data, versioning an
-artifact, or dispatching on version.
+The cost is that schemas only grow — deprecated fields and reserved numbers linger — in exchange for never migrating
+data, versioning an artifact, or dispatching on version.
 
 ## Wire and RPC
 
-The wire transport is **gRPC** (HTTP/2, binary protobuf). Shapes are authored once in TypeSpec and emitted to `.proto`
-with `@typespec/protobuf`; [`services.md`](services.md) is the service pattern built on it (the servicer base, the
-`themis.rpc.<domain>` stubs, the deploy). Components don't roll out atomically, so a rolling deploy always has several
-message generations in flight; additive-only evolution plus proto's tolerant readers keeps that skew safe.
+The wire transport is **gRPC** (HTTP/2, binary protobuf). RPC shapes are authored in TypeSpec and emitted to `.proto`
+with `@typespec/protobuf` — the same emitter and `buf breaking` gate as at-rest proto (see Three serialization buckets);
+[`services.md`](services.md) is the service pattern built on it (the servicer base, the `themis.rpc.<domain>` stubs, the
+deploy). Components don't roll out atomically, so a rolling deploy always has several message generations in flight;
+additive-only evolution plus proto's tolerant readers keeps that skew safe.
 
 - **Forward tolerance:** a proto reader ignores fields a newer producer adds — no lockstep required.
 - **Additive only:** add a field with a fresh `@field` number; never renumber, remove, or repurpose one (retire with
-  `@reserve`). The same additive rule as at-rest (see Schema evolution).
-- **Enforce in CI** with `buf breaking` against the base-branch `.proto` (advisory, the same posture as the at-rest
-  `chuckd` gate) — it catches the field-number reuse/removal and type changes a JSON-Schema view cannot see.
+  `reserved`). The same additive rule as at-rest (see Schema evolution).
 - **No in-payload version:** the message type identifies the shape on the wire, so there is no `schema_version` field.
 
-Proto is the **wire** target only. The durable/shared at-rest schema stays JSON (JSON Schema + Pydantic + Zod): proto's
-integer enums and absent literals would lose the richer vocabularies those targets carry. The wire models are authored
-to proto's constraints (string fields for hyphenated/dotted vocabularies; explicit `@field` numbers; no literals —
-appendix).
+The proto authoring constraints now apply to **all** proto, at-rest and wire alike (no longer wire-specific): integer
+enums with a forced `0` member and identifier-only names — so hyphenated/dotted vocabularies (SPDX licences, access
+kinds) are `string` fields, membership validated in code or `protovalidate`; no `const` and no `oneof`, so a
+discriminant is a plain `string` field with its invariant in `protovalidate`; an explicit `@field(n)` on every property
+(appendix).
 
 ## Tooling
 
-- Bun toolchain in CI for `tsp compile` (the `@typespec/json-schema` and `typespec-zod` emitters); a Python dev dep
-  (`codegen` uv group) on `datamodel-code-generator`. The compat gate (see Schema evolution) runs `chuckd` as a pinned
-  CI container (it is a JVM tool, shipped only as a Docker image). JS deps pinned via the committed `schema/` Bun
-  lockfile.
+- Bun toolchain in CI for `tsp compile` (the `@typespec/protobuf` and `typespec-zod` emitters); `protoc` / grpcio-tools
+  (a Python dev dep, `codegen` uv group) compile the emitted `.proto` to Python stubs. JS deps pinned via the committed
+  `schema/` Bun lockfile.
 - **Regen is a `tools/` Python orchestrator run as `uv run python -m tools.<name>`** — the repo has no task runner and
-  this stays in the uv/Python ecosystem. It runs `tsp compile` (emitting JSON Schema and Zod) → normalize the JSON
-  Schema → Pydantic, and reorders the Zod (see appendix). CI runs it and checks for no diff.
-- **The compat gate is a separate CI workflow** (`schema-compat.yml`), split into two independent jobs that fail
-  separately: `chuckd` (`tools/schema/chuckd_compat.py`) diffs each committed `jsonschema/<domain>.schema.json` against
-  its baseline per-type (see Schema evolution), and `buf` (`tools/schema/buf_compat.py`) diffs each committed `.proto`
-  with `buf breaking` (see Wire and RPC). Both shell out to a pinned Docker image and fail hard on any incompatible
-  delta; the pure logic is unit-tested without Docker.
+  this stays in the uv/Python ecosystem. It runs `tsp compile` (emitting `.proto` and Zod) → `protoc` the `.proto` to
+  Python stubs → reorder the Zod (see appendix). CI runs it and checks for no diff.
+- **The compat gate is a CI workflow** (`schema-compat.yml`) running `buf breaking` over each committed `.proto` against
+  its base-branch baseline (see Schema evolution). It shells out to a pinned `buf` and fails hard on any incompatible
+  delta; the pure logic is unit-tested. `buf breaking` is the sole authored-data gate (the chuckd job is retired, ADR
+  0003).
 
 ## Staged adoption
 
@@ -358,149 +262,81 @@ appendix).
 about exists is the point of this ordering.
 
 0. **Settle the toolchain and the reliable feature subset — no litcache.** Stand up `schema/` (Bun deps,
-   `tspconfig.yaml`), the JSON Schema normalize pass, the Pydantic generator and the direct Zod emitter (Zod generated
-   and `tsc`-smoke-tested, no consumer yet), the `tools/` regen orchestrator, and the CI gates (freshness + compat
-   gate). The driver is a **feature-coverage corpus of schemas in a `tests/` directory** — one per feature (string enum,
+   `tspconfig.yaml`), the `@typespec/protobuf` and direct Zod emitters, the `protoc` Python-stub step (Zod generated and
+   `tsc`-smoke-tested, no consumer yet), the `tools/` regen orchestrator, and the CI gates (freshness + `buf breaking`).
+   The driver is a **feature-coverage corpus of schemas in a `tests/` directory** — one per feature (string enum,
    optional, optional-with-default, literal, named union, nested, array, scalar formats) — that defines the reliable
-   subset and doubles as the CI smoke test and new-domain template. The **compat-tool experiment is done** (a
-   before/after change matrix run against `chuckd`): `chuckd` `BACKWARD` covers structural rules and value-domain
-   narrowing, closed content models make add-optional clean, `FULL` is unusable (see Schema evolution, appendix).
-   Output: every convention locked, gate settled, zero domain modelling.
-1. **litcache schema** — author the real models (the `litcache/` type files) on the settled rails. Unblocks the litcache
-   S0 build.
-1. Add the hand-written load/dump facade + golden fixtures (a corpus of historical artifacts the current schema must
-   still validate).
+   subset and doubles as the CI smoke test and new-domain template. Output: every convention locked, gate settled, zero
+   domain modelling.
+1. **litcache schema** — author the real models (the `litcache/` type files) on the settled rails. The at-rest half is
+   being re-cut from closed JSON to proto per ADR 0003. Unblocks the litcache build.
+1. Add the hand-written load/dump facade (proto messages ↔ storage, with the RMW discipline of ADR 0003) + golden
+   fixtures (a corpus of historical artifacts the current schema must still parse).
 1. Bring further domains under TypeSpec as they appear.
-1. The wire emitter is `@typespec/protobuf` (gRPC); services build on it (see [`services.md`](services.md)).
+1. RPC uses the same `@typespec/protobuf` emitter (gRPC); services build on it (see [`services.md`](services.md)).
 
 ## Open questions
 
 - Generated-code review burden on the public mirror (diff volume/noise).
 - Whether the pre-release `typespec-zod` emitter (pinned `0.0.0-68`, internal name `efv2-zod-sketch`) holds up as the
   corpus grows: it covers the corpus and emits faithful named schemas but mis-orders declarations across files, so it
-  needs the reorder pass (appendix). The fallback (JSON Schema + `json-schema-to-zod` + a dereference pass that de-names
-  every reused subschema) stays on the shelf if a fuller corpus surfaces emitter bugs the reorder pass can't absorb.
+  needs the reorder pass (appendix). With JSON Schema retired (ADR 0003) there is no `json-schema-to-zod` fallback; an
+  emitter regression is handled by fixing the reorder pass or the emitter itself.
+- **proto→pydantic generator maturity** — verify before sourcing the backend's Pydantic from proto; `betterproto` is the
+  fallback (ADR 0003).
 
 ## Appendix: emitter behaviour
 
-Validated end to end (TypeSpec 1.13 → `@typespec/json-schema` → JSON Schema → `datamodel-code-generator` → Pydantic v2;
-`typespec-zod` → Zod direct from `.tsp`; `@typespec/protobuf` → proto). Records the why behind the authoring rules and
-the wire (proto) constraints.
+Validated end to end (TypeSpec 1.13 → `@typespec/protobuf` → `.proto` → `protoc`/grpcio-tools → Python stubs;
+`typespec-zod` → Zod direct from `.tsp`). Records the why behind the authoring rules and the proto constraints.
 
 **Cross-target feature coverage:**
 
-| Feature (as authored)          | JSON Schema                        | Pydantic              | Zod                     | Proto                                  |
-| ------------------------------ | ---------------------------------- | --------------------- | ----------------------- | -------------------------------------- |
-| string enum                    | `enum:[…]`                         | `StrEnum`             | `z.enum([…])`           | string field (proto enums are integer) |
-| literal (`access: "licensed"`) | `const: "licensed"`                | `Literal['licensed']` | `z.literal("licensed")` | not representable                      |
-| optional `T?`                  | omit from `required`               | `T \| None = None`    | `.optional()`           | `optional`                             |
-| optional + default             | `default` + not required           | `= False`             | default                 | (no field defaults)                    |
-| `int32`                        | `integer` + min/max                | `conint(ge,le)`       | `.int().gte().lte()`    | `int32`                                |
-| array                          | `array`/`items`                    | `list[…]`             | `z.array(…)`            | `repeated`                             |
-| nested model                   | `$ref`                             | nested class          | `z.object({…})`         | `message`                              |
-| named union                    | `anyOf` of `const`-tagged variants | `RootModel[A\|B…]`    | `z.union([…])`          | `oneof`                                |
-| field numbers                  | —                                  | —                     | —                       | required (`@field(n)`)                 |
+| Feature (as authored)          | Proto                                     | Python (proto stub)     | Zod                     |
+| ------------------------------ | ----------------------------------------- | ----------------------- | ----------------------- |
+| string enum (hyphenated)       | `string` field (proto enums integer-only) | `str`                   | `z.enum([…])`           |
+| literal (`access: "licensed"`) | not representable                         | —                       | `z.literal("licensed")` |
+| optional `T?`                  | `optional`                                | presence via `HasField` | `.optional()`           |
+| optional + default             | (proto3 has no field defaults)            | —                       | default                 |
+| `int32`                        | `int32`                                   | `int`                   | `.int().gte().lte()`    |
+| array                          | `repeated`                                | repeated field          | `z.array(…)`            |
+| nested model                   | `message`                                 | nested message class    | `z.object({…})`         |
+| named union                    | unsupported — flat + `protovalidate`      | —                       | `z.discriminatedUnion`  |
+| field numbers                  | required (`@field(n)`)                    | —                       | —                       |
 
-**Pydantic specifics.** Enums → `StrEnum`; scalars `url`→`AnyUrl`, `utcDateTime`→`AwareDatetime`, `plainDate`→`date`
-(import auto-aliased around a field named `date`). Content model follows the class: **wire** schemas are open (no
-`additionalProperties:false`), so a reader ignores unknown fields — forward-tolerant reads under skew; **at-rest**
-schemas are closed, so unknown fields fail loud as drift.
+**Why a field with a default must be optional.** A required field with a default keeps the default out of the generated
+model; making it optional preserves it. (proto3 scalars carry implicit zero-defaults regardless; the rule matters for
+the Zod view model and for field presence.)
 
-**Why a field with a default must be optional.** `flagged: boolean = false` emits `default:false` but keeps the field in
-`required`, so codegen drops the default. Making it optional removes it from `required`, and the default survives.
+**Named union (Zod only), and why not `@discriminator` inheritance.** For a Zod view model a named union of
+`const`-tagged variants emits a discriminated union that enforces the invariant structurally; `@discriminator`
+inheritance does not — it types the use site as the bare base, so codegen produces `access: Access` (base) and the
+constraint is lost. Proto has no counterpart: `@typespec/protobuf` rejects union-typed fields and exposes no `oneof`
+decorator, so an at-rest domain models the discriminant flat and enforces the invariant with `protovalidate` (worked
+example).
 
-**Why named union, not `@discriminator` inheritance.** Model-inheritance `@discriminator` emits subtypes with
-`allOf:[$ref base]` but types the use site as the bare base — no `anyOf`, no discriminator — so codegen produces
-`access: Access` (base) and the constraint is lost. A named union emits the `anyOf` that codegen turns into an enforcing
-union. (A true tagged union with `Field(discriminator=…)` would need the `discriminator` keyword via `@discriminated`;
-the `anyOf`+`const` form already enforces.)
+**Escape hatch (`Extern`).** `model X is Extern<"path.proto", "pkg.X">` makes the proto emitter emit an `import` +
+verbatim reference instead of converting the model — the mechanism behind `WellKnown.Timestamp`/`Empty`. It is the only
+route to a hand-authored proto construct the emitter can't produce (a `oneof`, `google.protobuf.Timestamp`). Use it for
+well-known types; for a cross-field invariant prefer flat + `protovalidate` — `Extern` splits the source of truth (a
+hand-authored `.proto` island kept in sync by hand) for a `oneof` that is only codegen sugar (identical on the wire).
 
 **Why Zod is emitted direct from `.tsp`, not via `json-schema-to-zod`.** That converter does not resolve `$ref`s to
-`#/$defs/…` — the named, reused subschemas TypeSpec emits for each model (inline-nested objects are fine) — and silently
-emits `z.any()` for them (its default recursion depth is also 0). Routing Zod through JSON Schema would therefore need a
-dereference pass to inline every ref before conversion. A direct tsp→Zod emitter (`typespec-zod`) reads the source
-models and sidesteps the converter entirely — no dereference pass. Zod is frontend-wire-only, so it gains nothing from
-sharing the at-rest JSON Schema.
+`#/$defs/…` — the named, reused subschemas a JSON-Schema route would emit for each model — and silently emits `z.any()`
+for them. A direct tsp→Zod emitter (`typespec-zod`) reads the source models and sidesteps the converter entirely.
 
 The emitter's one defect (S0.3) is declaration order: it emits each model as `export const <name> = …` but a schema can
 land before another it references, which Zod's eager evaluation rejects at compile time (`TS2448`/`TS2454`, used before
 declaration). A deterministic **reorder pass** (`tools/schema/zod_reorder.py`) parses the emission, builds the reference
-graph, and re-emits the declarations dependency-first — the Zod analogue of the JSON Schema normalize pass, an automated
-transform over generated code. The reliable subset forbids recursion, so the graph is acyclic; a cycle (which Zod
-expresses only via `z.lazy`) fails loud.
+graph, and re-emits the declarations dependency-first. The reliable subset forbids recursion, so the graph is acyclic; a
+cycle (which Zod expresses only via `z.lazy`) fails loud.
 
-**Protobuf constraints (the wire authoring rules).** Proto enums are integer with a forced `0` member and
-identifier-only names, so a string vocabulary with hyphens or dots (SPDX licences, access kinds) cannot be a proto enum
-— model it as a `string` field (set-validation then lives in code, which compatible-evolution does not need on the
-wire). Proto has no `const`; a literal discriminant (e.g. a union tag) becomes a plain field validated in code. Every
-message property needs an explicit `@field(n)`; a paramless op maps to `google.protobuf.Empty`; streaming is `@stream`.
-These are why proto is the **wire** target only, kept off the shared/durable at-rest schema (which keeps the richer
-enums and literals).
+**Proto authoring constraints.** Proto enums are integer with a forced `0` member and identifier-only names, so a string
+vocabulary with hyphens or dots (SPDX licences, access kinds) cannot be a proto enum — model it as a `string` field
+(membership validated in code or `protovalidate`). Proto has no `const` and the emitter no `oneof`, so a discriminant is
+a plain `string` field and its cross-field invariant lives in `protovalidate`, not the shape. Every message property
+needs an explicit `@field(n)`; a paramless op maps to `google.protobuf.Empty`; streaming is `@stream`. These apply to
+all authored proto — at-rest and wire alike (ADR 0003).
 
-**`@typespec/versioning`.** With the json-schema emitter it does not produce per-version schemas — it merges all
-`@added`/`@removed` annotations into one shape. Per-version emission is an OpenAPI-emitter feature. Not needed here:
-there are no schema versions — each domain has a single current `.tsp` evolved additively.
-
-**Compat-gate experiment (chuckd).** Change matrix run through `chuckd` on draft-07 schemas, both content models:
-
-| change          | open, BACKWARD                                 | closed, BACKWARD |
-| --------------- | ---------------------------------------------- | ---------------- |
-| add-optional    | break (`PROPERTY_ADDED_TO_OPEN_CONTENT_MODEL`) | **OK**           |
-| add-required    | break                                          | break            |
-| remove-optional | OK                                             | break            |
-| remove-required | OK                                             | break            |
-| rename-field    | break                                          | break            |
-| enum-add        | OK                                             | OK               |
-| enum-remove     | break (`COMBINED_TYPE_SUBSCHEMAS_CHANGED`)     | break            |
-| `const` bump    | break                                          | break            |
-| pattern-tighten | break (`PATTERN_ADDED`)                        | break            |
-
-Findings: (1) `chuckd` `BACKWARD` catches value-domain narrowing (enum-remove, pattern-tighten, `const`) — the
-proto/`jsonsubschema`-structural blind spot — so one tool covers both halves and `jsonsubschema` is not needed. (2) On
-open models it flags `add-optional` exactly as `jsonsubschema` does; the lever is the content model, not the tool. (3)
-Closed models give clean additive semantics (add-optional OK, removal/narrowing break) — hence at-rest closed. (4)
-`FULL` fails every field addition regardless of content model, so the gate runs `BACKWARD`. Exit code is the count of
-incompatibilities (0 = compatible). chuckd is a JVM tool, Docker-only (no PyPI).
-
-That matrix ran on **standalone per-type** draft-07 schemas. Building the real gate (S0.6) surfaced two facts the matrix
-didn't:
-
-- **`chuckd` diffs only from a schema's root.** The committed bundle's root is a `$defs` container with no
-  `properties`/`$ref`, so the diff reaches nothing and reports *every* change compatible — the gate is a silent no-op on
-  the bundle. Fix: promote each `$def` to a root (its body + an absolute `$id` + the whole `$defs` retained so `#/$defs`
-  refs resolve) and diff each on its own. A breaking change lives in exactly the type whose body changed (a referenced
-  type's change surfaces in its own diff), so only changed-body types are run.
-- **jsonsKema (chuckd's loader) rejects a relative `$id`** (`URI is not absolute`). The bundle root's `$id` is the
-  relative `bundleId`; the per-type extraction sets an absolute `$id` (a reserved `.invalid` host, never dereferenced —
-  all refs are local).
-- **Output is `{errorType:"X", description:"…"}` per finding** (chuckd 0.6.0, `anentropic/chuckd`), not the
-  `Difference{…type=…}` form the README shows; parsed by `errorType`. `PROPERTY_ADDED_TO_OPEN_CONTENT_MODEL` is the one
-  downgraded to a warning.
-
-**Bundle → normalize → Pydantic (verified end to end).** A multi-file domain (four `.tsp` files, cross-file refs, an
-enum, an optional field) compiled with `@typespec/json-schema` (`emitAllModels: true`, `bundleId: litcache.schema.json`,
-`file-type: json`), TypeSpec 1.13.0.
-
-1. **Output is one bundled file**, 2020-12, all types under `$defs` — and **standards valid**
-   (`check-jsonschema --check-metaschema` passes). Confirms a domain emits one schema file, not one per type.
-
-1. **But the emitter's refs are `$id`-relative**, and each `$def` keeps its own `$id`:
-
-   ```jsonc
-   "$defs": {
-     "AccessKind": { "$id": "AccessKind.json", "type": "string", "enum": [...] },
-     "Version": { "$id": "Version.json", "properties": {
-       "access": { "$ref": "AccessKind.json" } } }   // <- not #/$defs/AccessKind
-   }
-   ```
-
-1. **`datamodel-code-generator` can't consume that** — it reads `"$ref": "AccessKind.json"` as a file path:
-   `$ref file not found: …/AccessKind.json`, no output. (TypeSpec Discussion #4084.)
-
-1. **Normalize** — strip each `$def`'s `$id`/`$schema`, rewrite `"$ref": "X.json"` → `"#/$defs/X"`. Still
-   metaschema-valid, and `datamodel-code-generator` then emits correct Pydantic v2: `AccessKind` enum,
-   `access_publisher: str | None = None`, cross-file refs resolved to `list[Version]` / `list[KnowledgeUnit]`.
-
-So the bundled form is standard but the JSON-Schema toolchain needs the normalize pass; it's a #4084 workaround, not
-intrinsic. (Minor: the bundle root has no top-level type, so datamodel-codegen also emits a spurious
-`Model(RootModel[Any])` — harmless; pin a root type or drop it.)
+**`@typespec/versioning`.** Not needed here: there are no schema versions — each domain has a single current `.tsp`
+evolved additively (see Schema evolution).

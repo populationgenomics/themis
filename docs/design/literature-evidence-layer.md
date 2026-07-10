@@ -96,26 +96,26 @@ split a later data migration — filter the redistributable objects out — not 
 ### 2.1 Storage layout — one directory per paper (GCS)
 
 Each paper is a **GCS directory** holding all its artifacts: source `xml` and/or `pdf`, derived `markdown`, extracted
-`figures/` (images), `supplementary/` files, the write-once `knowledge_units.jsonl` (Layer 1 model output, §4.2), and
-the derived `entities.jsonl` (the entity→KU map — stable entity ids + mention clustering, rebuildable, §4.2).
-**Revisions are additive and content-addressed** ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)):
-an updated source (a re-fetch, a PMC article-version bump, a PubMed revision) is collected as an **additional revision
-of that source lineage**, and a re-conversion as an **additional content-addressed rendering** — existing bytes are
-**never overwritten**, so a knowledge unit that cites a given rendering hash always resolves to the exact, unchanged
-text it was extracted from (§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s
-linked by an equivalence edge, §2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud
-SQL (§2.3) is a rebuildable projection of these directories.
+`figures/` (images), `supplementary/` files, the write-once `knowledge_units.pb` (Layer 1 model output, §4.2), and the
+derived `entities.pb` (the entity→KU map — stable entity ids + mention clustering, rebuildable, §4.2). **Revisions are
+additive and content-addressed** ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)): an updated source
+(a re-fetch, a PMC article-version bump, a PubMed revision) is collected as an **additional revision of that source
+lineage**, and a re-conversion as an **additional content-addressed rendering** — existing bytes are **never
+overwritten**, so a knowledge unit that cites a given rendering hash always resolves to the exact, unchanged text it was
+extracted from (§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s linked by an
+equivalence edge, §2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud SQL (§2.3) is
+a rebuildable projection of these directories.
 
-- **`manifest.json`** describes the directory: this UUID, all known external ids (§2.2), any equivalence edges linking
-  it to other UUIDs of the same work + the resulting canonical UUID (§2.2), the licence, access, and quality tags (§2),
+- **`manifest.pb`** describes the directory: this UUID, all known external ids (§2.2), any equivalence edges linking it
+  to other UUIDs of the same work + the resulting canonical UUID (§2.2), the licence, access, and quality tags (§2),
   capture provenance, a **retraction flag** (§6.1), and **the source URL of every known associated file — even files not
   (yet) downloaded** (a figure or supplementary archive we know exists but haven't fetched). This makes the directory
   self-describing and supports lazy fetch.
-- **`metadata.json`** holds bibliographic metadata. The **schema is `pubmed_pb2`** (pubmed-proto) — the 37M corpus is
-  already modelled there, so we reuse it rather than re-model — but it is **stored as JSON** (protobuf's canonical JSON
-  serialization; a JSONSchema is generable from the proto). So every consumer reads plain, inspectable JSON with **no
-  protobuf dependency**, while in-corpus and external papers (e.g. bioRxiv, synthesised into the same schema) stay
-  uniform downstream.
+- **`metadata.pb`** holds bibliographic metadata. The **schema is `pubmed_pb2`** (pubmed-proto) — the 37M corpus is
+  already modelled there, so we reuse it rather than re-model — **stored as binary proto** (bucket 1,
+  [ADR 0003](../adr/0003-serialization-posture.md)): write-once over the re-derivable PubMed XML. In-corpus and external
+  papers (e.g. bioRxiv, synthesised into the same message) stay uniform downstream; readability is via the dump helper,
+  not a stored JSON copy.
 
 ### 2.2 Identity — canonical id + external-id crosswalk
 
@@ -201,10 +201,10 @@ keeping the index RAM-resident in pgvector, §2.4.)
     **trigger for late-binding reconciliation** (§2.2): newly-ingested corpus papers are matched (DOI/title) to any
     pre-existing external UUID and linked or merged.
 - **Rebuildable from GCS (4d).** Cloud SQL holds **no primary state**: it is a materialised projection rebuilt from
-  **two GCS sources** — the ingestion's corpus-columns parquet, and the per-paper cache directories (`manifest.json` +
-  `metadata.json` + `knowledge_units.jsonl`), joined via the crosswalk. Lose the database, rebuild it from the bucket.
-  The expensive Layer-1 extraction is stored as a GCS artifact (not Postgres-primary) so a rebuild never re-extracts;
-  the grounding overlay is recomputable anyway (§4.2).
+  **two GCS sources** — the ingestion's corpus-columns parquet, and the per-paper cache directories (`manifest.pb` +
+  `metadata.pb` + `knowledge_units.pb`), joined via the crosswalk. Lose the database, rebuild it from the bucket. The
+  expensive Layer-1 extraction is stored as a GCS artifact (not Postgres-primary) so a rebuild never re-extracts; the
+  grounding overlay is recomputable anyway (§4.2).
 - **Corpus columns — project the proven subset for the full corpus.** Exploding a column subset out of the bagz files
   has already paid off in practice, so that subset is projected into Cloud SQL for **all 37M** papers, not just cached
   ones — giving uniform SQL over the whole corpus (joins to KUs, the crosswalk, Project/entity tables; relational
@@ -340,9 +340,9 @@ The agent produced the support/refute tally from facts (step 1), grew coverage (
   is the basis for non-copyrightability. Domain-agnostic; the costly LLM pass. Extracted **append-style** (§4.5), not
   per-paragraph-in-isolation. The jsonl is **write-once — what the model emits**: assertions plus raw, unresolved
   entity-mention strings, with **no stable entity ids** (the model doesn't assign them at generation time). Entity
-  identity is resolved in a separate pass into an **entity→KU map** stored alongside (§2.1, `entities.jsonl`): it mints
-  a stable local id per resolved entity, clusters that entity's mentions across units, and indexes which units mention
-  it — so other layers reference entities by id while the write-once jsonl is never rewritten (rebuild the map with a
+  identity is resolved in a separate pass into an **entity→KU map** stored alongside (§2.1, `entities.pb`): it mints a
+  stable local id per resolved entity, clusters that entity's mentions across units, and indexes which units mention it
+  — so other layers reference entities by id while the write-once jsonl is never rewritten (rebuild the map with a
   better resolver, Layer 1 untouched). Unit refinements are append-only — a later unit carries a `supersedes` pointer to
   the unit it refines, never mutating it. **Queries resolve to the head of the supersedes-chain** (the latest
   non-superseded unit for an id); superseded units are retained for provenance, not returned by default. There is no
@@ -379,7 +379,7 @@ novo*); a free-form type carries the long tail. One paper yields many atomic uni
 a write-once Layer-1 unit — the model's assertion plus raw, unresolved mention strings, no entity ids:
 
 ```jsonc
-// knowledge_units.jsonl  (Layer 1 — write-once, exactly as the model emits it)
+// knowledge_units.pb  (Layer 1 — write-once, exactly as the model emits it)
 { "id": "u17",
   "assertion": "Gain-of-function mutations in KCNJ11 or ABCC8 cause neonatal diabetes",
   "mentions": ["KCNJ11", "ABCC8", "neonatal diabetes"],   // raw strings, unresolved
@@ -407,7 +407,7 @@ clusters the raw mentions (here `"KCNJ11"` and `"KCNJ11 (Kir6.2)"` resolve to on
 entity occurs in — all without touching the write-once jsonl:
 
 ```jsonc
-// entities.jsonl  (derived, write-alongside, rebuildable) — resolution only
+// entities.pb  (derived, write-alongside, rebuildable) — resolution only
 { "eid": "e30", "canonical": "KCNJ11",
   "mentions": ["KCNJ11", "KCNJ11 (Kir6.2)"], "kus": ["u17", "u41"] }
 { "eid": "e31", "canonical": "ABCC8",
@@ -592,7 +592,7 @@ PRODUCT.md §9):
 A retracted or withdrawn paper's knowledge units stay in the immutable append-only substrate (§4.2) — they are **not
 deleted**. Retraction is handled as a **paper-level overlay fact, checked at resolution time**, not a mutation of units:
 
-- **Flag, don't purge.** Retraction/withdrawal is recorded as a flag on the paper: in `manifest.json` (GCS source of
+- **Flag, don't purge.** Retraction/withdrawal is recorded as a flag on the paper: in `manifest.pb` (GCS source of
   truth) and its Cloud SQL projection. Detection rides the existing non-bulk metadata path (§6) — PubMed retraction
   notices and Crossref retraction metadata, polled by the discovery/capture worker, never the agent.
 - **Every result resolves to a paper; the flag propagates on use.** Each KU and each paragraph-embedding hit resolves to

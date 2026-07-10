@@ -15,8 +15,8 @@ why.
 S0 = **cache storage + seed ingestion**, recording provenance. Everything that needs a user/entitlement model or query
 surface is deferred.
 
-- **In:** per-paper GCS storage; UUID identity + crosswalk; versioning + source anchors; `manifest.json` /
-  `metadata.json` schemas; the seed-ingestion path; extraction of the fetch ladder into a shared `litfetch` package.
+- **In:** per-paper GCS storage; UUID identity + crosswalk; versioning + source anchors; `manifest.pb` / `metadata.pb`
+  schemas; the seed-ingestion path; extraction of the fetch ladder into a shared `litfetch` package.
 - **Out (deferred):** the gated read-tool and any entitlement enforcement ("don't worry about serving"); live
   proven-access fetch and the upload route; the durable Cloud SQL serving projection (only the crosswalk table lands
   now, §Mechanisms); KU extraction (§4), embeddings (§2.4/§4.4), collections (§5).
@@ -26,15 +26,15 @@ surface is deferred.
 | Area                      | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Storage                   | The cache lives in the existing **`gs://cpg-themis-dev-fulltext`** bucket — seed under `ingest/`, built cache under `papers/` — behind the boundary (`cpg-themis-dev`). No separate bucket; **"litcache" names the component** (writer + layout), not a bucket. Bucket policy (private; versioned with soft-delete off; Autoclass→Archive; `force_destroy` off — the "precious" tier) is **owned by Pulumi** and documented once in [`../../infra/themis_infra/storage.py`](../../infra/themis_infra/storage.py) + `infra/README.md` §Storage; not restated here. Papers are **never GCS-TTL-expired** (a logical paper spans files with differing times; eviction, if ever, is an explicit operation, not a TTL). |
-| PubMed metadata           | Full PubMed metadata (baseline + dailies XML, and the exploded parquet) lives in a **separate, public bucket** (not themis-managed yet), not the cache bucket — it is unambiguously public data. Themis pulls the parquet → Cloud SQL (serving, deferred). Per-paper `metadata.json` (PubMed canonical JSON, or synthesised for non-PubMed) lives **per-paper in the cache bucket**. Cross-project SA grant for now; moving it into themis or making it requester-pays-public is a **later, staged** cleanup.                                                                                                                                                                                                      |
+| PubMed metadata           | Full PubMed metadata (baseline + dailies XML, and the exploded parquet) lives in a **separate, public bucket** (not themis-managed yet), not the cache bucket — it is unambiguously public data. Themis pulls the parquet → Cloud SQL (serving, deferred). Per-paper `metadata.pb` (PubMed canonical proto, or synthesised for non-PubMed) lives **per-paper in the cache bucket**. Cross-project SA grant for now; moving it into themis or making it requester-pays-public is a **later, staged** cleanup.                                                                                                                                                                                                       |
 | Fetch ladder              | Depend on the standalone **`litfetch`** package (prototyped; wheel via the wheelhouse, dep `litdown>=0.3`): a fetch ladder of `Fetcher` backends (PMC-OA S3, Europe PMC, Elsevier OA) + demand-driven `Resolver`s + `Generator`s, modelling an article as a **file-set** of External/Derived `File`s. Themis capture/ingestion runs it with its own allowlisted egress — licensed bytes never transit the shared plane.                                                                                                                                                                                                                                                                                            |
-| litfetch boundary         | **litfetch owns** identity (`ArticleIds`), the file-set model, fetching (uri + per-source credentials), source metadata + **raw licence + basis**, and `GenerationProvenance`. **litcache (consumer) owns** placement (this GCS layout + the `manifest.json` record), bibliographic `metadata.json`, and the **SPDX/policy** mapping. litfetch is **not** a bibliographic-metadata client. Mapping: External Files → `sources[]`; Derived Files (+`GenerationProvenance`) → `renderings[]`.                                                                                                                                                                                                                        |
+| litfetch boundary         | **litfetch owns** identity (`ArticleIds`), the file-set model, fetching (uri + per-source credentials), source metadata + **raw licence + basis**, and `GenerationProvenance`. **litcache (consumer) owns** placement (this GCS layout + the `manifest.pb` record), bibliographic `metadata.pb`, and the **SPDX/policy** mapping. litfetch is **not** a bibliographic-metadata client. Mapping: External Files → `sources[]`; Derived Files (+`GenerationProvenance`) → `renderings[]`.                                                                                                                                                                                                                            |
 | Identity                  | Random **uuid4** per paper = directory name. Deterministic ids rejected (preprints/supplements have no external id; late-binding).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Atomic mint               | **Cloud SQL crosswalk table** (in the instance themis runs anyway). Workers mint against a shared `crosswalk(external_id UNIQUE, doc_id)` table: one transaction inserts *all* of a paper's ids (DOI, PMID, PMCID, …) under the constraint, minting a fresh uuid4 if none collide. Multi-id atomicity is native to the single transaction. A collision adopts the incumbent `doc_id`. The table is **persistent but safe to drop** — rebuildable from manifests (scan + invert), so it holds no irreplaceable state. The manifest is the system of record and the commit; the DB row is the mint lock.                                                                                                             |
 | Equivalence               | Native multi-id claim removes the write-race edge case. An edge now arises only from a **genuine cross-paper link** — a paper's ids resolving to >1 distinct incumbent `doc_id` in one transaction (the late-binding case, §2.2) — detected atomically. The edge is written into the involved **manifests** (durable, rebuildable), never DB-only. Canonical uuid = lowest in the class; dedup/counting key on canonical (consumers deferred). Rare in a single-source seed.                                                                                                                                                                                                                                       |
 | Source vs rendering       | A **source** is a primary-artifact lineage (the pdf, the xml) with a stable `handle` and append-only `revisions[]`; an update is a new revision, not a paper-wide version. A **rendering** = one converter's markdown of one revision, content-addressed and keyed by its hash. **Converter is not part of source identity** — re-converting adds a rendering. See [ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md).                                                                                                                                                                                                                                                                             |
-| Source anchors            | Durable anchor = the extractor's **verbatim quote `{quote, exact}`** (write-once, boundary-side). Offsets are **recomputable** per `(ku_id, rendering)` by re-aligning the quote; never the source of truth. Recovering a quote's **bounding box in a rendering derived from a pdf** needs the pdf's character layer, so ingestion records `has_text_layer` per pdf source (below) to surface problem papers early; XML-backed papers map to the XML instead. (KU/extraction itself is deferred, but the cache layout reserves `knowledge_units.jsonl` and pins this contract.)                                                                                                                                    |
-| Licence/access            | **Per-source-lineage** (`sources[]`): **raw `licence` + `licence_basis`** (`artifact`\|`asserted`) as litfetch returns them, plus an `access` named-union tag (publisher required iff licensed, structurally). Varies between lineages (a CC-BY xml vs a restricted pdf), stable across a lineage's revisions. Policy booleans (`redistributable`, …) derived at read time by normalizing the raw licence to an SPDX id — not stored. Retraction = **paper-level** flag.                                                                                                                                                                                                                                           |
+| Source anchors            | Durable anchor = the extractor's **verbatim quote `{quote, exact}`** (write-once, boundary-side). Offsets are **recomputable** per `(ku_id, rendering)` by re-aligning the quote; never the source of truth. Recovering a quote's **bounding box in a rendering derived from a pdf** needs the pdf's character layer, so ingestion records `has_text_layer` per pdf source (below) to surface problem papers early; XML-backed papers map to the XML instead. (KU/extraction itself is deferred, but the cache layout reserves `knowledge_units.pb` and pins this contract.)                                                                                                                                       |
+| Licence/access            | **Per-source-lineage** (`sources[]`): **raw `licence` + `licence_basis`** (`artifact`\|`asserted`) as litfetch returns them, plus a flat `access` field (kind + optional publisher; publisher-iff-licensed enforced by `protovalidate`, not structurally). Varies between lineages (a CC-BY xml vs a restricted pdf), stable across a lineage's revisions. Policy booleans (`redistributable`, …) derived at read time by normalizing the raw licence to an SPDX id — not stored. Retraction = **paper-level** flag.                                                                                                                                                                                               |
 | Provenance vs entitlement | **Capture-side provenance** recorded now (per paper, no user-ID needed). **Read-side entitlement** deferred — there is no themis user/affiliation system yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Ingestion policy          | **Ingest everything** (OA / non-OA / unknown-basis); record what's known; quarantine nobody; serving not a concern at this stage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | S0 infra                  | **GCS holds the only irreplaceable state** — directories + manifests. The mint crosswalk table lives in themis's Cloud SQL instance and is rebuildable from manifests, so it is **persistent but safe to drop**. The durable serving projection (KU rows, embeddings, …) is still deferred — only the crosswalk lands now. The **manifest write is the commit point**; the resumability checkpoint is the written manifests, not the crosswalk.                                                                                                                                                                                                                                                                    |
@@ -45,12 +45,12 @@ surface is deferred.
 gs://cpg-themis-dev-fulltext/
   ingest/                                      # transient seed dump (raw docling json + pdf); deleted after ingestion. see Seed source
   papers/{uuid}/
-    manifest.json
-    metadata.json
+    manifest.pb
+    metadata.pb
     sources/{handle}/{hex}.{xml,pdf}         # immutable, content-addressed; seed bytes copied in (ingest/ is transient)
     renderings/{hex}.md                      # immutable; the markdown hash is the manifest map key
     renderings/{hex}.docling.json            # docling converter output (when converter=docling)
-    knowledge_units.jsonl                    # write-once; reserved (KU layer, deferred)
+    knowledge_units.pb                    # write-once; reserved (KU layer, deferred)
     figures/        {hash}.{ext}             # content-addressed blobs
     supplementary/  {hash}.{ext}
 ```
@@ -58,14 +58,16 @@ gs://cpg-themis-dev-fulltext/
 Ingestion reads the `ingest/` seed and writes per-paper directories alongside it. The crosswalk is a **derived index** —
 an inversion of the manifests' `external_ids` + `equivalence` — held in the Cloud SQL mint table, not in the bucket. GCS
 holds the **only irreplaceable** state in S0; rebuild-from-bucket is trivial — scan manifests, re-invert. Schemas evolve
-**additively only** (the TypeSpec rails, [`../design/typespec.md`](../design/typespec.md)): the current schema reads
-every artifact ever written, validated against it directly. An unknown field fails loud as drift (closed at-rest content
-model). The GCS layout and `manifest.json` shape here are **validated by a working `.litcache/` prototype** in the
-litfetch repo.
+**additively only** (the TypeSpec rails, [`../design/typespec.md`](../design/typespec.md)): a reader parses every
+artifact ever written, and proto's unknown-field retention means an older reader round-trips a newer writer's fields
+untouched ([ADR 0003](../adr/0003-serialization-posture.md)); a retired field-number is fenced with `reserved`. The GCS
+layout and `manifest.pb` shape here are **validated by a working `.litcache/` prototype** in the litfetch repo.
 
 ## Schemas
 
-### manifest.json — identity / provenance / cache-control
+### manifest.pb — identity / provenance / cache-control
+
+The binary manifest, shown here as its JSON *rendering* (via the dump helper, ADR 0003) for readability:
 
 ```jsonc
 {
@@ -101,27 +103,28 @@ litfetch repo.
 }
 ```
 
-### metadata.json — bibliographic
+### metadata.pb — bibliographic
 
-`pubmed_pb2` (`pubmed-proto`) canonical JSON, stored as plain JSON (no protobuf dependency downstream). Non-PubMed
-papers (bioRxiv, uploads) are synthesised into the same shape so consumers stay uniform — litcache owns this
-bibliographic shape, litfetch does not.
+`pubmed_pb2` (`pubmed-proto`) **binary proto** (`metadata.pb`) — bucket 1 per
+[ADR 0003](../adr/0003-serialization-posture.md). Non-PubMed papers (bioRxiv, uploads) are synthesised into the same
+message so consumers stay uniform — litcache owns this bibliographic shape, litfetch does not.
 
 The PubMed schema is **bootstrapped once from the PubMed DTD by `xsd-former`**
 (`xsdformer dtd pubmed.dtd --typespec-out`, optionally `--proto-compat` for a `.tsp` that round-trips `tsp→proto`) — a
-one-time generation, then committed and maintained in place, not a continuously regenerated artifact. The wire/storage
-format is **JSON, not proto**; the operational requirement is the ability to **round-trip the cached JSON ↔
-`pubmed-proto`** by some means (generated or hand-written conversion). So the metadata schema can ride the same JSON
-Schema / Pydantic rails as the litcache manifest, with JSON↔proto kept a conversion concern. Distinct from the
-hand-authored `schema/litcache/` types; not re-modelled here.
+one-time generation, then committed and maintained in place, not a continuously regenerated artifact. It rides the same
+proto rails as the litcache manifest. It qualifies for bucket 1 not on completeness (the DTD→proto transform
+intentionally drops fields we don't model) but because it is **write-once / overwrite-from-fresh** over a **re-derivable
+source** — the authoritative PubMed XML stays the system of record, so a dropped field is recovered by re-running the
+transform (ADR 0003). Distinct from the hand-authored `schema/litcache/` types; not re-modelled here.
 
 ### Schema definition
 
 Authored in **TypeSpec** under `schema/litcache/` on the Stage-0 rails
-([`../design/typespec.md`](../design/typespec.md)): snake_case, additive-only. `regen` emits the Pydantic models (the
-cache-writer's models), the committed `jsonschema/litcache.schema.json` — the at-rest validation artifact *and* the
-`schema-compat` baseline — and Zod. Cross-field rules that survive codegen are enforced structurally (the `access` named
-union); the rest live in a thin hand-written layer over the generated models (the policy mapping below).
+([`../design/typespec.md`](../design/typespec.md)): snake_case, additive-only, `@field` numbers. `regen` emits the
+committed `.proto` — the at-rest artifact source *and* the `buf breaking` baseline — the `protoc` Python stubs (the
+cache-writer's models), and Zod. `@typespec/protobuf` emits no `oneof`, so the `access`-iff-`publisher` rule is a
+`protovalidate` constraint (not structural); other cross-field rules live in a thin hand-written layer over the
+generated models (the policy mapping below).
 
 **The model is per-source-lineage, not per-version-snapshot**
 ([`../adr/0002-manifest-renderings-and-reference-model.md`](../adr/0002-manifest-renderings-and-reference-model.md)). A
@@ -144,7 +147,7 @@ model Source {
   media_type: SourceFormat;
   licence: string;            // raw, as litfetch returned it (not an SPDX id)
   licence_basis: LicenceBasis;
-  access: Access;             // named union — publisher required iff licensed
+  access: Access;             // flat: access kind + optional publisher (protovalidate)
   revisions: Revision[];      // ≥1, append-only, ordered by captured_at
 }
 
@@ -162,14 +165,12 @@ enum LicenceBasis {
   asserted: "asserted",       // asserted by an access authority (Unpaywall) or to the work's terms
 }
 
-// access-iff-publisher holds structurally in every target — typespec.md worked
-// example (b); no hand-written validator. `access` is a tagged object on the wire:
-// {"access": "licensed", "publisher": "…"} | {"access": "free-to-read"} | ….
-model FreeToRead          { access: "free-to-read"; }
-model Licensed            { access: "licensed"; publisher: string; }
-model InstitutionCaptured { access: "institution-captured"; }
-model UnknownAccess       { access: "unknown"; }
-union Access { FreeToRead, Licensed, InstitutionCaptured, UnknownAccess }
+// access is flat — @typespec/protobuf emits no oneof (ADR 0003), so the
+// access-iff-publisher invariant is a protovalidate rule, not structural.
+model Access {
+  access: string;      // "free-to-read" | "licensed" | "institution-captured" | "unknown"
+  publisher?: string;  // present iff access == "licensed" (protovalidate CEL rule)
+}
 
 enum SourceKind {
   pmc_oa_s3: "pmc_oa_s3", europe_pmc: "europe_pmc", elsevier_oa: "elsevier_oa",
@@ -218,12 +219,13 @@ model AssociatedFile {
 // artifact, so it carries no TypeSpec model on the additive-only rails.
 ```
 
-Callers validate raw cache JSON against the generated `Manifest` model directly; additive-only evolution means the
-current schema reads every artifact ever written. A genuine breaking change (e.g. dropping a field once all data is
-migrated off it) is the out-of-band "merge a red `schema-compat`" one-off (typespec.md "Schema evolution").
+Callers parse cache bytes into the generated `Manifest` proto message; additive-only evolution plus proto's
+unknown-field retention means a reader round-trips every artifact ever written (ADR 0003). A genuine breaking change
+(e.g. dropping a field once all data is migrated off it) is the out-of-band "merge a red `schema-compat`" one-off
+(typespec.md "Schema evolution").
 
-`metadata.json` stays outside this schema: it is `pubmed-proto` canonical JSON, validated against the JSONSchema
-generated from the proto (litfetch owns no bibliographic shape — see the litfetch-boundary row in Decisions).
+`metadata.pb` stays outside this schema: it is `pubmed-proto` binary proto — its own bucket-1 artifact (litfetch owns no
+bibliographic shape — see the litfetch-boundary row in Decisions).
 
 **Derived policy booleans** — the thin hand-written layer over the generated models, computed at read time and never
 stored (§2). The raw `licence` is first **normalized to an SPDX id** (the consumer's read-time job — litfetch returns
@@ -273,18 +275,18 @@ commercial use); the table localises that decision to one cell.
   table, insert every id under the `UNIQUE` constraint, minting a fresh uuid4 if none collide. A collision on any id
   adopts that row's incumbent `doc_id` (paper already cached); ids resolving to >1 distinct incumbent is a genuine
   cross-paper link → write an equivalence edge into the involved manifests (§2.2). Then write the paper directory and
-  `manifest.json` — **the manifest write is the commit**. The DB row is the mint lock, not irreplaceable state: a crash
+  `manifest.pb` — **the manifest write is the commit**. The DB row is the mint lock, not irreplaceable state: a crash
   before the manifest write leaves a claim row with no manifest; the re-run reprocesses that paper (manifest absent) and
   reuses the claimed uuid to complete it, so orphan rows are harmless.
 - **Identity (per object).** Decode the GCS key (handle double-encoding) and classify it — DOI (`10.x/…`), bare-digit
   **PMID**, Elsevier PII, or opaque. Harvest the Docling `origin.filename` as a second id (often a PMID when the key is
   a DOI). All resolved ids are claimed together in the one mint transaction; a genuine cross-paper link surfaces as an
   equivalence edge (above).
-- **Metadata resolution.** litcache resolves the identifier → bibliographic `metadata.json` (DOI → Crossref; PMID →
-  PubMed / Europe PMC) and the cross-ids (DOI↔PMID↔PMCID) — bibliographic metadata is litcache's, not litfetch's.
-  **Licence + access come from litfetch**: it returns the **raw `licence` + `licence_basis`** (`artifact` extracted from
-  the bytes, else `asserted` via Unpaywall) and the OA `access`; litcache stores them verbatim onto the matching
-  `Source` lineage and normalizes to SPDX only at read time (policy table). `unknown` where unresolved.
+- **Metadata resolution.** litcache resolves the identifier → bibliographic `metadata.pb` (DOI → Crossref; PMID → PubMed
+  / Europe PMC) and the cross-ids (DOI↔PMID↔PMCID) — bibliographic metadata is litcache's, not litfetch's. **Licence +
+  access come from litfetch**: it returns the **raw `licence` + `licence_basis`** (`artifact` extracted from the bytes,
+  else `asserted` via Unpaywall) and the OA `access`; litcache stores them verbatim onto the matching `Source` lineage
+  and normalizes to SPDX only at read time (policy table). `unknown` where unresolved.
 - **Conversion (branch on OA).** If the paper is in PMC / otherwise OA and XML is obtainable via the `litfetch` ladder
   (PMC-OA / Europe PMC), convert the XML with `litdown` (`converter=litdown`). Otherwise generate markdown from the seed
   Docling json via `docling-core` `export_to_markdown()` (`converter=docling`). Either way the pdf is retained as a
@@ -317,9 +319,9 @@ exported from this json; OA papers are rendered from fetched XML instead (Conver
 Per-paper pipeline (idempotent, resumable, safe to re-run incrementally): determine canonical ids (classify key +
 docling origin) → claim uuid in the crosswalk (dedup / equivalence) → skip if the manifest already exists → convert
 (OA/PMC: litfetch XML → litdown; else Docling → markdown, + flag pdf `has_text_layer` via pypdfium2) → resolve
-bibliographic metadata (PubMed ingestion or public API) → set up the paper dir + `metadata.json` → move the pdf and
-other files into place → write manifest (**the commit**). Built as a **Dataflow** pipeline reading/writing GCS and
-claiming crosswalk ids in Cloud SQL.
+bibliographic metadata (PubMed ingestion or public API) → set up the paper dir + `metadata.pb` → move the pdf and other
+files into place → write manifest (**the commit**). Built as a **Dataflow** pipeline reading/writing GCS and claiming
+crosswalk ids in Cloud SQL.
 
 ```mermaid
 flowchart TD
@@ -329,7 +331,7 @@ flowchart TD
   D -- none --> E["Mint fresh uuid4"]
   D -- "one incumbent" --> F["Adopt incumbent doc_id"]
   D -- "2+ incumbents" --> G["Adopt canonical doc_id + record equivalence edge"]
-  E --> H{"manifest.json already written?"}
+  E --> H{"manifest.pb already written?"}
   F --> H
   G --> H
   H -- yes --> Z["Skip — already cached"]
@@ -339,9 +341,9 @@ flowchart TD
   K --> K2["Check pdf text layer (pypdfium2); flag if not recoverable"]
   J --> L["Resolve bibliographic metadata: PubMed ingestion, else public API (Crossref / PubMed / Europe PMC)"]
   K2 --> L
-  L --> M["Set up paper dir + write metadata.json"]
+  L --> M["Set up paper dir + write metadata.pb"]
   M --> N["Move pdf + other files into place (source bytes, rendering, blobs)"]
-  N --> O["Write manifest.json — the commit"]
+  N --> O["Write manifest.pb — the commit"]
   O --> P(["Next paper"])
   Z --> P
 ```
@@ -354,17 +356,17 @@ workers claim against. The mint/write logic is otherwise runtime-agnostic.
 
 1. **Adopt `litfetch`** as a themis dependency (prototyped standalone package; wheel via the wheelhouse). Repoint
    pubmedifier's MCP service at it too.
-1. **Author the litcache schema** in `schema/litcache/*.tsp` and `regen` the committed Pydantic / JSON Schema / Zod (per
-   Schema definition). Then the **cache writer library** (themis) over the generated models: the crosswalk-table mint
-   (one transaction over all ids; equivalence edge on a genuine cross-paper link); crosswalk rebuild-from-manifests;
-   directory + manifest writer (manifest = commit); idempotent re-run.
+1. **Author the litcache schema** in `schema/litcache/*.tsp` and `regen` the committed `.proto` / Python stubs / Zod
+   (per Schema definition). Then the **cache writer library** (themis) over the generated models: the crosswalk-table
+   mint (one transaction over all ids; equivalence edge on a genuine cross-paper link); crosswalk
+   rebuild-from-manifests; directory + manifest writer (manifest = commit); idempotent re-run.
 1. **Stand up the Cloud SQL instance** (the one themis needs anyway) and create the crosswalk table the ingestion mints
    against — persistent but rebuildable from manifests, so safe to drop. The cache bucket already exists
    (`gs://cpg-themis-dev-fulltext`, Pulumi-owned); no new bucket.
 1. **Seed ingestion adapter** (a **Dataflow** pipeline over `gs://cpg-themis-dev-fulltext/ingest/`): the per-paper
    pipeline above (classify → claim uuid → skip-if-cached → convert OA-XML/litdown ⟨else docling⟩ → resolve metadata →
-   dir + metadata.json → move files → manifest). Needs `docling-core` + `litfetch` + Crossref/PubMed/Unpaywall
-   resolvers. Resumable; safe to re-run incrementally. Delete `ingest/` once the run completes.
+   dir + metadata.pb → move files → manifest). Needs `docling-core` + `litfetch` + Crossref/PubMed/Unpaywall resolvers.
+   Resumable; safe to re-run incrementally. Delete `ingest/` once the run completes.
 
 ## Deferred (later stages, per design §8)
 
