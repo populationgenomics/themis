@@ -24,7 +24,7 @@ from themis.services.store import storage as storage_mod
 _MAX_WRITE_ATTEMPTS = 8
 
 
-class GcsStorage:
+class GcsStorage(storage_mod.Storage):
     """``storage.Storage`` over two GCS buckets (the store is the version authority)."""
 
     def __init__(self, *, working_document_bucket: str, workspace_bucket: str) -> None:

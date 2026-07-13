@@ -8,7 +8,7 @@ import json
 import pytest
 
 from themis.services.auth import __main__ as main_mod
-from themis.services.auth import backend as backend_mod
+from themis.services.auth import backend as auth_backend
 
 
 def test_fixture_backend_resolves_seeded_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -22,7 +22,7 @@ def test_fixture_backend_resolves_seeded_token(monkeypatch: pytest.MonkeyPatch) 
     context = asyncio.run(backend.resolve('tok-abc'))
     assert context.project_id == 'p1'
     assert context.analysis_id == 'a1'
-    with pytest.raises(backend_mod.UnresolvedError):
+    with pytest.raises(auth_backend.UnresolvedError):
         asyncio.run(backend.resolve('unknown'))
 
 
@@ -32,8 +32,8 @@ def test_fixture_backend_keys_by_hash_not_plaintext(monkeypatch: pytest.MonkeyPa
     backend = main_mod.build_backend()
 
     # The plaintext token resolves; its hash (what the store holds) is not a key.
-    with pytest.raises(backend_mod.UnresolvedError):
-        asyncio.run(backend.resolve(backend_mod.hash_token('tok-abc')))
+    with pytest.raises(auth_backend.UnresolvedError):
+        asyncio.run(backend.resolve(auth_backend.hash_token('tok-abc')))
 
 
 def test_explicit_empty_store_boots(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,7 +41,7 @@ def test_explicit_empty_store_boots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_BACKEND', 'fixture')
     monkeypatch.setenv('THEMIS_FIXTURE_BINDINGS', '{}')
     backend = main_mod.build_backend()
-    with pytest.raises(backend_mod.UnresolvedError):
+    with pytest.raises(auth_backend.UnresolvedError):
         asyncio.run(backend.resolve('anything'))
 
 

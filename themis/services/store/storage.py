@@ -14,8 +14,9 @@ per-message limit).
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Iterable, Mapping
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
 
 # Zero-padded so a prefix listing orders numerically and the newest is the last key
 # (self-hosted-sandbox.md §9); wide enough that the pad never overflows in practice.
@@ -27,19 +28,23 @@ class WorkingDocument(NamedTuple):
     markdown: str
 
 
-class Storage(Protocol):
+class Storage(abc.ABC):
+    @abc.abstractmethod
     async def put_working_document(self, analysis_id: str, markdown: str) -> int:
         """Append an immutable version; return the store-assigned version number."""
         ...
 
+    @abc.abstractmethod
     async def get_working_document(self, analysis_id: str) -> WorkingDocument | None:
         """The latest version, or ``None`` when the Analysis has none yet."""
         ...
 
+    @abc.abstractmethod
     async def put_workspace(self, analysis_id: str, archive: bytes) -> None:
         """Overwrite the Analysis's ephemeral workspace archive."""
         ...
 
+    @abc.abstractmethod
     async def get_workspace(self, analysis_id: str) -> bytes | None:
         """The workspace archive, or ``None`` when none is stored yet."""
         ...
@@ -60,7 +65,7 @@ def next_version(existing_keys: Iterable[str]) -> int:
     return max(versions) + 1 if versions else 1
 
 
-class FixtureStorage:
+class FixtureStorage(Storage):
     """In-memory ``Storage`` for offline runs and tests.
 
     Models the same invariants as the GCS backend: working-document versions are append-only

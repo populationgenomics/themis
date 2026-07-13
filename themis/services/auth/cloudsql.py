@@ -17,7 +17,7 @@ from typing import Any, Protocol
 from google.cloud.sql import connector
 
 from themis.rpc import auth_pb2
-from themis.services.auth import backend as backend_mod
+from themis.services.auth import backend as auth_backend
 
 # pg8000 returns heterogeneous positional row tuples; typing the payload buys no safety.
 # (`_Row` aliases `Any`; ANN401 targets a literal `Any`, not an alias.)
@@ -39,7 +39,7 @@ class _Connection(Protocol):
     def close(self) -> None: ...
 
 
-class CloudSqlBackend:
+class CloudSqlBackend(auth_backend.SessionBackend):
     """A ``backend.SessionBackend`` over ``session_context`` (IAM auth, one connection per resolve).
 
     Holds a process-lifetime ``Connector``; each resolve opens and closes a single
@@ -67,7 +67,7 @@ class CloudSqlBackend:
         return await asyncio.get_running_loop().run_in_executor(None, self._resolve_blocking, session_token)
 
     def _resolve_blocking(self, session_token: str) -> auth_pb2.SessionContext:
-        token_hash = backend_mod.hash_token(session_token)
+        token_hash = auth_backend.hash_token(session_token)
         with contextlib.closing(self._connect()) as conn, contextlib.closing(conn.cursor()) as cursor:
             cursor.execute(
                 'SELECT project_id, analysis_id FROM session_context WHERE token_hash = %s',
@@ -75,7 +75,7 @@ class CloudSqlBackend:
             )
             row = cursor.fetchone()
         if row is None:
-            raise backend_mod.UnresolvedError
+            raise auth_backend.UnresolvedError
         return auth_pb2.SessionContext(project_id=row[0], analysis_id=row[1])
 
     def close(self) -> None:

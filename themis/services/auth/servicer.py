@@ -11,11 +11,11 @@ from __future__ import annotations
 import grpc
 
 from themis.rpc import auth_pb2, auth_pb2_grpc
-from themis.services.auth import backend as backend_mod
+from themis.services.auth import backend as auth_backend
 
 
 class Servicer(auth_pb2_grpc.AuthServicer):
-    def __init__(self, backend: backend_mod.SessionBackend) -> None:
+    def __init__(self, backend: auth_backend.SessionBackend) -> None:
         self._backend = backend
 
     async def ResolveSession(
@@ -23,5 +23,5 @@ class Servicer(auth_pb2_grpc.AuthServicer):
     ) -> auth_pb2.SessionContext:
         try:
             return await self._backend.resolve(request.session_token)
-        except backend_mod.UnresolvedError:
+        except auth_backend.UnresolvedError:
             await context.abort(grpc.StatusCode.PERMISSION_DENIED, 'session token could not be resolved')

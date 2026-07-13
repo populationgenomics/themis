@@ -10,9 +10,9 @@ connector with IAM auth (the deployed path).
 
 from __future__ import annotations
 
+import abc
 import hashlib
 from collections.abc import Mapping
-from typing import Protocol
 
 from themis.rpc import auth_pb2
 
@@ -21,7 +21,8 @@ class UnresolvedError(Exception):
     """The session token resolves to no binding — an invalid, revoked, or expired token."""
 
 
-class SessionBackend(Protocol):
+class SessionBackend(abc.ABC):
+    @abc.abstractmethod
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
         """Return the token's binding, or raise ``UnresolvedError`` if it grants nothing.
 
@@ -36,7 +37,7 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
-class FixtureBackend:
+class FixtureBackend(SessionBackend):
     """In-memory backend keyed by token hash, for offline use and tests.
 
     The invariant matches the real store: lookups are by ``hash_token`` of the bearer,

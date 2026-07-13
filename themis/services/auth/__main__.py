@@ -17,11 +17,11 @@ from google.protobuf import json_format
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from themis.rpc import auth_pb2, auth_pb2_grpc
-from themis.services.auth import backend as backend_mod
+from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
 
 
-def build_backend() -> backend_mod.SessionBackend:
+def build_backend() -> auth_backend.SessionBackend:
     backend = os.environ.get('THEMIS_BACKEND')
     if backend is None:
         raise SystemExit('THEMIS_BACKEND is required (expected "cloudsql" or "fixture")')
@@ -39,7 +39,7 @@ def _require(name: str) -> str:
     return value
 
 
-def _cloudsql_backend_from_env() -> backend_mod.SessionBackend:
+def _cloudsql_backend_from_env() -> auth_backend.SessionBackend:
     from themis.services.auth import cloudsql  # noqa: PLC0415 — deferred so the fixture path skips the connector import
 
     return cloudsql.CloudSqlBackend(
@@ -49,7 +49,7 @@ def _cloudsql_backend_from_env() -> backend_mod.SessionBackend:
     )
 
 
-def _fixture_backend_from_env() -> backend_mod.FixtureBackend:
+def _fixture_backend_from_env() -> auth_backend.FixtureBackend:
     """Build the offline backend from ``THEMIS_FIXTURE_BINDINGS``.
 
     A JSON object mapping each plaintext session token to its binding, e.g.
@@ -72,13 +72,13 @@ def _fixture_backend_from_env() -> backend_mod.FixtureBackend:
         raise SystemExit(
             f'THEMIS_FIXTURE_BINDINGS must be a JSON object of token -> binding, got {type(seeds).__name__}'
         )
-    bindings = {backend_mod.hash_token(token): _parse_binding(token, binding) for token, binding in seeds.items()}
-    return backend_mod.FixtureBackend(bindings)
+    bindings = {auth_backend.hash_token(token): _parse_binding(token, binding) for token, binding in seeds.items()}
+    return auth_backend.FixtureBackend(bindings)
 
 
 def _parse_binding(token: str, binding: object) -> auth_pb2.SessionContext:
     """Parse and validate one fixture binding into a ``SessionContext`` (fail-loud)."""
-    digest = backend_mod.hash_token(token)[:8]
+    digest = auth_backend.hash_token(token)[:8]
     if not isinstance(binding, dict):
         raise SystemExit(f'THEMIS_FIXTURE_BINDINGS binding (token sha256:{digest}…) must be a JSON object')
     try:

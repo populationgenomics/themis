@@ -12,11 +12,11 @@ verified at deploy.
 
 from __future__ import annotations
 
+import abc
 import dataclasses
 import pathlib
 import re
 from collections.abc import Mapping, Sequence
-from typing import Protocol
 
 _FILENAME_RE = re.compile(r'^(\d{4})_([a-z0-9_]+)\.sql$')
 _PLACEHOLDER_RE = re.compile(r'\$\{(\w+)\}')
@@ -37,13 +37,15 @@ class Migration:
     sql: str
 
 
-class Ledger(Protocol):
+class Ledger(abc.ABC):
     """The record of which migrations have been applied, and how to apply one."""
 
+    @abc.abstractmethod
     def applied_versions(self) -> set[int]:
         """Return the set of already-applied migration versions."""
         ...
 
+    @abc.abstractmethod
     def record(self, migration: Migration, sql: str) -> None:
         """Apply `sql` and mark `migration.version` applied, atomically."""
         ...
@@ -196,7 +198,7 @@ def run(
     return [migration.version for migration in pending]
 
 
-class InMemoryLedger:
+class InMemoryLedger(Ledger):
     """A `Ledger` test double: records versions + rendered SQL in memory."""
 
     def __init__(self) -> None:

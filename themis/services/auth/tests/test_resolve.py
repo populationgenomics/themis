@@ -10,7 +10,7 @@ import grpc.aio
 import pytest
 
 from themis.rpc import auth_pb2, auth_pb2_grpc
-from themis.services.auth import backend as backend_mod
+from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
 
 
@@ -19,7 +19,7 @@ def _resolve(bindings: Mapping[str, auth_pb2.SessionContext], token: str) -> aut
 
     async def run() -> auth_pb2.SessionContext:
         server = grpc.aio.server()
-        auth_pb2_grpc.add_AuthServicer_to_server(servicer_mod.Servicer(backend_mod.FixtureBackend(bindings)), server)
+        auth_pb2_grpc.add_AuthServicer_to_server(servicer_mod.Servicer(auth_backend.FixtureBackend(bindings)), server)
         port = server.add_insecure_port('127.0.0.1:0')
         await server.start()
         try:
@@ -34,7 +34,7 @@ def _resolve(bindings: Mapping[str, auth_pb2.SessionContext], token: str) -> aut
 
 def test_resolve_returns_the_binding() -> None:
     context = auth_pb2.SessionContext(project_id='proj-1', analysis_id='ana-1')
-    result = _resolve({backend_mod.hash_token('tok-123'): context}, 'tok-123')
+    result = _resolve({auth_backend.hash_token('tok-123'): context}, 'tok-123')
     assert result.project_id == 'proj-1'
     assert result.analysis_id == 'ana-1'
 

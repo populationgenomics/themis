@@ -57,7 +57,7 @@ def _iam_connect(sql: config.SqlConfig, pool: connector.Connector) -> _Connectio
     )
 
 
-class CloudSqlLedger:
+class CloudSqlLedger(migrate.Ledger):
     """A `migrate.Ledger` over Cloud SQL, tracked in `schema_migrations`.
 
     Bound to one live connection so the caller's advisory lock spans every
