@@ -3507,6 +3507,7 @@ lint = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
@@ -3525,6 +3526,7 @@ lint = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "ruff" },
     { name = "testcontainers" },
     { name = "types-pyyaml" },
@@ -3545,11 +3547,18 @@ migrate = [
 screen = [
     { name = "pyyaml" },
 ]
+session = [
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 test = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "check-jsonschema" },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
@@ -3563,6 +3572,7 @@ test = [
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "testcontainers" },
 ]
 
@@ -3602,6 +3612,7 @@ lint = [
     { name = "apache-beam", extras = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
@@ -3620,6 +3631,7 @@ lint = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "ruff" },
     { name = "testcontainers", extras = ["postgres"] },
     { name = "types-pyyaml" },
@@ -3638,11 +3650,18 @@ migrate = [
     { name = "pg8000" },
 ]
 screen = [{ name = "pyyaml" }]
+session = [
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 test = [
     { name = "apache-beam", extras = ["gcp"] },
     { name = "check-jsonschema" },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
@@ -3656,6 +3675,7 @@ test = [
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "testcontainers", extras = ["postgres"] },
 ]
 

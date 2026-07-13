@@ -56,6 +56,10 @@ cloudsql = ["cloud-sql-python-connector", "pg8000"]
 auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "cloudsql" }]
 # migration runner (themis/migrate): applies the committed SQL migrations at deploy.
 migrate = [{ include-group = "cloudsql" }]
+# service-to-service client (themis/clients): grpcio is the channel + generated stub;
+# google-auth mints the caller SA's ID token from the metadata server and requests is its
+# HTTP transport; protobuf backs the generated messages.
+session = ["grpcio", "google-auth", "requests", "protobuf"]
 # check-jsonschema: the metaschema validator the schema tests shell out to
 # (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
 # import-check the generated models in schema/tests (the codegen group provides
@@ -63,7 +67,7 @@ migrate = [{ include-group = "cloudsql" }]
 # crosswalk tests mint against a throwaway Postgres (never a mock — the
 # UNIQUE-in-one-txn semantics are the thing under test), gated on a reachable
 # Docker daemon.
-test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }]
+test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -74,12 +78,12 @@ infra = ["pulumi", "pulumi-gcp"]
 # can't resolve pydantic.* and fails on symbols the env (which has pydantic)
 # resolves fine. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
 # the schema/ Node project so the emitter's node_modules resolution works.
-testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests"]
+testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests"]
 pythonpath = ["."]
 consider_namespace_packages = true
 
@@ -147,6 +151,13 @@ ignore = [
 "themis/migrate/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
+]
+"themis/clients/auth/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+    "N802",   # inline test servicers mirror the proto service's PascalCase rpc names
+    "S105",   # fixture session tokens are not secrets
+    "ARG002", # a servicer override keeps the base signature even where a param is unused
 ]
 
 [tool.ruff.lint.pydocstyle]
