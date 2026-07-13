@@ -47,6 +47,10 @@ codegen = ["datamodel-code-generator", "grpcio-tools"]
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
 dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
+# auth service (themis/services/auth): the grpc.aio server + generated stubs. grpcio
+# is the runtime; grpcio-health-checking serves grpc.health.v1; protobuf backs the
+# generated messages (json_format seeds the fixture backend).
+auth = ["grpcio", "grpcio-health-checking", "protobuf"]
 # check-jsonschema: the metaschema validator the schema tests shell out to
 # (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
 # import-check the generated models in schema/tests (the codegen group provides
@@ -54,7 +58,7 @@ dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
 # crosswalk tests mint against a throwaway Postgres (never a mock — the
 # UNIQUE-in-one-txn semantics are the thing under test), gated on a reachable
 # Docker daemon.
-test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }]
+test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -65,13 +69,14 @@ infra = ["pulumi", "pulumi-gcp"]
 # can't resolve pydantic.* and fails on symbols the env (which has pydantic)
 # resolves fine. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
 # the schema/ Node project so the emitter's node_modules resolution works.
-testpaths = ["tests", "schema/tests"]
+testpaths = ["tests", "schema/tests", "themis/services/auth/tests"]
 pythonpath = ["."]
+consider_namespace_packages = true
 
 [tool.ruff]
 line-length = 120
@@ -127,12 +132,19 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]
+"themis/services/auth/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+]
+"themis/services/*/servicer.py" = [
+    "N802", # gRPC servicer methods mirror the proto service's PascalCase rpc names
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["themis_infra"]
+known-first-party = ["themis_infra", "themis"]
 
 # Complexity thresholds: roughly double the ruff defaults so the checks
 # fire on genuinely sprawling code but not on everyday parsers and
@@ -149,6 +161,11 @@ max-locals = 25
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["tools", "tests", "schema/tests", "infra", "litcache"]
+include = ["tools", "tests", "schema/tests", "infra", "litcache", "themis"]
+# themis/rpc is generated protoc output (dynamic message classes); the committed
+# .pyi gives importers static types, but the stubs themselves are not standard-mode
+# clean, so exclude them from checking. Re-list pyright's auto-excludes, which
+# specifying `exclude` would otherwise drop.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"
