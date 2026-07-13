@@ -3499,6 +3499,7 @@ infra = [
 ]
 lint = [
     { name = "apache-beam", extra = ["gcp"] },
+    { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
@@ -3506,6 +3507,7 @@ lint = [
     { name = "litdown" },
     { name = "litfetch" },
     { name = "lxml-stubs" },
+    { name = "pg8000" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "psycopg", extra = ["binary"] },
@@ -3529,6 +3531,10 @@ litcache = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pubmed-proto" },
     { name = "pypdfium2" },
+]
+migrate = [
+    { name = "cloud-sql-python-connector" },
+    { name = "pg8000" },
 ]
 screen = [
     { name = "pyyaml" },
@@ -3580,6 +3586,7 @@ infra = [
 ]
 lint = [
     { name = "apache-beam", extras = ["gcp"] },
+    { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
@@ -3587,6 +3594,7 @@ lint = [
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
     { name = "lxml-stubs" },
+    { name = "pg8000" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "psycopg", extras = ["binary"] },
@@ -3610,6 +3618,10 @@ litcache = [
     { name = "psycopg", extras = ["binary"] },
     { name = "pubmed-proto", specifier = "==0.1.0" },
     { name = "pypdfium2" },
+]
+migrate = [
+    { name = "cloud-sql-python-connector" },
+    { name = "pg8000" },
 ]
 screen = [{ name = "pyyaml" }]
 test = [
