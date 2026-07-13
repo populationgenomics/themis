@@ -24,6 +24,7 @@ class AuthService(pulumi.ComponentResource):
         sql_user: The SA's Cloud SQL IAM DB-user login — `THEMIS_SQL_IAM_USER` for
             the container, and the `${AUTH_DB_USER}` the `session_context` grant
             substitutes.
+        service_name: The Cloud Run service's name (the invoker-binding target).
         url: The service's `run.app` URL (internal ingress).
     """
 
@@ -108,11 +109,13 @@ class AuthService(pulumi.ComponentResource):
             ),
             opts=child,
         )
+        self.service_name = service.name
         self.url = service.uri
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
                 'sql_user': self.sql_user,
+                'service_name': self.service_name,
                 'url': self.url,
             }
         )

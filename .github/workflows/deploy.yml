@@ -47,6 +47,12 @@ jobs:
           docker build -f themis/services/auth/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "THEMIS_AUTH_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push store image
+        run: |
+          IMAGE="australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/store:${GITHUB_SHA}"
+          docker build -f themis/services/store/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_STORE_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - uses: pulumi/actions@v7
         id: pulumi
         with:
