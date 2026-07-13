@@ -10,6 +10,8 @@ See `docs/plans/managed-agents-wiring.md` §8.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pulumi
 import pulumi_gcp as gcp
 
@@ -141,6 +143,7 @@ def iam_db_user(
     project: str,
     instance: gcp.sql.DatabaseInstance,
     service_account_email: pulumi.Input[str],
+    database_roles: Sequence[str] | None = None,
     opts: pulumi.ResourceOptions | None = None,
 ) -> gcp.sql.User:
     """Create the Cloud SQL IAM database user a service account logs in as.
@@ -164,6 +167,9 @@ def iam_db_user(
         instance: The Cloud SQL instance to create the login on.
         service_account_email: The SA's email; the DB user name is this with the
             `.gserviceaccount.com` suffix removed.
+        database_roles: Postgres roles granted to the IAM DB user via the Admin API
+            (e.g. `cloudsqlsuperuser` for the schema-owning migrator, which needs
+            CREATE — a fresh IAM user has none). None for a plain login.
         opts: Resource options (parent/dependency wiring from the caller).
 
     Returns:
@@ -177,6 +183,7 @@ def iam_db_user(
             lambda email: email.removesuffix(_IAM_SA_EMAIL_SUFFIX)
         ),
         type='CLOUD_IAM_SERVICE_ACCOUNT',
+        database_roles=database_roles,
         opts=opts,
     )
 

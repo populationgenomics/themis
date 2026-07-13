@@ -41,9 +41,26 @@ jobs:
           docker build -t "$IMAGE" apps/web
           docker push "$IMAGE"
           echo "THEMIS_WEB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push auth image
+        run: |
+          IMAGE="australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/auth:${GITHUB_SHA}"
+          docker build -f themis/services/auth/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_AUTH_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - uses: pulumi/actions@v7
+        id: pulumi
         with:
           command: up
           stack-name: dev
           work-dir: infra
           cloud-url: gs://cpg-themis-dev-pulumi-state
+      # Apply pending DB migrations as the deploy SA (the schema-owning migrator),
+      # after the stack has attached the auth SA as a DB user (the SELECT grant's
+      # target). Connects through the connector with the job's WIF credentials.
+      - name: Apply database migrations
+        env:
+          THEMIS_SQL_CONNECTION_NAME: ${{ steps.pulumi.outputs.sql_connection_name }}
+          THEMIS_SQL_DATABASE: ${{ steps.pulumi.outputs.sql_database }}
+          THEMIS_SQL_IAM_USER: ${{ steps.pulumi.outputs.migrator_sql_user }}
+          THEMIS_MIGRATE_SUBSTITUTIONS: '{"AUTH_DB_USER": "${{ steps.pulumi.outputs.auth_sql_user }}"}'
+        run: uv run --group migrate python -m themis.migrate

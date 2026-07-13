@@ -12,9 +12,10 @@ import os
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import baseline, deploy_iam, ingest, secrets, sql, storage, web
+from themis_infra import auth, baseline, deploy_iam, ingest, secrets, sql, storage, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
+_AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 
 config = pulumi.Config()
 gcp_config = pulumi.Config('gcp')
@@ -64,12 +65,25 @@ migrator_sql_user = sql.iam_db_user(
     project=project,
     instance=database.instance,
     service_account_email=migrator_email,
+    # cloudsqlsuperuser gives the migrator CREATE on the public schema (a fresh IAM
+    # user has none); the only password-free bootstrap, applied via the Admin API.
+    database_roles=['cloudsqlsuperuser'],
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 sql.grant_cloudsql_connect(
     'themis-migrator',
     project=project,
     service_account_email=migrator_email,
+    opts=pulumi.ResourceOptions(depends_on=[database]),
+)
+auth_service = auth.AuthService(
+    'themis',
+    project=project,
+    region=region,
+    image=_service_image(_AUTH_IMAGE_ENV, 'themis-auth'),
+    sql_instance=database.instance,
+    sql_connection_name=database.instance_connection_name,
+    sql_database=database.database_name,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 site = web.WebService(
@@ -113,6 +127,11 @@ pulumi.export('sql_database', database.database_name)
 # The deploy SA's DB login — the identity the deploy.yml migrate step authenticates
 # as (the migrations' owner).
 pulumi.export('migrator_sql_user', migrator_sql_user.name)
+pulumi.export('auth_url', auth_service.url)
+pulumi.export('auth_sa_email', auth_service.service_account_email)
+# The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the
+# session_context SELECT grant.
+pulumi.export('auth_sql_user', auth_service.sql_user)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
