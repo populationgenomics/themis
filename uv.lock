@@ -3499,6 +3499,13 @@ dataflow = [
     { name = "pubmed-proto" },
     { name = "pypdfium2" },
 ]
+hello = [
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
@@ -3611,6 +3618,13 @@ dataflow = [
     { name = "psycopg", extras = ["binary"] },
     { name = "pubmed-proto", specifier = "==0.1.0" },
     { name = "pypdfium2" },
+]
+hello = [
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "requests" },
 ]
 infra = [
     { name = "pulumi" },

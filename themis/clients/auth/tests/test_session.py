@@ -149,3 +149,26 @@ def test_session_resolver_from_env_requires_url(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv('THEMIS_AUTH_URL', raising=False)
     with pytest.raises(SystemExit):
         session.session_resolver_from_env()
+
+
+def test_fixture_resolver_resolves_a_seeded_bearer() -> None:
+    session_resolver = session.fixture_session_resolver_from_json(
+        '{"tok": {"project_id": "p1", "analysis_id": "a1"}}', var_name='V'
+    )
+
+    async def run() -> auth_pb2.SessionContext:
+        return await session_resolver('tok')
+
+    context = asyncio.run(run())
+    assert context.project_id == 'p1'
+    assert context.analysis_id == 'a1'
+
+
+def test_fixture_resolver_unknown_bearer_is_unresolved() -> None:
+    session_resolver = session.fixture_session_resolver_from_json('{}', var_name='V')
+
+    async def run() -> auth_pb2.SessionContext:
+        return await session_resolver('nope')
+
+    with pytest.raises(session.UnresolvedSessionError):
+        asyncio.run(run())

@@ -9,11 +9,13 @@ unresolvable token — it never returns ``None``, so a servicer cannot proceed w
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Awaitable, Callable
 
 import grpc
 import grpc.aio
+from google.protobuf import json_format
 
 from themis.clients import id_token
 from themis.rpc import auth_pb2, auth_pb2_grpc
@@ -45,6 +47,58 @@ def session_resolver_from_env() -> SessionResolver:
     if not auth_url:
         raise SystemExit('THEMIS_AUTH_URL is required to reach the auth service')
     return session_resolver(auth_url)
+
+
+def fixture_session_resolver_from_json(raw: str | None, *, var_name: str) -> SessionResolver:
+    """Build an offline ``SessionResolver`` from a JSON bearer→binding map.
+
+    A service's offline/first-deploy authorizer: instead of reaching the auth service, resolve each
+    token against an explicitly-seeded map. Shared by every data-plane service's ``__main__`` fixture
+    branch so the JSON parsing and fail-loud validation live in one place.
+
+    Args:
+        raw: The JSON string — an object mapping each plaintext bearer to its binding, e.g.
+            ``{"tok": {"project_id": "p1", "analysis_id": "a1"}}``. ``None`` (an unset env var) is an
+            operator error; pass ``"{}"`` for an explicit empty set.
+        var_name: The source env var, named in the fail-loud error messages.
+
+    Returns:
+        A ``SessionResolver`` returning the seeded ``SessionContext`` for a known bearer and raising
+        ``UnresolvedSessionError`` on one it does not hold — matching the http resolver's contract.
+    """
+    if raw is None:
+        raise SystemExit(
+            f'{var_name} is required for the fixture authorizer: a JSON object of bearer -> binding, '
+            'or "{}" for an explicit empty set'
+        )
+    try:
+        seeds = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f'{var_name} is not valid JSON: {e}') from e
+    if not isinstance(seeds, dict):
+        raise SystemExit(f'{var_name} must be a JSON object of bearer -> binding, got {type(seeds).__name__}')
+    contexts = {token: _parse_binding(binding, var_name=var_name) for token, binding in seeds.items()}
+
+    async def session_resolver(session_token: str) -> auth_pb2.SessionContext:
+        try:
+            return contexts[session_token]
+        except KeyError:
+            raise UnresolvedSessionError from None
+
+    return session_resolver
+
+
+def _parse_binding(binding: object, *, var_name: str) -> auth_pb2.SessionContext:
+    """Parse and validate one fixture binding into a ``SessionContext`` (fail-loud)."""
+    if not isinstance(binding, dict):
+        raise SystemExit(f'{var_name} binding must be a JSON object')
+    try:
+        context = json_format.ParseDict(binding, auth_pb2.SessionContext())
+    except json_format.ParseError as e:
+        raise SystemExit(f'{var_name} binding is malformed: {e}') from e
+    if not context.project_id or not context.analysis_id:
+        raise SystemExit(f'{var_name} binding must set project_id and analysis_id')
+    return context
 
 
 async def require_session(

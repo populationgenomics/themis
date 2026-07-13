@@ -11,17 +11,17 @@ health service reports SERVING alongside.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 import grpc.aio
-from google.protobuf import json_format
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, store_pb2_grpc
+from themis.rpc import store_pb2_grpc
 from themis.services.store import servicer as servicer_mod
 from themis.services.store import storage as storage_mod
+
+_FIXTURE_CONTEXTS_VAR = 'THEMIS_STORE_FIXTURE_CONTEXTS'
 
 
 def _require(name: str) -> str:
@@ -54,54 +54,10 @@ def build_session_resolver() -> session_mod.SessionResolver:
     if backend == 'http':
         return session_mod.session_resolver_from_env()
     if backend == 'fixture':
-        return _fixture_session_resolver_from_env()
+        return session_mod.fixture_session_resolver_from_json(
+            os.environ.get(_FIXTURE_CONTEXTS_VAR), var_name=_FIXTURE_CONTEXTS_VAR
+        )
     raise SystemExit(f'unsupported THEMIS_AUTHORIZER_BACKEND {backend!r} (expected "http" or "fixture")')
-
-
-def _fixture_session_resolver_from_env() -> session_mod.SessionResolver:
-    """Build an offline session resolver from ``THEMIS_STORE_FIXTURE_CONTEXTS``.
-
-    A JSON object mapping each plaintext bearer to its binding, e.g.
-    ``{"tok": {"project_id": "p1", "analysis_id": "a1"}}``. Required — an unset var is an operator
-    error; pass ``{}`` for an explicit empty set. The session resolver raises ``UnresolvedSessionError`` on
-    a token it does not hold, matching the http backend.
-    """
-    raw = os.environ.get('THEMIS_STORE_FIXTURE_CONTEXTS')
-    if raw is None:
-        raise SystemExit(
-            'THEMIS_STORE_FIXTURE_CONTEXTS is required for the fixture authorizer: a JSON object of '
-            'bearer -> binding, or "{}" for an explicit empty set'
-        )
-    try:
-        seeds = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f'THEMIS_STORE_FIXTURE_CONTEXTS is not valid JSON: {e}') from e
-    if not isinstance(seeds, dict):
-        raise SystemExit(
-            f'THEMIS_STORE_FIXTURE_CONTEXTS must be a JSON object of bearer -> binding, got {type(seeds).__name__}'
-        )
-    contexts = {token: _parse_binding(binding) for token, binding in seeds.items()}
-
-    async def session_resolver(session_token: str) -> auth_pb2.SessionContext:
-        try:
-            return contexts[session_token]
-        except KeyError:
-            raise session_mod.UnresolvedSessionError from None
-
-    return session_resolver
-
-
-def _parse_binding(binding: object) -> auth_pb2.SessionContext:
-    """Parse and validate one fixture binding into a ``SessionContext`` (fail-loud)."""
-    if not isinstance(binding, dict):
-        raise SystemExit('THEMIS_STORE_FIXTURE_CONTEXTS binding must be a JSON object')
-    try:
-        context = json_format.ParseDict(binding, auth_pb2.SessionContext())
-    except json_format.ParseError as e:
-        raise SystemExit(f'THEMIS_STORE_FIXTURE_CONTEXTS binding is malformed: {e}') from e
-    if not context.project_id or not context.analysis_id:
-        raise SystemExit('THEMIS_STORE_FIXTURE_CONTEXTS binding must set project_id and analysis_id')
-    return context
 
 
 async def _serve() -> None:
