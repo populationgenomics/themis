@@ -3553,6 +3553,14 @@ session = [
     { name = "protobuf" },
     { name = "requests" },
 ]
+store = [
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 test = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "check-jsonschema" },
@@ -3653,6 +3661,14 @@ screen = [{ name = "pyyaml" }]
 session = [
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
+store = [
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
     { name = "protobuf" },
     { name = "requests" },
 ]
