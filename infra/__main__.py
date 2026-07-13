@@ -12,7 +12,7 @@ import os
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import auth, baseline, deploy_iam, ingest, secrets, sql, storage, store, web
+from themis_infra import auth, baseline, deploy_iam, ingest, sandbox, secrets, sql, storage, store, web
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
@@ -28,6 +28,10 @@ iap_access_group = config.require('iapAccessGroup')
 # Third-party ingestion key (no keyless/WIF path); the value is encrypted stack
 # config. Provisioned into Secret Manager below; its runtime reader lands later.
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
+# Anthropic worker credential for the self-hosted sandbox; encrypted stack config.
+# Provisioned into Secret Manager below; its reader (the dispatcher) lands with the
+# sandbox compute slice.
+anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
 
 
 def _service_image(env_var: str, service_name: str) -> str:
@@ -128,6 +132,24 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
 )
+# Self-hosted sandbox substrate (network + KMS + secret); the dispatcher and sandbox
+# job that consume it land on the same module in the compute slice.
+sandbox_network = sandbox.SandboxNetwork(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+session_token_key = sandbox.session_token_signing_key(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+anthropic_environment_key_secret = sandbox.environment_key_secret(
+    project=project,
+    region=region,
+    environment_key=anthropic_environment_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)
@@ -155,3 +177,8 @@ pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
 # The ingestion SA's DB login — the identity the Dataflow worker mints as.
 pulumi.export('ingest_sql_user', ingestion.sql_user.name)
+pulumi.export('sandbox_network', sandbox_network.network.id)
+pulumi.export('sandbox_subnetwork', sandbox_network.subnetwork.id)
+pulumi.export('sandbox_dns_response_policy', sandbox_network.response_policy.response_policy_name)
+pulumi.export('session_token_signing_key', session_token_key.id)
+pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)

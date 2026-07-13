@@ -26,6 +26,7 @@ _REQUIRED_SERVICES = (
     'secretmanager.googleapis.com',
     'sqladmin.googleapis.com',
     'dataflow.googleapis.com',
+    'dns.googleapis.com',
 )
 
 
