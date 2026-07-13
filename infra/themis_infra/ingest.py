@@ -34,7 +34,6 @@ class IngestionRuntime(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         sql_instance: gcp.sql.DatabaseInstance,
@@ -45,7 +44,6 @@ class IngestionRuntime(pulumi.ComponentResource):
         """Provision the ingestion worker SA and its grants.
 
         Args:
-            name: Resource-name prefix (the stack name).
             project: The GCP project to create the SA and project-level grant in.
             sql_instance: The Cloud SQL instance holding the crosswalk; the SA is
                 attached as an IAM DB user on it (the mint login).
@@ -55,11 +53,11 @@ class IngestionRuntime(pulumi.ComponentResource):
                 gets `secretAccessor` on each (e.g. the Semantic Scholar key).
             opts: Resource options (dependency wiring).
         """
-        super().__init__('themis:infra:IngestionRuntime', name, None, opts)
+        super().__init__('themis:infra:IngestionRuntime', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
         # The SA's resource name and account id, and the stem every grant nests
         # under — one value so the SA and its grants can't drift apart.
-        ingest_name = f'{name}-ingest'
+        ingest_name = 'themis-ingest'
 
         service_account = gcp.serviceaccount.Account(
             ingest_name,

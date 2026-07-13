@@ -15,7 +15,6 @@ _NONCURRENT_RETENTION_DAYS = 30
 
 
 def fulltext_bucket(
-    name: str,
     *,
     project: str,
     region: str,
@@ -23,7 +22,7 @@ def fulltext_bucket(
 ) -> gcp.storage.Bucket:
     """Create the full-text store bucket, returned for export and IAM grants."""
     return gcp.storage.Bucket(
-        f'{name}-fulltext',
+        'themis-fulltext',
         project=project,
         name=f'{project}-fulltext',
         location=region,

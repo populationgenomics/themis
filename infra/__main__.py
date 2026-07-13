@@ -47,11 +47,10 @@ def _service_image(env_var: str, service_name: str) -> str:
 
 
 # The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
-deploy_iam.grant_deploy_roles('themis', project=project)
+deploy_iam.grant_deploy_roles(project=project)
 
-base = baseline.Baseline('themis', project=project, region=region)
+base = baseline.Baseline(project=project, region=region)
 database = sql.CloudSqlDatabase(
-    'themis',
     project=project,
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
@@ -78,7 +77,6 @@ sql.grant_cloudsql_connect(
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 auth_service = auth.AuthService(
-    'themis',
     project=project,
     region=region,
     image=_service_image(_AUTH_IMAGE_ENV, 'themis-auth'),
@@ -88,7 +86,6 @@ auth_service = auth.AuthService(
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 store_service = store.StoreService(
-    'themis',
     project=project,
     region=region,
     image=_service_image(_STORE_IMAGE_ENV, 'themis-store'),
@@ -106,7 +103,6 @@ gcp.cloudrunv2.ServiceIamMember(
     member=pulumi.Output.concat('serviceAccount:', store_service.service_account_email),
 )
 site = web.WebService(
-    'themis',
     project=project,
     region=region,
     domain=domain,
@@ -115,20 +111,17 @@ site = web.WebService(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 fulltext = storage.fulltext_bucket(
-    'themis',
     project=project,
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 semantic_scholar = secrets.semantic_scholar_secret(
-    'themis',
     project=project,
     region=region,
     api_key=semantic_scholar_api_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 ingestion = ingest.IngestionRuntime(
-    'themis',
     project=project,
     sql_instance=database.instance,
     fulltext_bucket=fulltext.name,

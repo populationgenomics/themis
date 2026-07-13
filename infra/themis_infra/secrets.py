@@ -17,7 +17,6 @@ import pulumi_gcp as gcp
 
 
 def semantic_scholar_secret(
-    name: str,
     *,
     project: str,
     region: str,
@@ -32,7 +31,6 @@ def semantic_scholar_secret(
     the secret in-region with the rest of the stack.
 
     Args:
-        name: Resource-name prefix (the environment's stack name).
         project: The GCP project to create the secret in.
         region: The single region the secret replicates to.
         api_key: The key value, from `config.require_secret` (kept secret).
@@ -42,12 +40,12 @@ def semantic_scholar_secret(
         The `Secret`; its latest version carries `api_key`.
     """
     secret = gcp.secretmanager.Secret(
-        f'{name}-semantic-scholar-api-key',
+        'themis-semantic-scholar-api-key',
         project=project,
         # Deliberately unprefixed: secret_id is project-scoped, and each env is its
         # own project, so there is no cross-stack collision to disambiguate. Keeping
         # it stable and env-agnostic lets the runtime reader resolve it from a fixed
-        # name + its own project — it need not know the Pulumi `{name}` prefix.
+        # name + its own project — it need not know the Pulumi `themis-` prefix.
         secret_id='semantic-scholar-api-key',  # noqa: S106 — the secret's name, not its value
         replication=gcp.secretmanager.SecretReplicationArgs(
             user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
@@ -60,7 +58,7 @@ def semantic_scholar_secret(
     # which replaces this version (consumers read `latest`). Additive versioning
     # with an overlap window isn't needed for a read-latest API key.
     gcp.secretmanager.SecretVersion(
-        f'{name}-semantic-scholar-api-key-current',
+        'themis-semantic-scholar-api-key-current',
         secret=secret.id,
         secret_data=api_key,
         opts=pulumi.ResourceOptions(parent=secret),

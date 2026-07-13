@@ -39,7 +39,6 @@ class WebService(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         region: str,
@@ -48,7 +47,7 @@ class WebService(pulumi.ComponentResource):
         iap_member: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        super().__init__('themis:infra:WebService', name, None, opts)
+        super().__init__('themis:infra:WebService', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
         # Dedicated runtime identity for the web app — it is the Managed-Agents
@@ -57,9 +56,9 @@ class WebService(pulumi.ComponentResource):
         # (../../docs/runbooks/claude-api-wif.md); Anthropic and Cloud SQL read
         # grants attach here as they land.
         service_account = gcp.serviceaccount.Account(
-            f'{name}-runtime',
+            'themis-runtime',
             project=project,
-            account_id=f'{name}-web',
+            account_id='themis-web',
             display_name='Themis web service runtime (Managed Agents client)',
             opts=child,
         )
@@ -67,11 +66,11 @@ class WebService(pulumi.ComponentResource):
         self.service_account_unique_id = service_account.unique_id
 
         self._service = gcp.cloudrunv2.Service(
-            f'{name}-service',
+            'themis-service',
             project=project,
             # Explicit, stable service name (referenced by the deploy/preview
             # workflows and the console) — not an auto-generated one.
-            name=f'{name}-web',
+            name='themis-web',
             location=region,
             # Network gate: only the external LB (and internal traffic) may
             # reach the service — direct public requests to the run.app URL are
@@ -95,7 +94,7 @@ class WebService(pulumi.ComponentResource):
         # --service=iap.googleapis.com`); iap.googleapis.com is enabled by the
         # baseline this component depends on.
         iap_agent = gcp.projects.ServiceIdentity(
-            f'{name}-iap-identity',
+            'themis-iap-identity',
             project=project,
             service='iap.googleapis.com',
             opts=child,
@@ -106,7 +105,7 @@ class WebService(pulumi.ComponentResource):
         # service must still authenticate as this agent, closing the
         # unauthenticated internal-VPC path that ingress alone leaves open.
         gcp.cloudrunv2.ServiceIamMember(
-            f'{name}-invoker',
+            'themis-invoker',
             project=project,
             location=region,
             name=self._service.name,
@@ -115,7 +114,7 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
 
-        self.ip_address = self._build_load_balancer(name, project, region, domain, iap_member, child)
+        self.ip_address = self._build_load_balancer('themis', project, region, domain, iap_member, child)
         self.url = pulumi.Output.format('https://{0}', domain)
         self.register_outputs(
             {

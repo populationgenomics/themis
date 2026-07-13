@@ -48,7 +48,6 @@ def deploy_sa_email(project: str) -> str:
 
 
 def grant_deploy_roles(
-    name: str,
     *,
     project: str,
     opts: pulumi.ResourceOptions | None = None,
@@ -56,7 +55,6 @@ def grant_deploy_roles(
     """Grant the CI deploy SA its project roles (see module docstring).
 
     Args:
-        name: Resource-name prefix (the stack name).
         project: The GCP project; also fixes the deploy SA's deterministic email.
         opts: Resource options (dependency wiring).
     """
@@ -64,7 +62,7 @@ def grant_deploy_roles(
     for role in _DEPLOY_ROLES:
         slug = role.removeprefix('roles/').replace('.', '-')
         gcp.projects.IAMMember(
-            f'{name}-deploy-{slug}',
+            f'themis-deploy-{slug}',
             project=project,
             role=role,
             member=member,

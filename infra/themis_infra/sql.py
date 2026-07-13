@@ -48,21 +48,20 @@ class CloudSqlDatabase(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         region: str,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        super().__init__('themis:infra:CloudSqlDatabase', name, None, opts)
+        super().__init__('themis:infra:CloudSqlDatabase', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
         self.instance = gcp.sql.DatabaseInstance(
-            f'{name}-sql',
+            'themis-sql',
             project=project,
             # Explicit, stable name: referenced by the connector's connection
             # string and the console, not auto-generated.
-            name=f'{name}-sql',
+            name='themis-sql',
             region=region,
             database_version=_DATABASE_VERSION,
             # Provider-layer guard: refuse a destroy/replace that would drop the
@@ -119,7 +118,7 @@ class CloudSqlDatabase(pulumi.ComponentResource):
         self.instance_name = self.instance.name
 
         self.database = gcp.sql.Database(
-            f'{name}-db',
+            'themis-db',
             project=project,
             instance=self.instance.name,
             name=_DATABASE_NAME,

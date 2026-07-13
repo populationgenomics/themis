@@ -32,7 +32,6 @@ class StoreService(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         region: str,
@@ -40,13 +39,13 @@ class StoreService(pulumi.ComponentResource):
         auth_url: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        super().__init__('themis:infra:StoreService', name, None, opts)
+        super().__init__('themis:infra:StoreService', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
         service_account = gcp.serviceaccount.Account(
-            f'{name}-store-runtime',
+            'themis-store-runtime',
             project=project,
-            account_id=f'{name}-store',
+            account_id='themis-store',
             display_name='Themis store service runtime',
             opts=child,
         )
@@ -56,7 +55,7 @@ class StoreService(pulumi.ComponentResource):
         # Working-document versions are first-class objects (<analysis>/versions/<n>),
         # not GCS object versions; the deliverable persists, retention a later policy.
         working_documents = gcp.storage.Bucket(
-            f'{name}-store-working-documents',
+            'themis-store-working-documents',
             project=project,
             name=f'{project}-store-working-documents',
             location=region,
@@ -67,7 +66,7 @@ class StoreService(pulumi.ComponentResource):
         self.working_document_bucket = working_documents.name
 
         workspace = gcp.storage.Bucket(
-            f'{name}-store-workspace',
+            'themis-store-workspace',
             project=project,
             name=f'{project}-store-workspace',
             location=region,
@@ -87,7 +86,7 @@ class StoreService(pulumi.ComponentResource):
         # object-admin scoped to these buckets is the whole credential (§7).
         for label, bucket in (('working-documents', working_documents), ('workspace', workspace)):
             gcp.storage.BucketIAMMember(
-                f'{name}-store-{label}-object-admin',
+                f'themis-store-{label}-object-admin',
                 bucket=bucket.name,
                 role='roles/storage.objectAdmin',
                 member=member,
@@ -95,9 +94,9 @@ class StoreService(pulumi.ComponentResource):
             )
 
         service = gcp.cloudrunv2.Service(
-            f'{name}-store-service',
+            'themis-store-service',
             project=project,
-            name=f'{name}-store',
+            name='themis-store',
             location=region,
             # Internal only: called service-to-service (the sandbox proxy, later),
             # never from the public internet.

@@ -30,7 +30,6 @@ class AuthService(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         region: str,
@@ -40,13 +39,13 @@ class AuthService(pulumi.ComponentResource):
         sql_database: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        super().__init__('themis:infra:AuthService', name, None, opts)
+        super().__init__('themis:infra:AuthService', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
         service_account = gcp.serviceaccount.Account(
-            f'{name}-runtime',
+            'themis-runtime',
             project=project,
-            account_id=f'{name}-auth',
+            account_id='themis-auth',
             display_name='Themis auth service runtime',
             opts=child,
         )
@@ -55,14 +54,14 @@ class AuthService(pulumi.ComponentResource):
         # Create the SA's Cloud SQL IAM DB-user login and grant it the connect roles; the
         # session_context SELECT grant is applied by the migration, keyed on this login.
         db_user = sql.iam_db_user(
-            f'{name}-auth',
+            'themis-auth',
             project=project,
             instance=sql_instance,
             service_account_email=service_account.email,
             opts=child,
         )
         sql.grant_cloudsql_connect(
-            f'{name}-auth',
+            'themis-auth',
             project=project,
             service_account_email=service_account.email,
             opts=child,
@@ -70,10 +69,10 @@ class AuthService(pulumi.ComponentResource):
         self.sql_user = db_user.name
 
         service = gcp.cloudrunv2.Service(
-            f'{name}-service',
+            'themis-service',
             project=project,
             # Explicit, stable name (referenced by the deploy workflow and console).
-            name=f'{name}-auth',
+            name='themis-auth',
             location=region,
             # Internal only: reachable service-to-service (the store, later), never
             # from the public internet. Egress to the Cloud SQL Admin API is unaffected.

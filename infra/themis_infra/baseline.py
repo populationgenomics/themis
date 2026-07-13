@@ -41,18 +41,17 @@ class Baseline(pulumi.ComponentResource):
 
     def __init__(
         self,
-        name: str,
         *,
         project: str,
         region: str,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        super().__init__('themis:infra:Baseline', name, None, opts)
+        super().__init__('themis:infra:Baseline', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
         services = [
             gcp.projects.Service(
-                f'{name}-{service.split(".", 1)[0]}',
+                f'themis-{service.split(".", 1)[0]}',
                 project=project,
                 service=service,
                 # Keep APIs enabled if the program is torn down — other tooling
@@ -65,7 +64,7 @@ class Baseline(pulumi.ComponentResource):
         services_ready = pulumi.ResourceOptions(parent=self, depends_on=services)
 
         self.image_registry = gcp.artifactregistry.Repository(
-            f'{name}-images',
+            'themis-images',
             project=project,
             location=region,
             repository_id='themis',
