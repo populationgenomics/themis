@@ -24,13 +24,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# THEMIS_BACKEND is an explicit image default (the offline fixture), seeded with an
-# explicit empty store so the image boots; the deploy overrides both once the Cloud
-# SQL backend lands.
+# THEMIS_BACKEND defaults to the deployed Cloud SQL backend; the deploy supplies the
+# THEMIS_SQL_* connection env (a missing value fails loud at startup).
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app \
-    THEMIS_BACKEND=fixture \
-    THEMIS_FIXTURE_BINDINGS="{}"
+    THEMIS_BACKEND=cloudsql
 COPY themis/rpc ./themis/rpc
 COPY themis/services/auth ./themis/services/auth
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime,

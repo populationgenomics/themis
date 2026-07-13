@@ -47,13 +47,15 @@ codegen = ["datamodel-code-generator", "grpcio-tools"]
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
 dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
-# auth service (themis/services/auth): the grpc.aio server + generated stubs. grpcio
-# is the runtime; grpcio-health-checking serves grpc.health.v1; protobuf backs the
-# generated messages (json_format seeds the fixture backend).
-auth = ["grpcio", "grpcio-health-checking", "protobuf"]
-# migration runner (themis/migrate): the Cloud SQL client is the connector + pg8000
-# (IAM auth, no stored password, mirroring infra/sql.py). Imported only when migrating.
-migrate = ["cloud-sql-python-connector", "pg8000"]
+# Cloud SQL client: the connector + pg8000 (IAM auth, no stored password, mirroring
+# infra/sql.py), shared by the auth service's cloudsql backend and the migrate runner.
+cloudsql = ["cloud-sql-python-connector", "pg8000"]
+# auth service (themis/services/auth): the grpc.aio server + generated stubs + the Cloud
+# SQL backend. grpcio is the runtime; grpcio-health-checking serves grpc.health.v1;
+# protobuf backs the generated messages (json_format seeds the fixture backend).
+auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "cloudsql" }]
+# migration runner (themis/migrate): applies the committed SQL migrations at deploy.
+migrate = [{ include-group = "cloudsql" }]
 # check-jsonschema: the metaschema validator the schema tests shell out to
 # (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
 # import-check the generated models in schema/tests (the codegen group provides

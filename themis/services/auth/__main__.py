@@ -1,11 +1,9 @@
 """Server entrypoint: build the backend from the environment and serve the gRPC service.
 
-``THEMIS_BACKEND`` selects the adapter (required — no silent default); the ``fixture``
-backend seeds itself from ``THEMIS_FIXTURE_BINDINGS`` (JSON, also required) so the server
-resolves offline; ``PORT`` is the Cloud Run convention. Only the fixture backend exists this
-slice; a Cloud SQL backend lands with the store DB slice (the session-token table and its
-migrate runner do not exist yet). A ``grpc.health.v1`` health service reports SERVING
-alongside.
+``THEMIS_BACKEND`` selects the adapter (required — no silent default): ``cloudsql`` (the
+deployed backend, reading the ``session_context`` table via the Cloud SQL connector) or
+``fixture`` (offline runs, seeded from ``THEMIS_FIXTURE_BINDINGS``). ``PORT`` is the Cloud
+Run convention. A ``grpc.health.v1`` health service reports SERVING alongside.
 """
 
 from __future__ import annotations
@@ -26,13 +24,28 @@ from themis.services.auth import servicer as servicer_mod
 def build_backend() -> backend_mod.SessionBackend:
     backend = os.environ.get('THEMIS_BACKEND')
     if backend is None:
-        raise SystemExit(
-            'THEMIS_BACKEND is required (only "fixture" this slice; cloudsql lands with the store DB slice)'
-        )
+        raise SystemExit('THEMIS_BACKEND is required (expected "cloudsql" or "fixture")')
+    if backend == 'cloudsql':
+        return _cloudsql_backend_from_env()
     if backend == 'fixture':
         return _fixture_backend_from_env()
-    raise SystemExit(
-        f'unsupported THEMIS_BACKEND {backend!r} (only "fixture" this slice; cloudsql lands with the store DB slice)'
+    raise SystemExit(f'unsupported THEMIS_BACKEND {backend!r} (expected "cloudsql" or "fixture")')
+
+
+def _require(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f'required environment variable {name} is unset or empty')
+    return value
+
+
+def _cloudsql_backend_from_env() -> backend_mod.SessionBackend:
+    from themis.services.auth import cloudsql  # noqa: PLC0415 — deferred so the fixture path skips the connector import
+
+    return cloudsql.CloudSqlBackend(
+        connection_name=_require('THEMIS_SQL_CONNECTION_NAME'),
+        database=_require('THEMIS_SQL_DATABASE'),
+        iam_user=_require('THEMIS_SQL_IAM_USER'),
     )
 
 

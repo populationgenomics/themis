@@ -3475,9 +3475,15 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 auth = [
+    { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "pg8000" },
     { name = "protobuf" },
+]
+cloudsql = [
+    { name = "cloud-sql-python-connector" },
+    { name = "pg8000" },
 ]
 codegen = [
     { name = "datamodel-code-generator" },
@@ -3542,12 +3548,14 @@ screen = [
 test = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "check-jsonschema" },
+    { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "pg8000" },
     { name = "protobuf" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pubmed-proto" },
@@ -3562,9 +3570,15 @@ test = [
 
 [package.metadata.requires-dev]
 auth = [
+    { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "pg8000" },
     { name = "protobuf" },
+]
+cloudsql = [
+    { name = "cloud-sql-python-connector" },
+    { name = "pg8000" },
 ]
 codegen = [
     { name = "datamodel-code-generator" },
@@ -3627,12 +3641,14 @@ screen = [{ name = "pyyaml" }]
 test = [
     { name = "apache-beam", extras = ["gcp"] },
     { name = "check-jsonschema" },
+    { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
+    { name = "pg8000" },
     { name = "protobuf" },
     { name = "psycopg", extras = ["binary"] },
     { name = "pubmed-proto", specifier = "==0.1.0" },

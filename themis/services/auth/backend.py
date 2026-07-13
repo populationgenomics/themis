@@ -2,10 +2,10 @@
 
 The auth service is the sole reader of the token store. A caller (the store) forwards a
 session token; the backend hashes it and returns the bound Project + Analysis, or raises
-``UnresolvedError`` if the token grants nothing. The adapter is pluggable: the in-memory
-``FixtureBackend`` runs offline (tests, a first deploy); a Cloud SQL adapter reading the
-session-token store lands with the store DB slice (its table and migrate runner do not
-exist yet).
+``UnresolvedError`` if the token grants nothing. The adapter is pluggable (selected by
+``THEMIS_BACKEND``): the in-memory ``FixtureBackend`` runs offline (tests, a first deploy),
+and ``cloudsql.CloudSqlBackend`` reads the ``session_context`` table over the Cloud SQL
+connector with IAM auth (the deployed path).
 """
 
 from __future__ import annotations

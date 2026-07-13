@@ -37,12 +37,20 @@ def test_fixture_backend_keys_by_hash_not_plaintext(monkeypatch: pytest.MonkeyPa
 
 
 def test_explicit_empty_store_boots(monkeypatch: pytest.MonkeyPatch) -> None:
-    # `{}` is the image default: an explicit empty store the server boots on.
+    # An explicit empty fixture store still boots (resolves nothing).
     monkeypatch.setenv('THEMIS_BACKEND', 'fixture')
     monkeypatch.setenv('THEMIS_FIXTURE_BINDINGS', '{}')
     backend = main_mod.build_backend()
     with pytest.raises(backend_mod.UnresolvedError):
         asyncio.run(backend.resolve('anything'))
+
+
+def test_cloudsql_backend_requires_sql_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THEMIS_BACKEND', 'cloudsql')
+    for name in ('THEMIS_SQL_CONNECTION_NAME', 'THEMIS_SQL_DATABASE', 'THEMIS_SQL_IAM_USER'):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(SystemExit):
+        main_mod.build_backend()
 
 
 def test_missing_bindings_exits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,7 +67,7 @@ def test_missing_backend_exits(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_unsupported_backend_exits(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('THEMIS_BACKEND', 'cloudsql')
+    monkeypatch.setenv('THEMIS_BACKEND', 'memory')
     with pytest.raises(SystemExit):
         main_mod.build_backend()
 
