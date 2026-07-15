@@ -75,6 +75,31 @@ def _build_sync(session_token: str, internal_ca: bytes) -> sync_mod.WorkspaceSyn
     )
 
 
+async def _restore_or_fail_item(
+    workspace_sync: sync_mod.WorkspaceSync, work_queue: work_queue_mod.WorkQueue, work_id: str
+) -> bool:
+    """Restore ``/workspace`` and ack the item; on a store restore error, ack + stop it and report failure.
+
+    A store error resolving the working document is terminal, not reclaimed: the document persists, so a
+    re-triggered session restores it, whereas reclaiming would respawn into the same failure
+    (self-hosted-sandbox.md §9). The ``ack`` stops reclaim; the ``stop`` terminates the item.
+
+    Returns:
+        Whether restore succeeded and the caller should proceed to serve the session.
+    """
+    try:
+        await workspace_sync.restore()
+    except grpc.aio.AioRpcError:
+        _logger.exception('restore failed; failing the work item')
+        await work_queue.ack(work_id)
+        await work_queue.stop(work_id)
+        return False
+    _logger.info('restore complete; acking work item %s', work_id)
+    await work_queue.ack(work_id)  # restore proven (§5)
+    _logger.info('work item %s acked', work_id)
+    return True
+
+
 async def _start_http(proxy: anthropic_mod.AnthropicProxy) -> None:
     app = web.Application()
     app.router.add_route('*', '/{tail:.*}', proxy.handle)
@@ -141,14 +166,11 @@ async def _serve() -> None:
     internal_ca = _require('THEMIS_INTERNAL_CA_CERT').encode()
 
     workspace_sync = _build_sync(session_token, internal_ca)
-    await workspace_sync.restore()  # fail-closed: a store error other than NOT_FOUND raises, the spawn dies
-
     work_queue = work_queue_mod.AnthropicWorkQueue(
         anthropic_session, base_url=upstream_base, environment_id=environment_id, environment_key=environment_key
     )
-    _logger.info('restore complete; acking work item %s', work_id)
-    await work_queue.ack(work_id)  # only now, restore proven (§5)
-    _logger.info('work item %s acked', work_id)
+    if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
+        return  # restore failed: the item is acked + stopped, nothing to serve
 
     proxy = anthropic_mod.AnthropicProxy(
         anthropic_session,

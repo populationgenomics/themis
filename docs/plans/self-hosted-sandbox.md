@@ -315,11 +315,11 @@ the queue**, and no documented mechanism returns an acked-but-heartbeatless item
 unspecified, and there is no re-enqueue endpoint — §12). So a dispatcher that acked on claim would strand a spawn that
 dies during cold start — after the ack, before the worker's first heartbeat — with **no automatic recovery**. Keeping
 the item unacked until the sandbox is proven up puts every cold-start failure back on the documented reclaim path. The
-**proxy** therefore issues the `ack` as its first action after a **successful restore** (§9), just before it releases
-the agent-start gate: an instance that never comes up, or whose restore fails, never acks, and reclaim brings the item
-back — a persistently-failing restore loops until the bounded-retry breaker lands (a deferred follow-up, §9/§12). The
-lease is bound to the environment key + work id, not the ack'er's identity, so the sandbox heartbeats and stops the item
-the dispatcher polled (§2, verified against the SDK's `auto_stop=false` handoff).
+**proxy** therefore issues the `ack` only after restore resolves (§9), just before it releases the agent-start gate: an
+instance that never comes up never acks, so reclaim brings the item back; an instance whose restore *fails* acks and
+stops the item — a restore error is terminal, not retried (§9), so it never loops. The lease is bound to the environment
+key + work id, not the ack'er's identity, so the sandbox heartbeats and stops the item the dispatcher polled (§2,
+verified against the SDK's `auto_stop=false` handoff).
 
 Webhook deliveries retry with the same event id and draining an empty queue is a no-op, so duplicate or overlapping
 deliveries are harmless. If the dispatcher is down, sessions queue rather than fail — but Anthropic **auto-disables** a
@@ -688,16 +688,18 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
   - *Asymmetric failure.* A bad **scratch** archive fails open to empty scratch — the next checkpoint overwrites it, so
     it self-heals. The **document** fails closed: a corrupt latest version restores the prior good version, and anything
     ambiguous — a version present but unreadable, or the `workspace get` itself failing (store 5xx, session token
-    rejected) — fails the spawn (reclaim retries) rather than boot onto a blank document, since a blank restore would be
-    served a turn and mint a superseding higher-sequence version that regresses the deliverable. Only a store response
-    that positively reports no versions boots empty — the genuine first spawn.
-  - *Bounded retry — deferred (§12).* A document that fails closed on every spawn (a corrupt latest with no good
-    fallback, a persistently rejected session token) reclaim-loops, since the item stays unacked (§5). This slice leaves
-    that loop unbounded — checked only operationally (reclaim re-surfaces on a drain, so the burn tracks drain cadence,
-    and no real sessions run yet). The bounded-retry circuit breaker is a follow-up: the **proxy** — which observes the
-    store's restore errors — records and checks inspectable per-Analysis state in a Cloud SQL table and, past a
-    threshold, breaks the loop (acks + force-stops the item) instead of reclaiming. The inspectable state is the
-    mechanism; surfacing it to the curator is a separate frontend concern, not this slice.
+    rejected) — fails the item (acked and stopped, §5) rather than boot onto a blank document, since a blank restore
+    would be served a turn and mint a superseding higher-sequence version that regresses the deliverable. Only a store
+    response that positively reports no versions boots empty — the genuine first spawn.
+  - *Restore failure is terminal — fail fast, no retry.* A document restore that fails (a store error resolving the
+    latest version or the session token, distinct from a positive NOT_FOUND) is not retried: the proxy acks the item
+    (stopping reclaim), stops the work item, and exits. Retrying buys nothing — the failures that recur every spawn are
+    permanent (a corrupt latest with no good fallback, a persistently-rejected session token), and a transient store
+    error is rare (Cloud Run cold-starts queue rather than error). Erroring is not lossy: the working document persists,
+    so a re-triggered session restores it cleanly. The one case retry would help — a brief mid-request blip — is left to
+    a bounded in-process retry (retryable gRPC codes, backoff, within the spawn), added only if such errors are observed
+    (§12); a cross-spawn reclaim loop is the wrong tool for it. A cold-start crash that never reaches restore still
+    reclaims (§5); a per-Analysis crash-loop there is an infrastructure alert, not restore state.
 - **Checkpoint — proxy, on the idle it forwards.** The proxy reverse-proxies the Anthropic route (§6), so the session's
   SSE stream passes through it; it watches for `session.status_idle` / `stop_reason: end_turn`. On that signal it copies
   the durable glob — small (the versioned document this slice) — to a staging path while the tool loop is quiet, then
@@ -769,7 +771,7 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Capability-minting auth (signed URLs / downscoped tokens) | auth service gains minting; first non-blob API or a GCS-direct sync is the trigger; trades sandbox-egress tightness (§7, §8)                                                                                                                            |
 | Prompt scratch delete on `terminated`                     | a store `workspace delete` route the BFF calls after re-deriving the bearer; today only the age rule reaps scratch (§9)                                                                                                                                 |
-| Restore circuit breaker                                   | the proxy records/checks inspectable per-Analysis state in a Cloud SQL table and bounds consecutive-failed-restore retries (acks + force-stops past a threshold); curator surfacing is a later frontend concern (§5, §9)                                |
+| In-process restore retry                                  | a bounded retry (retryable gRPC codes, backoff) inside the spawn before the item fails terminally; added only if transient restore errors are observed — a restore failure is otherwise terminal, not reclaimed (§9)                                    |
 | Data contract grows to a whole directory                  | wider durable glob; the version becomes a tar (§9)                                                                                                                                                                                                      |
 | Live mid-run draft pane                                   | a debounced draft blob the proxy overwrites on file-change (§9)                                                                                                                                                                                         |
 | Queryable version metadata                                | a Cloud SQL metadata table pointing at the version blobs; only if versions need relational queries (§9)                                                                                                                                                 |
@@ -865,8 +867,8 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
 - **`requires_action` — no operating mode** — the agent has no custom tools and no `always_ask` policy, so no turn idles
   on `requires_action` (§2, §6); its task-timeout backstop is defensive only. Were one to occur it was acked on restore,
   so at task-timeout it is an acked-`starting` item — which is **not** reclaimed (the model above) — so it strands, it
-  does not loop. The other unbounded path — a document that fails closed on every restore — is unbounded this slice; the
-  bounded-retry circuit breaker that closes it is a deferred follow-up (§9).
+  does not loop. The other path — a document that fails closed on every restore — does not loop either: a restore error
+  is terminal, the proxy acks and stops the item rather than reclaiming (§9).
 - **Worker behavior on sustained failure** — read from the SDK source (as with the other §2 mechanics): does the
   `ant`/Go worker self-exit after N failed heartbeats or event-stream reconnects, and after how long? If so, that
   (minutes) is the real burn bound on a broken stream or a partition; if not, only the task timeout (§6) caps it.
