@@ -5,11 +5,12 @@
 
 ## Purpose
 
-One source of truth for data shapes, authored in **TypeSpec** (`.tsp`), generating typed models in every target we use:
-**proto** for authored machine-to-machine data — durable at-rest artifacts and inter-service RPC (→ Python stubs,
-optionally Pydantic sourced from proto) — and **Zod** for the browser-facing view model. Replaces per-language model
-definitions kept in sync by hand. The serialization posture — which data is proto, which is JSON — is
-[ADR 0003](../adr/0003-serialization-posture.md).
+One source of truth for data shapes, authored in **TypeSpec** (`.tsp`). Two targets: **proto** for authored
+machine-to-machine data — durable at-rest artifacts and inter-service RPC (→ Python stubs, optionally Pydantic sourced
+from proto) — and **Zod** for the browser-facing view model (bucket 2), canonicalized to the same proto3-JSON shape so
+JSON is a lingua franca across every seam. Replaces per-language model definitions kept in sync by hand. The
+serialization posture — which data is proto, which is JSON — is [ADR 0003](../adr/0003-serialization-posture.md); the
+canonical-JSON disciplines (enum strings, flat sum types) are [ADR 0004](../adr/0004-json-canonical-interchange.md).
 
 TypeSpec over hand-authored `.proto`: terser and readable; the compiler errors when a construct an enabled emitter
 cannot represent, so it *enforces* the translatable subset rather than leaving it to review; one source emits both
@@ -17,9 +18,10 @@ targets without re-modelling.
 
 ## Usage
 
-Two authored targets: **proto** (→ committed `.proto` → `protoc`/grpcio-tools Python stubs; RPC uses this already, e.g.
-`schema/proto/themis/rpc/auth.proto`, #91) and **Zod** (emitted direct from the `.tsp`), with the freshness (S0.4) and
-`buf breaking` compat (S0.6) CI gates in place. The at-rest litcache domain is being re-cut from the retired closed-JSON
+The primary target is **proto** (→ committed `.proto` → `protoc`/grpcio-tools Python stubs; RPC uses this already, e.g.
+`schema/proto/themis/rpc/auth.proto`, #91), with the freshness (S0.4) and `buf breaking` compat (S0.6) CI gates in
+place. The browser-facing bucket 2 emits **Zod**, canonicalized against the committed proto so it validates the same
+proto3-JSON (ADR 0004; see Code generation). The at-rest litcache domain is being re-cut from the retired closed-JSON
 rails onto this proto path (ADR 0003; see Staged adoption).
 
 ### Authoring a schema
@@ -37,13 +39,13 @@ rails onto this proto path (ADR 0003; see Staged adoption).
 
 - Import the generated proto stubs (`<pkg>/models/<domain>/…_pb2`); parse/serialize the `.pb` bytes directly. If a
   domain wants Pydantic ergonomics, source the models **from proto**, not from a reintroduced JSON Schema (ADR 0003).
-- Cross-field constraints that don't survive codegen live in a thin hand-written layer over the generated models (see
-  Authoring rules); declared-field constraints move to `protovalidate`.
+- Cross-field constraints and declared-field constraints don't survive codegen (the emitter emits no `protovalidate`);
+  both live in a thin hand-written validator over the generated models, wired at the boundary (see Authoring rules).
 
 ### Using a schema from TypeScript
 
-- Import the generated Zod schemas from the frontend `src/models/<domain>/` (built in S0.3). Zod is the **browser-facing
-  view model** (BFF↔frontend), never a durable at-rest artifact.
+- Import the committed Zod (`schema/tests/zod/…` today; a real view model when one lands). It validates the canonical
+  proto3-JSON — name-string enums, flat sum types — so a value the BFF speaks parses on both sides (ADR 0004).
 
 Consumers import committed generated code from their own tree; nothing depends on `schema/` (the authoring toolchain) at
 build or run time — the property the generated-code-is-committed policy (Code generation) buys.
@@ -59,7 +61,10 @@ evolves **additively only** — breaking changes are ruled out (see Schema evolu
    and, decisively, binary proto **retains unknown fields** through a parse→modify→serialize round trip, so
    read-modify-write can't silently drop a field an older component didn't model. That immunity is why at-rest is
    *binary* proto, not a name-keyed text projection (proto-JSON, pbtxt).
-1. **Authored, browser-facing → JSON + Zod.** The BFF↔frontend view model. Zod types gate it; no separate compat tool.
+1. **Authored, browser-facing → Zod over canonical JSON.** The BFF↔frontend view model, emitted as Zod from the same
+   `.tsp` and canonicalized to the proto3-JSON shape (ADR 0004), so the JSON the BFF projects validates identically on
+   both sides. The frontend has no real models yet — the feature corpus is the only Zod today — but the target is
+   settled (protobuf-es stays a future option; see Open questions).
 1. **Externally-defined, ingested → JSON, modelled as a subset view.** Raw upstream payloads we cache (Crossref,
    Unpaywall). We store the upstream's JSON as-is and model only the fields we read, tolerant of extras; we never
    round-trip it through a lossy typed write (ADR 0003, "External data").
@@ -67,18 +72,18 @@ evolves **additively only** — breaking changes are ruled out (see Schema evolu
 Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque bytes, outside all three.
 
 **Placement.** An at-rest domain is a plain library under the one `themis/` namespace — `themis.<domain>` (e.g.
-`themis.litcache`), its generated models under `themis/<domain>/models/`, its committed JSON Schema at the repo-root
-`jsonschema/<domain>.schema.json`. It has no wire surface, so it is *not* a `themis.services` / `themis.rpc` /
-`themis.clients` member. Staying under `themis/` rather than a top-level package follows the single-namespace convention
-([`../repo-structure.md`](../repo-structure.md)); a top-level name would pay off only for a cache shared *outside*
-themis, which is speculative — revisit if a real out-of-themis consumer appears.
+`themis.litcache`), authored as `.tsp` under `schema/<domain>/`, with its committed `.proto` and generated stubs
+produced per [Code generation](#code-generation). It has no wire surface, so it is *not* a `themis.services` /
+`themis.rpc` / `themis.clients` member. Staying under `themis/` rather than a top-level package follows the
+single-namespace convention ([`../repo-structure.md`](../repo-structure.md)); a top-level name would pay off only for a
+cache shared *outside* themis, which is speculative — revisit if a real out-of-themis consumer appears.
 
 ## Authoring and layout
 
 ```
 schema/                # .tsp sources + the Bun toolchain (authoring only)
   package.json         # pins @typespec/compiler + emitters; lockfile alongside
-  tspconfig.yaml       # shared emitter config
+  tsconfig.json        # the Zod tsc smoke config (bun run smoke:zod)
   node_modules/        # installed from the lockfile; gitignored
   litcache/            # a real domain
     main.tsp           # entry point: imports the domain's files
@@ -89,7 +94,8 @@ schema/                # .tsp sources + the Bun toolchain (authoring only)
   tests/               # the feature corpus + its test, kept under
     fixtures/          #   schema/ so node_modules stays an ancestor (see Usage)
       <domain>/main.tsp
-    proto/             # the corpus's committed generated .proto (+ zod/)
+    proto/             # the corpus's committed generated .proto (+ Python stubs)
+    zod/               # the corpus's committed generated Zod (.ts)
 ```
 
 Real domains sit directly under `schema/`; the synthetic feature corpus sits under `schema/tests/`. Both are below the
@@ -106,26 +112,28 @@ toolchain, which is what the emitter resolver needs.
 
 ## Code generation
 
-`.tsp` is the single source of truth. Proto and Zod are emitted from it **directly**; the Python stubs are the one
-two-step path (standard `protoc` over the committed `.proto`), not a JSON-Schema hub the others pass through. `<domain>`
-in the output paths is the `schema/<domain>/` directory: compiling its `main.tsp` entry point emits one artifact for the
-whole domain (everything `main.tsp` imports), not one file per type.
+`.tsp` is the single source of truth. Proto is emitted from it **directly**; the Python stubs are a two-step path
+(standard `protoc` over the committed `.proto`), not a JSON-Schema hub they pass through. `<domain>` in the output paths
+is the `schema/<domain>/` directory: compiling its `main.tsp` entry point emits one artifact for the whole domain
+(everything `main.tsp` imports), not one file per type.
 
-| Target       | Emitter / tool                          | Output                              | Consumer                                        |
-| ------------ | --------------------------------------- | ----------------------------------- | ----------------------------------------------- |
-| proto        | `@typespec/protobuf`                    | `schema/proto/<domain>/*.proto`     | at-rest artifacts + RPC; `buf breaking` gate    |
-| Python stubs | `protoc` / grpcio-tools (from `.proto`) | `<pkg>/models/<domain>/*_pb2.py`    | Python backend (optionally Pydantic-from-proto) |
-| Zod          | direct tsp→Zod emitter (`typespec-zod`) | frontend `src/models/<domain>/*.ts` | browser view model (BFF↔frontend)               |
+| Target         | Emitter / tool                          | Output                           | Consumer                                        |
+| -------------- | --------------------------------------- | -------------------------------- | ----------------------------------------------- |
+| proto          | `@typespec/protobuf`                    | `schema/proto/<domain>/*.proto`  | at-rest artifacts + RPC; `buf breaking` gate    |
+| Python stubs   | `protoc` / grpcio-tools (from `.proto`) | `<pkg>/models/<domain>/*_pb2.py` | Python backend (optionally Pydantic-from-proto) |
+| Zod (bucket 2) | `typespec-zod` → `zod_canonicalize`     | `<domain>/*.ts`                  | browser view model; validates canonical JSON    |
 
 Proto is the authored-data format for bucket 1 (at-rest + RPC); the committed `.proto` is both the compat-gate baseline
-and the `protoc` source for the Python stubs. Declared-field constraints ride along as `protovalidate` options. If a
-domain wants Pydantic ergonomics, source the models **from proto** (a proto→pydantic generator, or `betterproto`), never
-by reintroducing JSON Schema as a hub (ADR 0003).
+and the `protoc` source for the Python stubs. Declared-field constraints don't survive codegen (the emitter emits no
+`protovalidate`); they live in the hand-written validator layer. If a domain wants Pydantic ergonomics, source the
+models **from proto** (a proto→pydantic generator, or `betterproto`), never by reintroducing JSON Schema as a hub (ADR
+0003).
 
-Zod is emitted straight from `.tsp`, not via `json-schema-to-zod`, which doesn't resolve `$ref`s to `#/$defs/…` — the
-named, reused subschemas TypeSpec emits for every model (not inline-nested objects, which it handles) — silently
-emitting `z.any()` for them and otherwise forcing a dereference pass. The trade is leaning on a community tsp→Zod
-emitter — a maturity bet, not an architectural compromise, since the emitter reads the same `.tsp`.
+Zod (bucket 2) is emitted from the same `.tsp` by `typespec-zod`, then repaired by `tools.schema.zod_canonicalize`:
+`typespec-zod` is not proto-aware (it emits integer enums as `z.enum([0,1,2])` and well-known types as
+`{ _extern: z.never() }`), so the pass rewrites those against the committed proto to the canonical proto3-JSON shape
+(name-string enums, `z.iso.datetime()`), and `zod_reorder` orders the declarations. Sourcing names/types from the proto
+makes the Zod conformant to proto3-JSON **by construction** (ADR 0004).
 
 Policy:
 
@@ -136,26 +144,28 @@ Policy:
 
 ## Authoring rules
 
-The subset that round-trips cleanly to the kept targets (proto → Python stubs, Zod); the compiler enforces most, these
+The subset that round-trips cleanly to the emitted target (proto → Python stubs); the compiler enforces most, these
 cover the rest:
 
 - **snake_case identifiers**, so emitted property names match the proto/JSON field names directly (no per-field rename).
 - **A field with a default must be optional:** `flagged?: boolean = false`. A required field with a default keeps the
   default out of the generated model.
+- **Enum values are snake_case identifiers** (no hyphens), and that name *is* the canonical JSON string: proto enums are
+  integer on the wire but proto3-JSON keys them by name, and `zod_canonicalize` emits the same name (ADR 0004). Reserve
+  a `*_unspecified = 0` sentinel (proto3 requires a zero member); it is never a valid domain value. Only
+  genuinely-external arbitrary strings (e.g. a raw licence URL) are `string` fields.
 - **A cross-field "X iff Y" constraint** cannot be structural at rest: `@typespec/protobuf` emits no `oneof` (unions are
   rejected). Model the discriminant flat (a `string` field + the conditional field) and enforce the invariant with a
-  `protovalidate` rule (worked example). A named union is still the right shape for a Zod **view model** — it emits a
-  discriminated union — where the structural guarantee is wanted browser-side.
+  code-level validator, fail-loud at the boundary (worked example) — the emitter emits no `protovalidate`.
 - **Backtick reserved identifiers** (e.g. `` `unknown` ``).
 - **Document with `/** */` doc-comments (or `@doc`), never `//`.** The compiler discards `//` line comments, so they
   reach no emitter, no generated docstring, and no skill text; only doc-comments propagate (see
   [Documentation flow](#documentation-flow)).
 - **Avoid:** heterogeneous/tuple arrays, deep recursion, `anyOf`/`oneOf` of unrelated shapes, and `int64` (TypeSpec
-  encodes it as a JSON string for JS number precision, so the proto-JSON/Python view sees `string` while `typespec-zod`
-  emits `z.bigint()` — an inconsistent cross-target shape).
+  encodes it as a JSON string for JS number precision, so the proto-JSON/Python view sees `string`).
 
 The reliable subset is pinned concretely by the feature-coverage corpus under `schema/tests/fixtures/features/` — one
-`.tsp` per construct, each verified to round-trip to the kept targets (S0.5).
+`.tsp` per construct, each verified to round-trip to the emitted target (S0.5).
 
 Constraints that can't be expressed structurally are **not** generated — they live in the hand-written layer over the
 generated models.
@@ -165,7 +175,7 @@ generated models.
 `Access` is at-rest (bucket 1), so the target is **proto** — and `@typespec/protobuf` **cannot emit a `oneof`**: a
 union-typed field is rejected outright and there is no `oneof` decorator (verified against 0.83.0 and the 0.84 dev
 line). So a cross-field "X iff Y" invariant cannot hold *structurally* in proto. The at-rest model is **flat** — a
-`string` discriminant plus the conditional field — with the invariant enforced by `protovalidate`:
+`string` discriminant plus the conditional field — with the invariant enforced by a code-level validator:
 
 ```tsp
 model Access {
@@ -181,30 +191,21 @@ message Access {
 }
 ```
 
-Nothing structural stops `access = "licensed"` with no `publisher`; the invariant is a `protovalidate` CEL rule on the
-message (fail-loud at construction, ADR 0003):
+Nothing structural stops `access = "licensed"` with no `publisher`; the invariant is a **code-level validator** — one
+shared, fail-loud function per type, wired at the writer and the reader (ADR 0004) — checking:
 
 ```text
-(this.access == "licensed") == has(this.publisher)
+(access == "licensed") iff publisher is present
 ```
 
 Giving up the `oneof` costs nothing durable: on the wire a set `oneof` member encodes identically to a standalone field,
-so `oneof` is codegen sugar (mutual-exclusion + `WhichOneof`), not a wire/at-rest distinction. A **browser view model**
-(bucket 2) that surfaces access *can* keep the structural form — Zod is the target there, and `typespec-zod` does emit a
-discriminated union from a named union:
-
-```ts
-// Zod (bucket 2) — the structural guarantee holds where Zod is the target
-export const AccessSchema = z.discriminatedUnion("access", [
-  z.object({ access: z.literal("free-to-read") }),
-  z.object({ access: z.literal("licensed"), publisher: z.string() }),
-  z.object({ access: z.literal("institution-captured") }),
-  z.object({ access: z.literal("unknown") }),
-])
-```
+so `oneof` is codegen sugar (mutual-exclusion + `WhichOneof`), not a wire/at-rest distinction. The emitted **Zod** view
+model (bucket 2) is flat too — it validates the same canonical JSON and branches on the `access` string — rather than a
+discriminated union, so the wire and browser shapes stay identical (ADR 0004). The trade is that the flat model makes an
+illegal state (`licensed` with no `publisher`) *representable*; the boundary validator is what rules it out.
 
 (The only way to a proto `oneof` is `Extern` to a hand-authored `.proto` — see "Escape hatch" in the appendix — not
-worth it for a rule `protovalidate` covers.)
+worth it for a rule the validator covers.)
 
 ## Schema evolution
 
@@ -247,11 +248,11 @@ additive-only evolution plus proto's tolerant readers keeps that skew safe.
   `reserved`). The same additive rule as at-rest (see Schema evolution).
 - **No in-payload version:** the message type identifies the shape on the wire, so there is no `schema_version` field.
 
-The proto authoring constraints now apply to **all** proto, at-rest and wire alike (no longer wire-specific): integer
-enums with a forced `0` member and identifier-only names — so hyphenated/dotted vocabularies (SPDX licences, access
-kinds) are `string` fields, membership validated in code or `protovalidate`; no `const` and no `oneof`, so a
-discriminant is a plain `string` field with its invariant in `protovalidate`; an explicit `@field(n)` on every property
-(appendix).
+The proto authoring constraints apply to **all** proto, at-rest and wire alike: integer enums with a forced `0` member
+and identifier-only names — so enum values are snake_case identifiers (the canonical JSON string, ADR 0004), and only
+genuinely-external arbitrary strings (e.g. a raw licence URL) are `string` fields, membership validated in code; no
+`const` and no `oneof`, so a discriminant is a plain `string` field with its invariant in a code-level validator; an
+explicit `@field(n)` on every property (appendix).
 
 ## Documentation flow
 
@@ -259,34 +260,34 @@ Documentation authored on the `.tsp` is what makes the generated code and the ag
 (`/** */` or `@doc`) is documentation the emitters carry; a `//` line comment is dropped by the compiler and reaches
 nothing. Where a doc-comment lands depends on the target:
 
-| Doc-comment on…           | Reaches                                                                       | Via                                                  |
-| ------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------- |
-| a model / field (at-rest) | JSON Schema `description` → Pydantic class docstring + `Field(description=…)` | `@typespec/json-schema` + `datamodel-code-generator` |
-| an rpc / service (wire)   | the gRPC Stub/Servicer **method** docstring                                   | `@typespec/protobuf` → `protoc` `grpc_python` plugin |
-| a message / field (wire)  | **nothing** on the generated Python                                           | `protoc` carries no comment into `_pb2.py` / `.pyi`  |
+| Doc-comment on…                    | Reaches                                     | Via                                                  |
+| ---------------------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| an rpc / service                   | the gRPC Stub/Servicer **method** docstring | `@typespec/protobuf` → `protoc` `grpc_python` plugin |
+| a message / field (at-rest or RPC) | **nothing** on the generated Python         | `protoc` carries no comment into `_pb2.py` / `.pyi`  |
 
-So the wire path documents *operations* but not *message shapes*: an agent introspecting a message type or its fields at
-runtime sees no descriptions, even with perfect doc-comments. (When an rpc has no doc-comment, its generated stub
-carries the tell-tale `"Missing associated documentation comment in .proto file."` — the placeholder that proves the
-comment path exists.) Verify that `@typespec/protobuf` emits doc-comments as `.proto` leading comments; the plugin
-surfaces them only if they reach the `.proto`.
+Everything is proto now (ADR 0003), so this holds for at-rest artifacts as much as RPC: the path documents *operations*
+but not *message shapes*, and an agent introspecting a message type or its fields at runtime sees no descriptions, even
+with perfect doc-comments. (When an rpc has no doc-comment, its generated stub carries the tell-tale
+`"Missing associated documentation comment in .proto file."` — the placeholder that proves the comment path exists.)
+Verify that `@typespec/protobuf` emits doc-comments as `.proto` leading comments; the plugin surfaces them only if they
+reach the `.proto`.
 
 **Generate the agent/skill doc from the contract, not from runtime `__doc__`.** The proto `FileDescriptorProto`
-(compiled with `--include_source_info`), the JSON Schema `description`s, and the `.tsp` itself each retain *every*
-doc-comment; a skill-text generator that reads the contract is complete regardless of what survives into `_pb2`.
-Depending on Python docstrings instead would silently drop every message-field description. Attaching docstrings to the
-generated message types (a documented facade, or reading the descriptor's source info onto `__doc__`) is a deferred
-nice-to-have, not the route to LLM-legibility. Either way the prerequisite is the same: the documentation must be a
-doc-comment at the source ([Authoring rules](#authoring-rules)).
+(compiled with `--include_source_info`) and the `.tsp` itself each retain *every* doc-comment; a skill-text generator
+that reads the contract is complete regardless of what survives into `_pb2`. Depending on Python docstrings instead
+would silently drop every message-field description. Attaching docstrings to the generated message types (a documented
+facade, or reading the descriptor's source info onto `__doc__`) is a deferred nice-to-have, not the route to
+LLM-legibility. Either way the prerequisite is the same: the documentation must be a doc-comment at the source
+([Authoring rules](#authoring-rules)).
 
 ## Tooling
 
-- Bun toolchain in CI for `tsp compile` (the `@typespec/protobuf` and `typespec-zod` emitters); `protoc` / grpcio-tools
-  (a Python dev dep, `codegen` uv group) compile the emitted `.proto` to Python stubs. JS deps pinned via the committed
-  `schema/` Bun lockfile.
+- Bun toolchain in CI for `tsp compile` (the `@typespec/protobuf` emitter); `protoc` / grpcio-tools (a Python dev dep,
+  `codegen` uv group) compile the emitted `.proto` to Python stubs. JS deps pinned via the committed `schema/` Bun
+  lockfile.
 - **Regen is a `tools/` Python orchestrator run as `uv run python -m tools.<name>`** — the repo has no task runner and
-  this stays in the uv/Python ecosystem. It runs `tsp compile` (emitting `.proto` and Zod) → `protoc` the `.proto` to
-  Python stubs → reorder the Zod (see appendix). CI runs it and checks for no diff.
+  this stays in the uv/Python ecosystem. It runs `tsp compile` (emitting `.proto`) → `protoc` the `.proto` to Python
+  stubs. CI runs it and checks for no diff.
 - **The compat gate is a CI workflow** (`schema-compat.yml`) running `buf breaking` over each committed `.proto` against
   its base-branch baseline (see Schema evolution). It shells out to a pinned `buf` and fails hard on any incompatible
   delta; the pure logic is unit-tested. `buf breaking` is the sole authored-data gate (the chuckd job is retired, ADR
@@ -298,12 +299,11 @@ doc-comment at the source ([Authoring rules](#authoring-rules)).
 about exists is the point of this ordering.
 
 0. **Settle the toolchain and the reliable feature subset — no litcache.** Stand up `schema/` (Bun deps,
-   `tspconfig.yaml`), the `@typespec/protobuf` and direct Zod emitters, the `protoc` Python-stub step (Zod generated and
-   `tsc`-smoke-tested, no consumer yet), the `tools/` regen orchestrator, and the CI gates (freshness + `buf breaking`).
-   The driver is a **feature-coverage corpus of schemas in a `tests/` directory** — one per feature (string enum,
-   optional, optional-with-default, literal, named union, nested, array, scalar formats) — that defines the reliable
-   subset and doubles as the CI smoke test and new-domain template. Output: every convention locked, gate settled, zero
-   domain modelling.
+   `tsconfig.json`), the `@typespec/protobuf` emitter, the `protoc` Python-stub step, the `tools/` regen orchestrator,
+   and the CI gates (freshness + `buf breaking`). The driver is a **feature-coverage corpus of schemas in a `tests/`
+   directory** — one per feature (enum, optional, optional-with-default, nested, array, scalar formats) — that defines
+   the reliable subset and doubles as the CI smoke test and new-domain template. Output: every convention locked, gate
+   settled, zero domain modelling.
 1. **litcache schema** — author the real models (the `litcache/` type files) on the settled rails. The at-rest half is
    being re-cut from closed JSON to proto per ADR 0003. Unblocks the litcache build.
 1. Add the hand-written load/dump facade (proto messages ↔ storage, with the RMW discipline of ADR 0003) + golden
@@ -314,65 +314,55 @@ about exists is the point of this ordering.
 ## Open questions
 
 - Generated-code review burden on the public mirror (diff volume/noise).
-- Whether the pre-release `typespec-zod` emitter (pinned `0.0.0-68`, internal name `efv2-zod-sketch`) holds up as the
-  corpus grows: it covers the corpus and emits faithful named schemas but mis-orders declarations across files, so it
-  needs the reorder pass (appendix). With JSON Schema retired (ADR 0003) there is no `json-schema-to-zod` fallback; an
-  emitter regression is handled by fixing the reorder pass or the emitter itself.
+- **Bucket-2 view model is Zod, canonicalized** (ADR 0004) — `typespec-zod` → `zod_canonicalize` → `zod_reorder`, one
+  source, conformant to proto3-JSON by construction. protobuf-es (the browser consuming proto directly) stays a future
+  option if the FE would rather not carry Zod, but is not needed. Open sub-questions: `typespec-zod` is pre-release
+  (`0.0.0-68`), so watch for emitter changes that widen what `zod_canonicalize` must repair; and the first *real* view
+  model (vs the corpus) will exercise whether a curated projection wants to diverge from the stored shape.
 - **proto→pydantic generator maturity** — verify before sourcing the backend's Pydantic from proto; `betterproto` is the
   fallback (ADR 0003).
 
 ## Appendix: emitter behaviour
 
-Validated end to end (TypeSpec 1.13 → `@typespec/protobuf` → `.proto` → `protoc`/grpcio-tools → Python stubs;
-`typespec-zod` → Zod direct from `.tsp`). Records the why behind the authoring rules and the proto constraints.
+Validated end to end (TypeSpec 1.13 → `@typespec/protobuf` → `.proto` → `protoc`/grpcio-tools → Python stubs). Records
+the why behind the authoring rules and the proto constraints.
 
 **Cross-target feature coverage:**
 
-| Feature (as authored)          | Proto                                     | Python (proto stub)     | Zod                     |
-| ------------------------------ | ----------------------------------------- | ----------------------- | ----------------------- |
-| string enum (hyphenated)       | `string` field (proto enums integer-only) | `str`                   | `z.enum([…])`           |
-| literal (`access: "licensed"`) | not representable                         | —                       | `z.literal("licensed")` |
-| optional `T?`                  | `optional`                                | presence via `HasField` | `.optional()`           |
-| optional + default             | (proto3 has no field defaults)            | —                       | default                 |
-| `int32`                        | `int32`                                   | `int`                   | `.int().gte().lte()`    |
-| array                          | `repeated`                                | repeated field          | `z.array(…)`            |
-| nested model                   | `message`                                 | nested message class    | `z.object({…})`         |
-| named union                    | unsupported — flat + `protovalidate`      | —                       | `z.discriminatedUnion`  |
-| field numbers                  | required (`@field(n)`)                    | —                       | —                       |
+| Feature (as authored)  | Proto                               | Python (proto stub)     | Zod (canonicalized)           |
+| ---------------------- | ----------------------------------- | ----------------------- | ----------------------------- |
+| enum (identifier-safe) | integer enum, forced `0` member     | `int` / enum            | `z.enum([names])`             |
+| optional `T?`          | `optional`                          | presence via `HasField` | `.optional()`                 |
+| optional + default     | (proto3 has no field defaults)      | —                       | `.optional().default(v)`      |
+| `int32`                | `int32`                             | `int`                   | `z.number().int()` (ranged)   |
+| array                  | `repeated`                          | repeated field          | `z.array(...)`                |
+| nested model           | `message`                           | nested message class    | nested schema ref             |
+| `Timestamp`            | `google.protobuf.Timestamp`         | `Timestamp`             | `z.iso.datetime()`            |
+| named union            | unsupported — flat + code validator | —                       | flat (no discriminated union) |
+| field numbers          | required (`@field(n)`)              | —                       | —                             |
 
 **Why a field with a default must be optional.** A required field with a default keeps the default out of the generated
 model; making it optional preserves it. (proto3 scalars carry implicit zero-defaults regardless; the rule matters for
-the Zod view model and for field presence.)
+field presence.)
 
-**Named union (Zod only), and why not `@discriminator` inheritance.** For a Zod view model a named union of
-`const`-tagged variants emits a discriminated union that enforces the invariant structurally; `@discriminator`
-inheritance does not — it types the use site as the bare base, so codegen produces `access: Access` (base) and the
-constraint is lost. Proto has no counterpart: `@typespec/protobuf` rejects union-typed fields and exposes no `oneof`
-decorator, so an at-rest domain models the discriminant flat and enforces the invariant with `protovalidate` (worked
-example).
+**Why sum types are flat, not named unions.** A named union of `const`-tagged variants would emit a proto `oneof`
+(rejected) and, on the Zod side, a discriminated union — a shape that diverges from the flat proto and breaks the
+identical-JSON property (ADR 0004). So both targets model the discriminant flat (a `string` field + conditional fields)
+and the "X iff Y" invariant is a code-level validator, not the shape (worked example). `@discriminator` inheritance is
+also rejected: it types the use site as the bare base (`access: Access`), losing the constraint anyway.
 
 **Escape hatch (`Extern`).** `model X is Extern<"path.proto", "pkg.X">` makes the proto emitter emit an `import` +
 verbatim reference instead of converting the model — the mechanism behind `WellKnown.Timestamp`/`Empty`. It is the only
 route to a hand-authored proto construct the emitter can't produce (a `oneof`, `google.protobuf.Timestamp`). Use it for
-well-known types; for a cross-field invariant prefer flat + `protovalidate` — `Extern` splits the source of truth (a
-hand-authored `.proto` island kept in sync by hand) for a `oneof` that is only codegen sugar (identical on the wire).
+well-known types; for a cross-field invariant prefer flat + a code-level validator — `Extern` splits the source of truth
+(a hand-authored `.proto` island kept in sync by hand) for a `oneof` that is only codegen sugar (identical on the wire).
 
-**Why Zod is emitted direct from `.tsp`, not via `json-schema-to-zod`.** That converter does not resolve `$ref`s to
-`#/$defs/…` — the named, reused subschemas a JSON-Schema route would emit for each model — and silently emits `z.any()`
-for them. A direct tsp→Zod emitter (`typespec-zod`) reads the source models and sidesteps the converter entirely.
-
-The emitter's one defect (S0.3) is declaration order: it emits each model as `export const <name> = …` but a schema can
-land before another it references, which Zod's eager evaluation rejects at compile time (`TS2448`/`TS2454`, used before
-declaration). A deterministic **reorder pass** (`tools/schema/zod_reorder.py`) parses the emission, builds the reference
-graph, and re-emits the declarations dependency-first. The reliable subset forbids recursion, so the graph is acyclic; a
-cycle (which Zod expresses only via `z.lazy`) fails loud.
-
-**Proto authoring constraints.** Proto enums are integer with a forced `0` member and identifier-only names, so a string
-vocabulary with hyphens or dots (SPDX licences, access kinds) cannot be a proto enum — model it as a `string` field
-(membership validated in code or `protovalidate`). Proto has no `const` and the emitter no `oneof`, so a discriminant is
-a plain `string` field and its cross-field invariant lives in `protovalidate`, not the shape. Every message property
-needs an explicit `@field(n)`; a paramless op maps to `google.protobuf.Empty`; streaming is `@stream`. These apply to
-all authored proto — at-rest and wire alike (ADR 0003).
+**Proto authoring constraints.** Proto enums are integer with a forced `0` member and identifier-only names; enum values
+are snake_case identifiers and that name is the canonical JSON string (ADR 0004). Only a genuinely-external arbitrary
+string (e.g. a raw licence URL) is a `string` field (membership validated in code). Proto has no `const` and the emitter
+no `oneof`, so a discriminant is a plain `string` field and its cross-field invariant lives in a code-level validator,
+not the shape. Every message property needs an explicit `@field(n)`; a paramless op maps to `google.protobuf.Empty`;
+streaming is `@stream`. These apply to all authored proto — at-rest and wire alike (ADR 0003).
 
 **`@typespec/versioning`.** Not needed here: there are no schema versions — each domain has a single current `.tsp`
 evolved additively (see Schema evolution).

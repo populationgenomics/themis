@@ -39,10 +39,9 @@ screen = ["pyyaml"]
 # they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
 litcache = ["google-cloud-storage", "psycopg[binary]", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0"]
-# Schema codegen (tools/schema/regen.py): datamodel-code-generator turns the
-# normalized JSON Schema into Pydantic v2 models; grpcio-tools' protoc turns a
-# real domain's .proto into the committed themis/rpc/ gRPC stubs. Both are CLIs.
-codegen = ["datamodel-code-generator", "grpcio-tools"]
+# Schema codegen (tools/schema/regen.py): grpcio-tools' protoc turns each domain's
+# committed .proto into the generated Python stubs.
+codegen = ["grpcio-tools"]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).

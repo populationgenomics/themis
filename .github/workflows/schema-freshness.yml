@@ -17,15 +17,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      # Bun toolchain for tsp / json-schema / typespec-zod (tsp runs on the Bun
-      # runtime), installed from the committed schema/bun.lock (pinned deps).
+      # Bun toolchain for tsp / @typespec/protobuf / typespec-zod (tsp runs on the Bun runtime),
+      # installed from the committed schema/bun.lock (pinned deps).
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile
         working-directory: schema
-      # Python codegen deps: datamodel-code-generator (+ black/isort) for the
-      # Pydantic emission step of the orchestrator.
+      # Python codegen deps: grpcio-tools' protoc for the .proto -> stub step.
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true

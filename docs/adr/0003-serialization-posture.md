@@ -11,7 +11,7 @@ serialization moves.
 Durable litcache artifacts (`manifest.json`, `knowledge_units.jsonl`) are **closed JSON** (JSON Schema from TypeSpec,
 sealed, `chuckd`-gated); inter-service RPC is already **binary proto** (`schema/proto/themis/rpc/auth.proto`, #91,
 `buf breaking`-gated). This ADR moves the at-rest artifacts to binary proto too, joining the format the services already
-speak — it does not change RPC or the BFF↔frontend path (JSON + Zod).
+speak — it does not change RPC or the browser-facing path (bucket 2, deferred).
 
 The driver is a corruption risk closed JSON does not cover and binary proto eliminates by construction (below).
 
@@ -22,11 +22,12 @@ Serialized data falls into three buckets by *who owns the schema* and *who consu
 | Bucket                                                                        | Format                                       | Compat gate    | Owner of the shape |
 | ----------------------------------------------------------------------------- | -------------------------------------------- | -------------- | ------------------ |
 | Authored, internal machine-to-machine (at-rest artifacts + inter-service RPC) | **binary proto**                             | `buf breaking` | us                 |
-| Authored, browser-facing (BFF↔frontend)                                       | JSON + Zod                                   | — (Zod types)  | us (view model)    |
+| Authored, browser-facing (BFF↔frontend)                                       | **deferred** (protobuf-es vs Zod)            | —              | us (view model)    |
 | Externally-defined, ingested (raw upstream payloads we cache)                 | JSON, our model a documented **subset/view** | read-side only | the upstream       |
 
-TypeSpec stays the single IDL: it authors two targets — proto (bucket 1) and Zod (bucket 2). Content-addressed blobs
-(`sources/`, `renderings/`, `supplementary/`) are opaque bytes, unaffected.
+TypeSpec stays the single IDL: it authors proto (bucket 1) today. The bucket-2 browser target is **deferred and not
+committed** (protobuf-es vs Zod, see Consequences). Content-addressed blobs (`sources/`, `renderings/`,
+`supplementary/`) are opaque bytes, unaffected.
 
 ## Why
 
@@ -97,12 +98,12 @@ read).
   layer, one level up) and overkill per-doc, and per-record `.pb` scatters tiny blobs and breaks the
   one-artifact-alongside-manifest layout. `entities.jsonl` (derived, per-doc, rebuildable) takes the same shape.
 - **Drop JSON Schema entirely** (and `tools/schema/normalize.py`, the #4084 ref-rewrite). Bucket 1 is proto + `buf`;
-  bucket 2 is Zod; bucket 3, as built, never stores raw external JSON — external responses are mapped to canonical proto
-  at ingest (`crossref.py` → `PubmedArticle`), and the drift that matters (a *read* field changing type or vanishing) is
-  already caught at the ingest boundary by fail-loud mapping. A JSON-Schema pass would be redundant (the mapper walks
-  every field anyway) and can't express the semantic mapping. If a genuine store-raw-external-JSON artifact is ever
-  introduced *and* read in multiple places, add validation matched to the reader then (Zod for the TS BFF, a small
-  TypeSpec-authored `jsonschema` check for Python).
+  bucket 2 is the browser view model (target deferred); bucket 3, as built, never stores raw external JSON — external
+  responses are mapped to canonical proto at ingest (`crossref.py` → `PubmedArticle`), and the drift that matters (a
+  *read* field changing type or vanishing) is already caught at the ingest boundary by fail-loud mapping. A JSON-Schema
+  pass would be redundant (the mapper walks every field anyway) and can't express the semantic mapping. If a genuine
+  store-raw-external-JSON artifact is ever introduced *and* read in multiple places, add validation matched to the
+  reader then (the browser view model if TS, a small TypeSpec-authored `jsonschema` check for Python).
 - **Constraints move to `protovalidate`.** The `@minItems`, pattern, and range constraints JSON Schema carried become
   protovalidate options; string-valued enums stay (proto enums, JSON-name encoding), membership enforced by
   protovalidate if strictness is wanted.
@@ -133,5 +134,13 @@ Three PRs, dependency-ordered, each independently reviewable and mirror-safe:
 - Pydantic stays optional: if the backend wants its ergonomics, source it **from proto** (a proto→pydantic generator, or
   `betterproto`), never by reintroducing JSON Schema as a hub. Generator maturity is verified before betting on it;
   `betterproto` is the fallback.
-- The feature-coverage corpus (`schema/tests/fixtures/features/`) retires its JSON-Schema arm; it verifies proto (+ Zod)
-  round-trip.
+- A type that is both at-rest (proto) and browser-shipped needs **dual definitions** (proto + browser), a genuine cost
+  of proto-at-rest. Proto and Zod no longer share a reliable subset once JSON Schema is gone: `@typespec/protobuf` needs
+  integer enums and emits no `oneof`/literal, while a Zod emitter needs string enums.
+- The browser could instead **consume proto directly via protobuf-es** (buf's TS runtime), collapsing the dual
+  definition — the likely bucket-2 direction, undecided; the frontend has no models yet.
+- **Prefer identifier-safe enum values** (snake_case): proto enums are integer with identifier-only names. Hyphenated
+  vocabularies were our own choice, not a requirement; only genuinely-external arbitrary strings (e.g. a raw licence
+  URL) are `string` fields.
+- The feature-coverage corpus (`schema/tests/fixtures/features/`) retires its JSON-Schema arm; it verifies proto
+  round-trip (bucket 2 deferred).
