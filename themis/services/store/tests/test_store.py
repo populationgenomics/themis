@@ -86,6 +86,18 @@ def test_get_workspace_reassembles_multiple_output_chunks(monkeypatch: pytest.Mo
     assert chunks == [b'abcd', b'efgh', b'ij']
 
 
+def test_put_workspace_over_cap_is_resource_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(servicer_mod, '_MAX_WORKSPACE_ARCHIVE_BYTES', 4)
+
+    async def run() -> None:
+        async with _serving(storage_mod.FixtureStorage()) as stub:
+            await stub.PutWorkspace(_chunks([b'abc', b'def']), metadata=_GOOD_TOKEN)
+
+    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
+        asyncio.run(run())
+    assert exc_info.value.code() is grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
 def test_get_workspace_absent_is_not_found() -> None:
     async def run() -> None:
         async with _serving(storage_mod.FixtureStorage()) as stub:

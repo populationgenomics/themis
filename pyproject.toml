@@ -92,8 +92,9 @@ agent = ["grpcio", "protobuf"]
 # Docker daemon.
 test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
-# (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
-infra = ["pulumi", "pulumi-gcp"]
+# (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`. pulumi-tls
+# mints the internal ALB's self-signed serving cert (infra/themis_infra/internal_lb.py).
+infra = ["pulumi", "pulumi-gcp", "pulumi-tls"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. pydantic: pyright (now a hook) type-checks schema/tests (the

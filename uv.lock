@@ -2623,6 +2623,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pulumi-tls"
+version = "5.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "parver" },
+    { name = "pulumi" },
+    { name = "semver" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c2/72/2c62b6e16ebd36095d9f03e4639ecd80221d51fb1214d2bcb43b4071a145/pulumi_tls-5.5.0.tar.gz", hash = "sha256:6ff61f53ffc9f5704254b0b30d7e6df451f47555dbeb1735fb37a006c5696abd", size = 30482, upload-time = "2026-05-22T12:48:03.823Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/4f/e3ec5f28ea46733ba58fa244e5e7d011038e57c27ac02bf6b93efebe17f4/pulumi_tls-5.5.0-py3-none-any.whl", hash = "sha256:a7bf276b4f525b0eb578cdca7c19e86d6a8d1d9448122c4a9a3e4b51917460a1", size = 38715, upload-time = "2026-05-22T12:48:02.488Z" },
+]
+
+[[package]]
 name = "pyarrow"
 version = "18.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3546,6 +3560,7 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pulumi-tls" },
 ]
 lint = [
     { name = "aiohttp" },
@@ -3569,6 +3584,7 @@ lint = [
     { name = "pubmed-proto" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pulumi-tls" },
     { name = "pydantic" },
     { name = "pypdfium2" },
     { name = "pyright" },
@@ -3695,6 +3711,7 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pulumi-tls" },
 ]
 lint = [
     { name = "aiohttp" },
@@ -3718,6 +3735,7 @@ lint = [
     { name = "pubmed-proto", specifier = "==0.1.0" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pulumi-tls" },
     { name = "pydantic" },
     { name = "pypdfium2" },
     { name = "pyright" },

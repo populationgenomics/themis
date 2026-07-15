@@ -414,11 +414,12 @@ isolation later (the worker's tool runner is pluggable, §12). Two containers:
     elsewhere upstream.
   - **No credential-carrying redirect.** Never follows a 3xx with the injected credential attached (a redirect to an
     off-allowlist host would leak the key or session token).
-  - **Strict upstream TLS.** Validates the certificate on both legs; the L4 FQDN allow (§8) admits any connection to the
+  - **Strict upstream TLS.** Validates the certificate on every leg; the L4 IP allow (§8) admits any connection to the
     allowed IP, so cert validation — not the firewall — authenticates the upstream and stops a hijacked IP from
     receiving the credential or injecting tool calls. Pin `api.anthropic.com` at SPKI/CA granularity (a leaf pin
-    hard-fails every session on Anthropic's cert rotation); the store leg validates the store's specific hostname (not
-    any `*.run.app` cert), which an IP hijacker cannot forge.
+    hard-fails every session on Anthropic's cert rotation); the store and forward legs trust the internal load
+    balancer's self-signed certificate as their gRPC root and validate the service's private hostname against its SAN
+    (§8), which an IP hijacker cannot forge.
   - **Unbuffered streaming.** The Anthropic route streams — no response buffering, no idle timeout, per-chunk flush: it
     carries the worker's long-lived SSE event stream (minutes quiet between tool calls, §2); a buffering or idle-timeout
     proxy stalls tool delivery or tears the stream on every thinking gap.
@@ -452,7 +453,7 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
 | Identity                 | Holds                                                                                                                                                                                                                                                     | Deliberately lacks                                                                                                                       |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | **Dispatcher SA** (new)  | environment-key secret access, plus the webhook-signing-key on the own-subscription path (§12); KMS *MAC* (use-only) on the session-token signing key, to derive the per-session bearer; `run.jobs.run` on the sandbox job                                | org API key; any table; the raw signing key; any GCS/store credential                                                                    |
-| **Sandbox job SA** (new) | `run.invoker` on the sandbox-reachable services only (the store now)                                                                                                                                                                                      | every other role; invoke alone yields no data — a metadata-minted token opens nothing without the session token (held only by the proxy) |
+| **Sandbox job SA** (new) | `run.invoker` on the sandbox-reachable services only (the store and hello, behind the internal load balancer, §8)                                                                                                                                         | every other role; invoke alone yields no data — a metadata-minted token opens nothing without the session token (held only by the proxy) |
 | **Auth SA** (new)        | session-token-hash **read** on Cloud SQL, and nothing else                                                                                                                                                                                                | environment key; any GCS; any write                                                                                                      |
 | BFF SA                   | its wiring §4/§8 roles, minus the working-document-version write (now the store's checkpoint, §9), + KMS *MAC* (use-only, to compute the bearer whose hash it records at session create) + **read** on the working-document bucket (the version selector) | environment key; the raw signing key; GCS write                                                                                          |
 | Store SA                 | GCS **read/write** (object admin) on the working-document and ephemeral buckets; invoke the auth service                                                                                                                                                  | environment key; org API key; Cloud SQL (session tokens resolved via auth)                                                               |
@@ -521,22 +522,27 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
 ## 8. Egress & instance hardening
 
 - **Direct VPC egress, all traffic**, for the sandbox job: a deny-all egress firewall for the job's SA/tag, allowing
-  Anthropic's published inbound range (`160.79.104.0/23`, `2607:6bc0::/48`) on `:443` and the internal route to the
-  store (internal-ingress Cloud Run). The sandbox reaches **only** Anthropic and the store — all workspace persistence
-  goes through the store (§9), not GCS, so there is no `storage.googleapis.com` in the sandbox's allowlist (the store
-  reaches its own buckets with its own identity; the auth service is reached only by the store, not the sandbox). This
-  bounds L3/L4 egress hard; the two channels that would otherwise keep it from being an absolute seal — DNS resolution
-  and the egress IP itself — are each closed below:
+  Anthropic's published inbound range (`160.79.104.0/23`, `2607:6bc0::/48`) on `:443` and the internal load balancer's
+  IP (below) on `:443`. The sandbox reaches **only** Anthropic and the internal services the load balancer fronts (the
+  store and the hello forward-leg target, §6) — all workspace persistence goes through the store (§9), not GCS, so there
+  is no `storage.googleapis.com` in the sandbox's allowlist (the store reaches its own buckets with its own identity;
+  the auth service is reached only by the store and hello, not the sandbox). This bounds L3/L4 egress hard; the two
+  channels that would otherwise keep it from being an absolute seal — DNS resolution and the egress IP itself — are each
+  closed below:
   - **DNS — closed by a response-policy allowlist.** An L3/L4 egress rule does not restrict which *names* the workload
     resolves, so on its own it leaves recursive queries for `<base64-chunk>.attacker.example` as a low-bandwidth
     exfiltration path (the query reaching the attacker's authoritative nameserver *is* the leak). Close it with a
     **Cloud DNS response policy (RPZ)** on the sandbox VPC: a wildcard `*` catch-all sinkholed locally — answered
-    without recursing, so the query never leaves — with `bypassResponsePolicy` exceptions for the *exact* names the
-    sandbox needs (`api.anthropic.com`, the store), exact rather than `*.anthropic.com` so subdomain tunnelling under an
-    allowed parent is caught too. The two ways out — querying an external resolver directly, or DNS-over-HTTPS — are
-    outbound to non-allowlisted hosts, so the deny-all egress firewall already drops them. The metadata resolver
-    (`169.254.169.254`) is link-local and firewall-exempt but *forwards to the VPC's Cloud DNS*, so it is governed by
-    the same RPZ — not a bypass. One build-time probe confirms the metadata path honours the policy (§12).
+    without recursing, so the query never leaves — resolving the two internal-service hostnames
+    (`store.internal.themis`, `hello.internal.themis`) from local data to the load balancer's IP, with a
+    `bypassResponsePolicy` exception for only `api.anthropic.com` (exact, not `*.anthropic.com`, so subdomain tunnelling
+    under an allowed parent is caught). Only the credential proxy resolves any name — the agent reaches every service
+    through the proxy on loopback — and the proxy reaches the metadata server by IP
+    (`GCE_METADATA_HOST=169.254.169.254`), so the sinkhole never touches it. That leaves `api.anthropic.com` as the one
+    name that leaves the VPC, kept on DNS because Anthropic rotates which IPs are live within the published range
+    (pinning a single IP would trade that resilience for nothing — the sinkhole already makes DNS a closed exfiltration
+    channel). Its two abuse paths — an external resolver, or DNS-over-HTTPS — are outbound to non-allowlisted hosts the
+    deny-all egress already drops.
   - **Egress IP — pinned to Anthropic's published range.** Anthropic publishes fixed, dedicated inbound CIDRs for the
     API ([`160.79.104.0/23`, `2607:6bc0::/48`](https://platform.claude.com/docs/en/api/ip-addresses), "will not change
     without notice"), so the egress rule pins those directly rather than resolving `api.anthropic.com` firewall-side.
@@ -547,18 +553,32 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
     notice — a bounded operational watch, not a hole.
 - Containers in an instance share the network namespace, so the policy cannot distinguish agent from proxy. That is
   acceptable because reachability without the session token is harmless: agent code can reach `api.anthropic.com` or the
-  store directly — and can mint the job SA's invoker token — but holds no environment key and no session token, so every
-  such request is rejected at the credential check; the scoped proxy is the only path that carries them. (Credential
-  *secrecy* across the container boundary rests on the PID/mount-namespace split, §7 — a separate mechanism from network
-  reachability.)
-- **The store's ingress is internal and IAM-gated to the sandbox job SA** — no public endpoint; the sandbox reaches it
-  over the VPC, and the auth service sits behind it, reachable only from the store. The proxy presents the job SA's ID
-  token (`run.invoker`, §7) *and* the session token. IAM is defense-in-depth, not the authorization: the agent shares
-  the job SA and can mint that token, so invoke never substitutes for the session token — the store enforces it on
-  **every** route, **default-deny**, `workspace put`/`get` answering only after the auth service resolves the session
-  token, with no unauthenticated surface beyond a trivial health check that leaks no version or dependency detail (§12).
-  What the invoker gate buys over an IAM-open store is a documented caller set and a second factor against a session
-  token forged by a non-sandbox identity (the signing-key blast radius, §7).
+  internal services directly — and can mint the job SA's invoker token — but holds no environment key and no session
+  token, so every such request is rejected at the credential check; the scoped proxy is the only path that carries them.
+  (Credential *secrecy* across the container boundary rests on the PID/mount-namespace split, §7 — a separate mechanism
+  from network reachability.)
+- **The internal services sit behind one regional internal Application Load Balancer**, host-routing both private
+  hostnames to a single dedicated internal IP. A dedicated IP is what lets egress pin to one address, and that is the
+  whole point: the rejected alternative — Google's restricted VIP (`199.36.153.4/30`) — is one address shared by *every*
+  `*.run.app`, unfilterable by host, so agent code could POST the workspace to an attacker's `allowUnauthenticated`
+  Cloud Run service through it. That channel is uncontainable at L3/L4 without VPC-SC; a dedicated internal IP closes
+  it. The services take **load-balancer ingress** and accept the ID token minted for their private hostname
+  (`custom_audiences`), so a direct `run.app` call is rejected.
+  - **Why the LB serves a self-signed certificate.** A GCP Application Load Balancer negotiates HTTP/2 — which gRPC
+    requires — with clients only over TLS; there is no cleartext-HTTP/2 frontend, so the LB *must* present a
+    certificate. The private hostname has no public domain, so a publicly-trusted Google-managed certificate (which
+    validates via DNS authorization on a real zone) would need an out-of-band DNS record and a two-phase deploy, and a
+    Certificate Authority Service private CA would still make the proxy trust a private root while adding a CA pool. For
+    one LB with a single known client, a self-signed certificate injected as the proxy's gRPC trust root is the
+    self-contained choice; the proxy checks the LB's hostname against the certificate SAN, so a hijacked IP presenting a
+    different certificate is rejected.
+- **IAM and the load balancer are reachability, not authorization.** The proxy presents the job SA's ID token
+  (`run.invoker`, §7) *and* the session token; the agent shares the job SA and can mint that token, so invoke never
+  substitutes for the session token. The store and hello enforce it on **every** route, **default-deny** —
+  `workspace put`/`get` answering only after the auth service (reachable only from them, not the sandbox) resolves the
+  session token, with no unauthenticated surface beyond a trivial health check that leaks no version or dependency
+  detail (§12). What the invoker gate buys over an IAM-open service is a documented caller set and a second factor
+  against a session token forged by a non-sandbox identity (the signing-key blast radius, §7).
 - Sandbox sizing starts small (1 vCPU / 2 GiB — the workload is CLI calls and small scripts, and all 25 threads of a
   session share one sandbox); tune from `agent_run` usage data.
 - The dispatcher keeps default egress — it reaches `api.anthropic.com` plus KMS, Secret Manager, and the Cloud Run Admin

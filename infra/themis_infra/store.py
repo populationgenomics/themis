@@ -2,11 +2,11 @@
 
 Provisions the store data-plane service for one environment — a runtime SA, the
 working-document and ephemeral-workspace buckets, the SA's object-admin on both, and
-an internal-ingress Cloud Run service. The container runs the `gcs` storage backend
-and resolves each request's session through the auth service at `THEMIS_AUTH_URL`
-(self-hosted-sandbox.md §7, §9). Ingress is internal-only with no invoker binding yet
-— the sandbox proxy that calls it does not exist; its `run.invoker` attaches when it
-lands.
+a Cloud Run service reached only through the sandbox's internal load balancer. The
+container runs the `gcs` storage backend and resolves each request's session through
+the auth service at `THEMIS_AUTH_URL` (self-hosted-sandbox.md §7, §9). The caller — the
+sandbox proxy — dials the LB's private hostname, so the service accepts the ID token
+minted for that hostname (`custom_audiences`) and admits only load-balancer ingress.
 """
 
 from __future__ import annotations
@@ -25,9 +25,11 @@ class StoreService(pulumi.ComponentResource):
     Attributes:
         service_account_email: The runtime SA's email — the `run.invoker` member on
             the auth service, and the object-admin on both buckets.
+        service_name: The Cloud Run service name, for the load balancer's serverless NEG
+            and the sandbox job's invoker binding.
         working_document_bucket: The versioned working-document bucket name.
         workspace_bucket: The ephemeral-workspace bucket name.
-        url: The service's `run.app` URL (internal ingress).
+        url: The service's `run.app` URL (reached only through the internal load balancer).
     """
 
     def __init__(
@@ -37,6 +39,7 @@ class StoreService(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
+        custom_audiences: pulumi.Input[list[str]],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:StoreService', 'themis', None, opts)
@@ -98,15 +101,21 @@ class StoreService(pulumi.ComponentResource):
             project=project,
             name='themis-store',
             location=region,
-            # Internal only: called service-to-service (the sandbox proxy, later),
-            # never from the public internet.
-            ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
+            # Reached only through the sandbox's internal load balancer; direct run.app calls rejected.
+            ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
+            # The proxy dials the LB's private hostname, so its ID token's audience is that hostname.
+            custom_audiences=custom_audiences,
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,
+                        # PutWorkspace buffers the archive whole and copies it once to upload; hold two
+                        # copies of the cap (servicer.py) plus the GCS client and runtime.
+                        resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
+                            limits={'cpu': '1', 'memory': '2Gi'}
+                        ),
                         envs=[
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_STORAGE_BACKEND', value='gcs'),
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
@@ -132,10 +141,12 @@ class StoreService(pulumi.ComponentResource):
             ),
             opts=child,
         )
+        self.service_name = service.name
         self.url = service.uri
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
+                'service_name': self.service_name,
                 'working_document_bucket': self.working_document_bucket,
                 'workspace_bucket': self.workspace_bucket,
                 'url': self.url,

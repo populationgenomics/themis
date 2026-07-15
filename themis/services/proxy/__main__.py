@@ -60,11 +60,11 @@ def build_anthropic_session(spki_pins: frozenset[str]) -> aiohttp.ClientSession:
     return aiohttp.ClientSession(connector=tls.PinnedConnector(spki_pins), timeout=timeout, auto_decompress=False)
 
 
-def _build_sync(session_token: str) -> sync_mod.WorkspaceSync:
+def _build_sync(session_token: str, internal_ca: bytes) -> sync_mod.WorkspaceSync:
     store_url = _require('THEMIS_STORE_URL')
     channel = grpc.aio.secure_channel(
         _grpc_target(store_url),
-        id_token.channel_credentials(store_url),
+        id_token.channel_credentials(store_url, root_certificates=internal_ca),
         options=[('grpc.default_authority', _grpc_host(store_url))],
     )
     store = store_client.GrpcStore(channel, session_token=session_token)
@@ -86,11 +86,11 @@ async def _start_http(proxy: anthropic_mod.AnthropicProxy) -> None:
     await web.TCPSite(runner, '0.0.0.0', int(os.environ.get('THEMIS_PROXY_HTTP_PORT', '8080'))).start()  # noqa: S104
 
 
-async def _start_grpc(session_token: str) -> grpc.aio.Server:
+async def _start_grpc(session_token: str, internal_ca: bytes) -> grpc.aio.Server:
     forward_url = _require('THEMIS_FORWARD_UPSTREAM_URL')
     forward_channel = grpc.aio.secure_channel(
         _grpc_target(forward_url),
-        id_token.channel_credentials(forward_url),
+        id_token.channel_credentials(forward_url, root_certificates=internal_ca),
         options=[('grpc.default_authority', _grpc_host(forward_url))],
     )
     server = grpc.aio.server()
@@ -136,8 +136,11 @@ async def _serve() -> None:
     work_id = _require('ANTHROPIC_WORK_ID')
     upstream_base = os.environ.get('ANTHROPIC_BASE_URL', _DEFAULT_BASE_URL)
     anthropic_session = build_anthropic_session(frozenset(_require('THEMIS_ANTHROPIC_SPKI_PINS').split(',')))
+    # The internal store and forward services sit behind the sandbox's internal load balancer, which
+    # serves a self-signed certificate for their private hostnames (self-hosted-sandbox.md §8).
+    internal_ca = _require('THEMIS_INTERNAL_CA_CERT').encode()
 
-    workspace_sync = _build_sync(session_token)
+    workspace_sync = _build_sync(session_token, internal_ca)
     await workspace_sync.restore()  # fail-closed: a store error other than NOT_FOUND raises, the spawn dies
 
     work_queue = work_queue_mod.AnthropicWorkQueue(
@@ -158,7 +161,7 @@ async def _serve() -> None:
     )
     # Bind the listeners only now: the agent's startup probe gates on them, so "ready" means restored.
     await _start_http(proxy)
-    grpc_server = await _start_grpc(session_token)
+    grpc_server = await _start_grpc(session_token, internal_ca)
     _install_sigterm_flush(workspace_sync)
     _logger.info('listeners bound; serving the session')
     await grpc_server.wait_for_termination()

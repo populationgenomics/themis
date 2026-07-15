@@ -22,6 +22,11 @@ from themis.services.store import storage as storage_mod
 # Under gRPC's 4 MiB default per-message limit, with margin, so a large restore streams.
 _CHUNK_SIZE = 1 << 20
 
+# The scratch archive is buffered whole in memory before upload (§9); cap it so a runaway workspace
+# can't exhaust the store. Aligned with the proxy's decompressed-workspace cap (proxy/workspace.py) —
+# the archive is an uncompressed tar, so its size tracks the workspace it holds.
+_MAX_WORKSPACE_ARCHIVE_BYTES = 512 * 1024 * 1024
+
 
 class Servicer(store_pb2_grpc.StoreServicer):
     def __init__(self, storage: storage_mod.Storage, session_resolver: session_mod.SessionResolver) -> None:
@@ -48,8 +53,17 @@ class Servicer(store_pb2_grpc.StoreServicer):
         self, request_iterator: AsyncIterator[store_pb2.WorkspaceChunk], context: grpc.aio.ServicerContext
     ) -> store_pb2.PutWorkspaceResponse:
         session = await session_mod.require_session(context, self._session_resolver)
-        archive = b''.join([chunk.content async for chunk in request_iterator])
-        await self._storage.put_workspace(session.analysis_id, archive)
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in request_iterator:
+            total += len(chunk.content)
+            if total > _MAX_WORKSPACE_ARCHIVE_BYTES:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    f'workspace archive exceeds the {_MAX_WORKSPACE_ARCHIVE_BYTES}-byte cap',
+                )
+            chunks.append(chunk.content)
+        await self._storage.put_workspace(session.analysis_id, b''.join(chunks))
         return store_pb2.PutWorkspaceResponse()
 
     async def GetWorkspace(

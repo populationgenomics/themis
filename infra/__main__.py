@@ -12,11 +12,25 @@ import os
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import auth, baseline, deploy_iam, ingest, sandbox, secrets, sql, storage, store, web
+from themis_infra import (
+    auth,
+    baseline,
+    deploy_iam,
+    hello,
+    ingest,
+    internal_lb,
+    sandbox,
+    secrets,
+    sql,
+    storage,
+    store,
+    web,
+)
 
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
+_HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
 
 config = pulumi.Config()
 gcp_config = pulumi.Config('gcp')
@@ -94,18 +108,31 @@ store_service = store.StoreService(
     region=region,
     image=_service_image(_STORE_IMAGE_ENV, 'themis-store'),
     auth_url=auth_service.url,
+    custom_audiences=[internal_lb.audience(internal_lb.STORE_HOST)],
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-# The store resolves session tokens through auth (§7); grant its SA invoke on the
-# internal auth service — the binding auth left for when the store landed.
-gcp.cloudrunv2.ServiceIamMember(
-    'themis-store-invokes-auth',
+hello_service = hello.HelloService(
     project=project,
-    location=region,
-    name=auth_service.service_name,
-    role='roles/run.invoker',
-    member=pulumi.Output.concat('serviceAccount:', store_service.service_account_email),
+    region=region,
+    image=_service_image(_HELLO_IMAGE_ENV, 'themis-hello'),
+    auth_url=auth_service.url,
+    custom_audiences=[internal_lb.audience(internal_lb.HELLO_HOST)],
+    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+# The store and hello services resolve session tokens through auth (§7); grant each SA invoke on the
+# internal auth service — the binding auth left for when they landed.
+for label, invoker_sa_email in (
+    ('store', store_service.service_account_email),
+    ('hello', hello_service.service_account_email),
+):
+    gcp.cloudrunv2.ServiceIamMember(
+        f'themis-{label}-invokes-auth',
+        project=project,
+        location=region,
+        name=auth_service.service_name,
+        role='roles/run.invoker',
+        member=pulumi.Output.concat('serviceAccount:', invoker_sa_email),
+    )
 site = web.WebService(
     project=project,
     region=region,
@@ -139,6 +166,20 @@ sandbox_network = sandbox.SandboxNetwork(
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+# The internal load balancer that makes the store and hello services reachable from the locked-down
+# sandbox at stable private hostnames on one IP (self-hosted-sandbox.md §8).
+internal_services = internal_lb.InternalServiceLoadBalancer(
+    project=project,
+    region=region,
+    network=sandbox_network.network.id,
+    subnetwork=sandbox_network.subnetwork.id,
+    response_policy=sandbox_network.response_policy.response_policy_name,
+    services={
+        internal_lb.STORE_HOST: store_service.service_name,
+        internal_lb.HELLO_HOST: hello_service.service_name,
+    },
+    opts=pulumi.ResourceOptions(depends_on=[sandbox_network, store_service, hello_service]),
+)
 session_token_key = sandbox.session_token_signing_key(
     project=project,
     region=region,
@@ -167,6 +208,9 @@ pulumi.export('store_url', store_service.url)
 pulumi.export('store_sa_email', store_service.service_account_email)
 pulumi.export('store_working_document_bucket', store_service.working_document_bucket)
 pulumi.export('store_workspace_bucket', store_service.workspace_bucket)
+pulumi.export('hello_url', hello_service.url)
+pulumi.export('hello_sa_email', hello_service.service_account_email)
+pulumi.export('internal_lb_ip', internal_services.ip_address)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the
 # session_context SELECT grant.
 pulumi.export('auth_sql_user', auth_service.sql_user)
