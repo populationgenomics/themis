@@ -1,22 +1,20 @@
-"""Self-hosted sandbox substrate: the network, DNS, and key material the sandbox job builds on.
+"""Self-hosted sandbox: the network, credentials, dispatcher, and Cloud Run Job.
 
-The network + credential foundation for the self-hosted execution sandbox
-(docs/plans/self-hosted-sandbox.md §7, §8), split out ahead of the dispatcher and
-sandbox-job compute (which land on this same module in a later slice). It provisions:
+The self-hosted execution sandbox (docs/plans/self-hosted-sandbox.md §5-§8). It provisions:
 
 - a VPC + regional subnet dedicated to the sandbox job's Direct VPC egress,
-- a deny-all egress firewall that opens only Anthropic's published API range,
-- a Cloud DNS response policy that sinkholes every name except the exact hosts the
-  sandbox needs — closing the DNS exfiltration channel (§8),
-- the use-only KMS MAC key that signs per-session tokens (§7),
-- the Anthropic environment-key secret (its runtime reader, the dispatcher, lands
-  with the compute slice).
+- a deny-all egress firewall opening only Anthropic's published API range — the internal store
+  and hello services are reached through the internal load balancer (internal_lb.py), which opens
+  its own egress rule to a dedicated IP,
+- a Cloud DNS response policy that sinkholes every name except Anthropic (bypassed to its
+  public host) — the load balancer adds the internal-service records (§8),
+- the use-only KMS MAC key that signs per-session tokens (§7) and the environment-key and
+  webhook-signing-key secrets,
+- the dispatcher service and the sandbox Cloud Run Job (agent + credential proxy).
 
-The network is dedicated to the sandbox job — the sole Direct-VPC-egress tenant — so
-the egress rules govern it network-wide without the job's SA (which does not exist
-yet). The internal-store egress route, the store-host DNS bypass, and the SA-scoped
-key/secret bindings all attach with the compute slice, where the store URL and the
-consuming identities exist.
+The network is dedicated to the sandbox job — the sole Direct-VPC-egress tenant — so the
+egress rules govern it network-wide without a per-SA target. The SA-scoped key/secret
+bindings are granted where the consuming identities are wired (the program entrypoint).
 """
 
 from __future__ import annotations
@@ -33,6 +31,11 @@ _ANTHROPIC_API_CIDR = '160.79.104.0/23'
 _ANTHROPIC_API_HOST = 'api.anthropic.com'
 
 _SANDBOX_SUBNET_CIDR = '10.90.0.0/24'
+
+# The agent and proxy share this in-memory workspace (restore/checkpoint, §6, §9); the harness
+# output dir is a required mount whose content is discarded (deliverables go to the document).
+_WORKSPACE_MOUNT = '/workspace'
+_SESSION_OUTPUTS_MOUNT = '/mnt/session/outputs'
 
 
 class SandboxNetwork(pulumi.ComponentResource):
@@ -160,7 +163,6 @@ class SandboxNetwork(pulumi.ComponentResource):
             behavior='bypassResponsePolicy',
             opts=child,
         )
-
         self.register_outputs(
             {
                 'network': self.network.id,
@@ -244,3 +246,307 @@ def environment_key_secret(
         opts=pulumi.ResourceOptions(parent=secret),
     )
     return secret
+
+
+def webhook_signing_key_secret(
+    *,
+    project: str,
+    region: str,
+    signing_key: pulumi.Input[str],
+    opts: pulumi.ResourceOptions | None = None,
+) -> gcp.secretmanager.Secret:
+    """Provision the Anthropic webhook signing key (``whsec_…``) as a Secret Manager secret (§5).
+
+    The key the dispatcher's webhook endpoint verifies deliveries against (Standard Webhooks). Console-
+    generated per environment, sourced from encrypted config; read only by the dispatcher SA.
+    """
+    secret = gcp.secretmanager.Secret(
+        'themis-anthropic-webhook-signing-key',
+        project=project,
+        secret_id='anthropic-webhook-signing-key',  # noqa: S106 — the secret's name, not its value
+        replication=gcp.secretmanager.SecretReplicationArgs(
+            user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
+                replicas=[gcp.secretmanager.SecretReplicationUserManagedReplicaArgs(location=region)],
+            ),
+        ),
+        opts=opts,
+    )
+    gcp.secretmanager.SecretVersion(
+        'themis-anthropic-webhook-signing-key-current',
+        secret=secret.id,
+        secret_data=signing_key,
+        opts=pulumi.ResourceOptions(parent=secret),
+    )
+    return secret
+
+
+def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
+    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
+
+
+def _secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
+    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+        name=name,
+        value_source=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceArgs(
+            secret_key_ref=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
+                secret=secret_id, version='latest'
+            ),
+        ),
+    )
+
+
+class DispatcherService(pulumi.ComponentResource):
+    """The dispatcher Cloud Run service (public HMAC webhook) and its narrowly-scoped SA.
+
+    Attributes:
+        service_account_email: The runtime SA — env-key/webhook-key secret accessor, MAC signer, and
+            (bound in the sandbox job) the job runner.
+        url: The public service URL Anthropic's webhook posts to.
+    """
+
+    def __init__(
+        self,
+        *,
+        project: str,
+        region: str,
+        image: pulumi.Input[str],
+        environment_id: str,
+        environment_key_secret_id: pulumi.Input[str],
+        webhook_signing_key_secret_id: pulumi.Input[str],
+        session_token_key_id: pulumi.Input[str],
+        sandbox_job_name: pulumi.Input[str],
+        reclaim_older_than_ms: int,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        super().__init__('themis:infra:DispatcherService', 'themis', None, opts)
+        child = pulumi.ResourceOptions(parent=self)
+
+        service_account = gcp.serviceaccount.Account(
+            'themis-dispatcher-runtime',
+            project=project,
+            account_id='themis-dispatcher',
+            display_name='Themis sandbox dispatcher runtime',
+            opts=child,
+        )
+        self.service_account_email = service_account.email
+        member = pulumi.Output.concat('serviceAccount:', service_account.email)
+
+        for label, secret_id in (
+            ('environment-key', environment_key_secret_id),
+            ('webhook-signing-key', webhook_signing_key_secret_id),
+        ):
+            gcp.secretmanager.SecretIamMember(
+                f'themis-dispatcher-{label}-access',
+                project=project,
+                secret_id=secret_id,
+                role='roles/secretmanager.secretAccessor',
+                member=member,
+                opts=child,
+            )
+        # Use-only MAC signing (KMS material never leaves KMS); the dispatcher derives HMAC(session_id).
+        gcp.kms.CryptoKeyIAMMember(
+            'themis-dispatcher-mac-signer',
+            crypto_key_id=session_token_key_id,
+            role='roles/cloudkms.signerVerifier',
+            member=member,
+            opts=child,
+        )
+        # Version 1 is pinned: a different version derives different bearers and strands live sessions (§7).
+        key_version = pulumi.Output.concat(session_token_key_id, '/cryptoKeyVersions/1')
+
+        service = gcp.cloudrunv2.Service(
+            'themis-dispatcher-service',
+            project=project,
+            name='themis-dispatcher',
+            location=region,
+            ingress='INGRESS_TRAFFIC_ALL',  # public: Anthropic cannot present a GCP token; HMAC is the auth (§5)
+            template=gcp.cloudrunv2.ServiceTemplateArgs(
+                service_account=service_account.email,
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                containers=[
+                    gcp.cloudrunv2.ServiceTemplateContainerArgs(
+                        image=image,
+                        envs=[
+                            _env('ANTHROPIC_ENVIRONMENT_ID', environment_id),
+                            _env('THEMIS_SESSION_TOKEN_KEY_VERSION', key_version),
+                            _env('THEMIS_SANDBOX_JOB_PROJECT', project),
+                            _env('THEMIS_SANDBOX_JOB_REGION', region),
+                            _env('THEMIS_SANDBOX_JOB_NAME', sandbox_job_name),
+                            _env('THEMIS_RECLAIM_OLDER_THAN_MS', str(reclaim_older_than_ms)),
+                            _secret_env('ANTHROPIC_ENVIRONMENT_KEY', environment_key_secret_id),
+                            _secret_env('ANTHROPIC_WEBHOOK_SIGNING_KEY', webhook_signing_key_secret_id),
+                        ],
+                        ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
+                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
+                            http_get=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeHttpGetArgs(path='/healthz'),
+                        ),
+                    )
+                ],
+            ),
+            opts=child,
+        )
+        self.url = service.uri
+        # Anthropic posts the webhook without a GCP token, so the endpoint is public-invoke; the HMAC
+        # signature is the authentication and the proxy allowlist keeps the sandbox off /work/stats (§11).
+        gcp.cloudrunv2.ServiceIamMember(
+            'themis-dispatcher-public',
+            project=project,
+            location=region,
+            name=service.name,
+            role='roles/run.invoker',
+            member='allUsers',
+            opts=child,
+        )
+        self.register_outputs({'service_account_email': self.service_account_email, 'url': self.url})
+
+
+def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs:
+    return gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(name=name, value=value)
+
+
+class SandboxJob(pulumi.ComponentResource):
+    """The sandbox Cloud Run Job (agent + proxy sidecar) and its invoke-only SA.
+
+    One execution per spawn: the agent (main) runs ``ant beta:worker run`` and its exit-0 completes the
+    execution; the proxy sidecar holds the credentials. The agent depends on the proxy's startup probe,
+    which the proxy passes only after it restores /workspace — so the agent always boots restored.
+    Per-execution secrets (env key, session token, ids) are injected by the dispatcher's ``jobs.run``,
+    never baked here.
+
+    Attributes:
+        service_account_email: The job's runtime SA — ``run.invoker`` on the sandbox-reachable services
+            only; inert without the session token the proxy holds.
+        job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
+    """
+
+    def __init__(
+        self,
+        *,
+        project: str,
+        region: str,
+        agent_image: pulumi.Input[str],
+        proxy_image: pulumi.Input[str],
+        network: pulumi.Input[str],
+        subnetwork: pulumi.Input[str],
+        store_url: pulumi.Input[str],
+        hello_url: pulumi.Input[str],
+        internal_ca_cert: pulumi.Input[str],
+        forward_methods: str,
+        spki_pins: pulumi.Input[str],
+        working_document_path: str,
+        task_timeout_seconds: int,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        super().__init__('themis:infra:SandboxJob', 'themis', None, opts)
+        child = pulumi.ResourceOptions(parent=self)
+
+        service_account = gcp.serviceaccount.Account(
+            'themis-sandbox-job',
+            project=project,
+            account_id='themis-sandbox-job',
+            display_name='Themis sandbox job runtime',
+            opts=child,
+        )
+        self.service_account_email = service_account.email
+
+        job = gcp.cloudrunv2.Job(
+            'themis-sandbox-job',
+            project=project,
+            location=region,
+            name='themis-sandbox',
+            template=gcp.cloudrunv2.JobTemplateArgs(
+                template=gcp.cloudrunv2.JobTemplateTemplateArgs(
+                    service_account=service_account.email,
+                    # The ultimate backstop, sized to the longest legitimate session (§6); not Cloud Run's
+                    # short default, which would kill a long agent-backgrounded computation.
+                    timeout=f'{task_timeout_seconds}s',
+                    max_retries=0,
+                    vpc_access=gcp.cloudrunv2.JobTemplateTemplateVpcAccessArgs(
+                        egress='ALL_TRAFFIC',
+                        network_interfaces=[
+                            gcp.cloudrunv2.JobTemplateTemplateVpcAccessNetworkInterfaceArgs(
+                                network=network, subnetwork=subnetwork
+                            )
+                        ],
+                    ),
+                    containers=[
+                        # agent first = main: its exit-0 completes the execution while the sidecar is torn
+                        # down (§12); it depends on the proxy's post-restore readiness.
+                        gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                            name='agent',
+                            image=agent_image,
+                            # `ant beta:worker run` stops this long after a turn's end_turn (default 1m); widened
+                            # so the proxy's post-idle checkpoint has room to ride out a cold-started store
+                            # within the window (§9). The sandbox is billed only for this idle, per session.
+                            args=['--max-idle', '300s'],
+                            depends_ons=['proxy'],
+                            resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
+                                limits={'cpu': '1', 'memory': '2Gi'}
+                            ),
+                            volume_mounts=[
+                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
+                                    name='workspace', mount_path=_WORKSPACE_MOUNT
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
+                                    name='session-outputs', mount_path=_SESSION_OUTPUTS_MOUNT
+                                ),
+                            ],
+                        ),
+                        gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                            name='proxy',
+                            image=proxy_image,
+                            envs=[
+                                _job_env('THEMIS_STORE_URL', store_url),
+                                _job_env('THEMIS_FORWARD_UPSTREAM_URL', hello_url),
+                                _job_env('THEMIS_INTERNAL_CA_CERT', internal_ca_cert),
+                                _job_env('THEMIS_FORWARD_METHODS', forward_methods),
+                                _job_env('THEMIS_ANTHROPIC_SPKI_PINS', spki_pins),
+                                _job_env('THEMIS_WORKING_DOCUMENT_PATH', working_document_path),
+                                # The DNS sinkhole answers metadata.google.internal with 0.0.0.0; reach the
+                                # metadata server by IP so google-auth mints the store ID token.
+                                _job_env('GCE_METADATA_HOST', '169.254.169.254'),
+                            ],
+                            # Buffers the whole workspace archive in memory to checkpoint (a copy of the
+                            # scratch tmpfs, below) on top of the runtime.
+                            resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
+                                limits={'cpu': '1', 'memory': '2Gi'}
+                            ),
+                            # Binds only after restore, so the agent's dependency means "restore complete".
+                            # The window must cover worst-case restore — cold-starting the store and auth
+                            # services plus the workspace fetch — so the default 30s (3 x 10s) is too tight.
+                            startup_probe=gcp.cloudrunv2.JobTemplateTemplateContainerStartupProbeArgs(
+                                tcp_socket=gcp.cloudrunv2.JobTemplateTemplateContainerStartupProbeTcpSocketArgs(
+                                    port=8080
+                                ),
+                                period_seconds=10,
+                                failure_threshold=18,
+                            ),
+                            volume_mounts=[
+                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
+                                    name='workspace', mount_path=_WORKSPACE_MOUNT
+                                ),
+                            ],
+                        ),
+                    ],
+                    volumes=[
+                        gcp.cloudrunv2.JobTemplateTemplateVolumeArgs(
+                            name='workspace',
+                            # Below the store's archive cap (servicer.py) with margin: the checkpoint tars
+                            # this scratch whole, and the tar of a full scratch must stay under that cap.
+                            empty_dir=gcp.cloudrunv2.JobTemplateTemplateVolumeEmptyDirArgs(
+                                medium='MEMORY', size_limit='384Mi'
+                            ),
+                        ),
+                        gcp.cloudrunv2.JobTemplateTemplateVolumeArgs(
+                            name='session-outputs',
+                            empty_dir=gcp.cloudrunv2.JobTemplateTemplateVolumeEmptyDirArgs(
+                                medium='MEMORY', size_limit='128Mi'
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+            opts=child,
+        )
+        self.job_name = job.name
+        self.register_outputs({'service_account_email': self.service_account_email, 'job_name': self.job_name})

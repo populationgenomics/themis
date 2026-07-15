@@ -317,7 +317,7 @@ dies during cold start — after the ack, before the worker's first heartbeat �
 the item unacked until the sandbox is proven up puts every cold-start failure back on the documented reclaim path. The
 **proxy** therefore issues the `ack` as its first action after a **successful restore** (§9), just before it releases
 the agent-start gate: an instance that never comes up, or whose restore fails, never acks, and reclaim brings the item
-back — a persistently-failing restore is bounded by the store-counted circuit breaker (§9), not looped forever. The
+back — a persistently-failing restore loops until the bounded-retry breaker lands (a deferred follow-up, §9/§12). The
 lease is bound to the environment key + work id, not the ack'er's identity, so the sandbox heartbeats and stops the item
 the dispatcher polled (§2, verified against the SDK's `auto_stop=false` handoff).
 
@@ -579,8 +579,10 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
   session token, with no unauthenticated surface beyond a trivial health check that leaks no version or dependency
   detail (§12). What the invoker gate buys over an IAM-open service is a documented caller set and a second factor
   against a session token forged by a non-sandbox identity (the signing-key blast radius, §7).
-- Sandbox sizing starts small (1 vCPU / 2 GiB — the workload is CLI calls and small scripts, and all 25 threads of a
-  session share one sandbox); tune from `agent_run` usage data.
+- Sandbox sizing starts small — the agent container gets 1 vCPU / 2 GiB (the workload is CLI calls and small scripts,
+  and all 25 threads of a session share one sandbox) and the proxy sidecar 1 vCPU / 2 GiB (it buffers the workspace
+  archive whole to checkpoint, on top of the memory-backed `/workspace`); `/workspace` (384 MiB) and
+  `/mnt/session/outputs` (128 MiB) are memory-backed `emptyDir`s (§9). Tune from `agent_run` usage data.
 - The dispatcher keeps default egress — it reaches `api.anthropic.com` plus KMS, Secret Manager, and the Cloud Run Admin
   API (`jobs.run`) over Google APIs, and does no DB access (§5, §7); it has no VPC-facing role and no Cloud SQL
   connector.
@@ -689,12 +691,13 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
     rejected) — fails the spawn (reclaim retries) rather than boot onto a blank document, since a blank restore would be
     served a turn and mint a superseding higher-sequence version that regresses the deliverable. Only a store response
     that positively reports no versions boots empty — the genuine first spawn.
-  - *Bounded retry — the circuit breaker.* A document that fails closed on every spawn (a corrupt latest with no good
-    fallback, a persistently rejected session token) would reclaim-loop indefinitely, since the item stays unacked (§5).
-    The store counts consecutive failed restores per Analysis (it serves every `workspace get` and is the fail-closed
-    point); past a threshold the proxy breaks the loop instead of reclaiming — it acks and force-stops the item and
-    marks the Analysis errored, surfaced to the curator (fail-loud). This is the only per-Analysis respawn bound, and it
-    lives where the state already is, so the dispatcher stays stateless (§5, §7).
+  - *Bounded retry — deferred (§12).* A document that fails closed on every spawn (a corrupt latest with no good
+    fallback, a persistently rejected session token) reclaim-loops, since the item stays unacked (§5). This slice leaves
+    that loop unbounded — checked only operationally (reclaim re-surfaces on a drain, so the burn tracks drain cadence,
+    and no real sessions run yet). The bounded-retry circuit breaker is a follow-up: the **proxy** — which observes the
+    store's restore errors — records and checks inspectable per-Analysis state in a Cloud SQL table and, past a
+    threshold, breaks the loop (acks + force-stops the item) instead of reclaiming. The inspectable state is the
+    mechanism; surfacing it to the curator is a separate frontend concern, not this slice.
 - **Checkpoint — proxy, on the idle it forwards.** The proxy reverse-proxies the Anthropic route (§6), so the session's
   SSE stream passes through it; it watches for `session.status_idle` / `stop_reason: end_turn`. On that signal it copies
   the durable glob — small (the versioned document this slice) — to a staging path while the tool loop is quiet, then
@@ -744,8 +747,8 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
 - **Secret Manager / KMS delta**: the environment key; the **KMS MAC key** that derives the per-session bearer (BFF and
   dispatcher compute `HMAC(session_id)` via KMS — use-only, the key never leaves KMS, §7); a second webhook signing key
   if the dispatcher gets its own subscription (§12).
-- **CI**: five more images — the sandbox agent image, the credential-proxy image, the dispatcher, the store, and the
-  auth service — built and pushed alongside `themis-web` on `push:main`.
+- **CI**: six more images — the sandbox agent image, the credential-proxy image, the dispatcher, the hello service, the
+  store, and the auth service — built and pushed alongside `themis-web` on `push:main`.
 
 ## 11. Operations
 
@@ -766,6 +769,7 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Capability-minting auth (signed URLs / downscoped tokens) | auth service gains minting; first non-blob API or a GCS-direct sync is the trigger; trades sandbox-egress tightness (§7, §8)                                                                                                                            |
 | Prompt scratch delete on `terminated`                     | a store `workspace delete` route the BFF calls after re-deriving the bearer; today only the age rule reaps scratch (§9)                                                                                                                                 |
+| Restore circuit breaker                                   | the proxy records/checks inspectable per-Analysis state in a Cloud SQL table and bounds consecutive-failed-restore retries (acks + force-stops past a threshold); curator surfacing is a later frontend concern (§5, §9)                                |
 | Data contract grows to a whole directory                  | wider durable glob; the version becomes a tar (§9)                                                                                                                                                                                                      |
 | Live mid-run draft pane                                   | a debounced draft blob the proxy overwrites on file-change (§9)                                                                                                                                                                                         |
 | Queryable version metadata                                | a Cloud SQL metadata table pointing at the version blobs; only if versions need relational queries (§9)                                                                                                                                                 |
@@ -831,6 +835,14 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
   Direct-VPC-egress workload's metadata resolver (`169.254.169.254:53`) resolves through the RPZ-governed Cloud DNS (a
   non-allowlisted name is sinkholed from inside the sandbox) and that no alternate-resolver path escapes the deny-all
   egress firewall.
+- **Internal-service resolution & TLS** (the internal load balancer, §8) — two runtime checks the plan can't make from
+  code. (1) The sandbox dials the internal hostnames bare (`store.internal.themis`); confirm the container resolver
+  tries them absolute-first (the exact response-policy record → the LB IP) and does not append a search domain that the
+  `*.` sinkhole answers with `0.0.0.0` first — i.e. that `ndots` does not force search-suffixing of a two-label name. If
+  it does, dial the fully-qualified name (trailing dot) while preserving the bare authority for SNI and the ID-token
+  audience. (2) Smoke-test the gRPC handshake: the LB presents the self-signed leaf and the proxy trusts that same PEM
+  as its root — confirm the directly-trusted self-signed server certificate is accepted and its SAN matches the dialed
+  hostname.
 - **Web-tool exfil (decided; residual monitored)** — both `web_search` and `web_fetch` stay enabled. The channel is
   bounded by `web_fetch`'s "URLs already in the conversation" property and `web_search`'s low bandwidth (§2), so it is
   accepted and monitored, not a gate. The remaining build checks are functional, not go/no-go: confirm the web tools
@@ -853,8 +865,8 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
 - **`requires_action` — no operating mode** — the agent has no custom tools and no `always_ask` policy, so no turn idles
   on `requires_action` (§2, §6); its task-timeout backstop is defensive only. Were one to occur it was acked on restore,
   so at task-timeout it is an acked-`starting` item — which is **not** reclaimed (the model above) — so it strands, it
-  does not loop. The genuine unbounded path, a document that fails closed on every restore, is bounded by the
-  store-counted circuit breaker (§9), not left to the alert alone.
+  does not loop. The other unbounded path — a document that fails closed on every restore — is unbounded this slice; the
+  bounded-retry circuit breaker that closes it is a deferred follow-up (§9).
 - **Worker behavior on sustained failure** — read from the SDK source (as with the other §2 mechanics): does the
   `ant`/Go worker self-exit after N failed heartbeats or event-stream reconnects, and after how long? If so, that
   (minutes) is the real burn bound on a broken stream or a partition; if not, only the task timeout (§6) caps it.

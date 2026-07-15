@@ -22,6 +22,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    env:
+      IMAGE_PREFIX: australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.2.0
@@ -36,23 +38,47 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
       - name: Build and push web image
         run: |
-          IMAGE="australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/web:${GITHUB_SHA}"
+          IMAGE="${IMAGE_PREFIX}/web:${GITHUB_SHA}"
           gcloud auth configure-docker australia-southeast1-docker.pkg.dev --quiet
           docker build -t "$IMAGE" apps/web
           docker push "$IMAGE"
           echo "THEMIS_WEB_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - name: Build and push auth image
         run: |
-          IMAGE="australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/auth:${GITHUB_SHA}"
+          IMAGE="${IMAGE_PREFIX}/auth:${GITHUB_SHA}"
           docker build -f themis/services/auth/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "THEMIS_AUTH_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - name: Build and push store image
         run: |
-          IMAGE="australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/store:${GITHUB_SHA}"
+          IMAGE="${IMAGE_PREFIX}/store:${GITHUB_SHA}"
           docker build -f themis/services/store/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "THEMIS_STORE_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push hello image
+        run: |
+          IMAGE="${IMAGE_PREFIX}/hello:${GITHUB_SHA}"
+          docker build -f themis/services/hello/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_HELLO_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push dispatcher image
+        run: |
+          IMAGE="${IMAGE_PREFIX}/dispatcher:${GITHUB_SHA}"
+          docker build -f themis/services/dispatcher/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_DISPATCHER_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push proxy image
+        run: |
+          IMAGE="${IMAGE_PREFIX}/proxy:${GITHUB_SHA}"
+          docker build -f themis/services/proxy/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_PROXY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Build and push sandbox agent image
+        run: |
+          IMAGE="${IMAGE_PREFIX}/agent:${GITHUB_SHA}"
+          docker build -f themis/agent/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "THEMIS_AGENT_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - uses: pulumi/actions@v7
         id: pulumi
         with:

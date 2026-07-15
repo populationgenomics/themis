@@ -1,0 +1,9 @@
+# The self-hosted execution environment for the sandbox (self-hosted-sandbox.md §10).
+#
+# Applied to Anthropic Managed Agents (Console, or `ant beta:environments create --config
+# '{"type": "self_hosted"}'`) — see docs/runbooks/self-hosted-sandbox.md. There is no `networking`
+# block: tool execution runs in our GCP project, so the network is ours. This is the environment for
+# the slice; the wiring plan's cloud environment is dropped.
+name: self-hosted
+config:
+  type: self_hosted

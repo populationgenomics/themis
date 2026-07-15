@@ -8,6 +8,7 @@ environment runs this same program; all differences live in
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 import pulumi
 import pulumi_gcp as gcp
@@ -31,6 +32,17 @@ _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
+_DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
+_AGENT_IMAGE_ENV = 'THEMIS_AGENT_IMAGE'
+_PROXY_IMAGE_ENV = 'THEMIS_PROXY_IMAGE'
+
+# The sandbox forward leg's single consumer, and the working-document contract path.
+_HELLO_METHOD = '/themis.rpc.hello.Hello/SayHello'
+_WORKING_DOCUMENT_PATH = '/workspace/document.md'
+# Sized above worst-case cold-start-plus-restore so a booting item is not double-spawned (§5), and the
+# task timeout to the longest legitimate session plus margin (§6). Tune from agent_run usage.
+_RECLAIM_OLDER_THAN_MS = 180_000
+_TASK_TIMEOUT_SECONDS = 3600
 
 config = pulumi.Config()
 gcp_config = pulumi.Config('gcp')
@@ -43,25 +55,35 @@ iap_access_group = config.require('iapAccessGroup')
 # config. Provisioned into Secret Manager below; its runtime reader lands later.
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
 # Anthropic worker credential for the self-hosted sandbox; encrypted stack config.
-# Provisioned into Secret Manager below; its reader (the dispatcher) lands with the
-# sandbox compute slice.
 anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
+# The webhook signing key (whsec_, encrypted config) the dispatcher verifies deliveries against; the
+# self-hosted environment id; and the SPKI/CA pins for api.anthropic.com (public cert hashes).
+anthropic_webhook_signing_key = config.require_secret('anthropicWebhookSigningKey')
+anthropic_environment_id = config.require('anthropicEnvironmentId')
+anthropic_spki_pins = config.require('anthropicSpkiPins')
 
 
-def _service_image(env_var: str, service_name: str) -> str:
-    """The image to deploy for a Cloud Run service.
+def _image(env_var: str, live: Callable[[], str]) -> str:
+    """The image to deploy for a Cloud Run container (a service, or a job container).
 
     An explicit override wins: `deploy.yml` sets the freshly-pushed ref, and a
     first bring-up passes `gcr.io/cloudrun/hello`. With no override — a PR
-    `pulumi preview`, or a steady-state `up` — pin to the service's live image
-    so the plan shows no spurious image change. Reading the live image requires
-    the service to already exist, so a first bring-up must pass the override.
+    `pulumi preview`, or a steady-state `up` — read the resource's live image so
+    the plan shows no spurious image change. Reading the live image requires the
+    resource to already exist, so a first bring-up must pass the override.
     """
-    override = os.environ.get(env_var)
-    if override:
-        return override
-    live = gcp.cloudrunv2.get_service(name=service_name, location=region, project=project)
-    return live.templates[0].containers[0].image
+    return os.environ.get(env_var) or live()
+
+
+def _live_service_image(service_name: str) -> str:
+    service = gcp.cloudrunv2.get_service(name=service_name, location=region, project=project)
+    return service.templates[0].containers[0].image
+
+
+def _live_job_image(job_name: str, container_name: str) -> str:
+    job = gcp.cloudrunv2.get_job(name=job_name, location=region, project=project)
+    by_name = {container.name: container.image for container in job.templates[0].templates[0].containers}
+    return by_name[container_name]
 
 
 # The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
@@ -97,7 +119,7 @@ sql.grant_cloudsql_connect(
 auth_service = auth.AuthService(
     project=project,
     region=region,
-    image=_service_image(_AUTH_IMAGE_ENV, 'themis-auth'),
+    image=_image(_AUTH_IMAGE_ENV, lambda: _live_service_image('themis-auth')),
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
@@ -106,7 +128,7 @@ auth_service = auth.AuthService(
 store_service = store.StoreService(
     project=project,
     region=region,
-    image=_service_image(_STORE_IMAGE_ENV, 'themis-store'),
+    image=_image(_STORE_IMAGE_ENV, lambda: _live_service_image('themis-store')),
     auth_url=auth_service.url,
     custom_audiences=[internal_lb.audience(internal_lb.STORE_HOST)],
     opts=pulumi.ResourceOptions(depends_on=[base]),
@@ -114,7 +136,7 @@ store_service = store.StoreService(
 hello_service = hello.HelloService(
     project=project,
     region=region,
-    image=_service_image(_HELLO_IMAGE_ENV, 'themis-hello'),
+    image=_image(_HELLO_IMAGE_ENV, lambda: _live_service_image('themis-hello')),
     auth_url=auth_service.url,
     custom_audiences=[internal_lb.audience(internal_lb.HELLO_HOST)],
     opts=pulumi.ResourceOptions(depends_on=[base]),
@@ -137,7 +159,7 @@ site = web.WebService(
     project=project,
     region=region,
     domain=domain,
-    image=_service_image(_WEB_IMAGE_ENV, 'themis-web'),
+    image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
     iap_member=f'group:{iap_access_group}',
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
@@ -159,8 +181,8 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
 )
-# Self-hosted sandbox substrate (network + KMS + secret); the dispatcher and sandbox
-# job that consume it land on the same module in the compute slice.
+# Self-hosted sandbox: the network + KMS + secrets substrate, then the internal load balancer, the
+# sandbox job, and the dispatcher that run on it.
 sandbox_network = sandbox.SandboxNetwork(
     project=project,
     region=region,
@@ -190,6 +212,68 @@ anthropic_environment_key_secret = sandbox.environment_key_secret(
     region=region,
     environment_key=anthropic_environment_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+anthropic_webhook_signing_key_secret = sandbox.webhook_signing_key_secret(
+    project=project,
+    region=region,
+    signing_key=anthropic_webhook_signing_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+sandbox_job = sandbox.SandboxJob(
+    project=project,
+    region=region,
+    agent_image=_image(_AGENT_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'agent')),
+    proxy_image=_image(_PROXY_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'proxy')),
+    network=sandbox_network.network.id,
+    subnetwork=sandbox_network.subnetwork.id,
+    # The proxy dials the services at their load-balancer hostnames and trusts the LB's self-signed cert.
+    store_url=internal_lb.audience(internal_lb.STORE_HOST),
+    hello_url=internal_lb.audience(internal_lb.HELLO_HOST),
+    internal_ca_cert=internal_services.ca_cert_pem,
+    forward_methods=_HELLO_METHOD,
+    spki_pins=anthropic_spki_pins,
+    working_document_path=_WORKING_DOCUMENT_PATH,
+    task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
+    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_network, internal_services]),
+)
+# The job SA invokes only the sandbox-reachable services; inert without the proxy-held session token (§7).
+for label, invoke_target in (('store', store_service.service_name), ('hello', hello_service.service_name)):
+    gcp.cloudrunv2.ServiceIamMember(
+        f'themis-sandbox-invokes-{label}',
+        project=project,
+        location=region,
+        name=invoke_target,
+        role='roles/run.invoker',
+        member=pulumi.Output.concat('serviceAccount:', sandbox_job.service_account_email),
+    )
+dispatcher_service = sandbox.DispatcherService(
+    project=project,
+    region=region,
+    image=_image(_DISPATCHER_IMAGE_ENV, lambda: _live_service_image('themis-dispatcher')),
+    environment_id=anthropic_environment_id,
+    environment_key_secret_id=anthropic_environment_key_secret.secret_id,
+    webhook_signing_key_secret_id=anthropic_webhook_signing_key_secret.secret_id,
+    session_token_key_id=session_token_key.id,
+    sandbox_job_name=sandbox_job.job_name,
+    reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
+    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
+)
+# The dispatcher runs the sandbox job with per-execution container overrides (the session env), a custom
+# minimal role (§7). runWithOverrides is the override-carrying variant; run.jobs.run alone rejects them.
+sandbox_job_runner_role = gcp.projects.IAMCustomRole(
+    'themis-sandbox-job-runner',
+    project=project,
+    role_id='themisSandboxJobRunner',
+    title='Themis sandbox job runner',
+    permissions=['run.jobs.run', 'run.jobs.runWithOverrides'],
+)
+gcp.cloudrunv2.JobIamMember(
+    'themis-dispatcher-runs-job',
+    project=project,
+    location=region,
+    name=sandbox_job.job_name,
+    role=sandbox_job_runner_role.name,
+    member=pulumi.Output.concat('serviceAccount:', dispatcher_service.service_account_email),
 )
 
 pulumi.export('image_registry', base.image_prefix)
@@ -226,3 +310,8 @@ pulumi.export('sandbox_subnetwork', sandbox_network.subnetwork.id)
 pulumi.export('sandbox_dns_response_policy', sandbox_network.response_policy.response_policy_name)
 pulumi.export('session_token_signing_key', session_token_key.id)
 pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)
+pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)
+pulumi.export('sandbox_job_name', sandbox_job.job_name)
+pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
+pulumi.export('dispatcher_url', dispatcher_service.url)
+pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
