@@ -193,13 +193,17 @@ One session, from spawn to release, then respawn:
    contract path, plus the session's ephemeral scratch (§9) — then **acks** the work item (only now, restore proven —
    §5) and marks itself ready, gating the agent container's start, so `ant beta:worker run` always boots onto the
    restored filesystem.
-1. The **agent** attaches to the session's SSE event stream (through the proxy) and runs the tool loop: `bash`/file
-   tools operate on the shared `/workspace`, and the model **edits the working document as a plain file** at the
-   contract path. It calls no data-plane service.
-1. When the session idles with `stop_reason: end_turn`, the proxy — which is forwarding that stream — **checkpoints**:
-   it snapshots the durable glob (the paths marked for versioning, §9) into a new immutable working-document version and
-   syncs the ephemeral scratch, via the store under the session token. The same idle event starts the worker's 60 s
-   release countdown, so the checkpoint runs concurrently with it (§9).
+1. The **agent** (`ant beta:worker run`) runs the tool loop: it reads the session's events *paginated* (`GET /events`,
+   then posts each `user.tool_result`), and `bash`/file tools operate on the shared `/workspace`, where the model
+   **edits the working document as a plain file** at the contract path. It calls no data-plane service.
+1. The **proxy** — which holds the environment key — separately subscribes to the session's own real-time event stream
+   (`GET /v1/sessions/{id}/events/stream`, SSE) through the Anthropic SDK, which handles keep-alive and reconnect. When
+   it sees `session.status_idle` with `stop_reason.type == end_turn` it **checkpoints**: snapshots the durable glob (the
+   paths marked for versioning, §9) into a new immutable working-document version and syncs the ephemeral scratch, via
+   the store under the session token. The worker detects the same idle internally and starts its 60 s release countdown,
+   so the checkpoint runs concurrently with it (§9). (The paginated agent traffic never carries `end_turn`, and the
+   worker CLI exposes no per-turn hook, so the proxy sourcing the signal from the stream itself is the only place it is
+   observable — §9.)
 1. The worker releases, force-stops its work item, and the **job execution exits 0**. Scale-to-zero until the next
    steer.
 1. The next steering turn fires another `run_started`; a fresh sandbox spawns and restores `/workspace` from the store.
@@ -295,11 +299,15 @@ A minimal Cloud Run service (scale-to-zero); it reads the environment key from S
 that does. One public HMAC-verified webhook endpoint (Anthropic cannot present a GCP token — the same posture as the
 BFF's webhook receiver, wiring §4). On `session.status_run_started` it:
 
-1. **Drain-polls the queue** (`work.poller` with `drain`, `auto_stop=false` — the spawned sandbox owns the stop call).
-   The poller **does not ack** — ack is deferred into the sandbox (below). It **force-stops** a non-`session` item
-   itself rather than skipping it, since under `auto_stop=false` a skipped item's lease would sit until TTL. It forwards
-   the poll response's work fields (session/work/environment ids) into the spawn; work-item operations authenticate on
-   the environment key + work id, so the poll's per-item `secret` is unused and not forwarded.
+1. **Drain-polls the queue** — the `work.poller` semantics (`drain`, `auto_stop=false`; the spawned sandbox owns the
+   stop call), but a **hand-rolled REST client**, not the SDK helper: the restore-gated ack (the poll leaves the item
+   *pending*; the sandbox acks only once restore proves, below) needs a poll-without-ack that the SDK's
+   `poller`/`EnvironmentWorker` bundle and don't expose — a simple request/response the client owns, unlike the
+   checkpoint watcher, whose reconnect/keep-alive is hard to hand-roll and so uses the SDK stream (§4, §9). The poll
+   **does not ack** — ack is deferred into the sandbox (below). It **force-stops** a non-`session` item itself rather
+   than skipping it, since under `auto_stop=false` a skipped item's lease would sit until TTL. It forwards the poll
+   response's work fields (session/work/environment ids) into the spawn; work-item operations authenticate on the
+   environment key + work id, so the poll's per-item `secret` is unused and not forwarded.
 1. **Derives the session token** — `HMAC(session_id)` via the KMS MAC key (§7). No DB access and no session→Analysis
    resolution here: the BFF already bound the session token to its Analysis at session create, and the auth service
    resolves it at call time. (If the session has no session-token row, the store rejects downstream — a bug in session
@@ -416,10 +424,12 @@ isolation later (the worker's tool runner is pluggable, §12). Two containers:
     off-allowlist host would leak the key or session token).
   - **Strict upstream TLS.** Validates the certificate on every leg; the L4 IP allow (§8) admits any connection to the
     allowed IP, so cert validation — not the firewall — authenticates the upstream and stops a hijacked IP from
-    receiving the credential or injecting tool calls. Pin `api.anthropic.com` at SPKI/CA granularity (a leaf pin
-    hard-fails every session on Anthropic's cert rotation); the store and forward legs trust the internal load
-    balancer's self-signed certificate as their gRPC root and validate the service's private hostname against its SAN
-    (§8), which an IP hijacker cannot forge.
+    receiving the credential or injecting tool calls. The Anthropic leg validates against the public CA chain (Google
+    Trust Services) — the Anthropic SDK's default TLS, not an SPKI pin: pinning would harden against a CA compromise but
+    breaks on Anthropic's leaf/chain rotation and precludes the official SDK's HTTP client, a poor trade for egress to a
+    major provider over standard TLS. The store and forward legs trust the internal load balancer's self-signed
+    certificate as their gRPC root and validate the service's private hostname against its SAN (§8), which an IP
+    hijacker cannot forge.
   - **Unbuffered streaming.** The Anthropic route streams — no response buffering, no idle timeout, per-chunk flush: it
     carries the worker's long-lived SSE event stream (minutes quiet between tool calls, §2); a buffering or idle-timeout
     proxy stalls tool delivery or tears the stream on every thinking gap.
@@ -548,8 +558,8 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
     without notice"), so the egress rule pins those directly rather than resolving `api.anthropic.com` firewall-side.
     That removes the FQDN-object IP cap and any firewall/workload resolution mismatch, and — because the block is
     Anthropic-owned, not shared-CDN — leaves no co-tenant for an SNI-mismatched connection to reach (the agent shares
-    the network namespace, below, and can open its own socket to the allowed range, bypassing the proxy's cert pinning;
-    a dedicated block is what makes that harmless). Residual: watch the published list for changes, which arrive with
+    the network namespace, below, and can open its own socket to the allowed range, bypassing the proxy entirely; a
+    dedicated block is what makes that harmless). Residual: watch the published list for changes, which arrive with
     notice — a bounded operational watch, not a hole.
 - Containers in an instance share the network namespace, so the policy cannot distinguish agent from proxy. That is
   acceptable because reachability without the session token is harmless: agent code can reach `api.anthropic.com` or the
@@ -700,15 +710,19 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
     a bounded in-process retry (retryable gRPC codes, backoff, within the spawn), added only if such errors are observed
     (§12); a cross-spawn reclaim loop is the wrong tool for it. A cold-start crash that never reaches restore still
     reclaims (§5); a per-Analysis crash-loop there is an infrastructure alert, not restore state.
-- **Checkpoint — proxy, on the idle it forwards.** The proxy reverse-proxies the Anthropic route (§6), so the session's
-  SSE stream passes through it; it watches for `session.status_idle` / `stop_reason: end_turn`. On that signal it copies
-  the durable glob — small (the versioned document this slice) — to a staging path while the tool loop is quiet, then
-  tars-and-`workspace put`s that copy as the new version (gated as above), so a steer landing inside the grace and
-  re-arming the worker cannot tear the versioned snapshot. Scratch it tars live and best-effort: a steer inside the
-  grace may tear it, but only scratch, never the versioned document, is affected — consistency of files an
-  agent-backgrounded process (§4) is still writing is the agent's responsibility. A best-effort final `workspace put` on
-  the sidecar's SIGTERM is the backstop; it flushes the same lease-gated, sequence-guarded document version — recovering
-  the deliverable if the instance was torn down before the normal checkpoint finished — and the scratch.
+- **Checkpoint — proxy, on the session's own `end_turn` stream.** The agent (`ant beta:worker run`) reads its events
+  *paginated*, so `end_turn` never crosses the reverse-proxied agent traffic, and the worker CLI exposes no per-turn
+  hook (verified against the Go CLI + SDK). The proxy holds the environment key, so it separately subscribes to the
+  session's own real-time stream (`GET /v1/sessions/{id}/events/stream`, SSE) via the Anthropic SDK — which handles
+  keep-alive and reconnect — in a background task and watches for `session.status_idle` /
+  `stop_reason.type == end_turn`. On that signal it copies the durable glob — small (the versioned document this slice)
+  — to a staging path while the tool loop is quiet, then tars-and-`workspace put`s that copy as the new version (gated
+  as above), so a steer landing inside the grace and re-arming the worker cannot tear the versioned snapshot. Scratch it
+  tars live and best-effort: a steer inside the grace may tear it, but only scratch, never the versioned document, is
+  affected — consistency of files an agent-backgrounded process (§4) is still writing is the agent's responsibility.
+  There is **no SIGTERM backstop**: a single, observable trigger keeps a checkpoint failure attributable (fail-loud)
+  rather than masked by a fallback, and because `end_turn` fires at the start of the release grace the async checkpoint
+  — bounded by a store-call timeout under `--max-idle` — always resolves before the sidecar is reaped.
 - **Lifetime — the grace window is the checkpoint window.** The `end_turn` idle that triggers the checkpoint is the same
   event that starts the 60 s `--max-idle` release countdown (§2), so checkpoint and release run concurrently; a
   scratch-sized `workspace put` finishes well inside the grace. Across the run-lived boundary, state flows spawn N →
@@ -850,8 +864,9 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
   accepted and monitored, not a gate. The remaining build checks are functional, not go/no-go: confirm the web tools
   execute under `self_hosted` at all, and stand up the output/citation monitoring that watches the residual (planted-URL
   and low-bandwidth staged channels). Revisit the acceptance at the non-synthetic-data gate.
-- **Upstream TLS verification** — confirm the proxy validates both upstream certs and pins `api.anthropic.com` at
-  SPKI/CA granularity (not the leaf, which cert rotation would break) (§6).
+- **Upstream TLS verification** — confirm the proxy validates the upstream certificate against the public CA chain on
+  every leg: the Anthropic leg via Google Trust Services (the SDK's default), the internal legs via the load balancer's
+  self-signed root (§6).
 - **Checkpoint extraction hardening** — negative test that a `workspace put` archive with `../` / absolute / symlink
   entries, or a decompression bomb, cannot escape `/workspace` or OOM the instance on the next spawn's restore (§9).
 - **Lease fencing** — the store is the version-sequence authority (`<n>` = latest stored key + 1, create-only, §9), so

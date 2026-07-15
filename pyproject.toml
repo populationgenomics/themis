@@ -75,10 +75,10 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # themis/clients/work_queue and themis/clients/auth.
 dispatcher = ["aiohttp", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
 # credential-proxy sidecar (themis/services/proxy): the sandbox's agent-facing forwarder. aiohttp is
-# the Anthropic HTTP/1.1 reverse proxy + its pinning upstream client; grpcio (via the session group)
-# is the generic gRPC forward proxy; cryptography computes the upstream SPKI pins. Includes the session
-# client for id_token (the SA ID token on the forward channel).
-proxy = ["aiohttp", "cryptography", { include-group = "session" }]
+# the Anthropic HTTP/1.1 reverse proxy + its upstream client; anthropic is the SDK the turn-watcher
+# subscribes to the session event stream through; grpcio (via the session group) is the generic gRPC
+# forward proxy. Includes the session client for id_token (the SA ID token on the forward channel).
+proxy = ["aiohttp", "anthropic", { include-group = "session" }]
 # sandbox agent image (themis/agent): the untrusted `ant beta:worker run` container. grpcio + protobuf
 # back the generated stubs the model imports to call internal services in code mode; the
 # working-document linter (themis/document_linter) is stdlib-only.

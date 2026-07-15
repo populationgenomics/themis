@@ -19,6 +19,10 @@ import aiohttp
 _ANTHROPIC_VERSION = '2023-06-01'  # anthropic-version header value
 _ANTHROPIC_BETA = 'managed-agents-2026-04-01'  # anthropic-beta opt-in for the work-queue API
 _SESSION_ITEM_TYPE = 'session'
+# Ack/stop are quick request/response calls, but the proxy hands this client a session with no timeout
+# (tuned for its minutes-long SSE stream). Bound them so a stalled call fails loud instead of hanging
+# the proxy's startup (the ack gates the agent) forever.
+_ACK_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -67,16 +71,19 @@ class AnthropicWorkQueue(WorkQueue):
         }
 
     async def poll(self, *, reclaim_older_than_ms: int) -> WorkItem | None:
+        # Non-blocking drain: omitting block_ms returns immediately (the API default). The
+        # run_started webhook already enqueued the item, so there is nothing to long-poll for.
         params = {
             'beta': 'true',
             'reclaim_older_than_ms': str(reclaim_older_than_ms),
-            'block_ms': '0',  # non-blocking: a run_started item is already enqueued; a race reclaims
         }
         async with self._session.get(f'{self._work_base}/poll', headers=self._headers, params=params) as response:
             response.raise_for_status()
             if response.status == 204:
                 return None
             body = await response.json()
+        if body is None:
+            return None  # empty queue: the work API answers 200 with a null body, not 204
         return _parse_item(body)
 
     async def ack(self, work_id: str) -> None:
@@ -86,7 +93,9 @@ class AnthropicWorkQueue(WorkQueue):
         await self._post(f'{self._work_base}/{work_id}/stop')
 
     async def _post(self, url: str) -> None:
-        async with self._session.post(url, headers=self._headers, params={'beta': 'true'}) as response:
+        async with self._session.post(
+            url, headers=self._headers, params={'beta': 'true'}, timeout=_ACK_TIMEOUT
+        ) as response:
             response.raise_for_status()
 
 

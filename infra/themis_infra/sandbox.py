@@ -432,7 +432,6 @@ class SandboxJob(pulumi.ComponentResource):
         hello_url: pulumi.Input[str],
         internal_ca_cert: pulumi.Input[str],
         forward_methods: str,
-        spki_pins: pulumi.Input[str],
         working_document_path: str,
         task_timeout_seconds: int,
         opts: pulumi.ResourceOptions | None = None,
@@ -500,7 +499,6 @@ class SandboxJob(pulumi.ComponentResource):
                                 _job_env('THEMIS_FORWARD_UPSTREAM_URL', hello_url),
                                 _job_env('THEMIS_INTERNAL_CA_CERT', internal_ca_cert),
                                 _job_env('THEMIS_FORWARD_METHODS', forward_methods),
-                                _job_env('THEMIS_ANTHROPIC_SPKI_PINS', spki_pins),
                                 _job_env('THEMIS_WORKING_DOCUMENT_PATH', working_document_path),
                                 # The DNS sinkhole answers metadata.google.internal with 0.0.0.0; reach the
                                 # metadata server by IP so google-auth mints the store ID token.

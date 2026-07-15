@@ -73,15 +73,15 @@ def test_injects_environment_key_and_strips_client_api_key() -> None:
     assert body['x-api-key'] is None
 
 
-def test_pins_identity_accept_encoding() -> None:
+def test_forwards_client_accept_encoding() -> None:
     async def calls(client: test_utils.TestClient) -> dict[str, str | None]:
         resp = await client.get(f'/v1/sessions/{_SID}', headers={'Accept-Encoding': 'gzip, br'})
         assert resp.status == 200
         return await resp.json()
 
-    # The client asks for gzip; upstream must still see identity, so the streamed body
-    # reaches the sync layer's end_turn tap undecoded.
-    assert asyncio.run(_run(_echo_headers, calls))['accept-encoding'] == 'identity'
+    # The proxy no longer inspects the response body, so content negotiation passes through untouched:
+    # the client's Accept-Encoding reaches upstream unchanged.
+    assert asyncio.run(_run(_echo_headers, calls))['accept-encoding'] == 'gzip, br'
 
 
 def test_off_allowlist_path_is_forbidden() -> None:

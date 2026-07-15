@@ -57,11 +57,10 @@ iap_access_group = config.require('iapAccessGroup')
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
 # Anthropic worker credential for the self-hosted sandbox; encrypted stack config.
 anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
-# The webhook signing key (whsec_, encrypted config) the dispatcher verifies deliveries against; the
-# self-hosted environment id; and the SPKI/CA pins for api.anthropic.com (public cert hashes).
+# The webhook signing key (whsec_, encrypted config) the dispatcher verifies deliveries against, and the
+# self-hosted environment id.
 anthropic_webhook_signing_key = config.require_secret('anthropicWebhookSigningKey')
 anthropic_environment_id = config.require('anthropicEnvironmentId')
-anthropic_spki_pins = config.require('anthropicSpkiPins')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -242,7 +241,6 @@ sandbox_job = sandbox.SandboxJob(
     hello_url=internal_lb.audience(internal_lb.HELLO_HOST),
     internal_ca_cert=internal_services.ca_cert_pem,
     forward_methods=_HELLO_METHOD,
-    spki_pins=anthropic_spki_pins,
     working_document_path=_WORKING_DOCUMENT_PATH,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
     opts=pulumi.ResourceOptions(depends_on=[base, sandbox_network, internal_services]),

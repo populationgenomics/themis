@@ -20,5 +20,4 @@ config:
   themis:anthropicWebhookSigningKey:
     secure: v1:cxtXcFEn84mlFKe5:L3JW9Sg9nGTTn26WwpR3CkSnHK5GuYyfRP/AkGCkNw2OGQB6n4U/j+Wz2NMbRh78lo9Dchfg/rfnGnkBN6Hapa6c
   themis:anthropicEnvironmentId: env_placeholder
-  themis:anthropicSpkiPins: sLSm5X6OSXq8qKBvK6PXAuncZaNjRYeslGz1pKvaWl4=,jmjVD1Ch4nTgFZmFSrCui6ArBEVzn9/MUo+LdOoaJNA=
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=
