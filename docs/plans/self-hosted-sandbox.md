@@ -794,9 +794,10 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
   strands its item, which is why the ack is deferred into the sandbox (§5) (validated against a live `self_hosted`
   environment). Open: whether `ant beta:worker run` itself acks (a build check — a redundant proxy ack is harmless
   either way); and the acked-*and-heartbeated*-then-died variant (only ack-without-heartbeat is characterised).
-  Incidental API facts: the work-item `id` is the session id; the poll's `secret: null` shows work-item operations
-  authenticate on the env key + work id, not a per-item secret (§5); and `GET /work/{id}` status reads need a
-  control-plane (`workspace:developer`) credential, not the env key (poll/ack/heartbeat/stop only — §11's cred split).
+  Incidental API facts: the poll response's top-level `id` is the work id and its nested `data.id` the session id; the
+  poll's `secret: null` shows work-item operations authenticate on the env key + work id, not a per-item secret (§5);
+  and `GET /work/{id}` status reads need a control-plane (`workspace:developer`) credential, not the env key
+  (poll/ack/heartbeat/stop only — §11's cred split).
 - **Dormancy re-enqueue threshold** — work items are enqueued at session creation and when a "long-dormant" session
   receives a new message; the threshold is server-side and appears in no client code. Confirm with a live probe that a
   steer arriving *after* the worker released but *before* whatever "long-dormant" means still enqueues a work item
