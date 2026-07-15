@@ -13,12 +13,17 @@ with the pinning connector.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 
 import aiohttp
 from aiohttp import web
 
 from themis.services.proxy import allowlist as allowlist_mod
+from themis.services.proxy import stream_tap
+
+_logger = logging.getLogger(__name__)
 
 # Per-hop headers (RFC 7230 §6.1) never forwarded end to end.
 _HOP_BY_HOP = frozenset(
@@ -53,11 +58,14 @@ class AnthropicProxy:
         upstream_base: str,
         allowlist: allowlist_mod.AnthropicAllowlist,
         environment_key: str,
+        on_end_turn: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._session = session
         self._upstream_base = upstream_base.rstrip('/')
         self._allowlist = allowlist
         self._authorization = f'Bearer {environment_key}'
+        self._on_end_turn = on_end_turn
+        self._checkpoints: set[asyncio.Task[None]] = set()
 
     async def handle(self, request: web.Request) -> web.StreamResponse:
         if request.method == 'CONNECT':
@@ -76,10 +84,28 @@ class AnthropicProxy:
         ) as upstream:
             response = web.StreamResponse(status=upstream.status, headers=_filter(upstream.headers, _STRIP_RESPONSE))
             await response.prepare(request)
+            detector = stream_tap.EndTurnDetector() if self._on_end_turn else None
             async for chunk in upstream.content.iter_any():  # per-chunk flush, no buffering
                 await response.write(chunk)
+                if detector is not None and detector.feed(chunk):
+                    self._start_checkpoint()  # runs concurrently with the worker's release grace (§9)
             await response.write_eof()
             return response
+
+    def _start_checkpoint(self) -> None:
+        if self._on_end_turn is None:
+            return
+        task = asyncio.create_task(self._run_end_turn())
+        self._checkpoints.add(task)  # hold a reference so the task is not GC'd mid-flight
+        task.add_done_callback(self._checkpoints.discard)
+
+    async def _run_end_turn(self) -> None:
+        if self._on_end_turn is None:
+            return
+        try:
+            await self._on_end_turn()
+        except Exception:
+            _logger.exception('end_turn checkpoint failed')
 
     def _request_headers(self, headers: Mapping[str, str]) -> dict[str, str]:
         forwarded = _filter(headers, _STRIP_REQUEST)

@@ -24,7 +24,9 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
+COPY themis/rpc ./themis/rpc
 COPY themis/clients/id_token.py ./themis/clients/id_token.py
+COPY themis/clients/work_queue ./themis/clients/work_queue
 COPY themis/services/proxy ./themis/services/proxy
 # Serve unprivileged (defense-in-depth); the injected credentials live only in this container's env,
 # unreadable from the agent container (separate PID/mount namespaces).

@@ -1,13 +1,12 @@
-"""Proxy entrypoint: the Anthropic reverse proxy and the gRPC forward proxy on one event loop.
+"""Proxy entrypoint: restore /workspace, gate the agent, then forward and checkpoint (self-hosted-sandbox.md §4-§9).
 
-Two agent-facing listeners, configured entirely from the per-execution env the dispatcher injects
-into this container (the session/work/environment ids, the environment key, the session token). The
-HTTP listener reverse-proxies the Anthropic route; the localhost h2c gRPC listener forwards the
-agent's internal-service calls. Both bind ``127.0.0.1`` — reachable from the agent container over the
-shared network namespace, never from outside the instance.
-
-This is the forwarding half of the proxy; the workspace-sync + restore/ack lifecycle lands in the
-same binary next.
+Startup order matters. The proxy restores ``/workspace`` from the store (fail-closed on the working
+document, fail-open on scratch), acks the work item only once restore is proven, and only then binds
+its agent-facing listeners — the agent container's startup probe gates on those ports, so it always
+boots onto the restored filesystem. During the run the HTTP listener reverse-proxies the Anthropic
+route and drives the ``end_turn`` checkpoint off that stream; the localhost h2c gRPC listener forwards
+the agent's internal-service calls. A SIGTERM triggers a best-effort final checkpoint. Everything is
+configured from the dispatcher's per-execution env (fail-loud on a missing value).
 """
 
 from __future__ import annotations
@@ -15,17 +14,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import pathlib
+import signal
+import urllib.parse
 
 import aiohttp
 import grpc.aio
 from aiohttp import web
 
 from themis.clients import id_token
+from themis.clients.work_queue import client as work_queue_mod
 from themis.services.proxy import allowlist as allowlist_mod
 from themis.services.proxy import anthropic_proxy as anthropic_mod
-from themis.services.proxy import grpc_forward, tls
+from themis.services.proxy import grpc_forward, store_client, tls
+from themis.services.proxy import sync as sync_mod
 
 _DEFAULT_BASE_URL = 'https://api.anthropic.com'
+_logger = logging.getLogger(__name__)
 
 
 def _require(name: str) -> str:
@@ -35,8 +40,17 @@ def _require(name: str) -> str:
     return value
 
 
+def _grpc_host(url: str) -> str:
+    """The service host without scheme or slash, for the gRPC ``:authority``.
+
+    The ALB host-routes on the ``:authority``, so it must stay port-less to match the LB's port-less
+    host rule; only the dial target (``_grpc_target``) carries ``:443``.
+    """
+    return urllib.parse.urlparse(url).netloc
+
+
 def _grpc_target(url: str) -> str:
-    host = url.split('://', 1)[-1].rstrip('/')
+    host = _grpc_host(url)
     return host if ':' in host else f'{host}:443'
 
 
@@ -46,38 +60,107 @@ def build_anthropic_session(spki_pins: frozenset[str]) -> aiohttp.ClientSession:
     return aiohttp.ClientSession(connector=tls.PinnedConnector(spki_pins), timeout=timeout, auto_decompress=False)
 
 
-async def _serve() -> None:
-    allow = allowlist_mod.AnthropicAllowlist(
-        session_id=_require('ANTHROPIC_SESSION_ID'),
-        work_id=_require('ANTHROPIC_WORK_ID'),
-        environment_id=_require('ANTHROPIC_ENVIRONMENT_ID'),
+def _build_sync(session_token: str) -> sync_mod.WorkspaceSync:
+    store_url = _require('THEMIS_STORE_URL')
+    channel = grpc.aio.secure_channel(
+        _grpc_target(store_url),
+        id_token.channel_credentials(store_url),
+        options=[('grpc.default_authority', _grpc_host(store_url))],
     )
-    proxy = anthropic_mod.AnthropicProxy(
-        build_anthropic_session(frozenset(_require('THEMIS_ANTHROPIC_SPKI_PINS').split(','))),
-        upstream_base=os.environ.get('ANTHROPIC_BASE_URL', _DEFAULT_BASE_URL),
-        allowlist=allow,
-        environment_key=_require('ANTHROPIC_ENVIRONMENT_KEY'),
+    store = store_client.GrpcStore(channel, session_token=session_token)
+    return sync_mod.WorkspaceSync(
+        store,
+        root=pathlib.Path(os.environ.get('THEMIS_WORKSPACE_ROOT', '/workspace')),
+        document_path=pathlib.Path(_require('THEMIS_WORKING_DOCUMENT_PATH')),
     )
+
+
+async def _start_http(proxy: anthropic_mod.AnthropicProxy) -> None:
     app = web.Application()
     app.router.add_route('*', '/{tail:.*}', proxy.handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, '127.0.0.1', int(os.environ.get('THEMIS_PROXY_HTTP_PORT', '8080'))).start()
+    # Bind all interfaces, not loopback: the agent's readiness gate is Cloud Run's TCP startup probe
+    # on this port, and the probe dials the container interface, not 127.0.0.1. The job has no ingress,
+    # so only the co-pod agent and the probe reach it (self-hosted-sandbox.md §6).
+    await web.TCPSite(runner, '0.0.0.0', int(os.environ.get('THEMIS_PROXY_HTTP_PORT', '8080'))).start()  # noqa: S104
 
+
+async def _start_grpc(session_token: str) -> grpc.aio.Server:
     forward_url = _require('THEMIS_FORWARD_UPSTREAM_URL')
-    forward_channel = grpc.aio.secure_channel(_grpc_target(forward_url), id_token.channel_credentials(forward_url))
-    grpc_server = grpc.aio.server()
-    grpc_server.add_generic_rpc_handlers(
+    forward_channel = grpc.aio.secure_channel(
+        _grpc_target(forward_url),
+        id_token.channel_credentials(forward_url),
+        options=[('grpc.default_authority', _grpc_host(forward_url))],
+    )
+    server = grpc.aio.server()
+    server.add_generic_rpc_handlers(
         (
             grpc_forward.ForwardProxy(
                 forward_channel,
                 allowed_methods=_require('THEMIS_FORWARD_METHODS').split(','),
-                session_token=_require('THEMIS_SESSION_TOKEN'),
+                session_token=session_token,
             ),
         )
     )
-    grpc_server.add_insecure_port(f'127.0.0.1:{int(os.environ.get("THEMIS_PROXY_GRPC_PORT", "8081"))}')  # h2c localhost
-    await grpc_server.start()
+    server.add_insecure_port(f'127.0.0.1:{int(os.environ.get("THEMIS_PROXY_GRPC_PORT", "8081"))}')  # h2c localhost
+    await server.start()
+    return server
+
+
+def _install_sigterm_flush(workspace_sync: sync_mod.WorkspaceSync) -> None:
+    loop = asyncio.get_running_loop()
+    pending: set[asyncio.Task[None]] = set()
+
+    def _flush() -> None:
+        # asyncio holds only a weak reference to a task, so a bare create_task can be GC'd
+        # before it finishes; keep a strong reference until it completes.
+        task = loop.create_task(_final_checkpoint(workspace_sync))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    loop.add_signal_handler(signal.SIGTERM, _flush)
+
+
+async def _final_checkpoint(workspace_sync: sync_mod.WorkspaceSync) -> None:
+    try:
+        await workspace_sync.checkpoint()
+    except Exception:  # best-effort SIGTERM backstop; the end_turn checkpoint is the primary path (§9)
+        _logger.exception('SIGTERM checkpoint flush failed')
+
+
+async def _serve() -> None:
+    session_token = _require('THEMIS_SESSION_TOKEN')
+    environment_key = _require('ANTHROPIC_ENVIRONMENT_KEY')
+    environment_id = _require('ANTHROPIC_ENVIRONMENT_ID')
+    work_id = _require('ANTHROPIC_WORK_ID')
+    upstream_base = os.environ.get('ANTHROPIC_BASE_URL', _DEFAULT_BASE_URL)
+    anthropic_session = build_anthropic_session(frozenset(_require('THEMIS_ANTHROPIC_SPKI_PINS').split(',')))
+
+    workspace_sync = _build_sync(session_token)
+    await workspace_sync.restore()  # fail-closed: a store error other than NOT_FOUND raises, the spawn dies
+
+    work_queue = work_queue_mod.AnthropicWorkQueue(
+        anthropic_session, base_url=upstream_base, environment_id=environment_id, environment_key=environment_key
+    )
+    _logger.info('restore complete; acking work item %s', work_id)
+    await work_queue.ack(work_id)  # only now, restore proven (§5)
+    _logger.info('work item %s acked', work_id)
+
+    proxy = anthropic_mod.AnthropicProxy(
+        anthropic_session,
+        upstream_base=upstream_base,
+        allowlist=allowlist_mod.AnthropicAllowlist(
+            session_id=_require('ANTHROPIC_SESSION_ID'), work_id=work_id, environment_id=environment_id
+        ),
+        environment_key=environment_key,
+        on_end_turn=workspace_sync.checkpoint,
+    )
+    # Bind the listeners only now: the agent's startup probe gates on them, so "ready" means restored.
+    await _start_http(proxy)
+    grpc_server = await _start_grpc(session_token)
+    _install_sigterm_flush(workspace_sync)
+    _logger.info('listeners bound; serving the session')
     await grpc_server.wait_for_termination()
 
 
