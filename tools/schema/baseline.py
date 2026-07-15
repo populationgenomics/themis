@@ -1,9 +1,8 @@
 """Resolve and read committed files at a baseline git ref.
 
-The backward-compat gates diff each committed artifact against its baseline — the
-released line, stood in by the PR base branch (CI passes ``origin/<base>``). Both
-the chuckd gate (``tools.schema.chuckd_compat``) and the buf gate
-(``tools.schema.buf_compat``) need the same two operations against that ref:
+The backward-compat gate diffs each committed artifact against its baseline — the
+released line, stood in by the PR base branch (CI passes ``origin/<base>``). The
+buf gate (``tools.schema.buf_compat``) needs two operations against that ref:
 verify it resolves, and read a path's content at it.
 """
 

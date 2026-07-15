@@ -80,8 +80,8 @@ message type is a static (pyright) error, and server and caller exchange the *sa
 runtime API cannot drift from the contract, and there is no separate contract test — a generated servicer is the real
 forced interface, not a stand-in for one. Backward-compatibility is the separate `buf breaking` gate:
 [`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) diffs each committed `.proto` against its base-branch
-baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop), the same posture as the at-rest
-`chuckd` gate. See [`typespec.md`](typespec.md), "Schema evolution".
+baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop). It is the sole authored-data compat
+gate (ADR 0003 retired the at-rest `chuckd` gate). See [`typespec.md`](typespec.md), "Schema evolution".
 
 ## Adapters: a port protocol + pluggable backends
 

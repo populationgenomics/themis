@@ -1,16 +1,15 @@
 """Backward-compatibility gate for the committed gRPC proto contracts (S0.6).
 
-Diffs each committed ``schema/proto/**/<domain>.proto`` against its baseline with
-``buf breaking`` (FILE category — field renumber/removal, type/label changes,
-renames; the wire-level compat a JSON-Schema view cannot see), failing on any
-incompatible delta — additive-only evolution, no override
-(``docs/design/typespec.md`` "Schema evolution"). The sibling
-``tools.schema.chuckd_compat`` gates the at-rest JSON Schema bundles with
-``chuckd``.
+The **sole** authored-data compat gate (ADR 0003): diffs each committed
+``schema/proto/**/<domain>.proto`` against its baseline with ``buf breaking``
+(FILE category — field renumber/removal, type/label changes, renames), failing on
+any incompatible delta — additive-only evolution, no override
+(``docs/design/typespec.md`` "Schema evolution"). Gates RPC proto today; the at-rest artifacts join as they converge
+onto proto (ADR 0003 follow-up).
 
-**Baseline.** As with the chuckd gate: the released line, stood in by the PR base
-branch (``main`` under additive-only evolution). Pass it explicitly as
-``--baseline-ref`` (CI supplies ``origin/<base>``; locally e.g. ``main``).
+**Baseline.** The released line, stood in by the PR base branch (``main`` under
+additive-only evolution). Pass it explicitly as ``--baseline-ref`` (CI supplies
+``origin/<base>``; locally e.g. ``main``).
 
 ``buf breaking`` runs from a pinned ``docker run``. Runs in CI (Docker present on
 the runner); locally needs Docker and a baseline ref:
@@ -100,9 +99,9 @@ def main() -> int:
             print(f'compat: {path.name}: not present at {args.baseline_ref}; no baseline, skipping')
             continue
         output, returncode = _run_buf(path.read_text(), baseline_text, str(path.relative_to(_PROTO_DIR)))
-        # No tool-failure/incompatibility split like the chuckd path: buf yields no
-        # machine-parsed findings to tell them apart, so any non-zero counts as
-        # breaking (fail-safe — a crash blocks the gate, never passes it).
+        # buf yields no machine-parsed findings to split tool-failure from
+        # incompatibility, so any non-zero counts as breaking (fail-safe — a crash
+        # blocks the gate, never passes it).
         if returncode != 0:
             print(f'::error::compat {path.name}: breaking change(s) vs {args.baseline_ref}:\n{output}')
             hard_total += 1

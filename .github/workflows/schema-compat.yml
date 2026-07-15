@@ -8,19 +8,16 @@ on:
 
 jobs:
   backward-compatible:
-    # Two independent gates as separate matrix jobs, so one failing doesn't mask
-    # the other: chuckd for the at-rest JSON Schema bundles, buf for the proto
-    # wire contracts. Skip on the public mirror (themis), and skip draft PRs.
+    # `buf breaking` is the sole authored-data compat gate — it diffs the committed
+    # proto contracts against their baseline (RPC proto today; at-rest artifacts join
+    # as they converge onto proto, ADR 0003 follow-up). Skip on the
+    # public mirror (themis), and skip draft PRs.
     if: |
       github.repository == 'populationgenomics/themis-internal'
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        gate: [chuckd, buf]
     steps:
       # Full history: the gate diffs the committed artifact against its baseline
       # commit (the PR base tip, or HEAD^ on a push to main).
@@ -31,8 +28,8 @@ jobs:
         with:
           enable-cache: true
       # Baseline = the released line. For a PR that is the base branch tip; on a
-      # push to main it is the previous commit. (chuckd and buf both run via a
-      # pinned `docker run`; Docker is preinstalled on the runner.)
+      # push to main it is the previous commit. (buf runs via a pinned `docker
+      # run`; Docker is preinstalled on the runner.)
       - name: Resolve baseline ref
         id: baseline
         run: |
@@ -43,4 +40,4 @@ jobs:
           else
             echo "ref=HEAD^" >> "$GITHUB_OUTPUT"
           fi
-      - run: uv run python -m tools.schema.${{ matrix.gate }}_compat --baseline-ref "${{ steps.baseline.outputs.ref }}"
+      - run: uv run python -m tools.schema.buf_compat --baseline-ref "${{ steps.baseline.outputs.ref }}"

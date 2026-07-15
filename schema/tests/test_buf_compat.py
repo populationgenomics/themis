@@ -1,9 +1,8 @@
 """Test the S0.6 proto compat gate (``tools.schema.buf_compat``).
 
-``buf breaking`` (FILE category) is the wire analogue of the chuckd trio — a
-field renumber trips it red, an additive field is tolerated, an unchanged proto
-passes. Together they prove the gate the proto pipeline relies on. All run the
-real ``buf`` image, so they are gated on a reachable Docker daemon.
+``buf breaking`` (FILE category) is the sole authored-data compat gate — a field
+renumber trips it red, an additive field is tolerated, an unchanged proto passes.
+All run the real ``buf`` image, so they are gated on a reachable Docker daemon.
 """
 
 from __future__ import annotations
