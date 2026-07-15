@@ -3547,6 +3547,7 @@ lint = [
     { name = "aiohttp" },
     { name = "apache-beam", extra = ["gcp"] },
     { name = "cloud-sql-python-connector" },
+    { name = "cryptography" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3588,6 +3589,14 @@ migrate = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
+proxy = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 screen = [
     { name = "pyyaml" },
 ]
@@ -3610,6 +3619,7 @@ test = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "check-jsonschema" },
     { name = "cloud-sql-python-connector" },
+    { name = "cryptography" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3682,6 +3692,7 @@ lint = [
     { name = "aiohttp" },
     { name = "apache-beam", extras = ["gcp"] },
     { name = "cloud-sql-python-connector" },
+    { name = "cryptography" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3723,6 +3734,14 @@ migrate = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
+proxy = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 screen = [{ name = "pyyaml" }]
 session = [
     { name = "google-auth" },
@@ -3743,6 +3762,7 @@ test = [
     { name = "apache-beam", extras = ["gcp"] },
     { name = "check-jsonschema" },
     { name = "cloud-sql-python-connector" },
+    { name = "cryptography" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },

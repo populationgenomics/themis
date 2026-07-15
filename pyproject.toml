@@ -74,6 +74,11 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # google-auth mints the Cloud Run Admin API token for the jobs.run spawn. Also covers the shared
 # themis/clients/work_queue and themis/clients/auth.
 dispatcher = ["aiohttp", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
+# credential-proxy sidecar (themis/services/proxy): the sandbox's agent-facing forwarder. aiohttp is
+# the Anthropic HTTP/1.1 reverse proxy + its pinning upstream client; grpcio (via the session group)
+# is the generic gRPC forward proxy; cryptography computes the upstream SPKI pins. Includes the session
+# client for id_token (the SA ID token on the forward channel).
+proxy = ["aiohttp", "cryptography", { include-group = "session" }]
 # check-jsonschema: the metaschema validator the schema tests shell out to
 # (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
 # import-check the generated models in schema/tests (the codegen group provides
@@ -81,7 +86,7 @@ dispatcher = ["aiohttp", "google-cloud-kms", "google-crc32c", "google-auth", "st
 # crosswalk tests mint against a throwaway Postgres (never a mock — the
 # UNIQUE-in-one-txn semantics are the thing under test), gated on a reachable
 # Docker daemon.
-test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }]
+test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -92,12 +97,12 @@ infra = ["pulumi", "pulumi-gcp"]
 # can't resolve pydantic.* and fails on symbols the env (which has pydantic)
 # resolves fine. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
 # the schema/ Node project so the emitter's node_modules resolution works.
-testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests"]
+testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests"]
 pythonpath = ["."]
 consider_namespace_packages = true
 
@@ -178,6 +183,12 @@ ignore = [
 "themis/clients/work_queue/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
+]
+"themis/services/proxy/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+    "S105",   # fixture env keys / session tokens are not secrets
+    "S106",   # fixture credentials passed as kwargs are not secrets
 ]
 "themis/services/*/servicer.py" = [
     "N802",   # gRPC servicer methods mirror the proto service's PascalCase rpc names
