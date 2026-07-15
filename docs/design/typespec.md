@@ -140,6 +140,9 @@ cover the rest:
   `protovalidate` rule (worked example). A named union is still the right shape for a Zod **view model** — it emits a
   discriminated union — where the structural guarantee is wanted browser-side.
 - **Backtick reserved identifiers** (e.g. `` `unknown` ``).
+- **Document with `/** */` doc-comments (or `@doc`), never `//`.** The compiler discards `//` line comments, so they
+  reach no emitter, no generated docstring, and no skill text; only doc-comments propagate (see
+  [Documentation flow](#documentation-flow)).
 - **Avoid:** heterogeneous/tuple arrays, deep recursion, `anyOf`/`oneOf` of unrelated shapes, and `int64` (TypeSpec
   encodes it as a JSON string for JS number precision, so the proto-JSON/Python view sees `string` while `typespec-zod`
   emits `z.bigint()` — an inconsistent cross-target shape).
@@ -242,6 +245,32 @@ enums with a forced `0` member and identifier-only names — so hyphenated/dotte
 kinds) are `string` fields, membership validated in code or `protovalidate`; no `const` and no `oneof`, so a
 discriminant is a plain `string` field with its invariant in `protovalidate`; an explicit `@field(n)` on every property
 (appendix).
+
+## Documentation flow
+
+Documentation authored on the `.tsp` is what makes the generated code and the agent's skill doc legible. A doc-comment
+(`/** */` or `@doc`) is documentation the emitters carry; a `//` line comment is dropped by the compiler and reaches
+nothing. Where a doc-comment lands depends on the target:
+
+| Doc-comment on…           | Reaches                                                                       | Via                                                  |
+| ------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------- |
+| a model / field (at-rest) | JSON Schema `description` → Pydantic class docstring + `Field(description=…)` | `@typespec/json-schema` + `datamodel-code-generator` |
+| an rpc / service (wire)   | the gRPC Stub/Servicer **method** docstring                                   | `@typespec/protobuf` → `protoc` `grpc_python` plugin |
+| a message / field (wire)  | **nothing** on the generated Python                                           | `protoc` carries no comment into `_pb2.py` / `.pyi`  |
+
+So the wire path documents *operations* but not *message shapes*: an agent introspecting a message type or its fields at
+runtime sees no descriptions, even with perfect doc-comments. (When an rpc has no doc-comment, its generated stub
+carries the tell-tale `"Missing associated documentation comment in .proto file."` — the placeholder that proves the
+comment path exists.) Verify that `@typespec/protobuf` emits doc-comments as `.proto` leading comments; the plugin
+surfaces them only if they reach the `.proto`.
+
+**Generate the agent/skill doc from the contract, not from runtime `__doc__`.** The proto `FileDescriptorProto`
+(compiled with `--include_source_info`), the JSON Schema `description`s, and the `.tsp` itself each retain *every*
+doc-comment; a skill-text generator that reads the contract is complete regardless of what survives into `_pb2`.
+Depending on Python docstrings instead would silently drop every message-field description. Attaching docstrings to the
+generated message types (a documented facade, or reading the descriptor's source info onto `__doc__`) is a deferred
+nice-to-have, not the route to LLM-legibility. Either way the prerequisite is the same: the documentation must be a
+doc-comment at the source ([Authoring rules](#authoring-rules)).
 
 ## Tooling
 
