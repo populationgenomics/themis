@@ -32,6 +32,8 @@ class HelloService(pulumi.ComponentResource):
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
         custom_audiences: pulumi.Input[list[str]],
+        vpc_network: pulumi.Input[str],
+        vpc_subnetwork: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:HelloService', 'themis', None, opts)
@@ -58,6 +60,17 @@ class HelloService(pulumi.ComponentResource):
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
+                # admits it; all traffic, since auth's run.app is a public hostname a private-ranges
+                # route would send straight out.
+                vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
+                    network_interfaces=[
+                        gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
+                            network=vpc_network, subnetwork=vpc_subnetwork
+                        )
+                    ],
+                    egress='ALL_TRAFFIC',
+                ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,

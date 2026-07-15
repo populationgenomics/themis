@@ -22,6 +22,7 @@ from themis_infra import (
     internal_lb,
     sandbox,
     secrets,
+    services_network,
     sql,
     storage,
     store,
@@ -125,13 +126,21 @@ auth_service = auth.AuthService(
     sql_database=database.database_name,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
+# The internal services attach here (Direct VPC egress) to reach the internal-ingress auth service (§7).
+services_net = services_network.ServicesNetwork(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 store_service = store.StoreService(
     project=project,
     region=region,
     image=_image(_STORE_IMAGE_ENV, lambda: _live_service_image('themis-store')),
     auth_url=auth_service.url,
     custom_audiences=[internal_lb.audience(internal_lb.STORE_HOST)],
-    opts=pulumi.ResourceOptions(depends_on=[base]),
+    vpc_network=services_net.network.id,
+    vpc_subnetwork=services_net.subnetwork.id,
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
 hello_service = hello.HelloService(
     project=project,
@@ -139,7 +148,9 @@ hello_service = hello.HelloService(
     image=_image(_HELLO_IMAGE_ENV, lambda: _live_service_image('themis-hello')),
     auth_url=auth_service.url,
     custom_audiences=[internal_lb.audience(internal_lb.HELLO_HOST)],
-    opts=pulumi.ResourceOptions(depends_on=[base]),
+    vpc_network=services_net.network.id,
+    vpc_subnetwork=services_net.subnetwork.id,
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
 # The store and hello services resolve session tokens through auth (§7); grant each SA invoke on the
 # internal auth service — the binding auth left for when they landed.
