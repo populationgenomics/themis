@@ -66,6 +66,13 @@ evolves **additively only** — breaking changes are ruled out (see Schema evolu
 
 Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque bytes, outside all three.
 
+**Placement.** An at-rest domain is a plain library under the one `themis/` namespace — `themis.<domain>` (e.g.
+`themis.litcache`), its generated models under `themis/<domain>/models/`, its committed JSON Schema at the repo-root
+`jsonschema/<domain>.schema.json`. It has no wire surface, so it is *not* a `themis.services` / `themis.rpc` /
+`themis.clients` member. Staying under `themis/` rather than a top-level package follows the single-namespace convention
+([`../repo-structure.md`](../repo-structure.md)); a top-level name would pay off only for a cache shared *outside*
+themis, which is speculative — revisit if a real out-of-themis consumer appears.
+
 ## Authoring and layout
 
 ```
