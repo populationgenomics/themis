@@ -98,6 +98,17 @@ _DOMAINS: list[Domain] = [
         stubs_root=_SCHEMA_DIR / 'tests' / 'proto',
         zod_out=_SCHEMA_DIR / 'tests' / 'zod' / 'features.ts',
     ),
+    # litcache at-rest artifacts (the manifest). A real durable contract: its proto lands
+    # under schema/proto/ so `buf breaking` gates it (ADR 0003). @package themis.litcache.models.litcache
+    # -> committed schema/proto/themis/litcache/models/litcache.proto + themis/litcache/models/litcache_pb2.py
+    # stubs (the domain library themis.litcache holds the hand-written layer). At-rest, so no Zod (the
+    # browser view model is a separate concern; ADR 0004).
+    Domain(
+        name='litcache',
+        main_tsp=_SCHEMA_DIR / 'litcache' / 'main.tsp',
+        proto_root=_PROTO_DIR,
+        stubs_root=_REPO_ROOT,
+    ),
 ]
 
 

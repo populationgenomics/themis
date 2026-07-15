@@ -122,7 +122,7 @@ target-version = "py313"
 # generated proto/gRPC stubs. Real-domain model dirs join this list when they land
 # (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so this holds even
 # when pre-commit hands ruff explicit paths.
-extend-exclude = ["schema/tests/proto", "litcache/models/litcache.py", "themis/rpc"]
+extend-exclude = ["schema/tests/proto", "themis/litcache/models", "themis/rpc"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -244,7 +244,7 @@ include = ["tools", "tests", "schema/tests", "infra", "litcache", "themis"]
 # specifying `exclude` would otherwise drop. schema/tests/proto: resolve the generated
 # feature-corpus stub (features_pb2) that test_generated_stubs imports; `ignore` keeps
 # its generated files out of type-checking without replacing pyright's default excludes.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc"]
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models"]
 extraPaths = ["infra", "schema/tests/proto"]
 ignore = ["schema/tests/proto"]
 typeCheckingMode = "standard"
