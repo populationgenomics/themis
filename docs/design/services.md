@@ -31,10 +31,10 @@ A service, its client helpers, and its generated `rpc` package share a domain na
 A service is `themis/services/<name>/`, the package `themis.services.<name>`:
 
 - **`servicer.py`** — the servicer class subclassing the generated `<Service>Servicer`, one method per rpc taking and
-  returning the generated proto messages. It takes its backend as a constructor argument — it depends on a port
-  *protocol*, never a concrete backend.
-- **`<port>.py`** — the backend port as a `typing.Protocol` (auth's is `backend.SessionBackend`), plus its
-  implementations: an in-memory **fixture** for offline runs, and the real adapter later.
+  returning the generated proto messages. It takes its backend as a constructor argument — it depends on the abstract
+  port base, never a concrete backend.
+- **`<port>.py`** — the backend port as an `abc.ABC` (auth's is `backend.SessionBackend`), plus its implementations: an
+  in-memory **fixture** for offline runs, and the real adapter later.
 - **`__main__.py`** — the server entrypoint. Builds the backend from the environment (selected by a required env var —
   fail loud, no silent default), registers the servicer and a `grpc.health.v1` health servicer on a `grpc.aio` server,
   and serves on Cloud Run's `$PORT`.
@@ -83,11 +83,11 @@ forced interface, not a stand-in for one. Backward-compatibility is the separate
 baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop). It is the sole authored-data compat
 gate (ADR 0003 retired the at-rest `chuckd` gate). See [`typespec.md`](typespec.md), "Schema evolution".
 
-## Adapters: a port protocol + pluggable backends
+## Adapters: an abstract port + pluggable backends
 
-The servicer depends on a `Protocol`, not a concrete backend, so the same server runs offline (fixture) and deployed
-(real). The port's methods are `async` — a blocking adapter (Cloud SQL, GCS) offloads its I/O to a thread rather than
-stalling the `grpc.aio` event loop:
+The servicer depends on the abstract port, not a concrete backend, so the same server runs offline (fixture) and
+deployed (real). The port's methods are `async` — a blocking adapter (Cloud SQL, GCS) offloads its I/O to a thread
+rather than stalling the `grpc.aio` event loop:
 
 - **Selection** — `__main__` reads the backend from a required env var (`THEMIS_BACKEND`); an unset or unknown value is
   a `SystemExit`, never a silent fallback.
@@ -203,7 +203,7 @@ follow-up. Do not define shared tables inside a single service's PR.
    `@Protobuf.package`, a `@Protobuf.service` interface, `@field(n)` on every message field, `@stream` for streaming;
    one `Request` in, one `Response` out.
 1. Run `regen`; commit `schema/proto/themis/rpc/<domain>.proto` + the `themis/rpc/<domain>_pb2*.py` stubs.
-1. `themis/services/<name>/` — `servicer.py` (the `<Service>Servicer` subclass), the backend `Protocol` + fixture,
+1. `themis/services/<name>/` — `servicer.py` (the `<Service>Servicer` subclass), the backend `abc.ABC` + fixture,
    `__main__` (env-selected backend, `grpc.aio` server + health servicer, fail-loud seeding).
 1. `themis/services/<name>/tests/` — behaviour tests (in-process `grpc.aio`), `test_main.py`.
 1. Wire root `pyproject.toml` (dep group + `test`/`lint` include, `testpaths`) and the `Dockerfile`.
