@@ -126,48 +126,51 @@ async def _serve() -> None:
     # serves a self-signed certificate for their private hostnames (self-hosted-sandbox.md §8).
     internal_ca = _require('THEMIS_INTERNAL_CA_CERT').encode()
 
-    workspace_sync = _build_sync(session_token, internal_ca)
-    work_queue = work_queue_mod.AnthropicWorkQueue(
-        anthropic_session, base_url=upstream_base, environment_id=environment_id, environment_key=environment_key
-    )
-    if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
-        return  # restore failed: the item is acked + stopped, nothing to serve
+    # One SDK client for both the work queue (ack/stop) and the turn-watch event stream. Its read
+    # timeout is the stream's liveness floor; ack/stop override it per-call (_ACK_TIMEOUT_S).
+    timeout = anthropic.Timeout(_STREAM_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
+    async with anthropic.AsyncAnthropic(
+        auth_token=environment_key, base_url=upstream_base, timeout=timeout
+    ) as anthropic_client:
+        workspace_sync = _build_sync(session_token, internal_ca)
+        work_queue = work_queue_mod.AnthropicWorkQueue(anthropic_client, environment_id=environment_id)
+        if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
+            return  # restore failed: the item is acked + stopped, nothing to serve
 
-    session_id = _require('ANTHROPIC_SESSION_ID')
-    proxy = anthropic_mod.AnthropicProxy(
-        anthropic_session,
-        upstream_base=upstream_base,
-        allowlist=allowlist_mod.AnthropicAllowlist(
-            session_id=session_id, work_id=work_id, environment_id=environment_id
-        ),
-        environment_key=environment_key,
-    )
-    # Bind the listeners only now: the agent's startup probe gates on them, so "ready" means restored.
-    await _start_http(proxy)
-    grpc_server = await _start_grpc(session_token, internal_ca)
-    # Checkpoint the working document on each turn boundary: the worker CLI reads events paginated, so
-    # end_turn never crosses the reverse-proxied traffic — the proxy reads the session event stream (§9).
-    turn_watcher = asyncio.create_task(_watch_turns(upstream_base, session_id, environment_key, workspace_sync))
-    _logger.info('listeners bound; serving the session')
-    # The turn-watcher owns the session lifecycle: it returns on session.status_terminated (a clean end)
-    # and raises on an unrecoverable stream fault. Either ends the serve — a stopped watcher means the
-    # proxy would otherwise keep forwarding with no checkpointing.
-    serve = asyncio.create_task(grpc_server.wait_for_termination())
-    try:
-        await asyncio.wait({serve, turn_watcher}, return_when=asyncio.FIRST_COMPLETED)
-        if turn_watcher.done():
-            turn_watcher.result()  # re-raise an unrecoverable stream fault
-    finally:
-        turn_watcher.cancel()
-        await grpc_server.stop(_SHUTDOWN_GRACE_S)  # drain in-flight forwards; unblocks wait_for_termination
-        serve.cancel()
-        await asyncio.gather(serve, turn_watcher, return_exceptions=True)
+        session_id = _require('ANTHROPIC_SESSION_ID')
+        proxy = anthropic_mod.AnthropicProxy(
+            anthropic_session,
+            upstream_base=upstream_base,
+            allowlist=allowlist_mod.AnthropicAllowlist(
+                session_id=session_id, work_id=work_id, environment_id=environment_id
+            ),
+            environment_key=environment_key,
+        )
+        # Bind the listeners only now: the agent's startup probe gates on them, so "ready" means restored.
+        await _start_http(proxy)
+        grpc_server = await _start_grpc(session_token, internal_ca)
+        # Checkpoint the working document on each turn boundary: the worker CLI reads events paginated, so
+        # end_turn never crosses the reverse-proxied traffic — the proxy reads the session event stream (§9).
+        turn_watcher = asyncio.create_task(_watch_turns(anthropic_client, session_id, workspace_sync))
+        _logger.info('listeners bound; serving the session')
+        # The turn-watcher owns the session lifecycle: it returns on session.status_terminated (a clean end)
+        # and raises on an unrecoverable stream fault. Either ends the serve — a stopped watcher means the
+        # proxy would otherwise keep forwarding with no checkpointing.
+        serve = asyncio.create_task(grpc_server.wait_for_termination())
+        try:
+            await asyncio.wait({serve, turn_watcher}, return_when=asyncio.FIRST_COMPLETED)
+            if turn_watcher.done():
+                turn_watcher.result()  # re-raise an unrecoverable stream fault
+        finally:
+            turn_watcher.cancel()
+            await grpc_server.stop(_SHUTDOWN_GRACE_S)  # drain in-flight forwards; unblocks wait_for_termination
+            serve.cancel()
+            await asyncio.gather(serve, turn_watcher, return_exceptions=True)
 
 
 async def _watch_turns(
-    upstream_base: str,
+    client: anthropic.AsyncAnthropic,
     session_id: str,
-    environment_key: str,
     workspace_sync: sync_mod.WorkspaceSync,
 ) -> None:
     """Checkpoint the working document on each turn boundary of the session (§9).
@@ -188,39 +191,37 @@ async def _watch_turns(
     """
     seen: set[str] = set()
     primed = False
-    timeout = anthropic.Timeout(_STREAM_READ_TIMEOUT_S, connect=_CONNECT_TIMEOUT_S)
-    async with anthropic.AsyncAnthropic(auth_token=environment_key, base_url=upstream_base, timeout=timeout) as client:
-        while True:
-            try:
-                # The restored /workspace already reflects every boundary up to the latest checkpoint, so
-                # the first history pass seeds the high-water mark without re-checkpointing; a reconnect
-                # re-pages and checkpoints any boundary — and detects a termination — that fell in the gap.
-                terminated = await _process_events(
-                    client.beta.sessions.events.list(session_id), workspace_sync, seen, checkpoint=primed
-                )
-                primed = True
-                if not terminated:
-                    async with await client.beta.sessions.events.stream(session_id) as stream:
-                        terminated = await _process_events(stream, workspace_sync, seen, checkpoint=True)
-                if terminated:
-                    _logger.info('session terminated; final checkpoint, then stopping the proxy')
-                    await _checkpoint(workspace_sync)
-                    return
-                # The stream closed with no terminated event — a drop, not a session end. Back off and
-                # reconnect; re-paging the history covers any boundary that fell in the gap.
-                _logger.info('turn-watch stream closed; reconnecting')
-                await asyncio.sleep(_RECONNECT_BACKOFF_S)
-            except asyncio.CancelledError:
+    while True:
+        try:
+            # The restored /workspace already reflects every boundary up to the latest checkpoint, so
+            # the first history pass seeds the high-water mark without re-checkpointing; a reconnect
+            # re-pages and checkpoints any boundary — and detects a termination — that fell in the gap.
+            terminated = await _process_events(
+                client.beta.sessions.events.list(session_id), workspace_sync, seen, checkpoint=primed
+            )
+            primed = True
+            if not terminated:
+                async with await client.beta.sessions.events.stream(session_id) as stream:
+                    terminated = await _process_events(stream, workspace_sync, seen, checkpoint=True)
+            if terminated:
+                _logger.info('session terminated; final checkpoint, then stopping the proxy')
+                await _checkpoint(workspace_sync)
+                return
+            # The stream closed with no terminated event — a drop, not a session end. Back off and
+            # reconnect; re-paging the history covers any boundary that fell in the gap.
+            _logger.info('turn-watch stream closed; reconnecting')
+            await asyncio.sleep(_RECONNECT_BACKOFF_S)
+        except asyncio.CancelledError:
+            raise
+        except anthropic.APIStatusError as error:
+            if error.status_code < 500 and error.status_code != 429:
+                _logger.exception('turn-watch stream: unrecoverable %s; not reconnecting', error.status_code)
                 raise
-            except anthropic.APIStatusError as error:
-                if error.status_code < 500 and error.status_code != 429:
-                    _logger.exception('turn-watch stream: unrecoverable %s; not reconnecting', error.status_code)
-                    raise
-                _logger.warning('turn-watch stream: retryable %s; reconnecting', error.status_code, exc_info=True)
-                await asyncio.sleep(_RECONNECT_BACKOFF_S)
-            except anthropic.APIConnectionError:
-                _logger.warning('turn-watch stream dropped; reconnecting', exc_info=True)
-                await asyncio.sleep(_RECONNECT_BACKOFF_S)
+            _logger.warning('turn-watch stream: retryable %s; reconnecting', error.status_code, exc_info=True)
+            await asyncio.sleep(_RECONNECT_BACKOFF_S)
+        except anthropic.APIConnectionError:
+            _logger.warning('turn-watch stream dropped; reconnecting', exc_info=True)
+            await asyncio.sleep(_RECONNECT_BACKOFF_S)
 
 
 async def _process_events(

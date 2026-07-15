@@ -69,11 +69,11 @@ store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage",
 # authorized through auth. No storage backend of its own.
 hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "session" }]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
-# and spawns sandboxes. aiohttp is the HMAC-webhook server + the Anthropic/Cloud Run HTTP client;
-# google-cloud-kms derives the per-session token (google-crc32c verifies its response integrity);
-# google-auth mints the Cloud Run Admin API token for the jobs.run spawn. Also covers the shared
-# themis/clients/work_queue and themis/clients/auth.
-dispatcher = ["aiohttp", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
+# and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
+# is the SDK the work queue is driven through; google-cloud-kms derives the per-session token
+# (google-crc32c verifies its response integrity); google-auth mints the Cloud Run Admin API token for
+# the jobs.run spawn. Also covers the shared themis/clients/work_queue and themis/clients/auth.
+dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
 # credential-proxy sidecar (themis/services/proxy): the sandbox's agent-facing forwarder. aiohttp is
 # the Anthropic HTTP/1.1 reverse proxy + its upstream client; anthropic is the SDK the turn-watcher
 # subscribes to the session event stream through; grpcio (via the session group) is the generic gRPC

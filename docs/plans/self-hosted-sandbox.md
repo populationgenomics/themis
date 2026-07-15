@@ -299,15 +299,14 @@ A minimal Cloud Run service (scale-to-zero); it reads the environment key from S
 that does. One public HMAC-verified webhook endpoint (Anthropic cannot present a GCP token — the same posture as the
 BFF's webhook receiver, wiring §4). On `session.status_run_started` it:
 
-1. **Drain-polls the queue** — the `work.poller` semantics (`drain`, `auto_stop=false`; the spawned sandbox owns the
-   stop call), but a **hand-rolled REST client**, not the SDK helper: the restore-gated ack (the poll leaves the item
-   *pending*; the sandbox acks only once restore proves, below) needs a poll-without-ack that the SDK's
-   `poller`/`EnvironmentWorker` bundle and don't expose — a simple request/response the client owns, unlike the
-   checkpoint watcher, whose reconnect/keep-alive is hard to hand-roll and so uses the SDK stream (§4, §9). The poll
-   **does not ack** — ack is deferred into the sandbox (below). It **force-stops** a non-`session` item itself rather
-   than skipping it, since under `auto_stop=false` a skipped item's lease would sit until TTL. It forwards the poll
-   response's work fields (session/work/environment ids) into the spawn; work-item operations authenticate on the
-   environment key + work id, so the poll's per-item `secret` is unused and not forwarded.
+1. **Drain-polls the queue** via the SDK's low-level `work.poll` — which leaves the item *pending* and **does not ack**
+   — rather than the high-level `work.poller`, whose every yielded item is already ack'd. Acking on claim would commit
+   the item before the sandbox is proven up; our ack is restore-gated (the sandbox acks only once restore resolves,
+   below), so poll and ack stay separate low-level calls. The dispatcher **force-stops** a non-`session` item itself
+   rather than skipping it, since nothing else would (no sandbox spawns for it) and its lease would otherwise sit until
+   reclaim. It forwards the poll response's work fields (session/work/environment ids) into the spawn; work-item
+   operations authenticate on the environment key + work id, so the poll's per-item `secret` is unused and not
+   forwarded.
 1. **Derives the session token** — `HMAC(session_id)` via the KMS MAC key (§7). No DB access and no session→Analysis
    resolution here: the BFF already bound the session token to its Analysis at session create, and the auth service
    resolves it at call time. (If the session has no session-token row, the store rejects downstream — a bug in session
@@ -336,15 +335,16 @@ Console re-enable step in the runbook (§11).
 
 **Recovery is `reclaim_older_than_ms`, since the item stays unacked until the sandbox proves itself.** An item polled
 but not yet acked sits in the queue's pending set; a later drain with `reclaim_older_than_ms` past the window
-re-surfaces it for another spawn. Two things must hold. **Set it explicitly** — the poller leaves it unset and the
-server applies a 5 s default, far below cold-start latency (Direct VPC egress connection-establishment runs a minute or
-more on a cold instance, §8), so a 5 s window re-surfaces the still-booting item and **double-spawns on nearly every
-cold job**. Size it above worst-case cold-start-plus-restore time (a few minutes), accepting that a genuinely failed
-spawn takes that long to recover. It is the reclaim window, not the webhook retry, that bounds recovery: retries reuse
-the event id (Anthropic documents "at least once", same id; no schedule), so a retry landing inside the window drains
-empty and no-ops. But reclaim only re-surfaces the item — the dispatcher still drains only when a webhook wakes it (no
-timer, §1). If delivery already returned 2xx (a silent spawn failure, no further retries), the orphaned item waits for a
-later unrelated webhook to drain it — or, in a quiescent environment, for the queue-depth alert and runbook (§11).
+re-surfaces it for another spawn. Two things must hold. **Set it explicitly** — omit it and the server applies a 5 s
+default, far below cold-start latency (Direct VPC egress connection-establishment runs a minute or more on a cold
+instance, §8), so a 5 s window re-surfaces the still-booting item and **double-spawns on nearly every cold job**. The
+reclaim clock starts at the poll, so size it above worst-case cold-start-plus-restore time (10 min in config), accepting
+that a genuinely failed spawn takes that long to recover. It is the reclaim window, not the webhook retry, that bounds
+recovery: retries reuse the event id (Anthropic documents "at least once", same id; no schedule), so a retry landing
+inside the window drains empty and no-ops. But reclaim only re-surfaces the item — the dispatcher still drains only when
+a webhook wakes it (no timer, §1). If delivery already returned 2xx (a silent spawn failure, no further retries), the
+orphaned item waits for a later unrelated webhook to drain it — or, in a quiescent environment, for the queue-depth
+alert and runbook (§11).
 
 A double-spawn cannot become double-*service*: the sandbox's first `heartbeat` claims the lease with
 `expected_last_heartbeat: NO_HEARTBEAT`, and every later heartbeat echoes the server's value (412 on mismatch), so two

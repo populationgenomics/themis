@@ -13,6 +13,7 @@ import logging
 import os
 
 import aiohttp
+import anthropic
 import google.auth
 from aiohttp import web
 
@@ -26,6 +27,7 @@ _CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
 
 _DISPATCHER: web.AppKey[handler_mod.Dispatcher] = web.AppKey('dispatcher', handler_mod.Dispatcher)
 _SESSION: web.AppKey[aiohttp.ClientSession] = web.AppKey('session', aiohttp.ClientSession)
+_ANTHROPIC: web.AppKey[anthropic.AsyncAnthropic] = web.AppKey('anthropic', anthropic.AsyncAnthropic)
 
 
 def _require(name: str) -> str:
@@ -49,14 +51,13 @@ async def _on_startup(app: web.Application) -> None:
     app[_SESSION] = session
     environment_id = _require('ANTHROPIC_ENVIRONMENT_ID')
     environment_key = _require('ANTHROPIC_ENVIRONMENT_KEY')
+    anthropic_client = anthropic.AsyncAnthropic(
+        auth_token=environment_key, base_url=os.environ.get('ANTHROPIC_BASE_URL', _DEFAULT_BASE_URL)
+    )
+    app[_ANTHROPIC] = anthropic_client
     credentials, _ = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
     app[_DISPATCHER] = handler_mod.Dispatcher(
-        work_queue=work_queue_mod.AnthropicWorkQueue(
-            session,
-            base_url=os.environ.get('ANTHROPIC_BASE_URL', _DEFAULT_BASE_URL),
-            environment_id=environment_id,
-            environment_key=environment_key,
-        ),
+        work_queue=work_queue_mod.AnthropicWorkQueue(anthropic_client, environment_id=environment_id),
         deriver=derive_mod.kms_deriver(_require('THEMIS_SESSION_TOKEN_KEY_VERSION')),
         job_runner=job_runner_mod.CloudRunJobRunner(
             session,
@@ -74,6 +75,7 @@ async def _on_startup(app: web.Application) -> None:
 
 async def _on_cleanup(app: web.Application) -> None:
     await app[_SESSION].close()
+    await app[_ANTHROPIC].close()
 
 
 def build_app() -> web.Application:

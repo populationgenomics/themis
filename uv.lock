@@ -3614,6 +3614,7 @@ dataflow = [
 ]
 dispatcher = [
     { name = "aiohttp" },
+    { name = "anthropic" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
     { name = "google-crc32c" },
@@ -3765,6 +3766,7 @@ dataflow = [
 ]
 dispatcher = [
     { name = "aiohttp" },
+    { name = "anthropic" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
     { name = "google-crc32c" },

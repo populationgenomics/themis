@@ -40,9 +40,12 @@ _PROXY_IMAGE_ENV = 'THEMIS_PROXY_IMAGE'
 # The sandbox forward leg's single consumer, and the working-document contract path.
 _HELLO_METHOD = '/themis.rpc.hello.Hello/SayHello'
 _WORKING_DOCUMENT_PATH = '/workspace/document.md'
-# Sized above worst-case cold-start-plus-restore so a booting item is not double-spawned (§5), and the
-# task timeout to the longest legitimate session plus margin (§6). Tune from agent_run usage.
-_RECLAIM_OLDER_THAN_MS = 180_000
+# Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
+# it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
+# the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.
+# The cost of a wider window is that a genuinely failed spawn takes this long to become re-pollable. Task
+# timeout is the longest legitimate session plus margin (§6). Tune from agent_run usage.
+_RECLAIM_OLDER_THAN_MS = 600_000
 _TASK_TIMEOUT_SECONDS = 3600
 
 config = pulumi.Config()

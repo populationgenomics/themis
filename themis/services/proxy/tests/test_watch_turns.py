@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterable, Sequence
-from typing import Self
+from typing import Self, cast
 
 import anthropic
 import httpx
@@ -176,18 +176,20 @@ def test_process_events_returns_true_on_terminated() -> None:
 def test_watch_turns_propagates_unrecoverable_4xx(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(entrypoint, '_RECONNECT_BACKOFF_S', 0)
     events = _FakeEvents(stream_effects=[_status_error(403)])
-    monkeypatch.setattr(entrypoint.anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(events))
     with pytest.raises(anthropic.APIStatusError):
-        asyncio.run(entrypoint._watch_turns('https://up', 'sess', 'key', _SpyCheckpoints()))
+        asyncio.run(
+            entrypoint._watch_turns(cast(anthropic.AsyncAnthropic, _FakeClient(events)), 'sess', _SpyCheckpoints())
+        )
 
 
 def test_watch_turns_reconnects_on_retryable_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(entrypoint, '_RECONNECT_BACKOFF_S', 0)
     # A 429 reconnects rather than propagating; a later CancelledError ends the watcher.
     events = _FakeEvents(stream_effects=[_status_error(429), asyncio.CancelledError()])
-    monkeypatch.setattr(entrypoint.anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(events))
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(entrypoint._watch_turns('https://up', 'sess', 'key', _SpyCheckpoints()))
+        asyncio.run(
+            entrypoint._watch_turns(cast(anthropic.AsyncAnthropic, _FakeClient(events)), 'sess', _SpyCheckpoints())
+        )
     assert events.stream_calls == 2  # reconnected past the 429
 
 
@@ -195,8 +197,9 @@ def test_watch_turns_checkpoints_boundary_then_returns_on_terminated(monkeypatch
     monkeypatch.setattr(entrypoint, '_RECONNECT_BACKOFF_S', 0)
     sync = _SpyCheckpoints()
     events = _FakeEvents(stream_effects=[[_idle_end_turn('e1'), _terminated('e2')]])
-    monkeypatch.setattr(entrypoint.anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(events))
-    asyncio.run(entrypoint._watch_turns('https://up', 'sess', 'key', sync))  # returns cleanly, no exception
+    asyncio.run(
+        entrypoint._watch_turns(cast(anthropic.AsyncAnthropic, _FakeClient(events)), 'sess', sync)
+    )  # returns cleanly, no exception
     assert sync.count == 2  # the end_turn boundary, then the final flush on termination
     assert events.stream_calls == 1  # returned without reconnecting
 
@@ -205,8 +208,7 @@ def test_watch_turns_returns_on_terminated_without_a_trailing_boundary(monkeypat
     monkeypatch.setattr(entrypoint, '_RECONNECT_BACKOFF_S', 0)
     sync = _SpyCheckpoints()
     events = _FakeEvents(stream_effects=[[_terminated('e1')]])
-    monkeypatch.setattr(entrypoint.anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(events))
-    asyncio.run(entrypoint._watch_turns('https://up', 'sess', 'key', sync))
+    asyncio.run(entrypoint._watch_turns(cast(anthropic.AsyncAnthropic, _FakeClient(events)), 'sess', sync))
     assert sync.count == 1  # a final checkpoint even when the session ends mid-turn
     assert events.stream_calls == 1
 
@@ -217,7 +219,6 @@ def test_watch_turns_shuts_down_on_terminated_in_history(monkeypatch: pytest.Mon
     # The session terminated during a drop gap: on reconnect the terminated event is in the history
     # re-page, so the watcher shuts down without ever streaming the already-ended session.
     events = _FakeEvents(history=[_terminated('e1')])
-    monkeypatch.setattr(entrypoint.anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(events))
-    asyncio.run(entrypoint._watch_turns('https://up', 'sess', 'key', sync))
+    asyncio.run(entrypoint._watch_turns(cast(anthropic.AsyncAnthropic, _FakeClient(events)), 'sess', sync))
     assert sync.count == 1  # the final flush on termination
     assert events.stream_calls == 0  # never streamed the terminated session

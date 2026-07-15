@@ -2,10 +2,13 @@
 
 On a ``session.status_run_started`` webhook the dispatcher drains the queue: the webhook is only the
 trigger and carries no work, so items are claimed by polling. It polls (draining, without acking) and
-force-stops non-session items; the sandbox proxy acks its own item once restore is proven. Every call
-authenticates with the environment key as a Bearer on ``ANTHROPIC_BASE_URL``.
+force-stops non-session items; the sandbox proxy acks its own item once restore is proven.
 
-``WorkQueue`` is the port; ``AnthropicWorkQueue`` is the HTTP adapter. The in-memory double the
+The queue is driven through the SDK's low-level ``work.poll`` / ``work.ack`` / ``work.stop``, not the
+high-level ``work.poller``: the poller acks each item on yield, which would break the restore-gated
+deferred ack — the dispatcher polls without acking, and the proxy acks only after restore proves.
+
+``WorkQueue`` is the port; ``AnthropicWorkQueue`` is the SDK adapter. The in-memory double the
 dispatcher's orchestration tests drive lives in the test scaffolding.
 """
 
@@ -14,15 +17,14 @@ from __future__ import annotations
 import abc
 import dataclasses
 
-import aiohttp
+import anthropic
+from anthropic.types.beta.environments import beta_self_hosted_work
 
-_ANTHROPIC_VERSION = '2023-06-01'  # anthropic-version header value
-_ANTHROPIC_BETA = 'managed-agents-2026-04-01'  # anthropic-beta opt-in for the work-queue API
 _SESSION_ITEM_TYPE = 'session'
-# Ack/stop are quick request/response calls, but the proxy hands this client a session with no timeout
-# (tuned for its minutes-long SSE stream). Bound them so a stalled call fails loud instead of hanging
-# the proxy's startup (the ack gates the agent) forever.
-_ACK_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Ack/stop are quick request/response calls, but the proxy's shared client carries a long stream-read
+# timeout tuned for its minutes-long SSE stream. Bound them per-call so a stalled call fails loud
+# instead of hanging the proxy's startup (the ack gates the agent) forever.
+_ACK_TIMEOUT_S = 30.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,65 +54,34 @@ class WorkQueue(abc.ABC):
 
 
 class AnthropicWorkQueue(WorkQueue):
-    """The work queue over the Anthropic API (environment-key Bearer auth)."""
+    """The work queue over the Anthropic SDK's low-level ``work`` methods (the client carries auth)."""
 
-    def __init__(
-        self,
-        session: aiohttp.ClientSession,
-        *,
-        base_url: str,
-        environment_id: str,
-        environment_key: str,
-    ) -> None:
-        self._session = session
-        self._work_base = f'{base_url.rstrip("/")}/v1/environments/{environment_id}/work'
-        self._headers = {
-            'Authorization': f'Bearer {environment_key}',
-            'anthropic-version': _ANTHROPIC_VERSION,
-            'anthropic-beta': _ANTHROPIC_BETA,
-        }
+    def __init__(self, client: anthropic.AsyncAnthropic, *, environment_id: str) -> None:
+        self._client = client
+        self._environment_id = environment_id
 
     async def poll(self, *, reclaim_older_than_ms: int) -> WorkItem | None:
-        # Non-blocking drain: omitting block_ms returns immediately (the API default). The
-        # run_started webhook already enqueued the item, so there is nothing to long-poll for.
-        params = {
-            'beta': 'true',
-            'reclaim_older_than_ms': str(reclaim_older_than_ms),
-        }
-        async with self._session.get(f'{self._work_base}/poll', headers=self._headers, params=params) as response:
-            response.raise_for_status()
-            if response.status == 204:
-                return None
-            body = await response.json()
-        if body is None:
-            return None  # empty queue: the work API answers 200 with a null body, not 204
-        return _parse_item(body)
+        # Low-level poll, never work.poller: the poller acks on yield, but our ack is deferred until the
+        # proxy proves restore. Omitting block_ms is the non-blocking default — the run_started webhook
+        # already enqueued the item, so there is nothing to long-poll for.
+        work = await self._client.beta.environments.work.poll(
+            self._environment_id, reclaim_older_than_ms=reclaim_older_than_ms
+        )
+        if work is None:
+            return None
+        return _to_work_item(work)
 
     async def ack(self, work_id: str) -> None:
-        await self._post(f'{self._work_base}/{work_id}/ack')
+        await self._client.beta.environments.work.ack(
+            work_id, environment_id=self._environment_id, timeout=_ACK_TIMEOUT_S
+        )
 
     async def stop(self, work_id: str) -> None:
-        await self._post(f'{self._work_base}/{work_id}/stop')
-
-    async def _post(self, url: str) -> None:
-        async with self._session.post(
-            url, headers=self._headers, params={'beta': 'true'}, timeout=_ACK_TIMEOUT
-        ) as response:
-            response.raise_for_status()
+        await self._client.beta.environments.work.stop(
+            work_id, environment_id=self._environment_id, timeout=_ACK_TIMEOUT_S
+        )
 
 
-def _parse_item(body: object) -> WorkItem | None:
-    if not isinstance(body, dict):
-        raise ValueError(f'unexpected work-poll response: {type(body).__name__}')
+def _to_work_item(work: beta_self_hosted_work.BetaSelfHostedWork) -> WorkItem:
     # The work item wraps the session: top-level `id` is the work id, `data.id` the session id.
-    work_id = body.get('id')
-    if not work_id:
-        return None  # empty queue — nothing claimed
-    data = body.get('data')
-    if not isinstance(data, dict):
-        raise ValueError(f'work item missing data object: {body!r}')
-    session_id = data.get('id')
-    item_type = data.get('type')
-    if not (isinstance(work_id, str) and isinstance(session_id, str) and isinstance(item_type, str)):
-        raise ValueError(f'work item missing string id/data.id/data.type: {body!r}')
-    return WorkItem(work_id=work_id, session_id=session_id, item_type=item_type)
+    return WorkItem(work_id=work.id, session_id=work.data.id, item_type=work.data.type)
