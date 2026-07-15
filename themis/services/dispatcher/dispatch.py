@@ -35,20 +35,21 @@ async def dispatch_run_started(
     """Drain the queue: force-stop non-session items, derive + spawn each session item, never ack."""
     for _ in range(_MAX_ITEMS_PER_DELIVERY):
         item = await work_queue.poll(reclaim_older_than_ms=reclaim_older_than_ms)
-        if item is None:
-            return
-        if not item.is_session:
-            # A non-session item is unexpected (the endpoint subscribes to run_started only): surface it,
-            # and don't let a transient stop failure abort the drain of the remaining session items.
-            _logger.warning(
-                'unexpected non-session work item %s (type=%s); force-stopping', item.work_id, item.item_type
-            )
-            try:
-                await work_queue.stop(item.work_id)
-            except Exception:
-                _logger.exception('failed to force-stop work item %s; continuing drain', item.work_id)
-            continue
-        await _spawn_for(item, deriver, job_runner, environment_id, environment_key)
+        match item:
+            case None:
+                return
+            case work_queue_mod.WorkItem(is_session=False):
+                # A non-session item is unexpected (the endpoint subscribes to run_started only): surface it,
+                # and don't let a transient stop failure abort the drain of the remaining session items.
+                _logger.warning(
+                    'unexpected non-session work item %s (type=%s); force-stopping', item.work_id, item.item_type
+                )
+                try:
+                    await work_queue.stop(item.work_id)
+                except Exception:
+                    _logger.exception('failed to force-stop work item %s; continuing drain', item.work_id)
+            case _:
+                await _spawn_for(item, deriver, job_runner, environment_id, environment_key)
     _logger.warning(
         'reached the per-delivery cap of %d items; any remaining work reclaims on the next webhook',
         _MAX_ITEMS_PER_DELIVERY,
