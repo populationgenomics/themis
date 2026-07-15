@@ -7,10 +7,11 @@ trips). The authoritative check that the Zod is *valid* TypeScript is ``tsc``
 (``bun run smoke:zod``); these substring checks run without it in the ordinary
 pytest job. Freshness against the ``.tsp`` sources is the S0.4 gate.
 
-The ``test_features_*`` cases are the Zod half of the S0.5 round-trip verification:
-each construct in the feature-coverage corpus (``schema/tests/fixtures/features/``)
-projects to its expected Zod combinator. The JSON Schema and Pydantic halves live in
-``test_committed_schemas`` and ``test_generated_pydantic``.
+The ``test_features_*`` cases are the Zod half of the round-trip verification: each
+construct in the feature-coverage corpus (``schema/tests/fixtures/features/``) projects to
+its expected Zod combinator. The proto half lives in ``test_generated_stubs``. Enum and
+timestamp projections are the canonical-JSON forms produced by ``tools.schema.zod_canonicalize``
+(name-string enums, ``z.iso.datetime()``), not ``typespec-zod``'s raw output (ADR 0004).
 """
 
 from __future__ import annotations
@@ -52,15 +53,14 @@ def test_is_dependency_ordered(zod_path: pathlib.Path) -> None:
 @pytest.mark.parametrize(
     'fragment',
     [
-        'export const colour = z.enum(["red", "green", "blue"]);',  # string enum
+        'export const colour = z.enum(["red", "green", "blue"]);',  # int enum -> canonical name strings
         'optional_field: z.string().optional(),',  # optional
         'flagged: z.boolean().optional().default(false),',  # optional-with-default
-        'kind: z.literal("widget"),',  # literal
-        'export const access = z.union([freeToRead, licensed]);',  # named union
         'inner: inner,',  # nested model ref
         'tags: z.array(z.string()),',  # array
         'palette: z.array(colour),',  # array of enum refs
-        'when: z.coerce.date(),',  # utcDateTime scalar format
+        'count: z.number().int().gte(-2147483648).lte(2147483647),',  # int32 range
+        'when: z.iso.datetime(),',  # google.protobuf.Timestamp -> RFC-3339 string
         'link: z.string().url(),',  # url scalar format
     ],
 )

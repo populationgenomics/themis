@@ -1,6 +1,11 @@
-// Optional-with-default: a field carrying a default must be optional (authoring
-// rule — a default on a required field is dropped from the generated model).
-// Emits JSON Schema `default`; Pydantic `bool = False`; Zod `.default(false)`.
+import "@typespec/protobuf";
+
+using TypeSpec.Protobuf;
+
+namespace Features;
+
+// Optional-with-default: a field carrying a default must be optional (authoring rule).
+// proto3 has no field defaults (emits `optional bool`); Zod keeps `.default(false)`.
 model DefaultHolder {
-  flagged?: boolean = false;
+  @field(1) flagged?: boolean = false;
 }

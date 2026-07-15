@@ -1,8 +1,13 @@
+import "@typespec/protobuf";
 import "./common.tsp";
 
-// Array fields: a scalar array and an enum array. Emit {type:array, items:...};
-// Pydantic list[X]; Zod z.array(...).
+using TypeSpec.Protobuf;
+
+namespace Features;
+
+// Array fields: a scalar array and an enum array — emit `repeated` (proto) / z.array
+// (Zod).
 model ArrayHolder {
-  tags: string[];
-  palette: Colour[];
+  @field(1) tags: string[];
+  @field(2) palette: Colour[];
 }

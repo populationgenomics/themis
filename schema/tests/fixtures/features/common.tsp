@@ -1,10 +1,12 @@
-// Types shared across the corpus. Kept in common.tsp to model the layout rule
-// (domain-shared types live here) and to exercise the cross-file ref the
-// bundler must resolve.
+// Types shared across the corpus — the layout rule (domain-shared types live here)
+// and the cross-file ref the emitters must resolve.
+namespace Features;
 
-// String enum: snake_case members, hyphenated string values.
+// Proto enums are integer with a zero-valued first member and identifier-only names;
+// a hyphenated string vocabulary (SPDX licences, access kinds) is a `string` field
+// instead, not an enum (Authoring rules).
 enum Colour {
-  red: "red",
-  green: "green",
-  blue: "blue",
+  red: 0,
+  green: 1,
+  blue: 2,
 }

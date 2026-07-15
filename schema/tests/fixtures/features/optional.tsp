@@ -1,6 +1,12 @@
-// Optional field (no default): the `?` drops the field from JSON Schema
-// `required`; Pydantic `str | None = None`; Zod `.optional()`.
+import "@typespec/protobuf";
+
+using TypeSpec.Protobuf;
+
+namespace Features;
+
+// Optional field (no default): `?` emits `optional` in proto (explicit presence);
+// Zod `.optional()`.
 model OptionalHolder {
-  required_field: string;
-  optional_field?: string;
+  @field(1) required_field: string;
+  @field(2) optional_field?: string;
 }

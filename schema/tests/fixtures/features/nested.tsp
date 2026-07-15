@@ -1,9 +1,14 @@
-// Nested model reference: a model field typed as another named model — emits a
-// $ref to the named subschema (not an inline object), the shape typespec-zod
-// must resolve and json-schema-to-zod could not (design doc, Code generation).
+import "@typespec/protobuf";
+
+using TypeSpec.Protobuf;
+
+namespace Features;
+
+// Nested model reference: a field typed as another named model — emits a nested
+// `message` type (proto) / named object (Zod), not an inline anonymous shape.
 model Inner {
-  value: string;
+  @field(1) value: string;
 }
 model Outer {
-  inner: Inner;
+  @field(1) inner: Inner;
 }

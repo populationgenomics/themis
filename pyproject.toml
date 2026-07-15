@@ -108,7 +108,9 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
 # the schema/ Node project so the emitter's node_modules resolution works.
 testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests"]
-pythonpath = ["."]
+# "." for repo-root packages (themis, tools); schema/tests/proto for the committed
+# feature-corpus proto stub (features_pb2), which test_generated_stubs imports.
+pythonpath = [".", "schema/tests/proto"]
 consider_namespace_packages = true
 
 [tool.ruff]
@@ -121,7 +123,7 @@ target-version = "py313"
 # generated proto/gRPC stubs. Real-domain model dirs join this list when they land
 # (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so this holds even
 # when pre-commit hands ruff explicit paths.
-extend-exclude = ["schema/tests/pydantic", "litcache/models/litcache.py", "themis/rpc"]
+extend-exclude = ["schema/tests/proto", "litcache/models/litcache.py", "themis/rpc"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -240,7 +242,10 @@ include = ["tools", "tests", "schema/tests", "infra", "litcache", "themis"]
 # themis/rpc is generated protoc output (dynamic message classes); the committed
 # .pyi gives importers static types, but the stubs themselves are not standard-mode
 # clean, so exclude them from checking. Re-list pyright's auto-excludes, which
-# specifying `exclude` would otherwise drop.
+# specifying `exclude` would otherwise drop. schema/tests/proto: resolve the generated
+# feature-corpus stub (features_pb2) that test_generated_stubs imports; `ignore` keeps
+# its generated files out of type-checking without replacing pyright's default excludes.
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc"]
-extraPaths = ["infra"]
+extraPaths = ["infra", "schema/tests/proto"]
+ignore = ["schema/tests/proto"]
 typeCheckingMode = "standard"

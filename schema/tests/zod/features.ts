@@ -15,25 +15,6 @@ export const defaultHolder = z.object({
   flagged: z.boolean().optional().default(false),
 });
 
-export const literalHolder = z.object({
-  kind: z.literal("widget"),
-});
-
-export const freeToRead = z.object({
-  access: z.literal("free-to-read"),
-});
-
-export const licensed = z.object({
-  access: z.literal("licensed"),
-  publisher: z.string(),
-});
-
-export const access = z.union([freeToRead, licensed]);
-
-export const accessHolder = z.object({
-  access: access,
-});
-
 export const inner = z.object({
   value: z.string(),
 });
@@ -50,7 +31,6 @@ export const arrayHolder = z.object({
 export const scalarHolder = z.object({
   count: z.number().int().gte(-2147483648).lte(2147483647),
   ratio: z.number(),
-  when: z.coerce.date(),
-  day: z.coerce.date(),
+  when: z.iso.datetime(),
   link: z.string().url(),
 });
