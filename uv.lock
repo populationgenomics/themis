@@ -3500,6 +3500,10 @@ version = "0.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
+agent = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
@@ -3645,6 +3649,10 @@ test = [
 [package.metadata]
 
 [package.metadata.requires-dev]
+agent = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
