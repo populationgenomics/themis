@@ -9,7 +9,6 @@ Docker-gated.
 from __future__ import annotations
 
 import contextlib
-import shutil
 from collections.abc import Iterator
 
 import pg8000.dbapi
@@ -18,11 +17,10 @@ import testcontainers.postgres
 
 from themis.migrate import cloudsql, migrate
 
-_docker = pytest.mark.skipif(shutil.which('docker') is None, reason='Postgres runs as a Docker container')
-
 
 @pytest.fixture
-def connection() -> Iterator[pg8000.dbapi.Connection]:
+def connection(docker_daemon: None) -> Iterator[pg8000.dbapi.Connection]:
+    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
     with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as postgres:
         conn = pg8000.dbapi.connect(
             user=postgres.username,
@@ -42,7 +40,6 @@ _FAILING_SQL = 'CREATE TABLE probe (id integer);\nnot valid sql;'
 _GOOD_SQL = 'CREATE TABLE probe (id integer);'
 
 
-@_docker
 def test_record_rolls_back_a_failed_migration(connection: pg8000.dbapi.Connection) -> None:
     ledger = cloudsql.CloudSqlLedger(connection)
     assert ledger.applied_versions() == set()
@@ -59,7 +56,6 @@ def test_record_rolls_back_a_failed_migration(connection: pg8000.dbapi.Connectio
         assert cursor.fetchall()[0][0] is None
 
 
-@_docker
 def test_record_commits_a_successful_migration(connection: pg8000.dbapi.Connection) -> None:
     ledger = cloudsql.CloudSqlLedger(connection)
     ledger.applied_versions()
