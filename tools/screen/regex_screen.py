@@ -44,7 +44,10 @@ SUPPRESSION_RE = re.compile(r'(?:#|//|/\*|<!--)\s*screen-ignore:\s*\S[^\n]*?(?:\
 
 def _run(cmd: list[str]) -> str:
     # All callers pass literal git subcommands; no untrusted input.
-    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout  # noqa: S603
+    out = subprocess.run(cmd, check=True, capture_output=True).stdout  # noqa: S603
+    # A diff can carry non-UTF-8 bytes (e.g. cp1252 in a text fixture); the patterns are
+    # ASCII, so replacing undecodable bytes neither hides nor invents a match.
+    return out.decode('utf-8', 'replace')
 
 
 def _merge_base(head: str, base: str) -> str:

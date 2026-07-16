@@ -8,6 +8,7 @@ fixture content does not look like an intended CPG identifier. See
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 import pytest
 
@@ -99,6 +100,25 @@ class TestIterAddedLines:
     def test_binary_file_yields_nothing(self) -> None:
         lines = list(regex_screen._iter_added_lines(_load('binary.diff')))
         assert lines == []
+
+
+class TestRun:
+    def test_tolerates_non_utf8_bytes_in_diff(self, tmp_path: pathlib.Path) -> None:
+        # A text file carrying a cp1252 byte (0x93) — git diffs it as text, so the raw
+        # bytes reach _run's decode; a strict UTF-8 decode would raise UnicodeDecodeError.
+        def git(*args: str) -> None:
+            subprocess.run(['git', '-C', str(tmp_path), *args], check=True, capture_output=True)  # noqa: S603, S607
+
+        git('init', '-q')
+        git('config', 'user.email', 'test@example.com')
+        git('config', 'user.name', 'test')
+        (tmp_path / 'f.txt').write_bytes(b'a smart \x93quote\x94 here\n')
+        git('add', 'f.txt')
+
+        out = regex_screen._run(['git', '-C', str(tmp_path), 'diff', '--cached', '--unified=0'])
+
+        assert 'a smart' in out
+        assert '�' in out  # the undecodable bytes became replacement chars, not a crash
 
 
 class TestLoadPatterns:
