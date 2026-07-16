@@ -11,7 +11,17 @@ _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
 
 def test_committed_migrations_are_contiguous() -> None:
     migrations = migrate.discover(_MIGRATIONS_DIR)
-    assert [(m.version, m.name) for m in migrations] == [(1, 'session_context'), (2, 'grants')]
+    assert [(m.version, m.name) for m in migrations] == [
+        (1, 'session_context'),
+        (2, 'grants'),
+        (3, 'litcache_crosswalk'),
+    ]
+
+
+def test_litcache_crosswalk_migration_splits_cleanly() -> None:
+    crosswalk = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'litcache_crosswalk')
+    assert '${' not in crosswalk.sql  # no substitutions — schema/table/index only
+    assert len(migrate.split_statements(crosswalk.sql)) == 3  # CREATE SCHEMA, TABLE, INDEX
 
 
 def test_grants_migration_renders_and_splits_cleanly() -> None:

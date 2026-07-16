@@ -31,14 +31,15 @@ exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto 
 [dependency-groups]
 screen = ["pyyaml"]
 # litcache runtime (litcache/), one clause per dep: google-cloud-storage — GCS
-# Storage backend; psycopg[binary] — Cloud SQL crosswalk mint; docling-core —
+# Storage backend; the cloudsql group (connector + pg8000, IAM auth) — the crosswalk
+# mint's Cloud SQL access, shared with auth/migrate; docling-core —
 # non-OA Docling-json→markdown; pypdfium2 — pdf char-addressability probe;
 # litfetch — OA fetch + raw licence; litdown — JATS/Elsevier XML→markdown from
 # bytes (the OA branch calls it directly on the fetched bytes, added in 0.4);
-# pubmed_proto — bibliographic metadata.json. The three are exact-pinned because
+# pubmed_proto — bibliographic metadata.pb. The three are exact-pinned because
 # they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "psycopg[binary]", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0"]
+litcache = ["google-cloud-storage", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc turns each domain's
 # committed .proto into the generated Python stubs.
 codegen = ["grpcio-tools"]
@@ -161,6 +162,7 @@ ignore = [
 "tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
+    "S106",   # throwaway test-container credentials are not secrets
 ]
 "schema/tests/**" = [
     "S101",   # asserts are the standard pytest idiom

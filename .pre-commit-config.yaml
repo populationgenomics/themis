@@ -15,7 +15,10 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
       - id: debug-statements
+      # litcache test fixtures include a real CC-BY paper's pdf (~800 KB); raise
+      # the 500 KB default to admit it while still catching multi-MB accidents.
       - id: check-added-large-files
+        args: [--maxkb=1024]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.12
