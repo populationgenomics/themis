@@ -1,0 +1,7 @@
+# Generated protobuf stubs: collapse in GitHub diffs and drop from language stats.
+# Collapse only — GitHub still counts these lines in a PR's +/- total, as with any
+# lockfile; to inspect one, expand it in the diff.
+apps/web/src/gen/** linguist-generated=true
+**/*_pb2.py linguist-generated=true
+**/*_pb2.pyi linguist-generated=true
+**/*_pb2_grpc.py linguist-generated=true
