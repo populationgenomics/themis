@@ -14,13 +14,13 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-10T00:02:16.474554Z"
+exclude-newer = "2026-07-10T00:28:46.310467Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-litdown = { timestamp = "2026-07-17T00:02:16.475018Z", span = "PT0S" }
-pubmed-proto = { timestamp = "2026-07-17T00:02:16.475019Z", span = "PT0S" }
-litfetch = { timestamp = "2026-07-17T00:02:16.474715Z", span = "PT0S" }
+litdown = { timestamp = "2026-07-17T00:28:46.31078Z", span = "PT0S" }
+pubmed-proto = { timestamp = "2026-07-17T00:28:46.31078Z", span = "PT0S" }
+litfetch = { timestamp = "2026-07-17T00:28:46.310531Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -3399,6 +3399,7 @@ dataflow = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
     { name = "litdown" },
     { name = "litfetch" },
     { name = "pg8000" },
@@ -3439,6 +3440,7 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "httpx" },
     { name = "litdown" },
     { name = "litfetch" },
     { name = "lxml-stubs" },
@@ -3464,6 +3466,7 @@ litcache = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
     { name = "litdown" },
     { name = "litfetch" },
     { name = "pg8000" },
@@ -3512,6 +3515,7 @@ test = [
     { name = "google-crc32c" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "httpx" },
     { name = "litdown" },
     { name = "litfetch" },
     { name = "pg8000" },
@@ -3551,6 +3555,7 @@ dataflow = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
     { name = "pg8000" },
@@ -3591,6 +3596,7 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
     { name = "lxml-stubs" },
@@ -3616,6 +3622,7 @@ litcache = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
     { name = "pg8000" },
@@ -3662,6 +3669,7 @@ test = [
     { name = "google-crc32c" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.1.0" },
     { name = "pg8000" },

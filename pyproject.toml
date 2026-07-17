@@ -36,10 +36,11 @@ screen = ["pyyaml"]
 # non-OA Docling-json→markdown; pypdfium2 — pdf char-addressability probe;
 # litfetch — OA fetch + raw licence; litdown — JATS/Elsevier XML→markdown from
 # bytes (the OA branch calls it directly on the fetched bytes, added in 0.4);
-# pubmed_proto — bibliographic metadata.pb. The three are exact-pinned because
-# they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
+# pubmed_proto — bibliographic metadata.pb; httpx — async HTTP client for the efetch
+# and Crossref metadata-resolution calls. litfetch/litdown/pubmed_proto are exact-pinned
+# because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "docling-core", "pypdfium2", "protovalidate", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "protovalidate", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
