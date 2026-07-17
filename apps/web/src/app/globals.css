@@ -8,6 +8,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -46,25 +47,161 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Themis workbench design tokens. Light-only, warm palette.
+ * Static hex, role-named — each generates Tailwind utilities (bg-/text-/border-<name>).
+ * Screen agents MUST reference these tokens, never raw hex. Several roles share a
+ * value (e.g. status-running-* == agent-*); they stay separate tokens so a role can
+ * later diverge without touching call sites.
+ *
+ * `static`: emit every variable to :root unconditionally (no usage tree-shaking), so a
+ * screen agent can reference any token via raw `var(--color-*)` (e.g. an inline style)
+ * even before a matching utility is used anywhere.
+ */
+@theme static {
+  /* Ink — text scale. Named `ink-*` to avoid the `text-text-*` stutter;
+     ink-primary also mirrors --foreground (#1C1B1A). */
+  --color-ink-primary: #1c1b1a;
+  --color-ink-body: #34322f;
+  --color-ink-label: #46433f;
+  --color-ink-muted: #5a5754;
+  --color-ink-faint: #8c8881;
+  --color-ink-faintest: #a39e97;
+  --color-ink-ghost: #b4aea6;
+  --color-ink-neutral: #6e6a65;
+
+  /* Lines / separators. Named `line-*` to avoid `border-border-*`;
+     line-primary also mirrors --border, line-input mirrors --input. */
+  --color-line-primary: #e6e2db;
+  --color-line-soft: #efebe4;
+  --color-line-row: #f0ece5;
+  --color-line-softest: #f4f1ea;
+  --color-line-input: #d7d1c7;
+  --color-line-dashed: #dcd6cc;
+  --color-breadcrumb: #cfc9bf;
+  --color-scrollbar-thumb: #d8d2c8;
+  --color-separator-dot: #d8d2c8;
+
+  /* Surfaces. App base white is --background. */
+  --color-surface-warm-panel: #faf8f3;
+  --color-surface-doc-pane: #fcfbf8;
+  --color-surface-cream: #fbf6f0;
+  --color-surface-inset: #f4f1ec;
+  --color-surface-idle: #f2efea;
+
+  /* Primary action orange is --primary (#F05436); this is the README-only hover
+     (the design defines no hover rule). */
+  --color-primary-hover: #d8431f;
+
+  /* Agent / system indigo. Citation chip reuses agent-fg text + agent-border. */
+  --color-agent-fg: #3645a7;
+  --color-agent-tint: #eef0fa;
+  --color-agent-border: #d9def4;
+  --color-citation-bg: #f1f4fb;
+  --color-citation-bg-hover: #e6ecfa;
+
+  /* Teal accent. project-dot is a distinct teal-gray. */
+  --color-teal-fg: #527c7a;
+  --color-teal-tint: #eaf1f1;
+  --color-teal-border: #d5e5e5;
+  --color-teal-project-dot: #658d8d;
+
+  /* Subagent badge / tool-row left rail — amber-tan. */
+  --color-subagent-fg: #9a8050;
+  --color-subagent-bg: #f7efe0;
+  --color-subagent-border: #ecdfc6;
+
+  /* Status chips. running-dot uses animate-pulse-dot. */
+  --color-status-done-fg: #3f7a4e;
+  --color-status-done-bg: #e7f1e9;
+  --color-status-done-border: #cce0d1;
+  --color-status-done-dot: #4f8a5b;
+  --color-status-running-fg: #3645a7;
+  --color-status-running-bg: #eef0fa;
+  --color-status-running-border: #d9def4;
+  --color-status-running-dot: #3645a7;
+  --color-status-idle-fg: #6e6a65;
+  --color-status-idle-bg: #f2efea;
+  --color-status-idle-border: #e6e2db;
+  --color-status-idle-dot: #b4aea6;
+
+  /* Amber family A — surfaced-uncertainty / low-confidence / doc-error / not-found. */
+  --color-amber-uncertainty-icon: #c98a2e;
+  --color-amber-uncertainty-heading: #9a6e1f;
+  --color-amber-uncertainty-body: #6b5526;
+  --color-amber-uncertainty-bg: #faf4e8;
+  --color-amber-uncertainty-border: #ecdfc6;
+
+  /* Amber family B — cited-quote callout, a warmer amber. */
+  --color-amber-quote-eyebrow: #a88a3c;
+  --color-amber-quote-text: #5e4d24;
+  --color-amber-quote-bg: #fcf6e4;
+  --color-amber-quote-border: #ead9a8;
+
+  /* Curator steering bubble — warm cream, the human voice. */
+  --color-curator-bubble-bg: #fbf0e7;
+  --color-curator-bubble-border: #f0dcc8;
+
+  /* Pathogenicity red tier. pill-bg equals surface-cream by value. */
+  --color-path-text: #b23a2e;
+  --color-path-swatch: #c0392b;
+  --color-path-pill-fg: #c2641f;
+  --color-path-pill-bg: #fbf6f0;
+  --color-path-pill-border: #ede0d2;
+
+  /* ACMG strength codes. PM equals path-pill-fg, PP equals teal-fg by value. */
+  --color-acmg-pm: #c2641f;
+  --color-acmg-pp: #527c7a;
+
+  /* <mark> highlight fill + 3px bleed. */
+  --color-mark: #fce7a1;
+
+  /* Input focus ring — the indigo `--ring` (#3645A7) at 7%. Shared by the
+     new-analysis form fields via the `shadow-focus-ring` utility. */
+  --shadow-focus-ring: 0 0 0 3px rgba(54, 69, 167, 0.07);
+
+  /* Modal scrim. */
+  --color-scrim: rgba(28, 27, 26, 0.32);
+
+  /* Design radii, px-exact — supplement the --radius-derived shadcn scale. */
+  --radius-modal: 16px;
+  --radius-panel: 14px;
+  --radius-table: 12px;
+  --radius-card: 11px;
+  --radius-field: 9px;
+  --radius-button: 8px;
+  --radius-chip: 7px;
+  --radius-pill: 6px;
+  --radius-badge: 5px;
+  --radius-tag: 4px;
+
+  /* Running-dot pulse. Named pulse-dot so it does NOT shadow Tailwind's
+     built-in `pulse` keyframe (which fades to .5, not .3). */
+  --animate-pulse-dot: pulse-dot 1.4s ease-in-out infinite;
+}
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* shadcn base tokens retuned to the design's warm, light palette.
+     Kept as raw hex for legibility; screen agents prefer the semantic tokens above
+     and reach for these only via shadcn components. */
+  --background: #ffffff;
+  --foreground: #1c1b1a;
+  --card: #ffffff;
+  --card-foreground: #1c1b1a;
+  --popover: #ffffff;
+  --popover-foreground: #1c1b1a;
+  --primary: #f05436;
+  --primary-foreground: #ffffff;
+  --secondary: #faf8f3;
+  --secondary-foreground: #46433f;
+  --muted: #faf8f3;
+  --muted-foreground: #5a5754;
+  --accent: #f2efea;
+  --accent-foreground: #1c1b1a;
+  --destructive: #c0392b;
+  --border: #e6e2db;
+  --input: #d7d1c7;
+  --ring: #3645a7;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -81,6 +218,8 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Kept as scaffolded but unused: the workbench is light-only for this slice.
+   Retune to a warm dark palette if/when a dark theme is introduced. */
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -120,9 +259,66 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    /* Body default: 14px / 1.6, warm near-black body ink on white. Headings
+       and labels override to their own ink-* roles. */
+    @apply bg-background font-sans text-ink-body antialiased;
+    font-size: 14px;
+    line-height: 1.6;
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* Keyframes. Defined at top level so they are referenceable by
+   name from raw CSS/inline styles, not only via a Tailwind animation utility.
+   `spin` is byte-identical to Tailwind's built-in; `drawerIn` is the source-drawer
+   entrance (support.js applies it on open — screen agents pick the timing). */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes drawerIn {
+  from {
+    transform: translateX(26px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Custom scrollbar: 9px, token thumb radius 6px with a 2px
+   transparent inset, transparent track. Not expressible as stock Tailwind utilities. */
+@layer utilities {
+  .tscroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar-thumb) transparent;
+  }
+  .tscroll::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  .tscroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .tscroll::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar-thumb);
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
 }
