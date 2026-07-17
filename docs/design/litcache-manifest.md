@@ -101,86 +101,107 @@ offsets-cache shapes below are provisional (see [Reference / anchor types](#refe
 
 ## Schema
 
-The TypeSpec, realized in `schema/litcache/source.tsp` (`Source`, `Revision`, `Rendering`, `Access`, the enums) and
-`schema/litcache/manifest.tsp` (`Manifest`, `AssociatedFile`).
+Hand-authored proto in `schema/proto/themis/litcache/models/litcache.proto` (`Source`, `Revision`, `Rendering`, `Access`
+and the enums; `Manifest`, `AssociatedFile`) — the source of truth ([`proto.md`](proto.md)); shown here to keep the
+structural model legible. Enums are proto-canonical (`UPPER_SNAKE`, name-prefixed, `*_UNSPECIFIED = 0` sentinel that is
+never a valid domain value); declared-field invariants are protovalidate options.
 
-```tsp
-// source.tsp: a primary-artifact lineage with append-only revisions.
+```proto
+// The lineage parts.
 enum LicenceBasis {
-  artifact: "artifact"; // read from the fetched bytes (JATS <license>, Elsevier metadata)
-  asserted: "asserted"; // bytes carry no licence, so an access authority supplies it
-                        // (e.g. Unpaywall's OA determination), or we assert the work's
-                        // resolved terms onto a retained seed pdf that carries none
+  LICENCE_BASIS_UNSPECIFIED = 0;
+  LICENCE_BASIS_ARTIFACT = 1;  // read from the fetched bytes (JATS <license>, Elsevier metadata)
+  LICENCE_BASIS_ASSERTED = 2;  // bytes carry no licence, so an access authority supplies it (e.g.
+                               // Unpaywall's OA determination), or we assert the work's resolved
+                               // terms onto a retained seed pdf that carries none
 }
-
-model FreeToRead { access: "free-to-read"; }
-model Licensed { access: "licensed"; publisher: string; }
-model InstitutionCaptured { access: "institution-captured"; }
-model UnknownAccess { access: "unknown"; }
-union Access { FreeToRead, Licensed, InstitutionCaptured, UnknownAccess }
 
 enum SourceKind {
-  pmc_oa_s3: "pmc_oa_s3"; europe_pmc: "europe_pmc"; elsevier_oa: "elsevier_oa";
-  biorxiv: "biorxiv"; upload: "upload"; seed: "seed";
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_PMC_OA_S3 = 1; SOURCE_KIND_EUROPE_PMC = 2; SOURCE_KIND_ELSEVIER_OA = 3;
+  SOURCE_KIND_BIORXIV = 4; SOURCE_KIND_UPLOAD = 5; SOURCE_KIND_SEED = 6;
 }
-// Scraped html is converted to xml upstream and enters as media_type xml under a
-// distinct handle (e.g. "scraped-html") — so html is not a media type here.
-enum SourceFormat { xml: "xml"; pdf: "pdf"; }
-// llm-ocr (vision-model OCR of the pdf) is the preferred pdf route; docling is the
-// legacy fallback, retained so its existing renderings still resolve.
-enum Converter { litdown: "litdown"; docling: "docling"; llm_ocr: "llm-ocr"; }
-
-// One fetched byte-set of a lineage. Blob at sources/{handle}/{hex}.{ext}.
-model Revision {
-  hash: string;              // sha256 hex digest of the raw bytes
-  origin_url?: string;       // external provenance; omitted for seed/upload
-  kind: SourceKind;          // provenance of THIS fetch
-  captured_at: utcDateTime;  // recency signal — NOT array order
-  has_text_layer?: boolean; // pdf only: the pdf carries a recoverable text layer
-                             // (pypdfium2 extracts positioned glyphs) — enables quote→bbox
+// Scraped html is converted to xml upstream and enters as media_type xml under a distinct
+// handle (e.g. "scraped-html") — so html is not a media type here.
+enum SourceFormat { SOURCE_FORMAT_UNSPECIFIED = 0; SOURCE_FORMAT_XML = 1; SOURCE_FORMAT_PDF = 2; }
+// llm-ocr (vision-model OCR of the pdf) is the preferred pdf route; docling is the legacy
+// fallback, retained so its existing renderings still resolve.
+enum Converter {
+  CONVERTER_UNSPECIFIED = 0; CONVERTER_LITDOWN = 1; CONVERTER_DOCLING = 2; CONVERTER_LLM_OCR = 3;
 }
 
-// A primary-artifact lineage. The handle is stable identity across updates.
-model Source {
-  handle: string;            // lineage identity — an open id namespace, NOT an enum:
-                             // e.g. "pdf", "jats-xml", "scraped-html"
-  media_type: SourceFormat;
-  licence: string;           // raw, as litfetch returned it (not an SPDX id)
-  licence_basis: LicenceBasis;
-  access: Access;            // named union — publisher required iff licensed
-  revisions: Revision[];     // append-only, ordered by captured_at; last = current
+// Access disposition of a lineage. A oneof, so publisher exists iff the variant is `licensed` —
+// access-iff-publisher holds structurally; protovalidate requires exactly one variant.
+message FreeToRead {}
+message Licensed { string publisher = 1 [(buf.validate.field).string.min_len = 1]; }
+message InstitutionCaptured {}
+message UnknownAccess {}
+message Access {
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    FreeToRead free_to_read = 1;
+    Licensed licensed = 2;
+    InstitutionCaptured institution_captured = 3;
+    UnknownAccess unknown = 4;
+  }
+}
+
+// One fetched byte-set of a lineage. Blob at sources/{handle}/{hex}.{ext}; current = latest captured_at.
+message Revision {
+  string hash = 1;                 // sha256 hex digest of the raw bytes
+  optional string origin_url = 2;  // external provenance; omitted for seed/upload
+  SourceKind kind = 3;
+  google.protobuf.Timestamp captured_at = 4;  // recency signal — NOT array order
+  optional bool has_text_layer = 5;  // pdf only: recoverable text layer (pypdfium2 glyphs) — enables quote→bbox
+}
+
+// A primary-artifact lineage. `handle` is stable identity across updates.
+message Source {
+  string handle = 1;               // lineage identity, an open id namespace: "pdf" | "jats-xml" | "scraped-html"
+  SourceFormat media_type = 2;
+  string licence = 3;              // raw, as litfetch returned it (not an SPDX id)
+  LicenceBasis licence_basis = 4;
+  Access access = 5 [(buf.validate.field).required = true];
+  repeated Revision revisions = 6 [(buf.validate.field).repeated.min_items = 1];  // append-only, by captured_at
 }
 
 // Markdown derived from one revision via one route. Blob at renderings/{hex}.md.
-model Rendering {
-  from_source: string;       // Source.handle (open id namespace, not an enum)
-  from_revision: string;     // the Revision.hash it rendered
-  converter: Converter;
-  converter_version: string; // the converter tool/harness version
-  model?: string;            // free-text LLM id, e.g. "claude-opus-4-8";
-                             // required iff converter == llm-ocr (writer-enforced)
-  created_at: utcDateTime;
+message Rendering {
+  option (buf.validate.message).cel = {  // model set iff converter is CONVERTER_LLM_OCR
+    id: "rendering.model_iff_llm_ocr"
+    expression: "(this.converter == 3) == (this.model != '')"
+  };
+  string from_source = 1;          // Source.handle (open id namespace, not an enum)
+  string from_revision = 2;        // the Revision.hash it rendered
+  Converter converter = 3;
+  string converter_version = 4;    // the converter tool/harness version
+  optional string model = 5;       // free-text LLM id, e.g. "claude-opus-4-8"; set iff converter is llm_ocr
+  google.protobuf.Timestamp created_at = 6;
 }
 ```
 
-```tsp
-// manifest.tsp: sources + a content-addressed renderings map.
-enum AssociatedFileRole { figure: "figure"; supplementary: "supplementary"; }
-model AssociatedFile {
-  role: AssociatedFileRole;
-  name: string;
-  source_url?: string;
-  path?: string;             // supplementary/{hex}.{ext}; absent until fetched
+```proto
+// The manifest: sources + a content-addressed renderings map.
+enum AssociatedFileRole {
+  ASSOCIATED_FILE_ROLE_UNSPECIFIED = 0;
+  ASSOCIATED_FILE_ROLE_FIGURE = 1;
+  ASSOCIATED_FILE_ROLE_SUPPLEMENTARY = 2;
 }
-model Manifest {
-  doc_id: string;            // uuid4, == directory name
-  external_ids: ExternalIds;
-  claim_key: string;
-  equivalence: Equivalence;
-  retraction: Retraction;
-  sources: Source[];                 // primary artifacts
-  renderings: Record<Rendering>;     // key = markdown content hash (sha256 hex)
-  files: AssociatedFile[];           // supplementary registry (lazy fetch)
+message AssociatedFile {
+  AssociatedFileRole role = 1;
+  string name = 2;
+  optional string source_url = 3;
+  optional string path = 4;        // supplementary/{hex}.{ext}; absent until fetched
+}
+message Manifest {
+  string doc_id = 1;               // uuid4, == directory name
+  ExternalIds external_ids = 2;
+  string claim_key = 3;
+  Equivalence equivalence = 4;
+  Retraction retraction = 5;
+  repeated Source sources = 6;             // primary artifacts
+  map<string, Rendering> renderings = 7;   // key = markdown content hash (sha256 hex)
+  repeated AssociatedFile files = 8;       // supplementary registry (lazy fetch)
 }
 ```
 
@@ -291,24 +312,24 @@ blobs persist, so old cites keep resolving.
 Concrete shapes for the cite model. These live in KU records and a derived cache, not `Manifest`, and are **provisional
 -- the KU layer is deferred**: `ref_id`, the `status` values, and the span type are not yet frozen.
 
-```tsp
-model SourceAnchor {
-  paper_id: string;     // doc_id
-  document_id: string;  // a rendering hash
-  quote: string;        // verbatim, against the rendering's bytes
-  exact: boolean;       // false once only fuzzy realignment held
+```proto
+message SourceAnchor {
+  string paper_id = 1;     // doc_id
+  string document_id = 2;  // a rendering hash
+  string quote = 3;        // verbatim, against the rendering's bytes
+  bool exact = 4;          // false once only fuzzy realignment held
 }
-model SharedAnchor {    // exported form — quote stripped
-  paper_id: string;
-  document_id: string;
-  ref_id: string;
+message SharedAnchor {     // exported form — quote stripped
+  string paper_id = 1;
+  string document_id = 2;
+  string ref_id = 3;
 }
-model ResolvedSpan { start: int32; end: int32; }
-model OffsetsCacheEntry {
-  ref_id: string;
-  rendering: string;    // rendering hash the spans were computed against
-  spans: ResolvedSpan[];
-  status: "exact" | "fuzzy" | "unlocatable";
+message ResolvedSpan { int32 start = 1; int32 end = 2; }
+message OffsetsCacheEntry {
+  string ref_id = 1;
+  string rendering = 2;    // rendering hash the spans were computed against
+  repeated ResolvedSpan spans = 3;
+  string status = 4;       // "exact" | "fuzzy" | "unlocatable" — a proto-canonical enum once frozen
 }
 ```
 

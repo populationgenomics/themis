@@ -111,11 +111,10 @@ projection of these directories.
   capture provenance, a **retraction flag** (§6.1), and **the source URL of every known associated file — even files not
   (yet) downloaded** (a figure or supplementary archive we know exists but haven't fetched). This makes the directory
   self-describing and supports lazy fetch.
-- **`metadata.pb`** holds bibliographic metadata. The **schema is `pubmed_pb2`** (pubmed-proto) — the 37M corpus is
-  already modelled there, so we reuse it rather than re-model — **stored as binary proto** (bucket 1,
-  [proto.md](proto.md)): write-once over the re-derivable PubMed XML. In-corpus and external papers (e.g. bioRxiv,
-  synthesised into the same message) stay uniform downstream; readability is via the dump helper, not a stored JSON
-  copy.
+- **`metadata.pb`** holds bibliographic metadata. The **schema is `pubmed_proto`** — the 37M corpus is already modelled
+  there, so we reuse it rather than re-model — **stored as binary proto** (bucket 1 [proto.md](proto.md)): write-once
+  over the re-derivable PubMed XML. In-corpus and external papers (e.g. bioRxiv, synthesised into the same
+  `PubmedArticle`) stay uniform downstream; readability is via the dump helper, not a stored JSON copy.
 
 ### 2.2 Identity — canonical id + external-id crosswalk
 

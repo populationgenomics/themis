@@ -1,6 +1,6 @@
-// The litcache at-rest manifest and its parts (ADR 0002, ADR 0005). A durable, authored
-// contract: binary proto at rest, gated additively. This proto is the source of truth; the
-// committed themis/litcache/models/litcache_pb2 stubs are generated from it.
+// The litcache at-rest manifest and its parts (structural model: docs/design/litcache-manifest.md).
+// A durable, authored contract: binary proto at rest, gated additively. This proto is the source of
+// truth; the committed themis/litcache/models/litcache_pb2 stubs are generated from it.
 
 syntax = "proto3";
 
