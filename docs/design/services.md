@@ -64,11 +64,10 @@ committed stubs drift from the `.proto` — after any `.proto` change, re-run `r
 **One `Request` in, one `Response` out** — literally proto's `rpc Method(Request) returns (Response)`. A method returns
 the domain resource when it maps to one (`resolveSession → SessionContext`,
 `getWorkingDocument → WorkingDocumentSnapshot`), else a named `<Op>Response` (`putWorkspace → PutWorkspaceResponse`).
-Two carve-outs, both first-class in proto: a streaming payload is a `@stream` of a chunk message (`putWorkspace`
+Two carve-outs, both first-class in proto: a streaming payload is a `stream` of a chunk message (`putWorkspace`
 client-streams, `getWorkspace` server-streams `WorkspaceChunk`), and a read whose only input is the implicit session
-takes no request model — the emitter maps a paramless op to `google.protobuf.Empty`. The wire evolves additively (add a
-field, never renumber or remove — retire with `@reserve`), so a generated caller never breaks; `buf breaking` enforces
-it.
+takes `google.protobuf.Empty` as its request message. The wire evolves additively (add a field, never renumber or remove
+— retire with a `reserved` statement), so a generated caller never breaks; `buf breaking` enforces it.
 
 ## The forced interface: the generated servicer base
 

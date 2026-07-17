@@ -23,7 +23,7 @@ Settled (interview):
   per-domain sets.
 - **Hand-rolled runner**, porting #76's `migrate.py` — no ORM, no Alembic, no third-party migration CLI.
 - **Runs from the deploy pipeline** (a CI step after `pulumi up`), connecting as a schema-owning **migrator DB role**.
-- **Hand-written SQL** is the source of truth for the schema (TypeSpec stays wire/at-rest *model* authoring, not DDL).
+- **Hand-written SQL** is the source of truth for the schema (proto stays wire/at-rest *model* authoring, not DDL).
 - **First migration = the `session_context` table, standalone** (`token_hash`, `project_id`, `analysis_id`; no foreign
   keys) — enough to unblock auth.
 - **Lives in a top-level `db/`.**

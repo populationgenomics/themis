@@ -398,20 +398,20 @@ isolation later (the worker's tool runner is pluggable, §12). Two containers:
   not forwarded on the agent's behalf. The forward-and-inject machinery is retained but dormant: it is the mechanism the
   genomics/compute RPCs will use when the model again calls an internal API through the proxy (§1, §12).
 
-  **Transport — gRPC (HTTP/2, binary protobuf) over TypeSpec-authored proto.** The internal data-plane services (the
-  store and auth this slice; the genomics/compute APIs the model scripts later) speak gRPC, their contracts authored in
-  TypeSpec and emitted to `.proto` (see [`../design/services.md`](../design/services.md)). Credential injection across
-  the untrusted boundary drives the shape, and this slice makes it trivial: the model calls no data-plane service, so
-  the proxy is the store's gRPC **client**, injecting the session token as `x-themis-session-token` metadata (and the SA
-  ID token as `authorization`) on its own `workspace put`/`get` — a per-call option, no forwarding involved. The
-  Anthropic route stays an HTTP/1.1 reverse proxy (third-party REST, below). The dormant forward leg — agent → proxy →
-  an internal gRPC service, for the genomics/compute RPCs (§1, §12) — is a fixed-upstream, method-allowlisting,
-  metadata-injecting HTTP/2 forwarder: gRPC's structure (upstream from config, not client-named; `/pkg.Service/Method`
-  paths allowlisted exactly; HTTP/2-native streaming) keeps it small, not the Envoy-class rebuild REST framing would
-  force. The committed `.proto` is the contract: the server subclasses the generated servicer base — the interface is
-  forced structurally, `buf breaking` gates evolution, and the generated stub ships in the sandbox image for the model
-  to call. gRPC is less self-inspectable than JSON in code mode, but the model calls the typed stub, not raw HTTP, and
-  streaming is first-class (the workspace sync).
+  **Transport — gRPC (HTTP/2, binary protobuf).** The internal data-plane services (the store and auth this slice; the
+  genomics/compute APIs the model scripts later) speak gRPC, their contracts defined as `.proto` (see
+  [`../design/services.md`](../design/services.md)). Credential injection across the untrusted boundary drives the
+  shape, and this slice makes it trivial: the model calls no data-plane service, so the proxy is the store's gRPC
+  **client**, injecting the session token as `x-themis-session-token` metadata (and the SA ID token as `authorization`)
+  on its own `workspace put`/`get` — a per-call option, no forwarding involved. The Anthropic route stays an HTTP/1.1
+  reverse proxy (third-party REST, below). The dormant forward leg — agent → proxy → an internal gRPC service, for the
+  genomics/compute RPCs (§1, §12) — is a fixed-upstream, method-allowlisting, metadata-injecting HTTP/2 forwarder:
+  gRPC's structure (upstream from config, not client-named; `/pkg.Service/Method` paths allowlisted exactly;
+  HTTP/2-native streaming) keeps it small, not the Envoy-class rebuild REST framing would force. The committed `.proto`
+  is the contract: the server subclasses the generated servicer base — the interface is forced structurally,
+  `buf breaking` gates evolution, and the generated stub ships in the sandbox image for the model to call. gRPC is less
+  self-inspectable than JSON in code mode, but the model calls the typed stub, not raw HTTP, and streaming is
+  first-class (the workspace sync).
 
   Its hardening, each property load-bearing on the Anthropic route (the store-client leg validates the store's hostname
   and injects the session token as `x-themis-session-token` metadata):
@@ -790,7 +790,7 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
 | Live mid-run draft pane                                   | a debounced draft blob the proxy overwrites on file-change (§9)                                                                                                                                                                                         |
 | Queryable version metadata                                | a Cloud SQL metadata table pointing at the version blobs; only if versions need relational queries (§9)                                                                                                                                                 |
 | accept-to-publish freeze                                  | a retention hold on the chosen immutable version object (§9)                                                                                                                                                                                            |
-| Typed genomics / compute RPCs (async monitor token)       | gRPC over TypeSpec→proto; the model scripts a spec-generated stub through the proxy's forward route, session token injected there as metadata; heavyweight/long work returns a monitor token the model polls, so nothing long-blocking runs inline (§6) |
+| Typed genomics / compute RPCs (async monitor token)       | gRPC with a `.proto` contract; the model scripts a generated stub through the proxy's forward route, session token injected there as metadata; heavyweight/long work returns a monitor token the model polls, so nothing long-blocking runs inline (§6) |
 | Parallel / isolated tool execution                        | custom self-hosted worker with per-thread workspace/shell (the worker's tool runner is pluggable); serial-shared-state is the MA-worker default, not a self-hosting artifact (§6)                                                                       |
 | Intra-turn durability for long computations               | periodic durable-glob checkpoint / debounced draft blob; the code-mode gate where a mid-turn re-run is expensive, since checkpoints are `end_turn`-only (§4, §9)                                                                                        |
 | Analysis branching / model-driven commits                 | git-shaped; GCS versioning covers history + persistence, not branching (§9)                                                                                                                                                                             |

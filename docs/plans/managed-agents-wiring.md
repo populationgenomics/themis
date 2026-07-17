@@ -117,7 +117,7 @@ The happy path for one variant, auth to a persisted, reviewable Analysis.
 the MCP writer now present): the **MCP server** edits the working-document **draft** during the run; the **BFF** writes
 the Analysis row + the MCP grant (step 3), **snapshots the working-document version at the turn boundary** (step 5), and
 writes the session-end trace + source projection (step 9). One schema owner — the Python tool tier — both tiers using
-the TypeSpec-generated types ([§7](#7-persistence--trace)).
+the proto-generated types ([§7](#7-persistence--trace)).
 
 ## 2. Scope & relationship to the designs
 
@@ -174,7 +174,7 @@ thing that exercises the whole path, shaped so the deferred pieces slot in witho
   working-document editor toolset is the first, minimal instance of that typed-tool seam (a validated, grant-bound
   data-plane write); the genomics tools follow.
 - Roster specialization (fresh-context reviewer, agentic gatherers) beyond `[self]`.
-- Typed/structured ACMG output, the claims/verdicts model, the TypeSpec ACMG domain — the working document is loose
+- Typed/structured ACMG output, the claims/verdicts model, the proto ACMG domain — the working document is loose
   markdown, structured only at the citation seam.
 - A Project-management UI (invite / role administration); reports / accept-to-publish; anchored comments; Analysis
   branching; SSE push.
@@ -407,7 +407,7 @@ FastMCP dependency): it extracts the bearer, hashes it, looks up the grant, auth
 `GrantContext(analysis_id, project_id, created_by)` into the handler. Tools receive **resolved context**, never raw
 bearers or ids; the editor tools use it now, and the later `record_claim` / `record_gap` / `record_verdict` tools
 inherit binding + authorization for free. The cross-language contract — the `mcp_session_grant` row shape and the
-hashing constant — is **TypeSpec-defined** (§7), so the TS minter (BFF) and the Python validator (MCP server) stay in
+hashing constant — is **proto-defined** (§7), so the TS minter (BFF) and the Python validator (MCP server) stay in
 lockstep.
 
 **Lifecycle.** Mint on session create; revoke at **session end** — keyed off `session.status_terminated`, **not** the
@@ -511,7 +511,7 @@ typed/structured ACMG claims; anchored comments; Analysis branching; SSE push.
 Cloud SQL (Postgres), provisioned this slice (§8), holds everything. The artifacts are small and few (synthetic, a
 handful of variants), so blobs are **text columns**, not GCS — GCS-as-source-of-truth is litcache's pattern and earns
 its keep at litcache scale, not here. **The Python tool tier owns the schema + forward-only migrations** (§5); the BFF
-is a reader + session-plane writer; both tiers type their rows from the TypeSpec source
+is a reader + session-plane writer; both tiers type their rows from the `.proto` source
 ([`../design/proto.md`](../design/proto.md)).
 
 ### Minimal schema
@@ -548,7 +548,7 @@ The normalized `AgentRun` / `ToolCall` / claim / verdict trace of the (still-unw
 
 One schema owner keeps the writers safe (§5). The BFF accesses Postgres via a TS driver over the Cloud SQL Node
 connector (IAM auth, no password — `spike-infrastructure.md` §7), typed queries against the tool-tier-owned schema with
-row shapes validated by the TypeSpec-generated types; no ORM or migrations on the BFF side.
+row shapes validated by the proto-generated types; no ORM or migrations on the BFF side.
 
 ### Migrations
 
@@ -625,7 +625,7 @@ multiagent thread rendering) with no persistence beyond the Analysis.
 
 **M2 — the working document.** Add the data-plane tool seam + the per-session grant + the artifact pane.
 
-- TypeSpec domain for the slice's shapes (rows incl. `mcp_session_grant` + wire/display models); the full schema +
+- Proto domain for the slice's shapes (rows incl. `mcp_session_grant` + wire/display models); the full schema +
   forward-only migrations (tool tier).
 - Python MCP server (working-document editor tools + per-edit validation → the `working_document` draft in Cloud SQL) +
   its SA + the shared grant auth util (§5); the BFF mints the per-session grant (`mcp_session_grant` + the Anthropic
@@ -659,7 +659,7 @@ The ACMG guiding prompt + working-document outline start as placeholders through
 | Self-hosted execution sandbox                                             | environment `config.type` → `self_hosted` + a worker (§3, §8)                                                                        |
 | Curated genomics MCP tools + typed `record_*` emits                       | new tools on the tool tier; the per-session grant + data-plane mediation already exercised by the working-document editor tools (§5) |
 | Roster specialization (reviewer, gatherers)                               | agent `multiagent.agents` roster edit (§3)                                                                                           |
-| Typed/structured ACMG claims + TypeSpec ACMG domain                       | typed emits + citation-fidelity grow in the editor tools' per-edit validation layer; the claims model the MCP tools own (§6, §7)     |
+| Typed/structured ACMG claims + proto ACMG domain                          | typed emits + citation-fidelity grow in the editor tools' per-edit validation layer; the claims model the MCP tools own (§6, §7)     |
 | Project-management UI                                                     | CRUD over `project` / `user_project`, on the enforcement already in place (§4)                                                       |
 | Reports / accept-to-publish                                               | freezes a `working_document_version` (§6)                                                                                            |
 | Anchored comments                                                         | the code-point-span contract — litcache-era (§6)                                                                                     |
