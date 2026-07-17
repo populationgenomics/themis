@@ -2,8 +2,7 @@
 
 **Related:** [`../plans/literature-cache.md`](../plans/literature-cache.md) (the motivating at-rest models),
 [`services.md`](services.md) (the service pattern built on the RPC protos),
-[`0002-manifest-renderings-and-reference-model.md`](../adr/0002-manifest-renderings-and-reference-model.md) (the
-litcache manifest structural model).
+[`litcache-manifest.md`](litcache-manifest.md) (the litcache manifest structural model).
 
 ## Purpose
 

@@ -1,13 +1,18 @@
-# ADR 0002: Per-source revisions, content-addressed renderings, the quote-reference model
+# Design: litcache manifest — per-source revisions, content-addressed renderings, the quote-reference model
 
-**Status:** Accepted; serialization superseded by [`../design/proto.md`](../design/proto.md). Defines the manifest's
-source/rendering model and the quote-durable cite model that the KU layer (deferred) anchors against. Realized in
-`schema/proto/themis/litcache/models/litcache.proto` and the writer. **The structural model here stands; only its
-serialization moved:** the manifest is a binary proto message (`manifest.pb`), not closed JSON, and `Access` is a proto
-`oneof` over the four access variants (the iff-invariant is structural, with the residual constraints as `protovalidate`
-options — see proto.md). The JSON below is a *rendering* of the binary form, not the at-rest artifact.
+**Status:** current **Related:** [`proto.md`](proto.md) (serialization + the litcache proto),
+[`literature-evidence-layer.md`](literature-evidence-layer.md) §2 (the cache),
+[`../plans/literature-cache.md`](../plans/literature-cache.md) (the S0 build plan).
 
-## Context
+## Overview
+
+The litcache manifest's structural model: a paper's primary vs supplementary files as per-source lineages with
+append-only revisions, content-addressed renderings, and the quote-durable cite the KU layer anchors against. Serialized
+as a binary proto (`manifest.pb`); the JSON shown below is a *rendering*, not the at-rest artifact — `Access` is a proto
+`oneof` over the four access variants (access-iff-`publisher` structural), the residual constraints protovalidate
+options (see [`proto.md`](proto.md)).
+
+## Background
 
 The manifest must capture, as simply as the domain allows:
 
@@ -306,6 +311,12 @@ model OffsetsCacheEntry {
   status: "exact" | "fuzzy" | "unlocatable";
 }
 ```
+
+## Implementation state
+
+Shipped: the proto schema (`schema/proto/themis/litcache/models/litcache.proto`) + generated stubs, and the `Access`
+boundary validator. The cache writer, the readers, and the KU layer that anchors against the quote-reference model are
+staged in the build plan ([`../plans/literature-cache.md`](../plans/literature-cache.md)).
 
 ## Open questions
 

@@ -98,13 +98,13 @@ split a later data migration — filter the redistributable objects out — not 
 Each paper is a **GCS directory** holding all its artifacts: source `xml` and/or `pdf`, derived `markdown`, extracted
 `figures/` (images), `supplementary/` files, the write-once `knowledge_units.pb` (Layer 1 model output, §4.2), and the
 derived `entities.pb` (the entity→KU map — stable entity ids + mention clustering, rebuildable, §4.2). **Revisions are
-additive and content-addressed** ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)): an updated source
-(a re-fetch, a PMC article-version bump, a PubMed revision) is collected as an **additional revision of that source
-lineage**, and a re-conversion as an **additional content-addressed rendering** — existing bytes are **never
-overwritten**, so a knowledge unit that cites a given rendering hash always resolves to the exact, unchanged text it was
-extracted from (§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s linked by an
-equivalence edge, §2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud SQL (§2.3) is
-a rebuildable projection of these directories.
+additive and content-addressed** ([the litcache-manifest design](litcache-manifest.md)): an updated source (a re-fetch,
+a PMC article-version bump, a PubMed revision) is collected as an **additional revision of that source lineage**, and a
+re-conversion as an **additional content-addressed rendering** — existing bytes are **never overwritten**, so a
+knowledge unit that cites a given rendering hash always resolves to the exact, unchanged text it was extracted from
+(§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s linked by an equivalence edge,
+§2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud SQL (§2.3) is a rebuildable
+projection of these directories.
 
 - **`manifest.pb`** describes the directory: this UUID, all known external ids (§2.2), any equivalence edges linking it
   to other UUIDs of the same work + the resulting canonical UUID (§2.2), the licence, access, and quality tags (§2),
@@ -438,7 +438,7 @@ IRI resolves, and improving the ontology never disturbs the extracted assertions
 A unit's `cite` records **`(doc_id, document_id, quote, exact)`** — the paper id, the **rendering hash** the quote was
 made against (`document_id` is a content hash, not a converter-named version), the **verbatim supporting quote**, and
 whether the alignment that produced it was exact. The quote is the durable, boundary-side anchor; offsets are **not** in
-the cite — they are a recomputable cache ([ADR 0002](../adr/0002-manifest-renderings-and-reference-model.md)).
+the cite — they are a recomputable cache ([the litcache-manifest design](litcache-manifest.md)).
 
 - **Why the quote, not offsets.** Offsets are valid only against one exact byte sequence, so re-rendering (a better
   converter, a re-fetch) invalidates them; the quote survives, because it re-aligns into any rendering that still

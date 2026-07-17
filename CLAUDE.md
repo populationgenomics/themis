@@ -44,6 +44,10 @@ The primary audience for docs is a model reading them as context; humans second.
 mechanism, and rationale once — no rhetorical emphasis, no persuasion, no recaps. Every token written is re-paid on
 every future read.
 
+Design docs are the durable design record — one living doc per area under `docs/design/`, rewritten in place. There are
+no ADRs: rationale lives in the doc's `Alternatives considered`, chronology in git. See
+[`docs/style/design-docs.md`](docs/style/design-docs.md) for the policy and template.
+
 `CLAUDE.md` and `.claude/rules/` go further: model-only context, not human docs. Include only what changes behavior — no
 maintainer notes, no describing harness mechanics (which rules load when, where files live). Such content costs tokens
 every session and changes nothing; human-facing explanation belongs in `docs/` or code.
