@@ -151,6 +151,9 @@ follow-on) → clinical hardening. Each new scenario is cheap: swap {guiding pro
 Genomic and (later) patient data are the sensitive asset; the architecture is shaped around **not being able to leak
 them**.
 
+- **Single default-on chokepoint for every critical security check** — default-deny, exemptions explicitly allowlisted,
+  enforced at the resource not only the perimeter. How every check below is built; see
+  [`docs/design/security.md`](design/security.md).
 - **Lethal trifecta** (private data × untrusted content × external channel), mitigated primarily by **tool-surface
   design** — per-tool permissions and data-flow, tightly-typed constrained tools (enums, not free-form strings), **local
   data over open-internet queries**. Not post-hoc output filtering.
