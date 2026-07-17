@@ -73,9 +73,9 @@ What Anthropic gives us, condensed from the
 - **Two credentials, strictly split**: the environment key (Console-generated, `sk-ant-oat01-…`) authenticates the
   worker to its queue and nothing else; the org API key creates sessions and reads queue stats and must never reach a
   worker host.
-- The per-session pattern is a container whose entrypoint is **`ant beta:worker run`**, reading `ANTHROPIC_SESSION_ID`,
-  `ANTHROPIC_WORK_ID`, `ANTHROPIC_ENVIRONMENT_ID`, `ANTHROPIC_ENVIRONMENT_KEY` — and honoring **`ANTHROPIC_BASE_URL`**,
-  which is the hook the credential proxy hangs on.
+- The per-session pattern is a container whose entrypoint is the **first-party Python worker** (`themis/agent/worker.py`
+  → `EnvironmentWorker.handle_item()`), reading `ANTHROPIC_SESSION_ID`, `ANTHROPIC_WORK_ID`, `ANTHROPIC_ENVIRONMENT_ID`,
+  `ANTHROPIC_ENVIRONMENT_KEY` — and honoring **`ANTHROPIC_BASE_URL`**, which is the hook the credential proxy hangs on.
 - `web_search` / `web_fetch` are Anthropic **server tools**; the self-hosted worker's toolset implements only
   `bash`/`read`/`write`/`edit`/`glob`/`grep`, so on that evidence they execute **Anthropic-side**, not in our sandbox —
   but the docs do not state the execution locus for self-hosted sandboxes, so this is inferred, not documented, and
@@ -94,19 +94,26 @@ What Anthropic gives us, condensed from the
 
 ### Verified worker mechanics
 
-Read from the worker implementations, not the docs: `anthropic-sdk-python` @ `5e98d72`, `anthropic-sdk-typescript` @
-`96d1a99`, `anthropic-sdk-go` @ `v1.55.1` (the version `anthropic-cli` pins), and the `ant` CLI itself; all four agree.
-These are implementation behavior, not documented contract — re-verify the constants on worker upgrades.
+Read from the worker implementations, not the docs: the deployed worker is the first-party Python `EnvironmentWorker`
+(`anthropic-sdk-python`, the version pinned in the agent image); its mechanics below are read from that SDK and
+cross-checked against `anthropic-sdk-typescript` @ `96d1a99` and `anthropic-sdk-go` @ `v1.55.1`, which agree except
+where noted (the per-tool cap). These are implementation behavior, not documented contract — re-verify the constants on
+worker upgrades.
 
 - **Release trigger.** The worker holds its session and exits only when the session emits `session.status_idle` with
-  `stop_reason: end_turn` and stays quiet for `max_idle` (default **60 s**; any newer event resets the countdown;
-  `--max-idle 0` disables the timeout), or when the session terminates. An idle with `stop_reason: requires_action`
-  never arms the countdown — but this design produces no such idle: `requires_action` arises only from a custom tool or
-  an `always_ask` permission policy, and the agent's toolset (`bash`, the file tools, `web_search`/`web_fetch`, default
-  `always_allow`, no custom tools — §10) has neither, so every idle is `end_turn` or terminal. The task-timeout backstop
-  for a would-be `requires_action` hold is therefore defensive (config drift, a future trigger), not an operating mode
-  (§6). Idle timeout and termination are benign exits (the CLI exits **0**), and on every exit the worker force-stops
-  its work item.
+  `stop_reason: end_turn` and stays quiet for `max_idle` (default **60 s** = `DEFAULT_MAX_IDLE`; any newer event resets
+  the countdown; `--max-idle 0` releases as soon as the turn idles — the float flag has no value that disables release,
+  which needs `max_idle=None`), or when the session terminates. An idle with `stop_reason: requires_action` never arms
+  the countdown. The command tool is a custom tool (`shell`, §10), so each `shell` call *does* produce a
+  `requires_action` idle while the session waits for its `user.custom_tool_result` — but the worker's own session tool
+  runner answers that in process (it owns the shell) and the session resumes, so a `shell` `requires_action` is
+  transient and never arms the release clock, which gates on `end_turn` only. The only `requires_action` that would hold
+  the sandbox is one the worker cannot clear — a tool routed to no local implementation, or an `always_ask` policy —
+  which the toolset avoids: the prebuilt file/web tools keep the default `always_allow`, and the custom `shell` tool
+  needs no policy (the worker, not a human, answers it). The task-timeout backstop for such a would-be hold is therefore
+  defensive (config drift, a future trigger), not an operating mode (§6) — verify-on-deploy that a `shell`
+  `requires_action` idle clears without arming the release clock or the checkpoint. Idle timeout and termination are
+  benign exits (the worker exits **0**), and on every exit the worker force-stops its work item.
 - **Lease heartbeat.** A dedicated background task, started before skills download; first beat immediate, then every
   `min(lease TTL / 2, 30 s)` — fully independent of tool execution, so a long-running command can never lose the lease.
   A stop signal reaches the worker via the heartbeat: either the success body says `state: stopping/stopped` or the
@@ -114,14 +121,15 @@ These are implementation behavior, not documented contract — re-verify the con
   runner.
 - **Tool dispatch.** Tool calls arrive on the session's SSE event stream, reconciled against the paginated events list
   on every reconnect; results post back via `events.send`. The sandbox never calls the queue's `work/poll` endpoint —
-  the dispatcher polls (§5). The `ant beta:worker run` worker itself does not `ack`; it only `heartbeat`s and `stop`s
-  its own work item. Who issues the `ack`, and when, is a recovery-critical design choice (§5): the ack is issued
-  **inside the sandbox** (by the proxy, once restore succeeds), never by the dispatcher before the spawn.
+  the dispatcher polls (§5). The worker itself does not `ack`; it only `heartbeat`s and `stop`s its own work item. Who
+  issues the `ack`, and when, is a recovery-critical design choice (§5): the ack is issued **inside the sandbox** (by
+  the proxy, once restore succeeds), never by the dispatcher before the spawn.
 - **Per-tool-call ceiling.** The bash tool defaults to 120 s per command; the model can pass `timeout_ms`, but the
-  session runner wraps every tool call in its own cap — 120 s in the CLI/Go worker (not flag-exposed; 150 s in Python).
-  On timeout the shell is killed and restarted and the model sees an error result; bash output is capped at 100 KiB
-  (tail kept). Long computations therefore run as agent-backgrounded processes polled across bash calls, and must finish
-  within the sandbox's lifetime.
+  session runner wraps every tool call in its own **150 s** cap (`TOOL_TIMEOUT`, the Python worker's default, kept ~30 s
+  above the bash default so the inner timeout fires and tears down the shell before the outer one can). On timeout the
+  shell is killed and restarted and the model sees an error result; bash output is capped at 100 KiB (tail kept). Long
+  computations therefore run as agent-backgrounded processes polled across bash calls, and must finish within the
+  sandbox's lifetime.
 - **Work-item grain.** Items are enqueued at session creation and when a *dormant* session receives a new message. One
   item spans every run served while the worker is attached: a steering message inside the idle grace resets the
   countdown and reuses the same sandbox. After release, the next message must produce a fresh item — the dormancy
@@ -144,7 +152,7 @@ flowchart TB
   subgraph gcp["GCP project · cpg-themis-dev"]
     disp["sandbox dispatcher · Cloud Run<br/>webhook → poll (no ack) · derive session token · spawn"]
     subgraph job["sandbox job · one Cloud Run Job execution per spawn"]
-      agentc["agent container<br/>ant worker · tool execution · no credentials"]
+      agentc["agent container<br/>Python worker · tool execution · no credentials"]
       ws[("/workspace<br/>shared emptyDir")]
       proxy["credential proxy sidecar<br/>env key + session token (only two)"]
     end
@@ -191,19 +199,20 @@ One session, from spawn to release, then respawn:
    Run Job execution**, injecting the environment key and the session token into the **proxy** container only.
 1. The **proxy** starts first. It restores `/workspace` from the store — the latest working-document version into the
    contract path, plus the session's ephemeral scratch (§9) — then **acks** the work item (only now, restore proven —
-   §5) and marks itself ready, gating the agent container's start, so `ant beta:worker run` always boots onto the
-   restored filesystem.
-1. The **agent** (`ant beta:worker run`) runs the tool loop: it reads the session's events *paginated* (`GET /events`,
-   then posts each `user.tool_result`), and `bash`/file tools operate on the shared `/workspace`, where the model
-   **edits the working document as a plain file** at the contract path. It calls no data-plane service.
-1. The **proxy** — which holds the environment key — separately subscribes to the session's own real-time event stream
-   (`GET /v1/sessions/{id}/events/stream`, SSE) through the Anthropic SDK, which handles keep-alive and reconnect. When
-   it sees `session.status_idle` with `stop_reason.type == end_turn` it **checkpoints**: snapshots the durable glob (the
-   paths marked for versioning, §9) into a new immutable working-document version and syncs the ephemeral scratch, via
-   the store under the session token. The worker detects the same idle internally and starts its 60 s release countdown,
-   so the checkpoint runs concurrently with it (§9). (The paginated agent traffic never carries `end_turn`, and the
-   worker CLI exposes no per-turn hook, so the proxy sourcing the signal from the stream itself is the only place it is
-   observable — §9.)
+   §5) and marks itself ready, gating the agent container's start, so the worker always boots onto the restored
+   filesystem.
+1. The **agent** (the Python worker) runs the tool loop: it **streams** the session's events (SSE), dispatches each
+   `agent.tool_use` / `agent.custom_tool_use` and posts back the matching result, and `shell`/file tools operate on the
+   shared `/workspace`, where the model **edits the working document as a plain file** at the contract path. It calls no
+   data-plane service.
+1. The **proxy** — which holds the environment key — runs its **own** subscription to the session's real-time event
+   stream (`GET /v1/sessions/{id}/events/stream`, SSE) through the Anthropic SDK, which handles keep-alive and
+   reconnect. When it sees `session.status_idle` with `stop_reason.type == end_turn` it **checkpoints**: snapshots the
+   durable glob (the paths marked for versioning, §9) into a new immutable working-document version and syncs the
+   ephemeral scratch, via the store under the session token. The worker detects the same idle on its own stream and
+   starts its 300 s release countdown, so the checkpoint runs concurrently with it (§9). (The checkpoint rides the
+   proxy's independent subscription, not the agent's traffic, so it does not depend on how the worker reads events; the
+   worker exposes no per-turn hook to hang it on either way — §9.)
 1. The worker releases, force-stops its work item, and the **job execution exits 0**. Scale-to-zero until the next
    steer.
 1. The next steering turn fires another `run_started`; a fresh sandbox spawns and restores `/workspace` from the store.
@@ -231,7 +240,7 @@ sequenceDiagram
   Store-->>Proxy: latest doc version + scratch → unpack into /workspace (empty on first spawn)
   Proxy->>MA: ack work item (restore proven — §5)
   Proxy-->>Agent: ready — startup gate released
-  Agent->>Proxy: ant worker run · open event stream
+  Agent->>Proxy: Python worker · open event stream
   Proxy->>MA: subscribe session events (env key injected)
   Note over MA,Agent: one held-open outbound SSE stream · worker-initiated, nothing routes in
   loop each tool call · on the one open stream
@@ -248,7 +257,7 @@ sequenceDiagram
     Store->>Auth: resolve session token → Analysis
     Store->>Store: key objects server-side, write version-per-blob
   and release countdown
-    Note over Agent: --max-idle 60 s
+    Note over Agent: --max-idle 300 s
   end
   Agent->>Proxy: force-stop work item
   Proxy->>MA: forward stop · worker exits 0
@@ -265,19 +274,21 @@ sandbox: the only externally-initiated connection that triggers a sandbox spawn 
 dispatcher (§5), and the sandbox exposes no port of its own. That is what lets it be a scale-to-zero Job behind
 internal-only networking (§8) rather than a reachable service.
 
-**Run-lived, with a grace window.** The worker exits 60 s (`--max-idle`, §2) after the `end_turn` idle; a steer landing
-inside that window reuses the live sandbox instead of respawning. `--max-idle` is a latency/cost knob, but latency is
-not a driver here — a steer invokes long-running work, not a chat reply (§1), so the cold start on the first steer or
-after a pause past the window is dominated by the work it triggers, not felt as UI lag. We therefore keep `--max-idle`
-low and favour scale-to-zero; correctness does not depend on it either way, because `/workspace` is checkpoint/restored
-(§9).
+**Run-lived, with a grace window.** The worker exits 300 s (`--max-idle`, §2 — the deployed value; the SDK default
+`DEFAULT_MAX_IDLE` is 60 s) after the `end_turn` idle; a steer landing inside that window reuses the live sandbox
+instead of respawning. Latency is not what sizes the window — a steer invokes long-running work, not a chat reply (§1),
+so a cold start after a pause past the window is dominated by the work it triggers, not felt as UI lag. The window is
+sized to the worst-case checkpoint instead: the concurrent post-idle `workspace put` must finish under `--max-idle`
+before the sidecar is reaped (§9), and a cold-started store sets that floor. Reuse correctness does not depend on the
+window — `/workspace` is checkpoint/restored (§9); only the checkpoint does.
 
 **"Idle" is a protocol state, not a traffic heuristic** (§2). The release countdown arms only on the `end_turn` idle
-event, never on output silence, and a `requires_action` idle holds the sandbox indefinitely — so the minutes-long
-thinking gaps *between* tool calls never read as idle. Nor does a long computation: it cannot be a single command (the
-runner caps each call at ~120 s, §2), so it runs as an agent-backgrounded process polled across bash calls while the
-session stays `running` and the background heartbeat holds the lease. A 30-minute analysis is many sub-120 s polls, not
-one in-flight call — and looks `running`, never idle, throughout.
+event, never on output silence; a `requires_action` idle never arms it (a `shell` call's `requires_action` is answered
+by the worker in-process and clears at once; an unanswered one would hold the sandbox rather than release it) — so the
+minutes-long thinking gaps *between* tool calls never read as idle. Nor does a long computation: it cannot be a single
+command (the runner caps each call at ~150 s, §2), so it runs as an agent-backgrounded process polled across `shell`
+calls while the session stays `running` and the background heartbeat holds the lease. A 30-minute analysis is many
+sub-150 s polls, not one in-flight call — and looks `running`, never idle, throughout.
 
 **Long-run maintenance events — connections break, `/workspace` survives.** For executions running **beyond ~1 h**,
 Cloud Run may migrate the task between machines during a maintenance event. The docs describe this as a **live
@@ -359,14 +370,15 @@ One Cloud Run Job execution per sandbox spawn — its own instance (Cloud Run's 
 a fresh filesystem, exiting when the worker releases the session (§4). A Job task has CPU allocated for its entire
 lifetime — there is no request-based throttling because there are no requests — so long computations run at full speed;
 this is why the sandbox is a Job and not a request-billed service. A long computation is not one long tool call (the
-runner caps each call at ~120 s, §2): the agent backgrounds the process and polls it across bash calls, keeping the
+runner caps each call at ~150 s, §2): the agent backgrounds the process and polls it across `shell` calls, keeping the
 session `running` — and the sandbox alive — until the work completes. The Job's **task timeout** is the ultimate
 backstop and must be **set explicitly**, sized to the longest legitimate session plus margin — not Cloud Run's short
 default, which would kill a long agent-backgrounded computation. It caps the cost of a worker network-partitioned from
 Anthropic — which can't even receive the heartbeat `412` that would otherwise stop it (§2), so only its own
-self-exit-on-failure (if any, §12) or the timeout ends it — and, defensively, of a would-be `requires_action` hold,
-which this design does not otherwise produce (no custom tools, no `always_ask` — §2). The timeout bounds one instance,
-not a session that keeps re-spawning; that is the queue-depth alert and runbook's job (§11).
+self-exit-on-failure (if any, §12) or the timeout ends it — and, defensively, of a `requires_action` hold the worker
+cannot clear (a tool routed to no local implementation, or an `always_ask` policy — §2; the custom `shell` tool's own
+`requires_action` the worker answers in-process). The timeout bounds one instance, not a session that keeps re-spawning;
+that is the queue-depth alert and runbook's job (§11).
 
 **One runner, one shell, one workspace per session.** The worker runs a single tool runner over one persistent bash
 session and one `/workspace` for the whole session — tool calls execute **serially**, so the coordinator's up-to-25
@@ -380,12 +392,14 @@ token (§12), so nothing long-blocking runs inline. The residual — shared muta
 analysis — the async-RPC direction avoids; and self-hosting, unlike the cloud, holds the lever to add per-thread
 isolation later (the worker's tool runner is pluggable, §12). Two containers:
 
-- **Agent container** — the untrusted one; all tool execution happens here. Entrypoint `ant beta:worker run`; env: the
-  session/work/environment ids, `ANTHROPIC_BASE_URL=http://127.0.0.1:<proxy-port>`, and a **placeholder**
-  `ANTHROPIC_ENVIRONMENT_KEY` (the CLI requires one; the proxy replaces the header, so the value is never valid). Image:
-  a slim base plus `ant`, a Python runtime, and the document linter (§9). Workdir `/workspace` (the shared emptyDir,
-  checkpoint/restored, §9); an in-memory volume at `/mnt/session/outputs` satisfies the harness contract (the system
-  prompt directs deliverables to the working-document file, so anything written there is discarded by design).
+- **Agent container** — the untrusted one; all tool execution happens here. Entrypoint the **Python worker**
+  (`python -m themis.agent.worker`); env: the session/work/environment ids,
+  `ANTHROPIC_BASE_URL=http://127.0.0.1:<proxy-port>`, and a **placeholder** `ANTHROPIC_ENVIRONMENT_KEY` (the SDK client
+  requires a bearer; the proxy replaces the header, so the value is never valid). Image: a slim Python base plus the
+  anthropic SDK, the generated gRPC stubs (code mode, §1), and the document linter (§9). Workdir `/workspace` (the
+  shared emptyDir, checkpoint/restored, §9); an in-memory volume at `/mnt/session/outputs` satisfies the harness
+  contract (the system prompt directs deliverables to the working-document file, so anything written there is discarded
+  by design).
 
 - **Credential proxy sidecar** — a **host-pinning reverse proxy** for the Anthropic route (not a forward proxy: a
   forward proxy honors client-named upstreams, which would let agent code tunnel anywhere), **the sandbox's sync
@@ -441,9 +455,9 @@ isolation later (the worker's tool runner is pluggable, §12). Two containers:
 Matching is **path-only** (the query string is stripped first — every worker call carries `?beta=true`) and the ids are
 **literal, not wildcard segments**. Both the bare resource and its subtree are allowed on purpose: the worker issues a
 bare `GET /v1/sessions/<sid>` at startup — session retrieve, unconditionally, before the skills loop and whether or not
-the agent has any skills (verified in the SDK source, §2). A subtree-only `…/**` pattern would 403 that call. The two
-SDK workers then diverge: the Python worker **fails the whole job** (the retrieve is outside its skills try/except), and
-the `ant`/Go worker — the one we deploy — **logs a warning and runs on with skills silently skipped**. Either way the
+the agent has any skills (verified in the SDK source, §2). A subtree-only `…/**` pattern would 403 that call, which the
+deployed Python worker turns into a **whole-job failure**: the retrieve sits outside the per-skill try/except
+(`download_session_skills`), so a 403 aborts the tool context's `__aenter__` rather than merely skipping skills. So the
 entry is required. Pinning the literal `<sid>`/`<wid>` (rather than a `*` segment) is what confines the sandbox to *its
 own* session and work item — a wildcard would admit other sessions' and other work items' paths, including the
 queue-level `/work/poll` and `/work/stats` that must never be reachable (§2). The one surface the allowlist **cannot**
@@ -608,7 +622,7 @@ by an explicit persistence contract:
 
 - **Direct file editing.** The model authors the working document with the standard, well-trained file tools
   (`edit`/`grep`/`read`/`write`/`glob`) on a plain markdown file at a **contract path** in `/workspace`. There is no
-  store CLI and no MCP editor tools; the agent YAML drops `mcp_toolset` and `mcp_servers` and enables `bash` + the file
+  store CLI and no MCP editor tools; the agent YAML drops `mcp_toolset` and `mcp_servers` and enables `shell` + the file
   tools (§10). The system prompt tells the model where the file is and what shape it takes (the ACMG outline, wiring
   §3).
 - **Persistence contract.** A glob names the **durable** paths (default: the working document); the complement is
@@ -683,12 +697,13 @@ complement of the durable glob, and the store persists it in the ephemeral bucke
 server-side from the resolved session token.
 
 These endpoints take no caller-supplied key: the store derives the blob key server-side from the resolved session token
-(§7), so even a request agent `bash` hand-crafts to the store at L3 (§8) can only ever touch its own session's state.
+(§7), so even a request the agent hand-crafts through `shell` to the store at L3 (§8) can only ever touch its own
+session's state.
 
 - **Restore — proxy, on startup, gates the agent, then acks.** The agent container declares a startup dependency on the
   proxy; the proxy calls `workspace get`, unpacks into `/workspace`, and — only once restore completes — issues the
-  work-item `ack` (§5) and releases the gate, so `ant beta:worker run` boots onto the restored filesystem and no item is
-  acked until its sandbox is proven up. A restore that fails closed (below) never acks, so reclaim re-surfaces the item.
+  work-item `ack` (§5) and releases the gate, so the worker boots onto the restored filesystem and no item is acked
+  until its sandbox is proven up. A restore that fails closed (below) never acks, so reclaim re-surfaces the item.
   - *Untrusted input.* The agent controls `/workspace` and can `workspace put` a hand-crafted archive, so extraction
     rejects entries with `..`, absolute paths, or symlink/hardlink escapes, confines every write under `/workspace`, and
     caps decompressed size, entry count, and compression ratio — unhardened, a crafted archive is an arbitrary-write or
@@ -710,21 +725,22 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
     a bounded in-process retry (retryable gRPC codes, backoff, within the spawn), added only if such errors are observed
     (§12); a cross-spawn reclaim loop is the wrong tool for it. A cold-start crash that never reaches restore still
     reclaims (§5); a per-Analysis crash-loop there is an infrastructure alert, not restore state.
-- **Checkpoint — proxy, on the session's own `end_turn` stream.** The agent (`ant beta:worker run`) reads its events
-  *paginated*, so `end_turn` never crosses the reverse-proxied agent traffic, and the worker CLI exposes no per-turn
-  hook (verified against the Go CLI + SDK). The proxy holds the environment key, so it separately subscribes to the
-  session's own real-time stream (`GET /v1/sessions/{id}/events/stream`, SSE) via the Anthropic SDK — which handles
+- **Checkpoint — proxy, on its own `end_turn` subscription.** The proxy holds the environment key, so it subscribes to
+  the session's own real-time stream (`GET /v1/sessions/{id}/events/stream`, SSE) via the Anthropic SDK — which handles
   keep-alive and reconnect — in a background task and watches for `session.status_idle` /
-  `stop_reason.type == end_turn`. On that signal it copies the durable glob — small (the versioned document this slice)
-  — to a staging path while the tool loop is quiet, then tars-and-`workspace put`s that copy as the new version (gated
-  as above), so a steer landing inside the grace and re-arming the worker cannot tear the versioned snapshot. Scratch it
-  tars live and best-effort: a steer inside the grace may tear it, but only scratch, never the versioned document, is
-  affected — consistency of files an agent-backgrounded process (§4) is still writing is the agent's responsibility.
-  There is **no SIGTERM backstop**: a single, observable trigger keeps a checkpoint failure attributable (fail-loud)
-  rather than masked by a fallback, and because `end_turn` fires at the start of the release grace the async checkpoint
-  — bounded by a store-call timeout under `--max-idle` — always resolves before the sidecar is reaped.
+  `stop_reason.type == end_turn`. This subscription is **independent of the worker's event reads**: the streaming worker
+  also sees `end_turn` on its own stream, but the checkpoint rides the proxy's subscription, not the agent's traffic,
+  and the worker exposes no per-turn hook — so the proxy sourcing the signal itself is what keeps the checkpoint
+  observable and worker-independent. On that signal it copies the durable glob — small (the versioned document this
+  slice) — to a staging path while the tool loop is quiet, then tars-and-`workspace put`s that copy as the new version
+  (gated as above), so a steer landing inside the grace and re-arming the worker cannot tear the versioned snapshot.
+  Scratch it tars live and best-effort: a steer inside the grace may tear it, but only scratch, never the versioned
+  document, is affected — consistency of files an agent-backgrounded process (§4) is still writing is the agent's
+  responsibility. There is **no SIGTERM backstop**: a single, observable trigger keeps a checkpoint failure attributable
+  (fail-loud) rather than masked by a fallback, and because `end_turn` fires at the start of the release grace the async
+  checkpoint — bounded by a store-call timeout under `--max-idle` — always resolves before the sidecar is reaped.
 - **Lifetime — the grace window is the checkpoint window.** The `end_turn` idle that triggers the checkpoint is the same
-  event that starts the 60 s `--max-idle` release countdown (§2), so checkpoint and release run concurrently; a
+  event that starts the 300 s `--max-idle` release countdown (§2), so checkpoint and release run concurrently; a
   scratch-sized `workspace put` finishes well inside the grace. Across the run-lived boundary, state flows spawn N →
   checkpoint at idle → store → restore at spawn N+1, so the agent sees a continuous `/workspace` and **run-lived becomes
   indistinguishable from session-lived** (the Vercel reframe), scale-to-zero intact.
@@ -748,10 +764,11 @@ These endpoints take no caller-supplied key: the store derives the blob key serv
   ours now), applied by the existing control-plane apply. It is **the** environment for the slice — the wiring plan's
   cloud environment is dropped (self-hosted from the first synthetic scenarios, §1). (A cloud environment can serve as a
   throwaway dev/test harness for app iteration while the sandbox is de-risked, but it is not a shipped path.) The agent
-  YAML drops `mcp_toolset` and `mcp_servers` and enables `bash`, the file tools, and the `web_search` / `web_fetch`
-  server tools (default `always_allow`, no custom tools — §2); the system prompt teaches the contract path (§9). The BFF
-  stops parking the session token in an Anthropic vault (`vault_ids` disappears from session create) and records only
-  the bearer's hash — the bearer is derived per spawn, not stored (§7).
+  YAML drops `mcp_toolset` and `mcp_servers`, enables the prebuilt file tools and the `web_search` / `web_fetch` server
+  tools (default `always_allow`), and replaces the prebuilt `bash` with a custom `shell` tool carrying a model-stated
+  `intent` (§2); the system prompt teaches the contract path (§9). The BFF stops parking the session token in an
+  Anthropic vault (`vault_ids` disappears from session create) and records only the bearer's hash — the bearer is
+  derived per spawn, not stored (§7).
 - **`infra/themis_infra/sandbox.py`** (new module): the dispatcher service + SA, the sandbox job + its minimal SA
   (`run.invoker` on the sandbox-reachable services only), the environment-key secret plumbing, the VPC egress wiring,
   the Cloud DNS response policy, and the egress-IP allowlist. Prerequisite: the baseline has no VPC/subnet today —
@@ -832,12 +849,12 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
   `reclaim_older_than_ms` re-surfaces it; `ack` moves it `queued → starting` (setting `acknowledged_at`) and it is
   **not** auto-recovered — no reclaim re-surfaces a `starting` item without a heartbeat. So an acked-then-died sandbox
   strands its item, which is why the ack is deferred into the sandbox (§5) (validated against a live `self_hosted`
-  environment). Open: whether `ant beta:worker run` itself acks (a build check — a redundant proxy ack is harmless
-  either way); and the acked-*and-heartbeated*-then-died variant (only ack-without-heartbeat is characterised).
-  Incidental API facts: the poll response's top-level `id` is the work id and its nested `data.id` the session id; the
-  poll's `secret: null` shows work-item operations authenticate on the env key + work id, not a per-item secret (§5);
-  and `GET /work/{id}` status reads need a control-plane (`workspace:developer`) credential, not the env key
-  (poll/ack/heartbeat/stop only — §11's cred split).
+  environment). The deployed Python worker's `handle_item` does **not** ack — it only heartbeats and force-stops
+  (`EnvironmentWorker._handle_item`) — so the proxy's ack is the sole ack. Open: the acked-*and-heartbeated*-then-died
+  variant (only ack-without-heartbeat is characterised). Incidental API facts: the poll response's top-level `id` is the
+  work id and its nested `data.id` the session id; the poll's `secret: null` shows work-item operations authenticate on
+  the env key + work id, not a per-item secret (§5); and `GET /work/{id}` status reads need a control-plane
+  (`workspace:developer`) credential, not the env key (poll/ack/heartbeat/stop only — §11's cred split).
 - **Dormancy re-enqueue threshold** — work items are enqueued at session creation and when a "long-dormant" session
   receives a new message; the threshold is server-side and appears in no client code. Confirm with a live probe that a
   steer arriving *after* the worker released but *before* whatever "long-dormant" means still enqueues a work item
@@ -879,18 +896,23 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
 - **Working-document retention on `terminated`** — the versions are the deliverable, so the default is **keep** (a
   reopened Analysis restores its last version, §9), unlike the scratch which is deleted. Decide any age/cost GC policy
   on the working-document bucket separately, and confirm nothing keys document deletion off the `terminated` webhook.
-- **`requires_action` — no operating mode** — the agent has no custom tools and no `always_ask` policy, so no turn idles
-  on `requires_action` (§2, §6); its task-timeout backstop is defensive only. Were one to occur it was acked on restore,
-  so at task-timeout it is an acked-`starting` item — which is **not** reclaimed (the model above) — so it strands, it
-  does not loop. The other path — a document that fails closed on every restore — does not loop either: a restore error
-  is terminal, the proxy acks and stops the item rather than reclaiming (§9).
-- **Worker behavior on sustained failure** — read from the SDK source (as with the other §2 mechanics): does the
-  `ant`/Go worker self-exit after N failed heartbeats or event-stream reconnects, and after how long? If so, that
-  (minutes) is the real burn bound on a broken stream or a partition; if not, only the task timeout (§6) caps it.
+- **`requires_action` — no *holding* idle** — the custom `shell` tool's `requires_action` idle is answered in-process by
+  the worker (§2, §6), so it clears at once and never arms the release clock or the checkpoint (both gate on
+  `end_turn`); with no `always_ask` policy and no unowned tool, nothing else parks a turn on `requires_action`. Its
+  task-timeout backstop is defensive only. Were a holding `requires_action` to occur it was acked on restore, so at
+  task-timeout it is an acked-`starting` item — which is **not** reclaimed (the model above) — so it strands, it does
+  not loop. The other path — a document that fails closed on every restore — does not loop either: a restore error is
+  terminal, the proxy acks and stops the item rather than reclaiming (§9).
+- **Worker behavior on sustained failure** (resolved from the SDK source, §2). The Python worker's heartbeat loop
+  (`_heartbeat_loop`) self-exits once no heartbeat succeeds within the lease TTL (server-provided; ~90 s until the first
+  heartbeat response), or at once on a 4xx — so a full partition from Anthropic ends the worker in tens of seconds, well
+  under the task timeout (§6). A broken **event stream alone** does not self-exit: `_stream_loop` reconnects forever at
+  capped backoff (≤10 s), so with heartbeats still flowing only the task timeout caps it. Re-verify these constants on
+  worker upgrades.
 - **Skills exposure** — enabling `/v1/skills` grants a compromised sandbox an org-wide skill read; gate it on keeping
   skills free of sensitive content (§6).
-- **Checkpoint size vs grace** — a large workspace may not `workspace put` within the 60 s grace; raise `--max-idle`, or
-  checkpoint incrementally (delta upload) rather than a full tar (§9).
+- **Checkpoint size vs grace** — a large workspace may not `workspace put` within the 300 s grace; raise `--max-idle`
+  further, or checkpoint incrementally (delta upload) rather than a full tar (§9).
 - **Webhook fan-out** — endpoints are Console-registered with per-`data.type` subscriptions (an endpoint receives only
   the types it subscribes to). Whether **two** endpoints can coexist is undocumented; here the dispatcher wants only
   `session.status_run_started` and the BFF receiver only `session.status_terminated` (the per-turn `idled` snapshot is

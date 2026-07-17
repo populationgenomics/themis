@@ -407,9 +407,10 @@ def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateT
 class SandboxJob(pulumi.ComponentResource):
     """The sandbox Cloud Run Job (agent + proxy sidecar) and its invoke-only SA.
 
-    One execution per spawn: the agent (main) runs ``ant beta:worker run`` and its exit-0 completes the
-    execution; the proxy sidecar holds the credentials. The agent depends on the proxy's startup probe,
-    which the proxy passes only after it restores /workspace — so the agent always boots restored.
+    One execution per spawn: the agent (main) runs ``python -m themis.agent.worker`` and its exit-0
+    completes the execution; the proxy sidecar holds the credentials. The agent depends on the proxy's
+    startup probe, which the proxy passes only after it restores /workspace — so the agent always boots
+    restored.
     Per-execution secrets (env key, session token, ids) are injected by the dispatcher's ``jobs.run``,
     never baked here.
 
@@ -474,10 +475,11 @@ class SandboxJob(pulumi.ComponentResource):
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                             name='agent',
                             image=agent_image,
-                            # `ant beta:worker run` stops this long after a turn's end_turn (default 1m); widened
+                            # The worker stops this long after a turn's end_turn (worker default 60s); widened
                             # so the proxy's post-idle checkpoint has room to ride out a cold-started store
                             # within the window (§9). The sandbox is billed only for this idle, per session.
-                            args=['--max-idle', '300s'],
+                            # Plain seconds — themis/agent/worker.py's --max-idle parses a float.
+                            args=['--max-idle', '300'],
                             depends_ons=['proxy'],
                             resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
                                 limits={'cpu': '1', 'memory': '2Gi'}

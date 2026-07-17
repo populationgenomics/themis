@@ -3376,6 +3376,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 agent = [
+    { name = "anthropic" },
     { name = "grpcio" },
     { name = "protobuf" },
 ]
@@ -3529,6 +3530,7 @@ test = [
 
 [package.metadata.requires-dev]
 agent = [
+    { name = "anthropic" },
     { name = "grpcio" },
     { name = "protobuf" },
 ]

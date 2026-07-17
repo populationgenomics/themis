@@ -80,10 +80,11 @@ dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "goog
 # subscribes to the session event stream through; grpcio (via the session group) is the generic gRPC
 # forward proxy. Includes the session client for id_token (the SA ID token on the forward channel).
 proxy = ["aiohttp", "anthropic", { include-group = "session" }]
-# sandbox agent image (themis/agent): the untrusted `ant beta:worker run` container. grpcio + protobuf
-# back the generated stubs the model imports to call internal services in code mode; the
-# working-document linter (themis/document_linter) is stdlib-only.
-agent = ["grpcio", "protobuf"]
+# sandbox agent image (themis/agent): the untrusted first-party worker container. anthropic supplies the
+# EnvironmentWorker the entrypoint runs and the custom-tool decorator the model-stated-intent shell tool
+# uses; grpcio + protobuf back the generated stubs the model imports to call internal services in code
+# mode; the working-document linter (themis/document_linter) is stdlib-only.
+agent = ["grpcio", "protobuf", "anthropic"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
@@ -100,7 +101,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests", "themis/agent/tests"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -155,6 +156,10 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
     "S106",   # throwaway test-container credentials are not secrets
+]
+"themis/agent/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
 ]
 "schema/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
