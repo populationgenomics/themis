@@ -11,32 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
-from typing import Any, Protocol
 
 from google.cloud.sql import connector
 
+from themis.common import sql
 from themis.rpc import auth_pb2
 from themis.services.auth import backend as auth_backend
-
-# pg8000 returns heterogeneous positional row tuples; typing the payload buys no safety.
-# (`_Row` aliases `Any`; ANN401 targets a literal `Any`, not an alias.)
-_Row = Any
-
-
-class _Cursor(Protocol):
-    """The pg8000 DBAPI cursor surface used here."""
-
-    def execute(self, operation: str, args: Sequence[object] = ()) -> object: ...
-    def fetchone(self) -> _Row | None: ...
-    def close(self) -> None: ...
-
-
-class _Connection(Protocol):
-    """The pg8000 DBAPI connection surface used here."""
-
-    def cursor(self) -> _Cursor: ...
-    def close(self) -> None: ...
 
 
 class CloudSqlBackend(auth_backend.SessionBackend):
@@ -53,13 +33,12 @@ class CloudSqlBackend(auth_backend.SessionBackend):
         self._iam_user = iam_user
         self._connector = connector.Connector()
 
-    def _connect(self) -> _Connection:
-        return self._connector.connect(
-            self._connection_name,
-            'pg8000',
-            user=self._iam_user,
-            db=self._database,
-            enable_iam_auth=True,
+    def _connect(self) -> sql.Connection:
+        return sql.iam_connect(
+            self._connector,
+            connection_name=self._connection_name,
+            database=self._database,
+            iam_user=self._iam_user,
         )
 
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:

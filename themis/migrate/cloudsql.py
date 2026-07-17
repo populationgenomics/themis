@@ -14,47 +14,15 @@ from __future__ import annotations
 import contextlib
 import pathlib
 from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
 
 from google.cloud.sql import connector
 
+from themis.common import sql
 from themis.migrate import config, migrate
-
-# pg8000 returns heterogeneous positional row tuples (str, datetime, …); typing the
-# element payload buys no safety, so it stays dynamic. (`_Row` aliases `Any`; ANN401
-# targets a literal `Any` in an annotation, not an alias.)
-_Row = Any
 
 # Arbitrary application-wide key; every run takes this one session-level advisory
 # lock, so concurrent runs (overlapping deploys) serialize. 0x7468656d6973 = 'themis'.
 _MIGRATION_LOCK_KEY = 0x7468656D6973
-
-
-class _Cursor(Protocol):
-    """The pg8000 DBAPI cursor surface used here."""
-
-    def execute(self, operation: str, args: Sequence[object] = ()) -> object: ...
-    def fetchall(self) -> Sequence[_Row]: ...
-    def close(self) -> None: ...
-
-
-class _Connection(Protocol):
-    """The pg8000 DBAPI connection surface used here."""
-
-    def cursor(self) -> _Cursor: ...
-    def commit(self) -> None: ...
-    def close(self) -> None: ...
-
-
-def _iam_connect(sql: config.SqlConfig, pool: connector.Connector) -> _Connection:
-    """Open one IAM-authed pg8000 connection to the Cloud SQL instance."""
-    return pool.connect(
-        sql.connection_name,
-        'pg8000',
-        user=sql.iam_user,
-        db=sql.database,
-        enable_iam_auth=True,
-    )
 
 
 class CloudSqlLedger(migrate.Ledger):
@@ -71,7 +39,7 @@ class CloudSqlLedger(migrate.Ledger):
         'version integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())'
     )
 
-    def __init__(self, conn: _Connection) -> None:
+    def __init__(self, conn: sql.Connection) -> None:
         self._conn = conn
 
     def applied_versions(self) -> set[int]:
@@ -94,7 +62,7 @@ class CloudSqlLedger(migrate.Ledger):
 
 
 def apply_migrations(
-    sql: config.SqlConfig,
+    sql_config: config.SqlConfig,
     migrations_dir: pathlib.Path,
     substitutions: Mapping[str, str],
 ) -> Sequence[int]:
@@ -104,7 +72,7 @@ def apply_migrations(
     lock (released when the connection closes) serializes concurrent runs.
 
     Args:
-        sql: The Cloud SQL connection inputs.
+        sql_config: The Cloud SQL connection inputs.
         migrations_dir: The folder holding the `NNNN_name.sql` files.
         substitutions: The `${VAR}` values (the IAM DB-user logins for the GRANTs).
 
@@ -114,7 +82,14 @@ def apply_migrations(
     migrations = migrate.discover(migrations_dir)
     with (
         contextlib.closing(connector.Connector()) as pool,
-        contextlib.closing(_iam_connect(sql, pool)) as conn,
+        contextlib.closing(
+            sql.iam_connect(
+                pool,
+                connection_name=sql_config.connection_name,
+                database=sql_config.database,
+                iam_user=sql_config.iam_user,
+            )
+        ) as conn,
     ):
         with contextlib.closing(conn.cursor()) as cursor:
             cursor.execute('SELECT pg_advisory_lock(%s)', (_MIGRATION_LOCK_KEY,))

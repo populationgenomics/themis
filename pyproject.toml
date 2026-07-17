@@ -107,7 +107,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 [tool.pytest.ini_options]
 # schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
 # the schema/ Node project so the emitter's node_modules resolution works.
-testpaths = ["tests", "schema/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests"]
 # "." for repo-root packages (themis, tools); schema/tests/proto for the committed
 # feature-corpus proto stub (features_pb2), which test_generated_stubs imports.
 pythonpath = [".", "schema/tests/proto"]
@@ -165,6 +165,10 @@ ignore = [
     "S106",   # throwaway test-container credentials are not secrets
 ]
 "schema/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+]
+"themis/common/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]

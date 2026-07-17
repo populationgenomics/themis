@@ -1,4 +1,4 @@
-"""Tests for the shared GCS blob helpers (``themis.storage``) against ``fake-gcs-server``."""
+"""Tests for the shared GCS blob helpers (``themis.common.storage``) against ``fake-gcs-server``."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import hashlib
 import pytest
 from google.cloud import storage as gcs
 
-from themis import storage
+from themis.common import storage
 
 
 def test_put_is_content_addressed(gcs_bucket: gcs.Bucket) -> None:
