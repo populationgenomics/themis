@@ -1,0 +1,26 @@
+# buf module and gates for the hand-authored protos (proto.md). The .proto files under
+# schema/proto/ are the source of truth; `tools/schema/regen.py` runs `buf generate` to
+# emit the committed Python stubs, and apps/web emits protobuf-es from the same protos.
+version: v2
+modules:
+  - path: schema/proto
+deps:
+  - buf.build/bufbuild/protovalidate
+lint:
+  # BASIC (structural) + the two enum-canonical rules (UPPER_SNAKE prefixed values, a
+  # *_UNSPECIFIED zero member) + PROTOVALIDATE. The package/directory rules are excepted:
+  # the RPC services co-locate distinct-package protos (themis.rpc.auth, .store, .hello) in
+  # themis/rpc/ because each package names a distinct gRPC service wire path that deployed
+  # clients bind — consolidating to one package, or splitting to one directory each, would
+  # break those wire paths or churn every import.
+  use:
+    - BASIC
+    - ENUM_VALUE_PREFIX
+    - ENUM_ZERO_VALUE_SUFFIX
+    - PROTOVALIDATE
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+    - DIRECTORY_SAME_PACKAGE
+breaking:
+  use:
+    - FILE

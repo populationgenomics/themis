@@ -8,9 +8,9 @@ on:
 
 jobs:
   backward-compatible:
-    # `buf breaking` is the sole authored-data compat gate — it diffs the committed
-    # proto contracts against their baseline (RPC proto today; at-rest artifacts join
-    # as they converge onto proto, ADR 0003 follow-up). Skip on the
+    # `buf breaking` is the sole authored-data compat gate — it diffs every committed
+    # proto contract (RPC and at-rest) against its baseline; a pre-release contract is
+    # skipped until it stabilizes (tools/schema/buf_compat.py). Skip on the
     # public mirror (themis), and skip draft PRs.
     if: |
       github.repository == 'populationgenomics/themis-internal'

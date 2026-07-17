@@ -127,7 +127,7 @@ typed emits, trace feeders); web tier in [`../design/frontend-framework.md`](../
 [`../design/spike-infrastructure.md`](../design/spike-infrastructure.md) §1/§6/§8; deploy auth + confidential model
 config in [`../design/deployment.md`](../design/deployment.md); entities in
 [`../design/workspace-model.md`](../design/workspace-model.md); the future source-ref resolution in
-[`../design/typespec.md`](../design/typespec.md) +
+[`../design/proto.md`](../design/proto.md) +
 [`../design/literature-evidence-layer.md`](../design/literature-evidence-layer.md) §4.2. The UI lifts evidence-viewer /
 citation-anchor patterns from [`populationgenomics/flowa`](https://github.com/populationgenomics/flowa). This plan
 **decides** the first buildable vertical slice; the design docs hold the why.
@@ -512,7 +512,7 @@ Cloud SQL (Postgres), provisioned this slice (§8), holds everything. The artifa
 handful of variants), so blobs are **text columns**, not GCS — GCS-as-source-of-truth is litcache's pattern and earns
 its keep at litcache scale, not here. **The Python tool tier owns the schema + forward-only migrations** (§5); the BFF
 is a reader + session-plane writer; both tiers type their rows from the TypeSpec source
-([`../design/typespec.md`](../design/typespec.md)).
+([`../design/proto.md`](../design/proto.md)).
 
 ### Minimal schema
 

@@ -39,9 +39,10 @@ screen = ["pyyaml"]
 # pubmed_proto — bibliographic metadata.pb. The three are exact-pinned because
 # they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "docling-core", "pypdfium2", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
-# Schema codegen (tools/schema/regen.py): grpcio-tools' protoc turns each domain's
-# committed .proto into the generated Python stubs.
+litcache = ["google-cloud-storage", "docling-core", "pypdfium2", "protovalidate", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+# Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
+# from the buf-exported protos. Its bundled protoc pins the generated-code version to the
+# protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
 codegen = ["grpcio-tools"]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
@@ -83,47 +84,38 @@ proxy = ["aiohttp", "anthropic", { include-group = "session" }]
 # back the generated stubs the model imports to call internal services in code mode; the
 # working-document linter (themis/document_linter) is stdlib-only.
 agent = ["grpcio", "protobuf"]
-# check-jsonschema: the metaschema validator the schema tests shell out to
-# (schema/tests). Invoked as a CLI, never imported, so no type stubs. pydantic:
-# import-check the generated models in schema/tests (the codegen group provides
-# the generator; the runtime import needs pydantic itself). testcontainers: the
-# crosswalk tests mint against a throwaway Postgres (never a mock — the
-# UNIQUE-in-one-txn semantics are the thing under test), gated on a reachable
-# Docker daemon.
-test = ["pytest", "pyyaml", "check-jsonschema", "pydantic", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
+# testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
+# mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
+# reachable Docker daemon.
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`. pulumi-tls
 # mints the internal ALB's self-signed serving cert (infra/themis_infra/internal_lb.py).
 infra = ["pulumi", "pulumi-gcp", "pulumi-tls"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
-# what runs locally. pydantic: pyright (now a hook) type-checks schema/tests (the
-# generated models and their tests) which import pydantic; absent it, pyright
-# can't resolve pydantic.* and fails on symbols the env (which has pydantic)
-# resolves fine. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
+# what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "pydantic", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
 
 [tool.pytest.ini_options]
-# schema/tests holds the TypeSpec tool's tests + .tsp fixtures, co-located with
-# the schema/ Node project so the emitter's node_modules resolution works.
+# schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
 testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests"]
-# "." for repo-root packages (themis, tools); schema/tests/proto for the committed
-# feature-corpus proto stub (features_pb2), which test_generated_stubs imports.
-pythonpath = [".", "schema/tests/proto"]
+# "." for repo-root packages (themis, tools).
+pythonpath = ["."]
 consider_namespace_packages = true
 
 [tool.ruff]
 line-length = 120
 target-version = "py313"
 
-# Generated code (tools/schema/regen.py): committed, never hand-edited, so linting
-# it is noise (the datamodel-codegen header trips ERA001; protoc output is not
-# lint-clean) and a reformat would fight the freshness gate. `themis/rpc` is the
-# generated proto/gRPC stubs. Real-domain model dirs join this list when they land
-# (Stage 1+). The pre-commit ruff hooks pass --force-exclude, so this holds even
-# when pre-commit hands ruff explicit paths.
-extend-exclude = ["schema/tests/proto", "themis/litcache/models", "themis/rpc"]
+# Generated code (buf generate; tools/schema/regen.py): committed, never hand-edited,
+# so linting it is noise (buf plugin output is not lint-clean) and a reformat would
+# fight the freshness gate. `themis/rpc` and `themis/litcache/models` are the generated
+# proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The
+# pre-commit ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff
+# explicit paths.
+extend-exclude = ["themis/litcache/models", "themis/rpc", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -243,14 +235,11 @@ max-locals = 25
 
 [tool.pyright]
 pythonVersion = "3.13"
-include = ["tools", "tests", "schema/tests", "infra", "litcache", "themis"]
-# themis/rpc is generated protoc output (dynamic message classes); the committed
-# .pyi gives importers static types, but the stubs themselves are not standard-mode
-# clean, so exclude them from checking. Re-list pyright's auto-excludes, which
-# specifying `exclude` would otherwise drop. schema/tests/proto: resolve the generated
-# feature-corpus stub (features_pb2) that test_generated_stubs imports; `ignore` keeps
-# its generated files out of type-checking without replacing pyright's default excludes.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models"]
-extraPaths = ["infra", "schema/tests/proto"]
-ignore = ["schema/tests/proto"]
+include = ["tools", "tests", "schema/tests", "infra", "themis"]
+# themis/rpc and themis/litcache/models are generated buf output (dynamic message
+# classes); the committed .pyi gives importers static types, but the stubs themselves
+# are not standard-mode clean, so exclude them from checking. Re-list pyright's
+# auto-excludes, which specifying `exclude` would otherwise drop.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "buf"]
+extraPaths = ["infra"]
 typeCheckingMode = "standard"

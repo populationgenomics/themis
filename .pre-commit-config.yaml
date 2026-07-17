@@ -9,8 +9,12 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
+      # Generated stubs are committed verbatim from buf generate; a hygiene rewrite would
+      # drift them from the generator and break the freshness gate.
       - id: end-of-file-fixer
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/)'
       - id: trailing-whitespace
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/)'
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: detect-private-key
@@ -36,6 +40,14 @@ repos:
         entry: uv run --group lint pyright
         language: system
         files: \.py$
+        pass_filenames: false
+      # buf lint: the hand-authored protos' canonical-enum + structural discipline (buf.yaml).
+      # Whole-module (pass_filenames: false); fires on any staged .proto. Needs buf on PATH.
+      - id: buf-lint
+        name: buf lint
+        entry: buf lint
+        language: system
+        files: \.proto$
         pass_filenames: false
 
   # Web app checks via the project's Bun toolchain: biome (lint+format) and tsc

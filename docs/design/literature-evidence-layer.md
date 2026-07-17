@@ -113,9 +113,9 @@ a rebuildable projection of these directories.
   self-describing and supports lazy fetch.
 - **`metadata.pb`** holds bibliographic metadata. The **schema is `pubmed_pb2`** (pubmed-proto) — the 37M corpus is
   already modelled there, so we reuse it rather than re-model — **stored as binary proto** (bucket 1,
-  [ADR 0003](../adr/0003-serialization-posture.md)): write-once over the re-derivable PubMed XML. In-corpus and external
-  papers (e.g. bioRxiv, synthesised into the same message) stay uniform downstream; readability is via the dump helper,
-  not a stored JSON copy.
+  [proto.md](proto.md)): write-once over the re-derivable PubMed XML. In-corpus and external papers (e.g. bioRxiv,
+  synthesised into the same message) stay uniform downstream; readability is via the dump helper, not a stored JSON
+  copy.
 
 ### 2.2 Identity — canonical id + external-id crosswalk
 

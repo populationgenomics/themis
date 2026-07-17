@@ -17,27 +17,28 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
-      # Bun toolchain for tsp / @typespec/protobuf / typespec-zod (tsp runs on the Bun runtime),
-      # installed from the committed schema/bun.lock (pinned deps).
+      # buf: exports the protos + deps for protoc, and drives buf lint / breaking. No remote
+      # plugins — codegen is grpcio-tools' protoc (Python) + the app's local protoc-gen-es (TS).
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.66.1"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      # Bun + apps/web deps: the protobuf-es pass uses the app's local protoc-gen-es plugin.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile
-        working-directory: schema
-      # Python codegen deps: grpcio-tools' protoc for the .proto -> stub step.
-      - uses: astral-sh/setup-uv@v8.2.0
-        with:
-          enable-cache: true
-      - run: uv sync --locked --group codegen --python 3.13
+        working-directory: apps/web
       - run: uv run --group codegen python -m tools.schema.regen
       # The committed artifacts must equal what the orchestrator just produced.
-      # `git add -A` stages edits, new files, and deletions (node_modules and
-      # .tsp-out are gitignored, so scratch never counts); a non-empty staged
-      # diff means a .tsp (or a tool) changed without regenerating.
+      # `git add -A` stages edits, new files, and deletions; a non-empty staged
+      # diff means a .proto (or a tool) changed without regenerating.
       - name: Fail if committed artifacts are stale
         run: |-
           git add -A
           if ! git diff --cached --exit-code; then
-            echo "::error::Schema artifacts are stale. Run 'bun install --cwd schema && uv run --group codegen python -m tools.schema.regen' and commit the result."
+            echo "::error::Schema artifacts are stale. Run 'bun install --cwd apps/web && uv run --group codegen python -m tools.schema.regen' and commit the result."
             exit 1
           fi

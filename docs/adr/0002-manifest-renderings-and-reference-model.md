@@ -1,12 +1,11 @@
 # ADR 0002: Per-source revisions, content-addressed renderings, the quote-reference model
 
-**Status:** Accepted; superseded in part by [`0003-serialization-posture.md`](0003-serialization-posture.md). Defines
-the manifest's source/rendering model and the quote-durable cite model that the KU layer (deferred) anchors against.
-Realized in `schema/litcache/source.tsp` + `schema/litcache/manifest.tsp` and the writer. **The structural model here
-stands; only its serialization moved:** the manifest is a binary proto message (`manifest.pb`), not closed JSON, and
-`Access` is modelled flat (a `string access` field + optional `publisher`, the iff-invariant enforced by
-`protovalidate`) rather than a structural named union — `@typespec/protobuf` emits no `oneof` (ADR 0003). The JSON below
-is a *rendering* of the binary form, not the at-rest artifact.
+**Status:** Accepted; serialization superseded by [`../design/proto.md`](../design/proto.md). Defines the manifest's
+source/rendering model and the quote-durable cite model that the KU layer (deferred) anchors against. Realized in
+`schema/proto/themis/litcache/models/litcache.proto` and the writer. **The structural model here stands; only its
+serialization moved:** the manifest is a binary proto message (`manifest.pb`), not closed JSON, and `Access` is a proto
+`oneof` over the four access variants (the iff-invariant is structural, with the residual constraints as `protovalidate`
+options — see proto.md). The JSON below is a *rendering* of the binary form, not the at-rest artifact.
 
 ## Context
 

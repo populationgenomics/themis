@@ -1,11 +1,12 @@
 """Backward-compatibility gate for the committed gRPC proto contracts (S0.6).
 
-The **sole** authored-data compat gate (ADR 0003): diffs each committed
+The **sole** authored-data compat gate (proto.md): diffs each committed
 ``schema/proto/**/<domain>.proto`` against its baseline with ``buf breaking``
 (FILE category — field renumber/removal, type/label changes, renames), failing on
 any incompatible delta — additive-only evolution, no override
-(``docs/design/typespec.md`` "Schema evolution"). Gates RPC proto today; the at-rest artifacts join as they converge
-onto proto (ADR 0003 follow-up).
+(``docs/design/proto.md`` "Schema evolution"). Gates every committed proto — RPC and at-rest
+alike; a pre-release contract (no persisted data, no deployed consumer) is skipped until it
+stabilizes (see ``_PRE_RELEASE``).
 
 **Baseline.** The released line, stood in by the PR base branch (``main`` under
 additive-only evolution). Pass it explicitly as ``--baseline-ref`` (CI supplies
@@ -29,6 +30,11 @@ from tools.schema import baseline
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PROTO_DIR = _REPO_ROOT / 'schema' / 'proto'
+
+# Pre-release contracts, excluded from the breaking gate: no persisted data and no deployed
+# consumer, so a one-time reshape is intended. Each rejoins the gate once released. Paths are
+# relative to _PROTO_DIR.
+_PRE_RELEASE = frozenset({'themis/litcache/models/litcache.proto'})
 
 # buf breaking runner, pinned by digest (not a moving tag).
 _BUF_IMAGE = 'bufbuild/buf@sha256:c34c81ac26044490a10fb5009eb618640834b9048f38d4717538421c6a25e4d7'
@@ -93,12 +99,16 @@ def main() -> int:
 
     hard_total = 0
     for path in protos:
+        proto_rel = str(path.relative_to(_PROTO_DIR))
+        if proto_rel in _PRE_RELEASE:
+            print(f'compat: {path.name}: pre-release, not gated')
+            continue
         repo_rel = str(path.relative_to(_REPO_ROOT))
         baseline_text = baseline.show_at_ref(args.baseline_ref, repo_rel)
         if baseline_text is None:
             print(f'compat: {path.name}: not present at {args.baseline_ref}; no baseline, skipping')
             continue
-        output, returncode = _run_buf(path.read_text(), baseline_text, str(path.relative_to(_PROTO_DIR)))
+        output, returncode = _run_buf(path.read_text(), baseline_text, proto_rel)
         # buf yields no machine-parsed findings to split tool-failure from
         # incompatibility, so any non-zero counts as breaking (fail-safe — a crash
         # blocks the gate, never passes it).

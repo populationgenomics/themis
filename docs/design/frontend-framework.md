@@ -96,8 +96,8 @@ per-report authorization are app-DB, enforced by the BFF. The browser carries th
 ### Data fetching
 
 - **Stored state** (projects, analyses, working-document versions, reports, projected trace, comments) — REST/JSON over
-  the BFF, types generated from TypeSpec ([`typespec.md`](typespec.md)), TanStack Query on the client. Not GraphQL: a
-  single first-party client does not earn it.
+  the BFF, types generated from the protos as protobuf-es ([`proto.md`](proto.md)), TanStack Query on the client. Not
+  GraphQL: a single first-party client does not earn it.
 - **Liveness** — polling, as above.
 
 ### Component library

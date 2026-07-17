@@ -1,5 +1,6 @@
 import datetime
 
+from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -12,66 +13,88 @@ DESCRIPTOR: _descriptor.FileDescriptor
 
 class SourceKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    source_kind_unspecified: _ClassVar[SourceKind]
-    pmc_oa_s3: _ClassVar[SourceKind]
-    europe_pmc: _ClassVar[SourceKind]
-    elsevier_oa: _ClassVar[SourceKind]
-    biorxiv: _ClassVar[SourceKind]
-    upload: _ClassVar[SourceKind]
-    seed: _ClassVar[SourceKind]
+    SOURCE_KIND_UNSPECIFIED: _ClassVar[SourceKind]
+    SOURCE_KIND_PMC_OA_S3: _ClassVar[SourceKind]
+    SOURCE_KIND_EUROPE_PMC: _ClassVar[SourceKind]
+    SOURCE_KIND_ELSEVIER_OA: _ClassVar[SourceKind]
+    SOURCE_KIND_BIORXIV: _ClassVar[SourceKind]
+    SOURCE_KIND_UPLOAD: _ClassVar[SourceKind]
+    SOURCE_KIND_SEED: _ClassVar[SourceKind]
 
 class SourceFormat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    source_format_unspecified: _ClassVar[SourceFormat]
-    xml: _ClassVar[SourceFormat]
-    pdf: _ClassVar[SourceFormat]
+    SOURCE_FORMAT_UNSPECIFIED: _ClassVar[SourceFormat]
+    SOURCE_FORMAT_XML: _ClassVar[SourceFormat]
+    SOURCE_FORMAT_PDF: _ClassVar[SourceFormat]
 
 class LicenceBasis(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    licence_basis_unspecified: _ClassVar[LicenceBasis]
-    artifact: _ClassVar[LicenceBasis]
-    asserted: _ClassVar[LicenceBasis]
+    LICENCE_BASIS_UNSPECIFIED: _ClassVar[LicenceBasis]
+    LICENCE_BASIS_ARTIFACT: _ClassVar[LicenceBasis]
+    LICENCE_BASIS_ASSERTED: _ClassVar[LicenceBasis]
 
 class Converter(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    converter_unspecified: _ClassVar[Converter]
-    litdown: _ClassVar[Converter]
-    docling: _ClassVar[Converter]
-    llm_ocr: _ClassVar[Converter]
+    CONVERTER_UNSPECIFIED: _ClassVar[Converter]
+    CONVERTER_LITDOWN: _ClassVar[Converter]
+    CONVERTER_DOCLING: _ClassVar[Converter]
+    CONVERTER_LLM_OCR: _ClassVar[Converter]
 
 class AssociatedFileRole(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    associated_file_role_unspecified: _ClassVar[AssociatedFileRole]
-    figure: _ClassVar[AssociatedFileRole]
-    supplementary: _ClassVar[AssociatedFileRole]
-source_kind_unspecified: SourceKind
-pmc_oa_s3: SourceKind
-europe_pmc: SourceKind
-elsevier_oa: SourceKind
-biorxiv: SourceKind
-upload: SourceKind
-seed: SourceKind
-source_format_unspecified: SourceFormat
-xml: SourceFormat
-pdf: SourceFormat
-licence_basis_unspecified: LicenceBasis
-artifact: LicenceBasis
-asserted: LicenceBasis
-converter_unspecified: Converter
-litdown: Converter
-docling: Converter
-llm_ocr: Converter
-associated_file_role_unspecified: AssociatedFileRole
-figure: AssociatedFileRole
-supplementary: AssociatedFileRole
+    ASSOCIATED_FILE_ROLE_UNSPECIFIED: _ClassVar[AssociatedFileRole]
+    ASSOCIATED_FILE_ROLE_FIGURE: _ClassVar[AssociatedFileRole]
+    ASSOCIATED_FILE_ROLE_SUPPLEMENTARY: _ClassVar[AssociatedFileRole]
+SOURCE_KIND_UNSPECIFIED: SourceKind
+SOURCE_KIND_PMC_OA_S3: SourceKind
+SOURCE_KIND_EUROPE_PMC: SourceKind
+SOURCE_KIND_ELSEVIER_OA: SourceKind
+SOURCE_KIND_BIORXIV: SourceKind
+SOURCE_KIND_UPLOAD: SourceKind
+SOURCE_KIND_SEED: SourceKind
+SOURCE_FORMAT_UNSPECIFIED: SourceFormat
+SOURCE_FORMAT_XML: SourceFormat
+SOURCE_FORMAT_PDF: SourceFormat
+LICENCE_BASIS_UNSPECIFIED: LicenceBasis
+LICENCE_BASIS_ARTIFACT: LicenceBasis
+LICENCE_BASIS_ASSERTED: LicenceBasis
+CONVERTER_UNSPECIFIED: Converter
+CONVERTER_LITDOWN: Converter
+CONVERTER_DOCLING: Converter
+CONVERTER_LLM_OCR: Converter
+ASSOCIATED_FILE_ROLE_UNSPECIFIED: AssociatedFileRole
+ASSOCIATED_FILE_ROLE_FIGURE: AssociatedFileRole
+ASSOCIATED_FILE_ROLE_SUPPLEMENTARY: AssociatedFileRole
+
+class FreeToRead(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class Licensed(_message.Message):
+    __slots__ = ("publisher",)
+    PUBLISHER_FIELD_NUMBER: _ClassVar[int]
+    publisher: str
+    def __init__(self, publisher: _Optional[str] = ...) -> None: ...
+
+class InstitutionCaptured(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class UnknownAccess(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
 
 class Access(_message.Message):
-    __slots__ = ("access", "publisher")
-    ACCESS_FIELD_NUMBER: _ClassVar[int]
-    PUBLISHER_FIELD_NUMBER: _ClassVar[int]
-    access: str
-    publisher: str
-    def __init__(self, access: _Optional[str] = ..., publisher: _Optional[str] = ...) -> None: ...
+    __slots__ = ("free_to_read", "licensed", "institution_captured", "unknown")
+    FREE_TO_READ_FIELD_NUMBER: _ClassVar[int]
+    LICENSED_FIELD_NUMBER: _ClassVar[int]
+    INSTITUTION_CAPTURED_FIELD_NUMBER: _ClassVar[int]
+    UNKNOWN_FIELD_NUMBER: _ClassVar[int]
+    free_to_read: FreeToRead
+    licensed: Licensed
+    institution_captured: InstitutionCaptured
+    unknown: UnknownAccess
+    def __init__(self, free_to_read: _Optional[_Union[FreeToRead, _Mapping]] = ..., licensed: _Optional[_Union[Licensed, _Mapping]] = ..., institution_captured: _Optional[_Union[InstitutionCaptured, _Mapping]] = ..., unknown: _Optional[_Union[UnknownAccess, _Mapping]] = ...) -> None: ...
 
 class Revision(_message.Message):
     __slots__ = ("hash", "origin_url", "kind", "captured_at", "has_text_layer")

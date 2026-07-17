@@ -28,7 +28,7 @@ without adding signal.
 before, not what it does now; misleading or stale comments in the surrounding context that the PR touches.
 
 **Schema evolution.** Stored-artifact (JSON) schemas evolve **additively only** — breaking changes are ruled out (see
-`docs/design/typespec.md`). Look for:
+`docs/design/proto.md`). Look for:
 
 - Non-additive changes to a stored-artifact schema: a removed, renamed, or repurposed field; a narrowed value set
   (dropped enum member, tightened pattern or range); or a field newly made required. These break existing data or older

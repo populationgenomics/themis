@@ -68,7 +68,7 @@ Additions for the real ledger:
   `pg_advisory_lock`, so two concurrent runs (overlapping deploys) serialize: one applies, the other finds nothing
   pending. Released when the connection closes.
 - **Forward-only, no down-migrations** — matches the additive-only schema-evolution stance
-  ([`../design/typespec.md`](../design/typespec.md), "Schema evolution"). A correction is a new forward migration.
+  ([`../design/proto.md`](../design/proto.md), "Schema evolution"). A correction is a new forward migration.
 
 The pure runner is unit-tested against `InMemoryLedger`; `CloudSqlLedger` is verified against a live instance at deploy
 (it is not exercised offline).

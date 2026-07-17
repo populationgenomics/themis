@@ -34,8 +34,8 @@ Operating directives for Claude (and any agent) in this repo; they counteract de
 ## Services
 
 Adding a backend service under `themis/services/` (the data plane) → follow
-[`docs/design/services.md`](docs/design/services.md): the established pattern (TypeSpec → proto → generated stubs; the
-server subclasses the generated servicer base on `grpc.aio`; a port `abc.ABC` with a fail-loud, env-seeded fixture
+[`docs/design/services.md`](docs/design/services.md): the established pattern (hand-authored proto → generated stubs;
+the server subclasses the generated servicer base on `grpc.aio`; a port `abc.ABC` with a fail-loud, env-seeded fixture
 backend; deploy stacked separately). Reuse it; don't reinvent per service.
 
 ## Docs

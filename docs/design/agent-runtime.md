@@ -104,7 +104,7 @@ client back into a handling loop. Instead, claims/gaps/verdicts are emitted by t
 tools** — `record_claim` / `record_gap` / `record_verdict`, or writes to the working document. Each call routes through
 the MCP tunnel to our MCP server, which:
 
-- validates the payload against the schema generated from [`typespec.md`](typespec.md);
+- validates the payload against the schema generated from [`proto.md`](proto.md);
 - persists it to our store (the server holds the GCP identity; the sandbox never touches the store); and
 - writes the matching trace record.
 

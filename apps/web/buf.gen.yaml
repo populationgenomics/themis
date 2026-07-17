@@ -1,0 +1,10 @@
+# protobuf-es (TypeScript) for the web tier (proto.md, serialization posture bucket 2): the generated
+# types + JSON codec (fromJson/toJson) both the browser and the BFF use at the browser↔BFF seam. Run
+# via tools/schema/regen.py, writing to apps/web/src/gen/. A local plugin
+# (the app's own @bufbuild/protoc-gen-es devDep), not a remote one — the app already carries the
+# protobuf-es toolchain, and it keeps TS codegen off the BSR remote-plugin path.
+version: v2
+plugins:
+  - local: apps/web/node_modules/.bin/protoc-gen-es
+    out: apps/web/src/gen
+    opt: target=ts

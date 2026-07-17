@@ -22,46 +22,65 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/litcache/models/litcache.proto\x12\x1fthemis.litcache.models.litcache\x1a\x1fgoogle/protobuf/timestamp.proto\">\n\x06\x41\x63\x63\x65ss\x12\x0e\n\x06\x61\x63\x63\x65ss\x18\x01 \x01(\t\x12\x16\n\tpublisher\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x0c\n\n_publisher\"\xdc\x01\n\x08Revision\x12\x0c\n\x04hash\x18\x01 \x01(\t\x12\x17\n\norigin_url\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x39\n\x04kind\x18\x03 \x01(\x0e\x32+.themis.litcache.models.litcache.SourceKind\x12/\n\x0b\x63\x61ptured_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x1b\n\x0ehas_text_layer\x18\x05 \x01(\x08H\x01\x88\x01\x01\x42\r\n\x0b_origin_urlB\x11\n\x0f_has_text_layer\"\xa9\x02\n\x06Source\x12\x0e\n\x06handle\x18\x01 \x01(\t\x12\x41\n\nmedia_type\x18\x02 \x01(\x0e\x32-.themis.litcache.models.litcache.SourceFormat\x12\x0f\n\x07licence\x18\x03 \x01(\t\x12\x44\n\rlicence_basis\x18\x04 \x01(\x0e\x32-.themis.litcache.models.litcache.LicenceBasis\x12\x37\n\x06\x61\x63\x63\x65ss\x18\x05 \x01(\x0b\x32\'.themis.litcache.models.litcache.Access\x12<\n\trevisions\x18\x06 \x03(\x0b\x32).themis.litcache.models.litcache.Revision\"\xdf\x01\n\tRendering\x12\x13\n\x0b\x66rom_source\x18\x01 \x01(\t\x12\x15\n\rfrom_revision\x18\x02 \x01(\t\x12=\n\tconverter\x18\x03 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x04 \x01(\t\x12\x12\n\x05model\x18\x05 \x01(\tH\x00\x88\x01\x01\x12.\n\ncreated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x08\n\x06_model\"\xa1\x01\n\x0b\x45xternalIds\x12\x10\n\x03\x64oi\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04pmid\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x12\n\x05pmcid\x18\x03 \x01(\tH\x02\x88\x01\x01\x12\x12\n\x05\x61rxiv\x18\x04 \x01(\tH\x03\x88\x01\x01\x12\x14\n\x07\x62iorxiv\x18\x05 \x01(\tH\x04\x88\x01\x01\x42\x06\n\x04_doiB\x07\n\x05_pmidB\x08\n\x06_pmcidB\x08\n\x06_arxivB\n\n\x08_biorxiv\"6\n\x0b\x45quivalence\x12\r\n\x05\x65\x64ges\x18\x01 \x03(\t\x12\x18\n\x10\x63\x61nonical_doc_id\x18\x02 \x01(\t\"n\n\nRetraction\x12\x16\n\tretracted\x18\x01 \x01(\x08H\x00\x88\x01\x01\x12\x13\n\x06source\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x11\n\x04\x64\x61te\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0c\n\n_retractedB\t\n\x07_sourceB\x07\n\x05_date\"\xa5\x01\n\x0e\x41ssociatedFile\x12\x41\n\x04role\x18\x01 \x01(\x0e\x32\x33.themis.litcache.models.litcache.AssociatedFileRole\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x17\n\nsource_url\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04path\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\r\n\x0b_source_urlB\x07\n\x05_path\"\x9d\x04\n\x08Manifest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x42\n\x0c\x65xternal_ids\x18\x02 \x01(\x0b\x32,.themis.litcache.models.litcache.ExternalIds\x12\x11\n\tclaim_key\x18\x03 \x01(\t\x12\x41\n\x0b\x65quivalence\x18\x04 \x01(\x0b\x32,.themis.litcache.models.litcache.Equivalence\x12?\n\nretraction\x18\x05 \x01(\x0b\x32+.themis.litcache.models.litcache.Retraction\x12\x38\n\x07sources\x18\x06 \x03(\x0b\x32\'.themis.litcache.models.litcache.Source\x12M\n\nrenderings\x18\x07 \x03(\x0b\x32\x39.themis.litcache.models.litcache.Manifest.RenderingsEntry\x12>\n\x05\x66iles\x18\x08 \x03(\x0b\x32/.themis.litcache.models.litcache.AssociatedFile\x1a]\n\x0fRenderingsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x39\n\x05value\x18\x02 \x01(\x0b\x32*.themis.litcache.models.litcache.Rendering:\x02\x38\x01*|\n\nSourceKind\x12\x1b\n\x17source_kind_unspecified\x10\x00\x12\r\n\tpmc_oa_s3\x10\x01\x12\x0e\n\neurope_pmc\x10\x02\x12\x0f\n\x0b\x65lsevier_oa\x10\x03\x12\x0b\n\x07\x62iorxiv\x10\x04\x12\n\n\x06upload\x10\x05\x12\x08\n\x04seed\x10\x06*?\n\x0cSourceFormat\x12\x1d\n\x19source_format_unspecified\x10\x00\x12\x07\n\x03xml\x10\x01\x12\x07\n\x03pdf\x10\x02*I\n\x0cLicenceBasis\x12\x1d\n\x19licence_basis_unspecified\x10\x00\x12\x0c\n\x08\x61rtifact\x10\x01\x12\x0c\n\x08\x61sserted\x10\x02*M\n\tConverter\x12\x19\n\x15\x63onverter_unspecified\x10\x00\x12\x0b\n\x07litdown\x10\x01\x12\x0b\n\x07\x64ocling\x10\x02\x12\x0b\n\x07llm_ocr\x10\x03*Y\n\x12\x41ssociatedFileRole\x12$\n associated_file_role_unspecified\x10\x00\x12\n\n\x06\x66igure\x10\x01\x12\x11\n\rsupplementary\x10\x02\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/litcache/models/litcache.proto\x12\x1fthemis.litcache.models.litcache\x1a\x1b\x62uf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x0c\n\nFreeToRead\"&\n\x08Licensed\x12\x1a\n\tpublisher\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\"\x15\n\x13InstitutionCaptured\"\x0f\n\rUnknownAccess\"\xb4\x02\n\x06\x41\x63\x63\x65ss\x12\x43\n\x0c\x66ree_to_read\x18\x01 \x01(\x0b\x32+.themis.litcache.models.litcache.FreeToReadH\x00\x12=\n\x08licensed\x18\x02 \x01(\x0b\x32).themis.litcache.models.litcache.LicensedH\x00\x12T\n\x14institution_captured\x18\x03 \x01(\x0b\x32\x34.themis.litcache.models.litcache.InstitutionCapturedH\x00\x12\x41\n\x07unknown\x18\x04 \x01(\x0b\x32..themis.litcache.models.litcache.UnknownAccessH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\"\xdc\x01\n\x08Revision\x12\x0c\n\x04hash\x18\x01 \x01(\t\x12\x17\n\norigin_url\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x39\n\x04kind\x18\x03 \x01(\x0e\x32+.themis.litcache.models.litcache.SourceKind\x12/\n\x0b\x63\x61ptured_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x1b\n\x0ehas_text_layer\x18\x05 \x01(\x08H\x01\x88\x01\x01\x42\r\n\x0b_origin_urlB\x11\n\x0f_has_text_layer\"\xbb\x02\n\x06Source\x12\x0e\n\x06handle\x18\x01 \x01(\t\x12\x41\n\nmedia_type\x18\x02 \x01(\x0e\x32-.themis.litcache.models.litcache.SourceFormat\x12\x0f\n\x07licence\x18\x03 \x01(\t\x12\x44\n\rlicence_basis\x18\x04 \x01(\x0e\x32-.themis.litcache.models.litcache.LicenceBasis\x12?\n\x06\x61\x63\x63\x65ss\x18\x05 \x01(\x0b\x32\'.themis.litcache.models.litcache.AccessB\x06\xbaH\x03\xc8\x01\x01\x12\x46\n\trevisions\x18\x06 \x03(\x0b\x32).themis.litcache.models.litcache.RevisionB\x08\xbaH\x05\x92\x01\x02\x08\x01\"\xee\x02\n\tRendering\x12\x13\n\x0b\x66rom_source\x18\x01 \x01(\t\x12\x15\n\rfrom_revision\x18\x02 \x01(\t\x12=\n\tconverter\x18\x03 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x04 \x01(\t\x12\x12\n\x05model\x18\x05 \x01(\tH\x00\x88\x01\x01\x12.\n\ncreated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.Timestamp:\x8c\x01\xbaH\x88\x01\x1a\x85\x01\n\x1brendering.model_iff_llm_ocr\x12\x39model must be set iff converter is CONVERTER_LLM_OCR (=3)\x1a+(this.converter == 3) == (this.model != \'\')B\x08\n\x06_model\"\xa1\x01\n\x0b\x45xternalIds\x12\x10\n\x03\x64oi\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04pmid\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x12\n\x05pmcid\x18\x03 \x01(\tH\x02\x88\x01\x01\x12\x12\n\x05\x61rxiv\x18\x04 \x01(\tH\x03\x88\x01\x01\x12\x14\n\x07\x62iorxiv\x18\x05 \x01(\tH\x04\x88\x01\x01\x42\x06\n\x04_doiB\x07\n\x05_pmidB\x08\n\x06_pmcidB\x08\n\x06_arxivB\n\n\x08_biorxiv\"6\n\x0b\x45quivalence\x12\r\n\x05\x65\x64ges\x18\x01 \x03(\t\x12\x18\n\x10\x63\x61nonical_doc_id\x18\x02 \x01(\t\"n\n\nRetraction\x12\x16\n\tretracted\x18\x01 \x01(\x08H\x00\x88\x01\x01\x12\x13\n\x06source\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x11\n\x04\x64\x61te\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0c\n\n_retractedB\t\n\x07_sourceB\x07\n\x05_date\"\xa5\x01\n\x0e\x41ssociatedFile\x12\x41\n\x04role\x18\x01 \x01(\x0e\x32\x33.themis.litcache.models.litcache.AssociatedFileRole\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x17\n\nsource_url\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04path\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\r\n\x0b_source_urlB\x07\n\x05_path\"\x9d\x04\n\x08Manifest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x42\n\x0c\x65xternal_ids\x18\x02 \x01(\x0b\x32,.themis.litcache.models.litcache.ExternalIds\x12\x11\n\tclaim_key\x18\x03 \x01(\t\x12\x41\n\x0b\x65quivalence\x18\x04 \x01(\x0b\x32,.themis.litcache.models.litcache.Equivalence\x12?\n\nretraction\x18\x05 \x01(\x0b\x32+.themis.litcache.models.litcache.Retraction\x12\x38\n\x07sources\x18\x06 \x03(\x0b\x32\'.themis.litcache.models.litcache.Source\x12M\n\nrenderings\x18\x07 \x03(\x0b\x32\x39.themis.litcache.models.litcache.Manifest.RenderingsEntry\x12>\n\x05\x66iles\x18\x08 \x03(\x0b\x32/.themis.litcache.models.litcache.AssociatedFile\x1a]\n\x0fRenderingsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x39\n\x05value\x18\x02 \x01(\x0b\x32*.themis.litcache.models.litcache.Rendering:\x02\x38\x01*\xc4\x01\n\nSourceKind\x12\x1b\n\x17SOURCE_KIND_UNSPECIFIED\x10\x00\x12\x19\n\x15SOURCE_KIND_PMC_OA_S3\x10\x01\x12\x1a\n\x16SOURCE_KIND_EUROPE_PMC\x10\x02\x12\x1b\n\x17SOURCE_KIND_ELSEVIER_OA\x10\x03\x12\x17\n\x13SOURCE_KIND_BIORXIV\x10\x04\x12\x16\n\x12SOURCE_KIND_UPLOAD\x10\x05\x12\x14\n\x10SOURCE_KIND_SEED\x10\x06*[\n\x0cSourceFormat\x12\x1d\n\x19SOURCE_FORMAT_UNSPECIFIED\x10\x00\x12\x15\n\x11SOURCE_FORMAT_XML\x10\x01\x12\x15\n\x11SOURCE_FORMAT_PDF\x10\x02*e\n\x0cLicenceBasis\x12\x1d\n\x19LICENCE_BASIS_UNSPECIFIED\x10\x00\x12\x1a\n\x16LICENCE_BASIS_ARTIFACT\x10\x01\x12\x1a\n\x16LICENCE_BASIS_ASSERTED\x10\x02*k\n\tConverter\x12\x19\n\x15\x43ONVERTER_UNSPECIFIED\x10\x00\x12\x15\n\x11\x43ONVERTER_LITDOWN\x10\x01\x12\x15\n\x11\x43ONVERTER_DOCLING\x10\x02\x12\x15\n\x11\x43ONVERTER_LLM_OCR\x10\x03*\x83\x01\n\x12\x41ssociatedFileRole\x12$\n ASSOCIATED_FILE_ROLE_UNSPECIFIED\x10\x00\x12\x1f\n\x1b\x41SSOCIATED_FILE_ROLE_FIGURE\x10\x01\x12&\n\"ASSOCIATED_FILE_ROLE_SUPPLEMENTARY\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.litcache.models.litcache_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_LICENSED'].fields_by_name['publisher']._loaded_options = None
+  _globals['_LICENSED'].fields_by_name['publisher']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_ACCESS'].oneofs_by_name['kind']._loaded_options = None
+  _globals['_ACCESS'].oneofs_by_name['kind']._serialized_options = b'\272H\002\010\001'
+  _globals['_SOURCE'].fields_by_name['access']._loaded_options = None
+  _globals['_SOURCE'].fields_by_name['access']._serialized_options = b'\272H\003\310\001\001'
+  _globals['_SOURCE'].fields_by_name['revisions']._loaded_options = None
+  _globals['_SOURCE'].fields_by_name['revisions']._serialized_options = b'\272H\005\222\001\002\010\001'
+  _globals['_RENDERING']._loaded_options = None
+  _globals['_RENDERING']._serialized_options = b'\272H\210\001\032\205\001\n\033rendering.model_iff_llm_ocr\0229model must be set iff converter is CONVERTER_LLM_OCR (=3)\032+(this.converter == 3) == (this.model != \'\')'
   _globals['_MANIFEST_RENDERINGSENTRY']._loaded_options = None
   _globals['_MANIFEST_RENDERINGSENTRY']._serialized_options = b'8\001'
-  _globals['_SOURCEKIND']._serialized_start=1964
-  _globals['_SOURCEKIND']._serialized_end=2088
-  _globals['_SOURCEFORMAT']._serialized_start=2090
-  _globals['_SOURCEFORMAT']._serialized_end=2153
-  _globals['_LICENCEBASIS']._serialized_start=2155
-  _globals['_LICENCEBASIS']._serialized_end=2228
-  _globals['_CONVERTER']._serialized_start=2230
-  _globals['_CONVERTER']._serialized_end=2307
-  _globals['_ASSOCIATEDFILEROLE']._serialized_start=2309
-  _globals['_ASSOCIATEDFILEROLE']._serialized_end=2398
-  _globals['_ACCESS']._serialized_start=107
-  _globals['_ACCESS']._serialized_end=169
-  _globals['_REVISION']._serialized_start=172
-  _globals['_REVISION']._serialized_end=392
-  _globals['_SOURCE']._serialized_start=395
-  _globals['_SOURCE']._serialized_end=692
-  _globals['_RENDERING']._serialized_start=695
-  _globals['_RENDERING']._serialized_end=918
-  _globals['_EXTERNALIDS']._serialized_start=921
-  _globals['_EXTERNALIDS']._serialized_end=1082
-  _globals['_EQUIVALENCE']._serialized_start=1084
-  _globals['_EQUIVALENCE']._serialized_end=1138
-  _globals['_RETRACTION']._serialized_start=1140
-  _globals['_RETRACTION']._serialized_end=1250
-  _globals['_ASSOCIATEDFILE']._serialized_start=1253
-  _globals['_ASSOCIATEDFILE']._serialized_end=1418
-  _globals['_MANIFEST']._serialized_start=1421
-  _globals['_MANIFEST']._serialized_end=1962
-  _globals['_MANIFEST_RENDERINGSENTRY']._serialized_start=1869
-  _globals['_MANIFEST_RENDERINGSENTRY']._serialized_end=1962
+  _globals['_SOURCEKIND']._serialized_start=2496
+  _globals['_SOURCEKIND']._serialized_end=2692
+  _globals['_SOURCEFORMAT']._serialized_start=2694
+  _globals['_SOURCEFORMAT']._serialized_end=2785
+  _globals['_LICENCEBASIS']._serialized_start=2787
+  _globals['_LICENCEBASIS']._serialized_end=2888
+  _globals['_CONVERTER']._serialized_start=2890
+  _globals['_CONVERTER']._serialized_end=2997
+  _globals['_ASSOCIATEDFILEROLE']._serialized_start=3000
+  _globals['_ASSOCIATEDFILEROLE']._serialized_end=3131
+  _globals['_FREETOREAD']._serialized_start=136
+  _globals['_FREETOREAD']._serialized_end=148
+  _globals['_LICENSED']._serialized_start=150
+  _globals['_LICENSED']._serialized_end=188
+  _globals['_INSTITUTIONCAPTURED']._serialized_start=190
+  _globals['_INSTITUTIONCAPTURED']._serialized_end=211
+  _globals['_UNKNOWNACCESS']._serialized_start=213
+  _globals['_UNKNOWNACCESS']._serialized_end=228
+  _globals['_ACCESS']._serialized_start=231
+  _globals['_ACCESS']._serialized_end=539
+  _globals['_REVISION']._serialized_start=542
+  _globals['_REVISION']._serialized_end=762
+  _globals['_SOURCE']._serialized_start=765
+  _globals['_SOURCE']._serialized_end=1080
+  _globals['_RENDERING']._serialized_start=1083
+  _globals['_RENDERING']._serialized_end=1449
+  _globals['_EXTERNALIDS']._serialized_start=1452
+  _globals['_EXTERNALIDS']._serialized_end=1613
+  _globals['_EQUIVALENCE']._serialized_start=1615
+  _globals['_EQUIVALENCE']._serialized_end=1669
+  _globals['_RETRACTION']._serialized_start=1671
+  _globals['_RETRACTION']._serialized_end=1781
+  _globals['_ASSOCIATEDFILE']._serialized_start=1784
+  _globals['_ASSOCIATEDFILE']._serialized_end=1949
+  _globals['_MANIFEST']._serialized_start=1952
+  _globals['_MANIFEST']._serialized_end=2493
+  _globals['_MANIFEST_RENDERINGSENTRY']._serialized_start=2400
+  _globals['_MANIFEST_RENDERINGSENTRY']._serialized_end=2493
 # @@protoc_insertion_point(module_scope)

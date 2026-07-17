@@ -49,7 +49,7 @@ def read_modify_write(
 ) -> None:
     """Read ``name``, apply ``mutate``, and write the result iff the object hasn't changed.
 
-    Optimistic concurrency via GCS generation preconditions (ADR 0003): read the object and
+    Optimistic concurrency via GCS generation preconditions (proto.md): read the object and
     its generation, write back with ``if_generation_match``; a concurrent write makes the read
     stale (a 412), so re-read and retry up to ``attempts`` times. `mutate` must be pure — it is
     re-invoked on each attempt.

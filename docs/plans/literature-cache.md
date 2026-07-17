@@ -2,13 +2,12 @@
 
 **Status:** plan — concrete design settled (this doc); build pending. Seed source identified
 (`gs://cpg-themis-dev-fulltext/ingest/`, copy complete). Schema authoring is **unblocked**: the TypeSpec Stage-0 rails
-have landed ([`../design/typespec.md`](../design/typespec.md)), and **litfetch is prototyped** (a standalone package
-with a working `.litcache/`). **Related:** design + rationale in
+have landed ([`../design/proto.md`](../design/proto.md)), and **litfetch is prototyped** (a standalone package with a
+working `.litcache/`). **Related:** design + rationale in
 [`../design/literature-evidence-layer.md`](../design/literature-evidence-layer.md) §2 (cache), §2.1 (layout), §2.2
 (identity), §3 (capture), §4.2 (source anchors); boundary/egress in
 [`../design/spike-infrastructure.md`](../design/spike-infrastructure.md) §8; schema rails in
-[`../design/typespec.md`](../design/typespec.md). This plan **decides** the buildable S0 cache; the design doc holds the
-why.
+[`../design/proto.md`](../design/proto.md). This plan **decides** the buildable S0 cache; the design doc holds the why.
 
 ## Scope
 
@@ -58,16 +57,16 @@ gs://cpg-themis-dev-fulltext/
 Ingestion reads the `ingest/` seed and writes per-paper directories alongside it. The crosswalk is a **derived index** —
 an inversion of the manifests' `external_ids` + `equivalence` — held in the Cloud SQL mint table, not in the bucket. GCS
 holds the **only irreplaceable** state in S0; rebuild-from-bucket is trivial — scan manifests, re-invert. Schemas evolve
-**additively only** (the TypeSpec rails, [`../design/typespec.md`](../design/typespec.md)): a reader parses every
-artifact ever written, and proto's unknown-field retention means an older reader round-trips a newer writer's fields
-untouched ([ADR 0003](../adr/0003-serialization-posture.md)); a retired field-number is fenced with `reserved`. The GCS
-layout and `manifest.pb` shape here are **validated by a working `.litcache/` prototype** in the litfetch repo.
+**additively only** (the TypeSpec rails, [`../design/proto.md`](../design/proto.md)): a reader parses every artifact
+ever written, and proto's unknown-field retention means an older reader round-trips a newer writer's fields untouched
+([proto.md](../design/proto.md)); a retired field-number is fenced with `reserved`. The GCS layout and `manifest.pb`
+shape here are **validated by a working `.litcache/` prototype** in the litfetch repo.
 
 ## Schemas
 
 ### manifest.pb — identity / provenance / cache-control
 
-The binary manifest, shown here as its JSON *rendering* (via the dump helper, ADR 0003) for readability:
+The binary manifest, shown here as its JSON *rendering* (via the dump helper, proto.md) for readability:
 
 ```jsonc
 {
@@ -105,9 +104,9 @@ The binary manifest, shown here as its JSON *rendering* (via the dump helper, AD
 
 ### metadata.pb — bibliographic
 
-`pubmed_pb2` (`pubmed-proto`) **binary proto** (`metadata.pb`) — bucket 1 per
-[ADR 0003](../adr/0003-serialization-posture.md). Non-PubMed papers (bioRxiv, uploads) are synthesised into the same
-message so consumers stay uniform — litcache owns this bibliographic shape, litfetch does not.
+`pubmed_pb2` (`pubmed-proto`) **binary proto** (`metadata.pb`) — bucket 1 per [proto.md](../design/proto.md). Non-PubMed
+papers (bioRxiv, uploads) are synthesised into the same message so consumers stay uniform — litcache owns this
+bibliographic shape, litfetch does not.
 
 The PubMed schema is **bootstrapped once from the PubMed DTD by `xsd-former`**
 (`xsdformer dtd pubmed.dtd --typespec-out`, optionally `--proto-compat` for a `.tsp` that round-trips `tsp→proto`) — a
@@ -115,16 +114,22 @@ one-time generation, then committed and maintained in place, not a continuously 
 proto rails as the litcache manifest. It qualifies for bucket 1 not on completeness (the DTD→proto transform
 intentionally drops fields we don't model) but because it is **write-once / overwrite-from-fresh** over a **re-derivable
 source** — the authoritative PubMed XML stays the system of record, so a dropped field is recovered by re-running the
-transform (ADR 0003). Distinct from the hand-authored `schema/litcache/` types; not re-modelled here.
+transform (proto.md). Distinct from the hand-authored `schema/litcache/` types; not re-modelled here.
 
 ### Schema definition
 
-Authored in **TypeSpec** under `schema/litcache/` on the Stage-0 rails
-([`../design/typespec.md`](../design/typespec.md)): snake_case, additive-only, `@field` numbers. `regen` emits the
-committed `.proto` — the at-rest artifact source *and* the `buf breaking` baseline — the `protoc` Python stubs (the
-cache-writer's models), and Zod. `@typespec/protobuf` emits no `oneof`, so the `access`-iff-`publisher` rule is a
-`protovalidate` constraint (not structural); other cross-field rules live in a thin hand-written layer over the
-generated models (the policy mapping below).
+> **Superseded by [`../design/proto.md`](../design/proto.md) — build against that.** The schema is now **hand-authored
+> `.proto`** under `schema/proto/themis/litcache/models/` (not TypeSpec/`.tsp`), with proto-canonical enums, a real
+> `oneof` `Access` (so access-iff-`publisher` is **structural**, not a `protovalidate` constraint), and `protovalidate`
+> options for the residual rules; `regen` emits the Python stubs and the web tier's protobuf-es (no Zod). The
+> TypeSpec/flat-`Access` description below is retained only as the original plan record; the per-source-lineage model
+> (ADR 0002) still stands.
+
+Authored in **TypeSpec** under `schema/litcache/` on the Stage-0 rails ([`../design/proto.md`](../design/proto.md)):
+snake_case, additive-only, `@field` numbers. `regen` emits the committed `.proto` — the at-rest artifact source *and*
+the `buf breaking` baseline — the `protoc` Python stubs (the cache-writer's models), and Zod. `@typespec/protobuf` emits
+no `oneof`, so the `access`-iff-`publisher` rule is a `protovalidate` constraint (not structural); other cross-field
+rules live in a thin hand-written layer over the generated models (the policy mapping below).
 
 **The model is per-source-lineage, not per-version-snapshot**
 ([`../adr/0002-manifest-renderings-and-reference-model.md`](../adr/0002-manifest-renderings-and-reference-model.md)). A
@@ -165,7 +170,7 @@ enum LicenceBasis {
   asserted: "asserted",       // asserted by an access authority (Unpaywall) or to the work's terms
 }
 
-// access is flat — @typespec/protobuf emits no oneof (ADR 0003), so the
+// access is flat — @typespec/protobuf emits no oneof (proto.md), so the
 // access-iff-publisher invariant is a protovalidate rule, not structural.
 model Access {
   access: string;      // "free-to-read" | "licensed" | "institution-captured" | "unknown"
@@ -220,9 +225,9 @@ model AssociatedFile {
 ```
 
 Callers parse cache bytes into the generated `Manifest` proto message; additive-only evolution plus proto's
-unknown-field retention means a reader round-trips every artifact ever written (ADR 0003). A genuine breaking change
+unknown-field retention means a reader round-trips every artifact ever written (proto.md). A genuine breaking change
 (e.g. dropping a field once all data is migrated off it) is the out-of-band "merge a red `schema-compat`" one-off
-(typespec.md "Schema evolution").
+(proto.md "Schema evolution").
 
 `metadata.pb` stays outside this schema: it is `pubmed-proto` binary proto — its own bucket-1 artifact (litfetch owns no
 bibliographic shape — see the litfetch-boundary row in Decisions).

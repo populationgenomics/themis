@@ -3,7 +3,7 @@
 `themis/services/` is the internal **data plane** — gRPC services (HTTP/2, binary protobuf; no MCP, no REST), distinct
 from `apps/` (the user-facing web surface). See [`../repo-structure.md`](../repo-structure.md) for where it sits.
 
-Load-bearing invariant: **the server subclasses the servicer base class generated from a committed, TypeSpec-authored
+Load-bearing invariant: **the server subclasses the servicer base class generated from a committed, hand-authored
 `.proto`.** The interface is forced by the type system — an unimplemented rpc or a wrong message type is a static error,
 not a runtime drift — so there is no contract test. The committed `.proto` is the contract; `buf breaking` gates its
 evolution. `themis/services/auth/` is the worked example throughout — read it alongside this doc.
@@ -45,24 +45,21 @@ A service is `themis/services/<name>/`, the package `themis.services.<name>`:
 The messages, stub, and servicer base are **not** under the service — they live in the shared `themis/rpc/` (below),
 because a caller imports the identical modules.
 
-## The wire contract: TypeSpec → proto → stubs
+## The wire contract: proto → stubs
 
-One source of truth for the shapes and the service, authored in TypeSpec with `@typespec/protobuf`; see
-[`typespec.md`](typespec.md) for the authoring rules. Per service:
+The `.proto` is the source of truth for the shapes and the service, hand-authored; see [`proto.md`](proto.md) for the
+authoring rules. Per service:
 
-1. Author `schema/<domain>/main.tsp` — `@package({ name: "themis.rpc.<domain>" })` on the namespace, a
-   `@TypeSpec.Protobuf.service` interface whose operations are the rpcs, and messages whose every field carries a
-   `@field(n)` number. `@stream(StreamMode.In | Out | Duplex)` marks a streaming rpc; `@reserve` retires a field name or
-   number. Auto-discovered by `regen` (globs `schema/*/main.tsp`); no registration step.
-1. Run `uv run --group codegen python -m tools.schema.regen`. It compiles the committed
-   `schema/proto/themis/rpc/<domain>.proto` (the contract) and runs `protoc` (grpcio-tools) to the committed
-   `themis/rpc/<domain>_pb2.py` + `<domain>_pb2_grpc.py` stubs.
+1. Author `schema/proto/themis/rpc/<domain>.proto` — `package themis.rpc.<domain>`, a `service` whose rpcs are the
+   operations, and messages whose every field carries an explicit number. `stream` marks a streaming rpc; a retired
+   field name or number goes in a `reserved` statement.
+1. Run `uv run python -m tools.schema.regen`. It runs `buf generate` to the committed `themis/rpc/<domain>_pb2.py`,
+   `.pyi`, and `<domain>_pb2_grpc.py` stubs.
 
-The committed **`.proto` is the only committed schema artifact** for a service: the contract, the `buf breaking`
-baseline, and the source `protoc` generates from. The package name doubles as the Python import path
-(`themis.rpc.<domain>`), so `protoc` emits `from themis.rpc import <domain>_pb2` with no import rewriting. The freshness
-gate fails CI if the committed proto or stubs drift from the `.tsp` — after any `.tsp` change, re-run `regen` and
-commit.
+The committed **`.proto` is the source of truth** for a service: the contract, the `buf breaking` baseline, and what
+`buf generate` produces the stubs from. The package name doubles as the Python import path (`themis.rpc.<domain>`), so
+the stubs emit `from themis.rpc import <domain>_pb2` with no import rewriting. The freshness gate fails CI if the
+committed stubs drift from the `.proto` — after any `.proto` change, re-run `regen` and commit.
 
 **One `Request` in, one `Response` out** — literally proto's `rpc Method(Request) returns (Response)`. A method returns
 the domain resource when it maps to one (`resolveSession → SessionContext`,
@@ -81,7 +78,7 @@ runtime API cannot drift from the contract, and there is no separate contract te
 forced interface, not a stand-in for one. Backward-compatibility is the separate `buf breaking` gate:
 [`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) diffs each committed `.proto` against its base-branch
 baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop). It is the sole authored-data compat
-gate (ADR 0003 retired the at-rest `chuckd` gate). See [`typespec.md`](typespec.md), "Schema evolution".
+gate (the at-rest `chuckd` gate was retired). See [`proto.md`](proto.md), "Schema evolution".
 
 ## Adapters: an abstract port + pluggable backends
 
@@ -199,9 +196,9 @@ follow-up. Do not define shared tables inside a single service's PR.
 
 ## Checklist
 
-1. `schema/<domain>/main.tsp` — author the wire contract ([`typespec.md`](typespec.md) authoring rules):
-   `@Protobuf.package`, a `@Protobuf.service` interface, `@field(n)` on every message field, `@stream` for streaming;
-   one `Request` in, one `Response` out.
+1. `schema/proto/themis/rpc/<domain>.proto` — author the wire contract ([`proto.md`](proto.md) authoring rules):
+   `package themis.rpc.<domain>`, a `service`, an explicit number on every message field, `stream` for streaming; one
+   `Request` in, one `Response` out.
 1. Run `regen`; commit `schema/proto/themis/rpc/<domain>.proto` + the `themis/rpc/<domain>_pb2*.py` stubs.
 1. `themis/services/<name>/` — `servicer.py` (the `<Service>Servicer` subclass), the backend `abc.ABC` + fixture,
    `__main__` (env-selected backend, `grpc.aio` server + health servicer, fail-loud seeding).

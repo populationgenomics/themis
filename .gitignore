@@ -28,7 +28,5 @@ venv/
 # Local environment files
 .env
 
-# Node toolchain for schema/ (deps installed from the committed lockfile)
+# Node toolchain for apps/web (deps installed from the committed lockfile)
 node_modules/
-# Scratch TypeSpec output; committed artifacts live in schema/tests/jsonschema/
-schema/.tsp-out/
