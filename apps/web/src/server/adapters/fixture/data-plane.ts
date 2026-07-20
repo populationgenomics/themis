@@ -25,7 +25,7 @@ interface Entry {
 /** In-memory, deterministic data plane — the offline/demo path. Holds the created
  *  analyses and advances each run's reveal one stage per poll. Authorization is
  *  `AuthorizedBackend`'s job; this layer trusts the ids it is handed. */
-export class FixtureBackend implements AnalysisDataPlane {
+export class FixtureDataPlane implements AnalysisDataPlane {
   private readonly entries = new Map<string, Entry>();
   private counter = 0;
 

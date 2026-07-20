@@ -149,6 +149,12 @@
   --color-path-pill-bg: #fbf6f0;
   --color-path-pill-border: #ede0d2;
 
+  /* Failure — a tool call that errored, a request the BFF rejected. Equals the
+     path red tier by value; separate so retuning pathogenicity leaves it put. */
+  --color-error-text: #b23a2e;
+  --color-error-bg: #fbf6f0;
+  --color-error-border: #ede0d2;
+
   /* ACMG strength codes. PM equals path-pill-fg, PP equals teal-fg by value. */
   --color-acmg-pm: #c2641f;
   --color-acmg-pp: #527c7a;

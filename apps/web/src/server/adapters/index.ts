@@ -1,5 +1,5 @@
 import type { AnalysisDataPlane, ProjectMembership } from "../ports";
-import { createFixtureBackend, createFixtureMembership } from "./fixture";
+import { createFixtureDataPlane, createFixtureMembership } from "./fixture";
 
 export type Backend = "fixture" | "real";
 
@@ -30,7 +30,7 @@ export function createDataPlane(env: EnvLike = process.env): AnalysisDataPlane {
       "THEMIS_BACKEND=real: the real backend adapter is not wired yet",
     );
   }
-  return createFixtureBackend();
+  return createFixtureDataPlane();
 }
 
 /** Build a FRESH membership — the user↔Project mapping the `AuthorizedBackend`

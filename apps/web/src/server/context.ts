@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { createDataPlane, createMembership } from "./adapters";
 import { AuthorizedBackend } from "./authorized-backend";
 import { getUserIdentity } from "./identity";
@@ -52,4 +53,11 @@ export async function userContext(request: Request): Promise<UserContext> {
   const userEmail = await getUserIdentity().assertedEmail(request.headers);
   const backend = new AuthorizedBackend(dataPlane(), membership(), userEmail);
   return { userEmail, backend };
+}
+
+/** The verified caller of the request being rendered. For server components, which
+ *  reach the headers ambiently; a route handler holds a Request and uses
+ *  `userContext`. */
+export async function currentUserEmail(): Promise<string> {
+  return getUserIdentity().assertedEmail(await headers());
 }

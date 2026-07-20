@@ -1,10 +1,20 @@
-export default function Home() {
+import { Suspense } from "react";
+import { currentUserEmail } from "@/server/context";
+import { Workbench } from "./workbench";
+
+// `Workbench` reads the selected analysis from the URL via `useSearchParams`, which
+// requires a Suspense boundary above it (App Router prerendering contract).
+
+// The page resolves the caller before it renders, so there is nothing to prerender:
+// without this the build attempts one, and the identity seam it reaches has no
+// request to answer from.
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const userEmail = await currentUserEmail();
   return (
-    <main className="flex min-h-svh flex-col items-center justify-center gap-2 p-8 text-center">
-      <h1 className="text-3xl font-semibold tracking-tight">Themis</h1>
-      <p className="text-sm text-muted-foreground">
-        Variant curation workbench
-      </p>
-    </main>
+    <Suspense fallback={null}>
+      <Workbench userEmail={userEmail} />
+    </Suspense>
   );
 }
