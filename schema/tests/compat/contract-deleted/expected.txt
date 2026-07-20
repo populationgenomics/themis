@@ -1,0 +1,3 @@
+::error::compat <module>: breaking change(s) vs origin/main:
+  1:1: Previously present file "themis/rpc/sample.proto" was deleted.
+FAIL: compat gate: 1 incompatible proto contract(s) — additive-only evolution, no override

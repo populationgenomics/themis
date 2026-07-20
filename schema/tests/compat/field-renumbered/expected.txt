@@ -1,0 +1,3 @@
+::error::compat themis/rpc/sample.proto: breaking change(s) vs origin/main:
+  5:1: Previously present field "2" with name "b" on message "Foo" was deleted.
+FAIL: compat gate: 1 incompatible proto contract(s) — additive-only evolution, no override

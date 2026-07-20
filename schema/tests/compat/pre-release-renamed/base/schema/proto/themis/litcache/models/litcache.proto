@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package themis.litcache.models;
+
+message Access {
+  string free_to_read = 1;
+}
