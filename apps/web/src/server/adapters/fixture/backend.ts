@@ -7,16 +7,10 @@ import {
   DocumentResponseSchema,
   type PollResponse,
   PollResponseSchema,
-  type Project,
-  ProjectSchema,
 } from "@/models/workbench";
 import { ResourceNotFoundError } from "../../errors";
-import type { AnalysisBackend } from "../../ports";
+import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
 import { documentMarkdown, stageCount, timelineAt } from "./timeline";
-
-// The one seed Project the offline path exposes; the caller names it on create/list.
-const FIXTURE_PROJECT_ID = "proj_fixture";
-const FIXTURE_PROJECT_NAME = "Fixture Project";
 
 interface Entry {
   analysis: Analysis;
@@ -28,9 +22,10 @@ interface Entry {
   revealedDocVersion: number;
 }
 
-/** In-memory, deterministic backend — the offline/demo path. Holds the created
- *  analyses and advances each run's reveal one stage per poll. */
-export class FixtureBackend implements AnalysisBackend {
+/** In-memory, deterministic data plane — the offline/demo path. Holds the created
+ *  analyses and advances each run's reveal one stage per poll. Authorization is
+ *  `AuthorizedBackend`'s job; this layer trusts the ids it is handed. */
+export class FixtureBackend implements AnalysisDataPlane {
   private readonly entries = new Map<string, Entry>();
   private counter = 0;
 
@@ -42,19 +37,7 @@ export class FixtureBackend implements AnalysisBackend {
     return entry;
   }
 
-  async listProjects(): Promise<Project[]> {
-    return [
-      create(ProjectSchema, {
-        id: FIXTURE_PROJECT_ID,
-        name: FIXTURE_PROJECT_NAME,
-      }),
-    ];
-  }
-
-  async createAnalysis(input: {
-    prompt: string;
-    projectId: string;
-  }): Promise<Analysis> {
+  async createAnalysis(input: CreateAnalysisInput): Promise<Analysis> {
     this.counter += 1;
     const analysis = create(AnalysisSchema, {
       id: `an_${this.counter}`,
@@ -71,11 +54,16 @@ export class FixtureBackend implements AnalysisBackend {
     return analysis;
   }
 
-  async listAnalyses(projectId: string): Promise<Analysis[]> {
+  async listAnalysesIn(projectIds: readonly string[]): Promise<Analysis[]> {
+    const scope = new Set(projectIds);
     return [...this.entries.values()]
       .map((entry) => entry.analysis)
-      .filter((analysis) => analysis.projectId === projectId)
+      .filter((analysis) => scope.has(analysis.projectId))
       .sort((a, b) => createdMs(b) - createdMs(a));
+  }
+
+  async projectOfAnalysis(analysisId: string): Promise<string> {
+    return this.require(analysisId).analysis.projectId;
   }
 
   async pollEvents(analysisId: string): Promise<PollResponse> {

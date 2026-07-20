@@ -22,9 +22,9 @@ The language boundary falls at the **agent's data plane**, not at the browser:
 - **Agent-facing tier** — the internal services and data-plane mediation ([`agent-runtime.md`](agent-runtime.md),
   [`spike-infrastructure.md`](spike-infrastructure.md) §8). Reached from the self-hosted sandbox in code mode, never by
   the browser. Python; isolated; its language is invisible to the web app.
-- **Web tier** (this doc) — **Next.js**: the UI plus the BFF (backend-for-frontend: the data API, IAP handling, the
-  webhook receiver, and the live session relay). One server-side language across the frontend↔backend seam — the surface
-  that iterates fastest in the dog-fooding loop.
+- **Web tier** (this doc) — **Next.js**: the UI plus the BFF (backend-for-frontend: the data API, IAP handling, and the
+  live session relay). One server-side language across the frontend↔backend seam — the surface that iterates fastest in
+  the dog-fooding loop.
 
 The BFF is domain-logic-light (it reads typed rows and relays events; the genomics logic lives in the tool tier and is
 written to the store there), so nothing pulls it toward Python; unifying the web app in TypeScript keeps the hot seam
@@ -76,9 +76,10 @@ Two writers feed our store, neither standing:
   involved.
 - **A one-shot backfill**, at session end — a `session.status_idled` / `session.status_terminated` webhook triggers a
   single `events.list` read that projects the event-stream-only telemetry (per-agent token/cache usage, thinking,
-  sub-agent thread structure) into Cloud SQL. The webhook receiver is an HMAC-verified route **exempt from IAP**
-  (Anthropic cannot present an IAP credential); its signing key is inventoried in
-  [`spike-infrastructure.md`](spike-infrastructure.md) §4.
+  sub-agent thread structure) into Cloud SQL. Anthropic cannot present an IAP credential, so the delivery lands on the
+  dispatcher's HMAC-verified endpoint ([`self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)) — the one public
+  non-IAP surface, whose signing key is inventoried in [`spike-infrastructure.md`](spike-infrastructure.md) §4. **The
+  web tier exposes no webhook route**; which component performs the projection off that signal is open.
 
 Anthropic's log is replayable, so the backfill needs no live consumer. We materialize despite that log because the trace
 must be **reproducible independent of a beta API's retention**, must support **cross-session SQL analytics** (the
@@ -91,10 +92,13 @@ version; comment/deep-link anchors).
 IAP is the gate ([`spike-infrastructure.md`](spike-infrastructure.md) §2). The app **verifies** IAP's signed
 `X-Goog-IAP-JWT-Assertion` per request at a single default-on chokepoint ([`security.md`](security.md)): a proxy
 default-deny perimeter (`apps/web/src/proxy.ts`) plus a shared request-scoped accessor (`server/context.ts`) that
-re-verifies at the data seam, so no route reaches the backend unauthenticated. The proxy allowlists `healthz`; the
-HMAC-verified webhook receiver is the other IAP-exempt surface in the design. The asserted email is the identity for
-comment attribution and audit; roles, Project membership, and per-report authorization are app-DB, enforced by the BFF.
-The browser carries the IAP cookie on same-origin requests (including the polling fetch).
+re-verifies at the data seam, so no route reaches the backend unauthenticated. `PUBLIC_PATHS` allowlists `/api/healthz`
+and nothing else, because the startup probe reaches the container directly, bypassing the load balancer, and so carries
+no assertion. It is not an IAP exemption and grants no reachability: ingress is locked to the load balancer and
+`run.invoker` is held only by the IAP service agent. **This tier has no unauthenticated inbound surface** — an
+Anthropic-inbound delivery is the dispatcher's, a separate service. The asserted email is the identity for comment
+attribution and audit; roles, Project membership, and per-report authorization are app-DB, enforced by the BFF. The
+browser carries the IAP cookie on same-origin requests (including the polling fetch).
 
 ### Data fetching
 

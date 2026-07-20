@@ -5,33 +5,36 @@ import type {
   Project,
 } from "@/models/workbench";
 
-// The single port the routes depend on: the authenticated user's view of the
-// analysis surface, selected by `THEMIS_BACKEND` (`./adapters`). A user belongs to
-// many Projects, so `createAnalysis` and `listAnalyses` name the Project they act in;
-// `pollEvents` / `getDocument` are analysis-keyed. The fixture is a single-Project
-// stand-in and enforces no membership; per-Project authorization — verifying the
-// caller belongs to the named Project — is defined in workspace-model.md
-// §Authorization. One port, not a Store/Client split: that split maps two distinct
-// real backends (Cloud SQL + Anthropic), whereas the route surface here is one
-// cohesive analysis-session lifecycle. The real adapter composes SQL / Anthropic /
-// KMS / GCS behind these methods; the routes stay unaware of that topology.
+// The server's ports — what an adapter implements. `AnalysisDataPlane` is the raw,
+// unauthorized persistence layer; `ProjectMembership` is the user↔Project mapping.
+// Routes reach neither directly: `AuthorizedBackend` (authorized-backend.ts) wraps
+// the pair, bound to the verified user, and `userContext` is its sole constructor —
+// so every access is membership-scoped by construction. See
+// docs/design/workspace-model.md (Authorization) and docs/design/security.md.
 //
 // The methods return protobuf-es view-model messages (constructed with `create`);
 // the routes serialize them with `toJson` and never reshape the payload.
 
-export interface AnalysisBackend {
-  /** The Projects the caller belongs to — the app-bar's Project selector. */
-  listProjects(): Promise<Project[]>;
+export interface CreateAnalysisInput {
+  prompt: string;
+  // The Project the analysis lands in — named by the caller and membership-verified
+  // by `AuthorizedBackend`, not chosen by the data plane.
+  projectId: string;
+  // The verified caller, recorded as the analysis creator.
+  userEmail: string;
+}
 
-  /** Create an analysis in `projectId` and kick off its agent session: mint the id +
-   *  session, seed the run, return the new row. */
-  createAnalysis(input: {
-    prompt: string;
-    projectId: string;
-  }): Promise<Analysis>;
+/** Raw analysis persistence + retrieval, with NO authorization. Only the
+ *  composition root and `AuthorizedBackend` hold one; routes never do. The real
+ *  adapter composes SQL / Anthropic / KMS / GCS behind these methods. */
+export interface AnalysisDataPlane {
+  /** Create the analysis and kick off its agent session: mint the id + session,
+   *  seed the run, return the new row. */
+  createAnalysis(input: CreateAnalysisInput): Promise<Analysis>;
 
-  /** A Project's analyses, newest first — the session switcher's source. */
-  listAnalyses(projectId: string): Promise<Analysis[]>;
+  /** Analyses in the given Projects, newest first — the session switcher's source.
+   *  An empty Project set yields no rows. */
+  listAnalysesIn(projectIds: readonly string[]): Promise<Analysis[]>;
 
   /** One liveness tick: the FULL projected event list and the working-document
    *  version signal. */
@@ -40,4 +43,19 @@ export interface AnalysisBackend {
   /** The current working document as a produced|not-produced result, or a named
    *  historical `version`. */
   getDocument(analysisId: string, version?: number): Promise<DocumentResponse>;
+
+  /** The Project owning an analysis. Raises `ResourceNotFoundError` when the
+   *  analysis is unknown — the same not-found a non-member gets, so a caller can
+   *  never distinguish "outside my Projects" from "does not exist". */
+  projectOfAnalysis(analysisId: string): Promise<string>;
+}
+
+/** The user↔Project membership mapping — the access boundary. Seeded offline by
+ *  the fixture; read from the `project_members` table by the real adapter. */
+export interface ProjectMembership {
+  isMember(userEmail: string, projectId: string): Promise<boolean>;
+
+  /** Every Project the user belongs to (id + name). Empty ⇒ the user can reach
+   *  nothing (default-deny). */
+  projectsOf(userEmail: string): Promise<Project[]>;
 }

@@ -33,5 +33,35 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/app/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/server/adapters", "@/server/adapters/**"],
+                    "message": "Route/page/server code must reach the data plane only through userContext (@/server/context) — never an adapter, at any depth."
+                  },
+                  {
+                    "group": ["@/server/authorized-backend"],
+                    "message": "AuthorizedBackend is constructed only in @/server/context; route code holds it via userContext."
+                  },
+                  {
+                    "group": ["@/server/identity", "@/server/identity/**"],
+                    "message": "Identity is verified by the proxy and userContext; app code must not re-resolve it."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

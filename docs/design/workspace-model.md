@@ -56,6 +56,29 @@ and those institutional lines do **not** coincide with Project boundaries. Themi
 literature across institutions. Sources are _untrusted content_ (PRODUCT.md §9), reached through a curated, controlled
 tool surface.
 
+## Authorization (enforcing the Project boundary)
+
+The boundary is enforced, not just declared. A user belongs to many Projects, so every access names the Project it acts
+in — a create and a listing name it directly, a point access (an Analysis's events, working document, poll) resolves it
+from the Analysis. Access is admitted **iff the user is a member of that Project**. A non-member is answered exactly as
+for an unknown Project or Analysis — **not-found, never a distinguishable forbidden** — so cross-Project *existence*
+never leaks (the existence-signal rule above).
+
+Enforcement is a single default-on chokepoint ([`security.md`](security.md)), one level below request auth
+([`frontend-framework.md`](frontend-framework.md) §Auth):
+
+- **`AuthorizedBackend`** wraps the raw `AnalysisDataPlane`, bound to the verified user. `userContext` is its only
+  constructor, so a route can never hold an unscoped backend. `createAnalysis` and `listAnalyses` name a Project and
+  verify membership before touching data; a point access (`getDocument`, `pollEvents`) resolves the Analysis's Project
+  and checks membership — and the working document is addressable only through that resolved Analysis, so the check
+  cannot be skipped. `listProjects` returns the Projects the user belongs to — the create/list selector.
+- **`ProjectMembership`** is the mapping the check reads — a `project_members(project_id, user_email, role)` table in
+  the real adapter, a seeded map offline. Empty ⇒ the user reaches nothing (default-deny); a real deploy is closed until
+  memberships are seeded.
+
+This mirrors the session plane: `session_context(token_hash, project_id, …)` project-scopes the **agent's** data access
+(the store resolves a bearer → its Project); `project_members` is the same boundary for the **user's** access.
+
 ## Interaction model (the workbench it grows into)
 
 - **Refine intent first** — pin down the question/goals in dialogue before committing work.
