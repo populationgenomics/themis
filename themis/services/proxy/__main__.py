@@ -149,8 +149,7 @@ async def _serve() -> None:
         # Bind the listeners only now: the agent's startup probe gates on them, so "ready" means restored.
         await _start_http(proxy)
         grpc_server = await _start_grpc(session_token, internal_ca)
-        # Checkpoint the working document on each turn boundary: the worker CLI reads events paginated, so
-        # end_turn never crosses the reverse-proxied traffic — the proxy reads the session event stream (§9).
+        # Checkpoint at each end_turn boundary, off the proxy's own event-stream subscription (§9).
         turn_watcher = asyncio.create_task(_watch_turns(anthropic_client, session_id, workspace_sync))
         _logger.info('listeners bound; serving the session')
         # The turn-watcher owns the session lifecycle: it returns on session.status_terminated (a clean end)
@@ -175,10 +174,9 @@ async def _watch_turns(
 ) -> None:
     """Checkpoint the working document on each turn boundary of the session (§9).
 
-    The worker CLI reads its events paginated, so an ``end_turn`` never crosses the reverse-proxied
-    agent traffic. The proxy holds the environment key and the upstream, so it subscribes to the
-    session's own event stream via the Anthropic SDK and checkpoints on ``session.status_idle`` /
-    ``end_turn``.
+    The proxy holds the environment key and the upstream, so it subscribes to the session's own event
+    stream via the Anthropic SDK and checkpoints on ``session.status_idle`` / ``end_turn`` — independent
+    of how the worker reads its own events.
 
     A dropped stream is expected on a long-lived connection: reconnect, re-page the event history, and
     dedupe by event id so a boundary that fell in the drop gap still checkpoints. A 4xx status (auth,
