@@ -30,6 +30,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app \
     THEMIS_BACKEND=cloudsql
 COPY themis/rpc ./themis/rpc
+COPY themis/common/__init__.py themis/common/sql.py ./themis/common/
 COPY themis/services/auth ./themis/services/auth
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime,
 # so no chown is needed.
