@@ -1,0 +1,119 @@
+// The workbench domain: the BFF↔frontend view model for an Analysis and its run — the shapes the
+// web app's three routes exchange (create/list, poll, working document). A curated projection of
+// what the workbench renders, not a mirror of the data plane's RPC contracts; the sandbox
+// machinery behind it is dropped.
+//
+// protobuf-es generates the browser stubs from this proto; the BFF serves proto3-JSON
+// (toJson) and the client parses it (fromJson), so a single codec speaks both ends.
+
+syntax = "proto3";
+
+package themis.workbench.models.workbench;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a markdown body
+// carrying the inline grammar (**bold**). A turn with no text (an agent turn that only makes tool
+// calls) is not emitted as a narration.
+message Narration {
+  string text = 1;
+}
+
+// The output of a completed tool call.
+message ToolResult {
+  string output = 1;  // the tool's stdout/result text; may be empty (a command with no output)
+  bool is_error = 2;  // the call failed (non-zero exit / ToolError)
+}
+
+// A tool call, projected for display. `name` tags the tool; `intent` is the one-line label (the
+// shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the
+// name); `command` is the full untruncated invocation the row reveals on expand. `result` is
+// absent until the call returns.
+message ToolCall {
+  string name = 1;
+  string intent = 2;
+  string command = 3;
+  ToolResult result = 4;
+}
+
+// One line of the projected conversation stream. A oneof over the three variants, so the
+// kind-iff-payload invariant is structural; the client surfaces it as a tagged union. `id` is stable
+// across polls (the client replaces by id, never appends); `occurred_at` orders the stream — array
+// position stops being load-bearing once interleaved sub-agent threads fold into one list. The
+// projection is flat: it carries neither per-turn agent/thread attribution (coordinator vs a named
+// sub-agent) nor a thinking variant — both are additive fields, deferred until the workbench renders
+// them.
+message ConversationEvent {
+  string id = 1;
+  google.protobuf.Timestamp occurred_at = 5;
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+
+    Narration assistant = 2;
+    Narration user = 3;
+    ToolCall tool = 4;
+  }
+}
+
+// A Project the user belongs to — the access/data boundary an Analysis is bound to (GLOSSARY).
+message Project {
+  string id = 1;
+  string name = 2;
+}
+
+// An Analysis: a collaborative working session bound to a Project (GLOSSARY). `session_id` is the
+// backend session the agent runs in, minted at create.
+message Analysis {
+  string id = 1;
+  string session_id = 2;
+  string project_id = 3;
+  string prompt = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// The create request: the kickoff prompt and the Project the analysis lands in. A whitespace-only
+// prompt or a blank project id is rejected at the boundary.
+message CreateAnalysisRequest {
+  string prompt = 1 [(buf.validate.field).cel = {
+    id: "prompt.non_blank"
+    message: "prompt must contain a non-whitespace character"
+    expression: "this.matches('\\\\S')"
+  }];
+  string project_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// The create reply: the minted analysis id, which the client puts in the URL.
+message CreateAnalysisResponse {
+  string id = 1;
+}
+
+// The prior Analyses the session browser lists, newest first.
+message ListAnalysesResponse {
+  repeated Analysis analyses = 1;
+}
+
+// The Projects the user belongs to — the app-bar's Project selector.
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+// One poll tick. `events` is the whole projected stream every tick (the client replaces by id,
+// never appends): the upstream event log has no since-cursor, so the adapter re-projects the lot
+// each poll. The progressive reveal is server-side state, not a client-threaded cursor.
+message PollResponse {
+  repeated ConversationEvent events = 1;
+  optional int32 working_document_version = 2 [(buf.validate.field).int32.gte = 1];  // absent until a working document is produced, then its version
+}
+
+// A produced working document: its version and markdown body.
+message WorkingDocument {
+  int32 version = 1 [(buf.validate.field).int32.gte = 1];
+  string markdown = 2;
+}
+
+// The working document as a produced/not-produced result. `document` unset is the not-produced
+// state the pane handles — a represented absence, not an inferred empty.
+message DocumentResponse {
+  WorkingDocument document = 1;
+}

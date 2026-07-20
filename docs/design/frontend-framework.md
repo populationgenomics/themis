@@ -56,10 +56,10 @@ Anthropic runs the agent loop; the web tier never holds a connection for the run
 
 - **Kick off** — the BFF creates the session and sends the case as a `user.message` (request/response).
 - **Live conversation thread** — the browser polls the BFF (~2–3 s); the BFF reads Anthropic's persisted event log
-  (`events.list` since a cursor), authorizes the IAP identity against Project membership, translates events to the
-  display model, and returns the new ones. The BFF holds the Anthropic API key and is the **authorization and projection
-  point** — the browser never reaches Anthropic directly. Anthropic's log *is* the live transcript; the BFF relays it,
-  it does not copy it.
+  (`events.list`), authorizes the IAP identity against Project membership, translates events to the display model, and
+  returns the whole projected stream (the client replaces by id, never appends). The BFF holds the Anthropic API key and
+  is the **authorization and projection point** — the browser never reaches Anthropic directly. Anthropic's log *is* the
+  live transcript; the BFF relays it, it does not copy it.
 - **Steering** — occasional curator interjections are plain POSTs to the BFF that call `sessions.events.send`
   (`user.message` / `user.interrupt`). SSE/WebSocket push is deferred (Open questions).
 
@@ -88,10 +88,13 @@ version; comment/deep-link anchors).
 
 ### Auth
 
-IAP is the gate ([`spike-infrastructure.md`](spike-infrastructure.md) §2). The app is stateless and trusts the IAP JWT
-per request; the asserted email is the identity for comment attribution and audit. Roles, Project membership, and
-per-report authorization are app-DB, enforced by the BFF. The browser carries the IAP cookie on same-origin requests
-(including the polling fetch); the webhook route is the one IAP-exempt surface.
+IAP is the gate ([`spike-infrastructure.md`](spike-infrastructure.md) §2). The app **verifies** IAP's signed
+`X-Goog-IAP-JWT-Assertion` per request at a single default-on chokepoint ([`security.md`](security.md)): a proxy
+default-deny perimeter (`apps/web/src/proxy.ts`) plus a shared request-scoped accessor (`server/context.ts`) that
+re-verifies at the data seam, so no route reaches the backend unauthenticated. The proxy allowlists `healthz`; the
+HMAC-verified webhook receiver is the other IAP-exempt surface in the design. The asserted email is the identity for
+comment attribution and audit; roles, Project membership, and per-report authorization are app-DB, enforced by the BFF.
+The browser carries the IAP cookie on same-origin requests (including the polling fetch).
 
 ### Data fetching
 

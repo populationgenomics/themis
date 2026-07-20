@@ -113,11 +113,11 @@ target-version = "py313"
 
 # Generated code (buf generate; tools/schema/regen.py): committed, never hand-edited,
 # so linting it is noise (buf plugin output is not lint-clean) and a reformat would
-# fight the freshness gate. `themis/rpc` and `themis/litcache/models` are the generated
-# proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The
-# pre-commit ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff
-# explicit paths.
-extend-exclude = ["themis/litcache/models", "themis/rpc", "buf"]
+# fight the freshness gate. `themis/rpc`, `themis/litcache/models`, and
+# `themis/workbench/models` are the generated proto/gRPC stubs; `buf` is the vendored
+# buf.validate stub (protovalidate options). The pre-commit ruff hooks pass
+# --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
+extend-exclude = ["themis/litcache/models", "themis/workbench/models", "themis/rpc", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -242,10 +242,10 @@ max-locals = 25
 [tool.pyright]
 pythonVersion = "3.13"
 include = ["tools", "tests", "schema/tests", "infra", "themis"]
-# themis/rpc and themis/litcache/models are generated buf output (dynamic message
-# classes); the committed .pyi gives importers static types, but the stubs themselves
-# are not standard-mode clean, so exclude them from checking. Re-list pyright's
-# auto-excludes, which specifying `exclude` would otherwise drop.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "buf"]
+# themis/rpc, themis/litcache/models, and themis/workbench/models are generated buf
+# output (dynamic message classes); the committed .pyi gives importers static types, but
+# the stubs themselves are not standard-mode clean, so exclude them from checking. Re-list
+# pyright's auto-excludes, which specifying `exclude` would otherwise drop.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "themis/workbench/models", "buf"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"
