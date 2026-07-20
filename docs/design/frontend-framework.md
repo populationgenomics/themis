@@ -17,11 +17,11 @@ This doc fixes the frontend framework and the web-tier data flow against the Man
 
 ## Decision: Next.js (full-stack TypeScript); Python confined to the tool tier
 
-The language boundary falls at the **MCP tunnel**, not at the browser:
+The language boundary falls at the **agent's data plane**, not at the browser:
 
-- **Agent-facing tier** — the MCP/tool servers and data-plane mediation ([`agent-runtime.md`](agent-runtime.md),
-  [`spike-infrastructure.md`](spike-infrastructure.md) §8). Reached by Anthropic's managed loop through MCP tunnels,
-  never by the browser. Python; isolated; its language is invisible to the web app.
+- **Agent-facing tier** — the internal services and data-plane mediation ([`agent-runtime.md`](agent-runtime.md),
+  [`spike-infrastructure.md`](spike-infrastructure.md) §8). Reached from the self-hosted sandbox in code mode, never by
+  the browser. Python; isolated; its language is invisible to the web app.
 - **Web tier** (this doc) — **Next.js**: the UI plus the BFF (backend-for-frontend: the data API, IAP handling, the
   webhook receiver, and the live session relay). One server-side language across the frontend↔backend seam — the surface
   that iterates fastest in the dog-fooding loop.
@@ -71,8 +71,8 @@ request/response — Cloud-Run-native, no held connections.
 
 Two writers feed our store, neither standing:
 
-- **MCP servers**, during the run — claims/gaps/verdicts and tool-call provenance, written host-side as the agent calls
-  `record_claim` / `record_gap` / `record_verdict` ([`agent-runtime.md`](agent-runtime.md)); the web tier is not
+- **Internal services**, during the run — claims/gaps/verdicts and tool-call provenance, written host-side as the agent
+  calls `record_claim` / `record_gap` / `record_verdict` ([`agent-runtime.md`](agent-runtime.md)); the web tier is not
   involved.
 - **A one-shot backfill**, at session end — a `session.status_idled` / `session.status_terminated` webhook triggers a
   single `events.list` read that projects the event-stream-only telemetry (per-agent token/cache usage, thinking,

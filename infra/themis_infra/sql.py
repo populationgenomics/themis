@@ -5,7 +5,7 @@ by table GRANTs in the migrations, not here. `iam_db_user` (the login) and
 `grant_cloudsql_connect` (the project roles to reach the instance) are called from
 each service module, not this constructor — the instance can't depend on the
 services' SAs (they need its connection name), so attaching from here would cycle.
-See `docs/plans/managed-agents-wiring.md` §8.
+See `docs/design/spike-infrastructure.md` §8.
 """
 
 from __future__ import annotations

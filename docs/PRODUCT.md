@@ -157,11 +157,11 @@ them**.
 - **Lethal trifecta** (private data × untrusted content × external channel), mitigated primarily by **tool-surface
   design** — per-tool permissions and data-flow, tightly-typed constrained tools (enums, not free-form strings), **local
   data over open-internet queries**. Not post-hoc output filtering.
-- **Self-hosted execution boundary:** execution + tools run inside CPG's network (self-hosted sandboxes + MCP tunnels);
-  Anthropic does orchestration only; agent code-execution, filesystem, tool calls and data never leave the boundary —
-  critical because the agent runs code over raw genomic data. Deferrable for the earliest MVP (public evidence sources,
-  no patient data — §12), but required for the product. The UI is auth-controlled but internet-reachable (not
-  VPN-gated).
+- **Self-hosted execution boundary:** execution + tools run inside CPG's network (self-hosted sandboxes; the agent
+  reaches our internal services in code mode); Anthropic does orchestration only; agent code-execution, filesystem, tool
+  calls and data never leave the boundary — critical because the agent runs code over raw genomic data. Deferrable for
+  the earliest MVP (public evidence sources, no patient data — §12), but required for the product. The UI is
+  auth-controlled but internet-reachable (not VPN-gated).
 - **Sensitivity tiers:** individual-variant public-DB lookups are low-risk; cohort-scale genomic data and
   PII/clinical-notes progressively tighten the surface.
 - **Tainted-data propagation** is real but secondary — the primary mitigation is leaving the agent nothing to exfiltrate

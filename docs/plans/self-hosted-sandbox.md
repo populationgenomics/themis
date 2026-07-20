@@ -1,10 +1,10 @@
 # Plan: Self-hosted sandbox on Cloud Run
 
 This plan decides the **self-hosted execution sandbox**: where the agent's tool execution runs, and how the credentials
-involved stay out of the agent's reach. It is the **execution model the wiring slice builds**
-([`managed-agents-wiring.md`](managed-agents-wiring.md)) — self-hosted from the first synthetic scenarios, not a later
-replacement for Anthropic's cloud sandboxes. "Self-hosted" is about *where execution runs*; it is orthogonal to *what
-data* runs through it — synthetic scenarios first, non-synthetic data a later gate on top (wiring §2 scope).
+involved stay out of the agent's reach. It is the **execution model the wiring builds on**
+([`../design/managed-agents.md`](../design/managed-agents.md)) — self-hosted from the first synthetic scenarios, not a
+later replacement for Anthropic's cloud sandboxes. "Self-hosted" is about *where execution runs*; it is orthogonal to
+*what data* runs through it — synthetic scenarios first, non-synthetic data a later gate on top.
 
 ## 1. Why self-host the sandbox
 
@@ -52,9 +52,9 @@ The design is held to four requirements:
   sub-second claim latency and fleet scale; our sessions run for minutes and a cold start of seconds is invisible. Its
   worker pod mounts `ANTHROPIC_ENVIRONMENT_KEY` (a `secretKeyRef`) straight into the same container that runs
   `ant beta:worker run` — the env key is readable by agent code, the property we specifically want to avoid.
-- **MCP tunnel** (wiring §2 option A) — needs beta access we don't hold and a standing proxy host. Nothing needs it: the
-  model edits the working document as a synced file, and the genomics APIs later are internal, so no server of ours is
-  ever Anthropic-reached.
+- **MCP tunnel** — needs beta access we don't hold and a standing proxy host. Nothing needs it: the model edits the
+  working document as a synced file, and the genomics APIs later are internal, so no server of ours is ever
+  Anthropic-reached.
 - **Always-on poller** (`ant beta:worker poll`, or a Cloud Run worker pool at min-instances 1) — the simplest worker,
   but standing cost for a queue that is empty almost always, and in-process execution would share one filesystem across
   sessions.
@@ -613,10 +613,10 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
 
 ## 9. Persistence — the working document and `/workspace`
 
-The wiring plan's store is reshaped. It is no longer an editor-tool MCP server the agent calls per edit; it is a
-session-token-authed blob mediator (`workspace put`/`get`) fronting two buckets, resolving the session token through the
-auth service (§7). The agent never calls it — **the model edits files, the proxy syncs them.** Two kinds of state, split
-by an explicit persistence contract:
+The store is reshaped. It is no longer an editor-tool MCP server the agent calls per edit; it is a session-token-authed
+blob mediator (`workspace put`/`get`) fronting two buckets, resolving the session token through the auth service (§7).
+The agent never calls it — **the model edits files, the proxy syncs them.** Two kinds of state, split by an explicit
+persistence contract:
 
 ### The working document — a file the model edits directly
 

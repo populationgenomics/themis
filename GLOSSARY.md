@@ -50,5 +50,6 @@ Shared definitions so we use terms consistently (and so tooling has one source o
 - **Desire paths** — recurring custom analyses the agent reaches for, which graduate into new deterministic
   tools/annotations.
 - **Lethal trifecta** — the exfiltration risk when private data × untrusted content × an external channel coincide.
-- **Self-hosted sandbox / MCP tunnel** — Anthropic mechanisms that keep tool execution and MCP servers inside our
-  network (orchestration stays on Anthropic's side).
+- **Self-hosted sandbox** — the Anthropic mechanism that keeps tool execution inside our network (orchestration stays on
+  Anthropic's side). **Code mode** — the agent reaches our internal services by writing code against their generated
+  stubs, rather than through chains of discrete tool calls.

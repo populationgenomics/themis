@@ -20,17 +20,18 @@ sandbox.** This is the Managed Agents split — a hosted REST API where the loop
 log, and coordinator scheduling are Anthropic's — paired with a **self-hosted execution sandbox** so code execution
 stays inside CPG's network ([`spike-infrastructure.md`](spike-infrastructure.md) §8).
 
-- **Tools** — our tightly-typed MCP servers ([`tool-surface.md`](tool-surface.md)) are reached by the managed loop
-  through MCP tunnels; no public endpoint. The servers that read private data (Cloud SQL/GCS) hold the GCP identity; the
-  sandbox holds none and never touches the store directly (data-plane mediation — §8).
+- **Tools** — the agent reaches our internal services in **code mode**: it writes code against their generated stubs
+  rather than issuing chains of discrete tool calls. The services are gRPC and internal-only; those that read private
+  data (Cloud SQL/GCS) hold the GCP identity. The sandbox holds no credential — a sandbox-local proxy injects the
+  per-session one on the way out, so the agent never touches the store directly (data-plane mediation — §8).
 - **Execution sandbox** — the self-hosted worker runs the agent's `bash` and generated code under our egress policy.
 - **Session client** — the web-app backend creates a session per submitted case and consumes its event stream (to drive
   the workspace UI and write the trace). It is a thin client, **not** a workflow conductor: it starts the session and
   observes; it does not sequence the agents.
 
 There is no orchestrator in our code. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 calls the web app
-the "orchestrator/session-client," it means this session client — not a conductor; the data-plane mediation is the MCP
-tier's (above).
+the "orchestrator/session-client," it means this session client — not a conductor; the data-plane mediation is the
+services tier's (above).
 
 ## Decision: Managed Agents, coordinator-driven
 
@@ -45,7 +46,7 @@ coverage, traceability, and eval).
 ### Why Managed Agents
 
 It skips building and operating the agent loop, the execution-sandbox lifecycle, per-session state, and the event stream
-— fast results, the Spike's goal — while the parts we do build (the tool/MCP servers, the data-plane mediation) are
+— fast results, the Spike's goal — while the parts we do build (the internal services, the data-plane mediation) are
 runtime-independent and carry over if we ever move off it ([`spike-infrastructure.md`](spike-infrastructure.md) §8). The
 dependency it adds is Anthropic's (beta) agent API.
 
@@ -97,18 +98,18 @@ Each roster sub-agent is its own versioned Agent, so per-role tool-scoping and p
 free. How much the coordinator decomposes versus working in fewer, broader agents is the scaffold-vs-autonomy dial
 (PRODUCT §11) — set by eval, widened as the model proves it can own more.
 
-## Structured output: typed calls into our MCP tools
+## Structured output: typed calls into our services
 
 Managed Agents has no per-session output-schema enforcement, and a client-side custom tool would drag the thin session
-client back into a handling loop. Instead, claims/gaps/verdicts are emitted by the agent **calling our tightly-typed MCP
-tools** — `record_claim` / `record_gap` / `record_verdict`, or writes to the working document. Each call routes through
-the MCP tunnel to our MCP server, which:
+client back into a handling loop. Instead, claims/gaps/verdicts are emitted by the agent **calling our tightly-typed
+services** — `record_claim` / `record_gap` / `record_verdict`, or writes to the working document. The agent writes code
+against the generated stubs; the call reaches the service through the sandbox-local proxy, and the service:
 
 - validates the payload against the schema generated from [`proto.md`](proto.md);
-- persists it to our store (the server holds the GCP identity; the sandbox never touches the store); and
+- persists it to our store (the service holds the GCP identity; the sandbox never touches the store); and
 - writes the matching trace record.
 
-The structured-output contract is therefore part of the tool surface — no prose parsing, no file scraping, no
+The structured-output contract is therefore part of the service surface — no prose parsing, no file scraping, no
 custom-tool round-trip. The **working document** (PRODUCT §7) is the durable artifact, grown through these typed calls.
 
 ## Untrusted gathered content
@@ -134,10 +135,10 @@ injected tool call mid-gather. Hardening the injection leg beyond this is tool-s
 
 The trace ([`trace-schema.md`](trace-schema.md)) has two feeders, both consistent with hosting only tools and sandboxes:
 
-- **Our MCP servers** write provenance-rich records host-side on each tool call (URL, args, response hash,
-  source-database version) — they are where the call actually executes.
+- **Our services** write provenance-rich records host-side on each call (URL, args, response hash, source-database
+  version) — they are where the call actually executes.
 - **The session client** projects the Managed Agents event stream into the trace vocabulary: `span.model_request_end`
-  for per-agent token/cache usage, `agent.tool_use` / `agent.mcp_tool_use` for calls, `agent.thinking`, and the
+  for per-agent token/cache usage, `agent.tool_use` / `agent.custom_tool_use` for calls, `agent.thinking`, and the
   `session.thread_*` per-thread streams for sub-agent activity — the coordinator fans out across threads, so the client
   consumes those, not just the primary stream.
 

@@ -48,8 +48,8 @@ This yields two planes:
   corpus-scale classifier scoring for collection selection. Low sensitivity; reusable beyond Themis.
 - **Themis boundary plane** — behind the egress-controlled boundary (`spike-infrastructure.md` §8). Paragraph
   embeddings, the knowledge-unit substrate, the licensed/captured cache tier, the extraction pipeline, and
-  question-answering. Reached by the agent only through tightly-typed MCP-tunnel tools; the agent never touches the
-  stores directly.
+  question-answering. Reached by the agent only through tightly-typed internal services, called in code mode; the agent
+  never touches the stores directly.
 
 Which plane an artifact physically lives in (the public store vs behind the boundary) **follows from** its
 shared-vs-gated class above; it is not an independent decision.
@@ -576,8 +576,8 @@ facets (case report, functional study, animal model) as filterable tags.
 The layer adds **no new agent-side egress surface**; it rides themis's existing model (`spike-infrastructure.md` §8,
 PRODUCT.md §9):
 
-- The agent reaches sources only through **tightly-typed MCP tools**; the self-hosted sandbox has deny-by-default egress
-  and **nothing to exfiltrate to**.
+- The agent reaches sources only through **tightly-typed internal services**; the self-hosted sandbox has
+  deny-by-default egress and **nothing to exfiltrate to**.
 - Outbound network calls happen **infra-side, never under agent control**, under an egress allowlist:
   - **bulk-available** sources (PubMed/PMC, the OA subset) are **mirrored locally** — no live querying;
   - **non-bulk** resolution/metadata services (Crossref, Semantic Scholar, Unpaywall, arXiv) are queried **live by the
@@ -607,7 +607,8 @@ deleted**. Retraction is handled as a **paper-level overlay fact, checked at res
 ## 7. Compute and storage
 
 Seed scale: ~100k open-access papers. Most boundary-plane storage maps onto infrastructure the Spike already provisions
-(Cloud SQL Postgres, GCS, Cloud Run, MCP tunnels); the layer is largely additive tables, buckets, jobs, and tools.
+(Cloud SQL Postgres, GCS, Cloud Run, the sandbox forward leg); the layer is largely additive tables, buckets, jobs, and
+services.
 
 | Asset                                     | Size / cost                                                                                                                                    | Where                                                              |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
@@ -747,7 +748,7 @@ Each stage stands alone and is additive; ordering is a guide, not a critical pat
 favour fast iteration. Effort is eng-weeks for a small team.
 
 - **S0 — Cache + capture + whole-read Q&A (~2–4 wk).** Licence-tagged write-through cache; upload + proven-access fetch;
-  discovery→whole-read MCP tools. Reuses pubmedifier's full-text ladder and per-user credentials. Serves the Spike
+  discovery→whole-read service calls. Reuses pubmedifier's full-text ladder and per-user credentials. Serves the Spike
   (`variant + condition → ACMG`, public sources) immediately.
 - **S1 — Seed + paragraph retrieval (~3–6 wk).** Collection selection v1 (MeSH + E5+LR classifier); fill the ~100k OA
   cache; paragraph embeddings; passage- retrieval tool. Answers specific RD questions over a real corpus. Parallelisable

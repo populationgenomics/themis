@@ -78,8 +78,8 @@ Self-hosted sandboxes (§8) add **two scoped stored secrets**: the `ANTHROPIC_EN
 claim its work queue, and the **webhook signing key** (`whsec_…`) that verifies the wake webhook letting the worker
 scale to zero — both Secret Manager, scoped to one environment, rotated on exposure. The control plane (creating
 agents/sessions/environments) still authenticates via WIF. Env-var vault credentials are not supported on self-hosted,
-so any third-party key is read host-side by our tool MCP servers from Secret Manager. The interim cloud sandbox needs no
-environment key.
+so any third-party key is read host-side by our internal services from Secret Manager. The interim cloud sandbox needs
+no environment key.
 
 Rotation: these no-WIF-path credentials rotate on compromise / per provider policy (the environment key on exposure).
 
@@ -104,49 +104,51 @@ single PR-approval gate), plus cloud-free validation. No PR job can mutate cloud
   (authenticated via WIF), then `pulumi up` points the Cloud Run service at the new image — deploying to
   **cpg-themis-dev**.
 - **Separate Cloud Run services, sized and scaled independently** (distinct images and identities): the **web app**
-  (`themis-web` — the IAP-fronted UI/BFF) and the **Python MCP tool server** (the agent's data-plane mediator, holding
-  the GCP/Cloud SQL identity — §8). The MCP endpoint is the tool server's, not the web app's. The self-hosted phase (§8)
-  adds a third deployable, the **sandbox worker** (runs in our infra with controlled egress; platform TBD). Agent and
-  environment definitions are version-controlled YAML applied via the **`ant` CLI** from CI (control plane).
+  (`themis-web` — the IAP-fronted UI/BFF) and the **internal gRPC services** (the agent's data plane, holding the
+  GCP/Cloud SQL identity — §8), which carry no public endpoint. The self-hosted phase (§8) adds the **sandbox worker**
+  (runs in our infra with controlled egress) with its credential-proxy sidecar, and the **dispatcher** that starts it.
+  Agent and environment definitions are version-controlled YAML applied via the **`ant` CLI** (control plane).
 - Prod (later): a **gated GitHub Environment** (required approval) promotes the *same validated image* into prod's
   Artifact Registry by copy — **no rebuild** — and deploys. Full project isolation; prod never reads dev's registry.
 
 The deployables and their boundaries — boxed is inside our GCP project; orange marks a public endpoint, green
-internal-only (no public ingress). Auth labels each hop. The MCP path is shown for the spike (direct, vault-bearer
-public endpoint); the end-state reachability is an open choice
-([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §2), not shown here.
+internal-only (no public ingress). Auth labels each hop. Only two surfaces are publicly reachable: the web app behind
+IAP, and the dispatcher behind HMAC. The data-plane services are internal, reached from the sandbox.
 
 ```mermaid
 flowchart TB
   browser["Curator browser"]
   ma["Anthropic Managed Agents · external"]
   subgraph gcp["GCP project · cpg-themis-dev"]
-    web["web app · Cloud Run (themis-web)<br/>BFF + webhook receiver<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
-    mcp["MCP tool server · Cloud Run (Python)<br/>id: Cloud SQL write · agent data plane"]
+    web["web app · Cloud Run (themis-web)<br/>BFF<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
+    disp["dispatcher · Cloud Run<br/>HMAC webhook front"]
+    sandbox["sandbox job + credential proxy<br/>agent code execution"]
+    svc["internal services · Cloud Run (Python, gRPC)<br/>id: Cloud SQL write · agent data plane"]
     sql[("Cloud SQL")]
   end
   browser -->|"IAP / HTTPS LB"| web
   web -->|"WIF Path B · sessions, events"| ma
-  ma -->|"HMAC · session-end (IAP-exempt)"| web
-  ma -->|"vault-bearer"| mcp
+  ma -->|"HMAC · run started"| disp
+  disp -->|"run job"| sandbox
+  sandbox -->|"code mode · session token injected by the proxy"| svc
   web -->|"Cloud SQL IAM"| sql
-  mcp -->|"Cloud SQL IAM"| sql
+  svc -->|"Cloud SQL IAM"| sql
 
   classDef public fill:#ffe8cc,stroke:#d9480f,color:#000
   classDef internal fill:#d3f9d8,stroke:#2b8a3e,color:#000
-  class web,mcp public
-  class sql internal
+  class web,disp public
+  class svc,sandbox,sql internal
 ```
 
 ### 7. Local dev environment
 
 The agent loop and tools run in the **cloud** (the dev project + Anthropic's Managed Agents); the tools depend on real
 data, so emulating them locally adds no signal. Local dev is therefore two fast paths against dev, not a local clone.
-The **MCP tunnel** (§8) is one end-state reachability option, not a local-dev requirement: the tool tier stays deployed
-in dev, reached by the managed loop, so there is nothing to tunnel or host per developer.
+The data-plane services stay deployed in dev and are reached from the sandbox, so there is nothing to tunnel or host per
+developer.
 
 - **Tool / agent iteration:** edit locally, then push to **dev** through a dev-only fast path — apply the
-  agent/environment YAML with `ant`, redeploy the tool MCP server / sandbox worker to dev — and run a session there,
+  agent/environment YAML with `ant`, redeploy the internal services / sandbox worker to dev — and run a session there,
   inspecting the resulting trace. (Dev-only; the gated `main`→deploy pipeline in §6 is unchanged.)
 - **UI iteration:** run the **web app locally** against **dev Cloud SQL** (via the Cloud SQL Auth Proxy, IAM auth) and
   **dev GCS** — it reads real dev display data. The proxy is IAM-gated and TLS — no public DB exposure, no password, no
@@ -159,8 +161,8 @@ in dev, reached by the managed loop, so there is nothing to tunnel or host per d
   concern), with a configured dev user where a flow needs an identity.
 
 **Shared-dev concurrency:** dev is one environment for the whole team, so concurrent mutation of shared resources —
-schema, the deployed tool/MCP servers, agent definitions — is a coordination point, not per-developer isolation. The
-only complete cure is full per-developer isolation, which is overkill for the Spike; so for the Spike (small team) we
+schema, the deployed services, agent definitions — is a coordination point, not per-developer isolation. The only
+complete cure is full per-developer isolation, which is overkill for the Spike; so for the Spike (small team) we
 **coordinate**, and if it chafes we go to **per-developer projects** (cheap given the Pulumi setup — one stack per
 project), not partial isolation. The schema-rollback case specifically: migrations are **forward-only**, applied to dev
 only via the merge→deploy pipeline (§6), so the deployed schema only advances; in-progress schema changes run against
@@ -180,47 +182,44 @@ infra consequences.
 
 Why Managed Agents for the Spike: it skips building and operating the agent loop, the execution sandbox, per-session
 state, and the event stream — so we get results fast, the Spike's goal. This is **not** meaningful lock-in: the parts we
-build — the tool/MCP servers (the data-plane mediation) and the web app's session client — are runtime-independent and
+build — the internal services (the data-plane mediation) and the web app's session client — are runtime-independent and
 carry over unchanged, so moving to a custom loop later swaps only the session/orchestration layer, not our tools or data
 plane. The dependency that does exist is Anthropic's (beta) agent API. Alternatives are weighed in
 [`agent-runtime.md`](agent-runtime.md).
 
 Execution sandbox — target is **self-hosted**, for egress control. The Anthropic-hosted **cloud** sandbox gets the first
 version running, **gated so self-hosted lands before any real (non-synthetic) data**; the cloud→self-hosted move is
-mostly **additive** (add the worker and egress policy; the end-state MCP reachability is a separate open choice, §8),
-not rework, because the web app, agent YAML, CI, and data plane are **sandbox-agnostic**. The near-term target is a
-**self-hosted sandbox** (`config: type=self_hosted`): tool execution (bash, the public-endpoint lookups) runs in a
-container **in our infra**, driven by a worker that **wakes on a thin signed webhook** (`session.status_run_started`)
-and then claims work by **outbound poll** — so the worker **scales to zero** and work/results flow outbound (the only
-inbound is the signed wake notification). The egress controls (deny-by-default VPC egress, allowlist to the public
-lookup endpoints / local mirrors) exist either way; under the Anthropic-hosted cloud sandbox they are configured on
-Anthropic's side, and **self-hosting moves that configuration to our boundary** — egress for the agent's own
-bash/generated code is then governed where we set the policy.
+mostly **additive** (add the worker and egress policy), not rework, because the web app, agent YAML, CI, and data plane
+are **sandbox-agnostic**. The near-term target is a **self-hosted sandbox** (`config: type=self_hosted`): tool execution
+(bash, the public-endpoint lookups) runs in a container **in our infra**, driven by a worker that **wakes on a thin
+signed webhook** (`session.status_run_started`) and then claims work by **outbound poll** — so the worker **scales to
+zero** and work/results flow outbound (the only inbound is the signed wake notification). The egress controls
+(deny-by-default VPC egress, allowlist to the public lookup endpoints / local mirrors) exist either way; under the
+Anthropic-hosted cloud sandbox they are configured on Anthropic's side, and **self-hosting moves that configuration to
+our boundary** — egress for the agent's own bash/generated code is then governed where we set the policy.
 
-- **Tool reachability (end state, open choice):** either **MCP tunnels** — `cloudflared` + an Anthropic proxy in our
-  network reach the lookup/tool MCP servers with no public endpoint (a beta preview needing access approval) — or
-  **ditch MCP** and have the self-hosted worker call our **internal APIs directly** (no MCP, no tunnel), the credential
+- **Tool reachability:** the self-hosted worker calls our **internal APIs directly**, in code mode, with the credential
   injected by a sandbox-local proxy so the agent never holds it
-  ([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §2). Neither is needed for the spike's
-  public vault-bearer endpoint.
+  ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) §6, §7). The services need no public endpoint
+  and no tunnel.
 - **Sandbox container:** under self-hosted we build and harden it — minimal base, curated **binary allowlist** (no
   egress/network tools, no runtime package manager), tracked manifest under CODEOWNERS + security review. Under the
   interim cloud sandbox this is Anthropic's.
 - **Isolation:** the sandbox holds no GCP credentials and no metadata-server access; egress is deny-by-default at our
-  boundary. **Our MCP servers hold the GCP identity** and mediate the agent's access to private data (Cloud SQL/GCS) —
-  the sandbox never touches the data store directly.
-- **Write boundary — by identity, not read-vs-write.** The MCP tool tier is the **sole writer of agent-authored
-  content** — the working document, later typed claims — each write grant-bound to its Analysis
-  ([`../plans/managed-agents-wiring.md`](../plans/managed-agents-wiring.md) §5). The **web app** writes the
-  **control-plane / session rows** it owns (Analysis, membership, the per-session grant, the session-end trace/source
-  projection), reads display rows, and takes **curator-initiated writes** — a paper upload is a normal web-app→**GCS**
-  write, not agent-authored content. Admitting any source (an upload, a `web_fetch` page, the corpus) into an agent's
-  context is a separate retrieval-trust question, orthogonal to which identity wrote the blob.
-- **Config + code execution:** the agent config — system prompt, tool list, MCP server URLs, model id — lives on the
-  Agent object and is pushed at **deploy time via `ant`** (control plane, §6), not bootstrapped per-poll; MCP
-  credentials attach per session via vaults. The concrete per-agent model id is secret-class confidential — see
-  *Confidential config* in [`deployment.md`](deployment.md). Generated analysis code is not squeezed through MCP — it
-  runs via the toolset's `bash`/file tools **in the self-hosted worker**, under our egress policy.
+  boundary. **Our services hold the GCP identity** and mediate the agent's access to private data (Cloud SQL/GCS) — the
+  sandbox never touches the data store directly.
+- **Write boundary — by identity, not read-vs-write.** The internal services are the **sole writer of agent-authored
+  content** — the working document, later typed claims — each write bound to its Analysis by the per-session token the
+  sandbox-local proxy injects ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) §7). The **web app**
+  writes the **control-plane / session rows** it owns (Analysis, membership, the per-session grant, the session-end
+  trace/source projection), reads display rows, and takes **curator-initiated writes** — a paper upload is a normal
+  web-app→**GCS** write, not agent-authored content. Admitting any source (an upload, a `web_fetch` page, the corpus)
+  into an agent's context is a separate retrieval-trust question, orthogonal to which identity wrote the blob.
+- **Config + code execution:** the agent config — system prompt, toolset, model id — lives on the Agent object and is
+  pushed at **deploy time via `ant`** (control plane, §6), not bootstrapped per-poll; it carries no service URLs or
+  credentials, which the sandbox-local proxy supplies per session. The concrete per-agent model id is secret-class
+  confidential — see *Confidential config* in [`deployment.md`](deployment.md). Generated analysis code runs via the
+  toolset's `bash`/file tools **in the self-hosted worker**, under our egress policy.
 
 See [`agent-runtime.md`](agent-runtime.md) for the loop topology and the runtime-side of the self-hosted-sandbox design.
 
