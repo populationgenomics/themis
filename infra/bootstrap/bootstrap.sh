@@ -75,6 +75,15 @@ gcloud kms keys add-iam-policy-binding "${KMS_KEY}" \
   --project="${PROJECT}" --location="${REGION}" --keyring="${KMS_KEYRING}" \
   --member="serviceAccount:${PREVIEW_SA}" --role=roles/cloudkms.cryptoKeyDecrypter >/dev/null
 
+# Keyring read: the program looks the ring up to place the session-token signing
+# key in it, and a cryptoKey-level role does not carry cloudkms.keyRings.get.
+# Both SAs evaluate the program, so both need it.
+for SA in "${DEPLOY_SA}" "${PREVIEW_SA}"; do
+  gcloud kms keyrings add-iam-policy-binding "${KMS_KEYRING}" \
+    --project="${PROJECT}" --location="${REGION}" \
+    --member="serviceAccount:${SA}" --role=roles/cloudkms.viewer >/dev/null
+done
+
 # --- GitHub WIF: pool + OIDC provider, pinned to this repo --------------------
 gcloud iam workload-identity-pools create "${POOL}" --project="${PROJECT}" \
   --location=global --display-name='GitHub Actions' 2>/dev/null || true
