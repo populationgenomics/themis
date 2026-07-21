@@ -87,7 +87,7 @@ def apply_migrations(
                 pool,
                 connection_name=sql_config.connection_name,
                 database=sql_config.database,
-                iam_user=sql_config.iam_user,
+                db_user=sql_config.db_user,
             )
         ) as conn,
     ):

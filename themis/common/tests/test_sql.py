@@ -29,7 +29,7 @@ def test_iam_connect_dials_with_pg8000_and_iam_auth() -> None:
         pool,  # type: ignore[arg-type]  # structural stand-in for connector.Connector
         connection_name='proj:region:inst',
         database='themis',
-        iam_user='themis-auth@proj.iam',
+        db_user='themis-auth@proj.iam',
     )
 
     assert conn is pool.connection

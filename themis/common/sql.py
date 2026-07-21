@@ -40,7 +40,7 @@ class Connection(Protocol):
     def close(self) -> None: ...
 
 
-def iam_connect(pool: connector.Connector, *, connection_name: str, database: str, iam_user: str) -> Connection:
+def iam_connect(pool: connector.Connector, *, connection_name: str, database: str, db_user: str) -> Connection:
     """Open one IAM-authed pg8000 connection to a Cloud SQL instance.
 
     Args:
@@ -48,7 +48,7 @@ def iam_connect(pool: connector.Connector, *, connection_name: str, database: st
             caller's).
         connection_name: The `project:region:instance` string the connector dials.
         database: The application database name.
-        iam_user: The DB role's IAM login (the SA email minus `.gserviceaccount.com`).
+        db_user: The DB role's IAM login (the SA email minus `.gserviceaccount.com`).
 
     Returns:
         A live pg8000 connection in its default (non-autocommit) mode.
@@ -56,7 +56,7 @@ def iam_connect(pool: connector.Connector, *, connection_name: str, database: st
     return pool.connect(
         connection_name,
         'pg8000',
-        user=iam_user,
+        user=db_user,
         db=database,
         enable_iam_auth=True,
     )

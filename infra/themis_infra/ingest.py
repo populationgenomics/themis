@@ -29,7 +29,7 @@ class IngestionRuntime(pulumi.ComponentResource):
         service_account_email: The worker SA's email.
         service_account_unique_id: The worker SA's stable numeric id (never
             reused, so it survives a delete/recreate of the same email).
-        sql_user: The SA's Cloud SQL IAM DB-user login (the crosswalk mint).
+        db_user: The SA's Cloud SQL IAM DB-user login (the crosswalk mint).
     """
 
     def __init__(
@@ -100,7 +100,7 @@ class IngestionRuntime(pulumi.ComponentResource):
         # The crosswalk-mint login + the roles to reach the instance. Table-level
         # rights come from the migration (the migrator owns the `litcache` schema
         # and grants this SA SELECT/INSERT), never here.
-        self.sql_user = sql.iam_db_user(
+        self.db_user = sql.iam_db_user(
             ingest_name,
             project=project,
             instance=sql_instance,
@@ -120,6 +120,6 @@ class IngestionRuntime(pulumi.ComponentResource):
             {
                 'service_account_email': self.service_account_email,
                 'service_account_unique_id': self.service_account_unique_id,
-                'sql_user': self.sql_user.name,
+                'db_user': self.db_user.name,
             }
         )

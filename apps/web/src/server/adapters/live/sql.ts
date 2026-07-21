@@ -61,7 +61,7 @@ export class Sql {
     });
     return new Pool({
       ...options,
-      user: this.config.iamUser,
+      user: this.config.dbUser,
       database: this.config.database,
       max: 5,
     });

@@ -45,7 +45,7 @@ def _cloudsql_backend_from_env() -> auth_backend.SessionBackend:
     return cloudsql.CloudSqlBackend(
         connection_name=_require('THEMIS_SQL_CONNECTION_NAME'),
         database=_require('THEMIS_SQL_DATABASE'),
-        iam_user=_require('THEMIS_SQL_IAM_USER'),
+        db_user=_require('THEMIS_DB_USER'),
     )
 
 

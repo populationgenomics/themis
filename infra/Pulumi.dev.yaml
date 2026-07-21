@@ -19,5 +19,16 @@ config:
     secure: v1:V+8CUcyzFKaD2KMn:M4TeNL3dd5Lt64SFUehLx4xLiDQEQwV/EvKknrjCdSxPp1MP+6tAX0+4mIuccyas1PRnT8M2xIGhppV0FNXvl3HyleLHAt62h1t4/UwK0oeuL53eYfHqj4KMSkmvuN3xzrC8y4HsC3D7CEr0V8cUWJ7i/4DIYZ2IOE2w/g==
   themis:anthropicWebhookSigningKey:
     secure: v1:cxtXcFEn84mlFKe5:L3JW9Sg9nGTTn26WwpR3CkSnHK5GuYyfRP/AkGCkNw2OGQB6n4U/j+Wz2NMbRh78lo9Dchfg/rfnGnkBN6Hapa6c
-  themis:anthropicEnvironmentId: env_placeholder
+  themis:anthropicEnvironmentId: env_019YrrWjcSDHPnHBUhvNHcVs
+  # The Managed Agents agent the BFF opens sessions against.
+  themis:anthropicAgentId: agent_01Y9V9bZK731rzBMwLWGJciw
+  # Anthropic Managed-Agents WIF (Path B) identifiers — plaintext, not credentials
+  # (docs/runbooks/claude-api-wif.md).
+  themis:anthropicFederationRuleId: fdrl_01JXLFyrG8PnJ62qPFzTmp4P
+  themis:anthropicOrganizationId: 0c504942-5311-4fc0-a3a3-1f6a53666205
+  themis:anthropicServiceAccountId: svac_01ELDvWbrGpDNhcDdAaYniGJ
+  themis:anthropicWorkspaceId: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+  # The IAP backend service's numeric id (= the web_backend_service_id output) — the web app
+  # verifies the IAP-JWT audience against it.
+  themis:iapBackendServiceId: "7475211739280005859"
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=

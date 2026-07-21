@@ -93,6 +93,6 @@ jobs:
         env:
           THEMIS_SQL_CONNECTION_NAME: ${{ steps.pulumi.outputs.sql_connection_name }}
           THEMIS_SQL_DATABASE: ${{ steps.pulumi.outputs.sql_database }}
-          THEMIS_SQL_IAM_USER: ${{ steps.pulumi.outputs.migrator_sql_user }}
-          THEMIS_MIGRATE_SUBSTITUTIONS: '{"AUTH_DB_USER": "${{ steps.pulumi.outputs.auth_sql_user }}"}'
+          THEMIS_DB_USER: ${{ steps.pulumi.outputs.migrator_db_user }}
+          THEMIS_MIGRATE_SUBSTITUTIONS: '{"AUTH_DB_USER": "${{ steps.pulumi.outputs.auth_db_user }}", "WEB_DB_USER": "${{ steps.pulumi.outputs.web_db_user }}"}'
         run: uv run --group migrate python -m themis.migrate

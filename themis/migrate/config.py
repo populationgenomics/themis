@@ -1,7 +1,7 @@
 """Migration-runner configuration, read from the environment, failing loud on a gap.
 
 The deploy step hands the runner the Cloud SQL wiring and the GRANT logins as env:
-`THEMIS_SQL_CONNECTION_NAME` / `THEMIS_SQL_DATABASE` / `THEMIS_SQL_IAM_USER` (the
+`THEMIS_SQL_CONNECTION_NAME` / `THEMIS_SQL_DATABASE` / `THEMIS_DB_USER` (the
 migrator DB role), and `THEMIS_MIGRATE_SUBSTITUTIONS` as a JSON object of the
 `${VAR}` -> login map the GRANT migrations render. A missing required value raises
 rather than running a half-configured migration.
@@ -22,13 +22,13 @@ class SqlConfig:
     Attributes:
         connection_name: The `project:region:instance` string the connector dials.
         database: The application database name.
-        iam_user: The migrator DB role's IAM login (the SA email minus
+        db_user: The migrator DB role's IAM login (the SA email minus
             `.gserviceaccount.com`, matching infra/sql.py).
     """
 
     connection_name: str
     database: str
-    iam_user: str
+    db_user: str
 
 
 def _require(environ: Mapping[str, str], name: str) -> str:
@@ -44,7 +44,7 @@ def load_sql_config(environ: Mapping[str, str] | None = None) -> SqlConfig:
     return SqlConfig(
         connection_name=_require(source, 'THEMIS_SQL_CONNECTION_NAME'),
         database=_require(source, 'THEMIS_SQL_DATABASE'),
-        iam_user=_require(source, 'THEMIS_SQL_IAM_USER'),
+        db_user=_require(source, 'THEMIS_DB_USER'),
     )
 
 

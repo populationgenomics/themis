@@ -23,7 +23,7 @@ export interface AnthropicConfig {
 export interface SqlConfig {
   connectionName: string;
   database: string;
-  iamUser: string;
+  dbUser: string;
 }
 
 /** The Cloud KMS MAC key version the bearer is derived through. Pinned to a
@@ -70,7 +70,7 @@ export function loadSqlConfig(env: EnvLike = process.env): SqlConfig {
   return {
     connectionName: required(env, "THEMIS_SQL_CONNECTION_NAME"),
     database: required(env, "THEMIS_SQL_DATABASE"),
-    iamUser: required(env, "THEMIS_SQL_IAM_USER"),
+    dbUser: required(env, "THEMIS_DB_USER"),
   };
 }
 

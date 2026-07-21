@@ -47,7 +47,7 @@ def test_explicit_empty_store_boots(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cloudsql_backend_requires_sql_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_BACKEND', 'cloudsql')
-    for name in ('THEMIS_SQL_CONNECTION_NAME', 'THEMIS_SQL_DATABASE', 'THEMIS_SQL_IAM_USER'):
+    for name in ('THEMIS_SQL_CONNECTION_NAME', 'THEMIS_SQL_DATABASE', 'THEMIS_DB_USER'):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(SystemExit):
         main_mod.build_backend()

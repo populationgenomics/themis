@@ -21,7 +21,7 @@ class AuthService(pulumi.ComponentResource):
 
     Attributes:
         service_account_email: The runtime SA's email.
-        sql_user: The SA's Cloud SQL IAM DB-user login — `THEMIS_SQL_IAM_USER` for
+        db_user: The SA's Cloud SQL IAM DB-user login — `THEMIS_DB_USER` for
             the container, and the `${AUTH_DB_USER}` the `session_context` grant
             substitutes.
         service_name: The Cloud Run service's name (the invoker-binding target).
@@ -66,7 +66,7 @@ class AuthService(pulumi.ComponentResource):
             service_account_email=service_account.email,
             opts=child,
         )
-        self.sql_user = db_user.name
+        self.db_user = db_user.name
 
         service = gcp.cloudrunv2.Service(
             'themis-service',
@@ -92,9 +92,7 @@ class AuthService(pulumi.ComponentResource):
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
                                 name='THEMIS_SQL_DATABASE', value=sql_database
                             ),
-                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
-                                name='THEMIS_SQL_IAM_USER', value=db_user.name
-                            ),
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_DB_USER', value=db_user.name),
                         ],
                         # Serve gRPC: a named `h2c` port makes Cloud Run speak HTTP/2 cleartext
                         # to the container (TLS terminated at the ingress), and the startup probe
@@ -113,7 +111,7 @@ class AuthService(pulumi.ComponentResource):
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
-                'sql_user': self.sql_user,
+                'db_user': self.db_user,
                 'service_name': self.service_name,
                 'url': self.url,
             }

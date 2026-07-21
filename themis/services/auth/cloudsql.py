@@ -27,10 +27,10 @@ class CloudSqlBackend(auth_backend.SessionBackend):
     matching the store's invariant.
     """
 
-    def __init__(self, *, connection_name: str, database: str, iam_user: str) -> None:
+    def __init__(self, *, connection_name: str, database: str, db_user: str) -> None:
         self._connection_name = connection_name
         self._database = database
-        self._iam_user = iam_user
+        self._db_user = db_user
         self._connector = connector.Connector()
 
     def _connect(self) -> sql.Connection:
@@ -38,7 +38,7 @@ class CloudSqlBackend(auth_backend.SessionBackend):
             self._connector,
             connection_name=self._connection_name,
             database=self._database,
-            iam_user=self._iam_user,
+            db_user=self._db_user,
         )
 
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:

@@ -64,6 +64,19 @@ anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
 # self-hosted environment id.
 anthropic_webhook_signing_key = config.require_secret('anthropicWebhookSigningKey')
 anthropic_environment_id = config.require('anthropicEnvironmentId')
+anthropic_agent_id = config.require('anthropicAgentId')
+# Anthropic Managed-Agents WIF (Path B) identifiers — plaintext, not credentials
+# (docs/runbooks/claude-api-wif.md); the web app (the client) presents these.
+anthropic_federation_rule_id = config.require('anthropicFederationRuleId')
+anthropic_organization_id = config.require('anthropicOrganizationId')
+anthropic_service_account_id = config.require('anthropicServiceAccountId')
+anthropic_workspace_id = config.require('anthropicWorkspaceId')
+# IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
+# lookup) and the backend service's numeric id. The backend fronts the web service, so its
+# id can't be a live input to it (a cycle) — it is exported as web_backend_service_id and
+# set here out of band after the first deploy, like the LB IP's A record.
+project_number = gcp.organizations.get_project(project_id=project).number
+iap_backend_service_id = config.require('iapBackendServiceId')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -103,7 +116,7 @@ database = sql.CloudSqlDatabase(
 # owned by an identity neither runtime SA can impersonate; a table owner bypasses
 # GRANTs, so the runtime SAs get only the table-level GRANTs the migrations apply.
 migrator_email = deploy_iam.deploy_sa_email(project)
-migrator_sql_user = sql.iam_db_user(
+migrator_db_user = sql.iam_db_user(
     'themis-migrator',
     project=project,
     instance=database.instance,
@@ -168,13 +181,47 @@ for label, invoker_sa_email in (
         role='roles/run.invoker',
         member=pulumi.Output.concat('serviceAccount:', invoker_sa_email),
     )
+# The KMS MAC key that signs per-session tokens (§7) — a shared substrate: the web BFF derives
+# the bearer at session create, the dispatcher re-derives it at spawn.
+session_token_key = sandbox.session_token_signing_key(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoKeyVersions/1')
 site = web.WebService(
     project=project,
     region=region,
     domain=domain,
     image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
     iap_member=f'group:{iap_access_group}',
-    opts=pulumi.ResourceOptions(depends_on=[base]),
+    sql_instance=database.instance,
+    sql_connection_name=database.instance_connection_name,
+    sql_database=database.database_name,
+    session_token_key_version=session_token_key_version,
+    working_document_bucket=store_service.working_document_bucket,
+    anthropic_environment_id=anthropic_environment_id,
+    anthropic_agent_id=anthropic_agent_id,
+    anthropic_federation_rule_id=anthropic_federation_rule_id,
+    anthropic_organization_id=anthropic_organization_id,
+    anthropic_service_account_id=anthropic_service_account_id,
+    anthropic_workspace_id=anthropic_workspace_id,
+    project_number=project_number,
+    iap_backend_service_id=iap_backend_service_id,
+    opts=pulumi.ResourceOptions(depends_on=[base, database, store_service]),
+)
+# The web BFF signs session tokens with the MAC key and reads the working document from GCS.
+gcp.kms.CryptoKeyIAMMember(
+    'themis-web-mac-signer',
+    crypto_key_id=session_token_key.id,
+    role='roles/cloudkms.signerVerifier',
+    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+)
+gcp.storage.BucketIAMMember(
+    'themis-web-working-document-viewer',
+    bucket=store_service.working_document_bucket,
+    role='roles/storage.objectViewer',
+    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
 )
 fulltext = storage.fulltext_bucket(
     project=project,
@@ -194,8 +241,8 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
 )
-# Self-hosted sandbox: the network + KMS + secrets substrate, then the internal load balancer, the
-# sandbox job, and the dispatcher that run on it.
+# Self-hosted sandbox: the network + Anthropic secrets, then the internal load balancer, the sandbox
+# job, and the dispatcher that run on it.
 sandbox_network = sandbox.SandboxNetwork(
     project=project,
     region=region,
@@ -214,11 +261,6 @@ internal_services = internal_lb.InternalServiceLoadBalancer(
         internal_lb.HELLO_HOST: hello_service.service_name,
     },
     opts=pulumi.ResourceOptions(depends_on=[sandbox_network, store_service, hello_service]),
-)
-session_token_key = sandbox.session_token_signing_key(
-    project=project,
-    region=region,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 anthropic_environment_key_secret = sandbox.environment_key_secret(
     project=project,
@@ -293,11 +335,17 @@ pulumi.export('lb_ip', site.ip_address)
 pulumi.export('url', site.url)
 pulumi.export('web_sa_email', site.service_account_email)
 pulumi.export('web_sa_unique_id', site.service_account_unique_id)
+# The web SA's DB login — the ${WEB_DB_USER} the migrate step substitutes into the
+# analyses/session_context write grants.
+pulumi.export('web_db_user', site.db_user)
+# The IAP backend service's numeric id — set as themis:iapBackendServiceId after the first
+# deploy so the web app can verify the IAP-JWT audience.
+pulumi.export('web_backend_service_id', site.backend_service_id)
 pulumi.export('sql_connection_name', database.instance_connection_name)
 pulumi.export('sql_database', database.database_name)
 # The deploy SA's DB login — the identity the deploy.yml migrate step authenticates
 # as (the migrations' owner).
-pulumi.export('migrator_sql_user', migrator_sql_user.name)
+pulumi.export('migrator_db_user', migrator_db_user.name)
 pulumi.export('auth_url', auth_service.url)
 pulumi.export('auth_sa_email', auth_service.service_account_email)
 pulumi.export('store_url', store_service.url)
@@ -309,14 +357,14 @@ pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('internal_lb_ip', internal_services.ip_address)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the
 # session_context SELECT grant.
-pulumi.export('auth_sql_user', auth_service.sql_user)
+pulumi.export('auth_db_user', auth_service.db_user)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
 # The ingestion SA's DB login — the identity the Dataflow worker mints as.
-pulumi.export('ingest_sql_user', ingestion.sql_user.name)
+pulumi.export('ingest_db_user', ingestion.db_user.name)
 pulumi.export('sandbox_network', sandbox_network.network.id)
 pulumi.export('sandbox_subnetwork', sandbox_network.subnetwork.id)
 pulumi.export('sandbox_dns_response_policy', sandbox_network.response_policy.response_policy_name)

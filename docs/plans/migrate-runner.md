@@ -79,7 +79,7 @@ After `pulumi up`, the deploy workflow runs `uv run python -m themis_migrate` be
 the new schema. It connects through the **Cloud SQL connector** (IAM database auth) as the **migrator DB role**,
 discovers `db/migrations/`, renders the grant logins, and applies the pending migrations idempotently — safe to run on
 every deploy. Config comes from the environment (`THEMIS_SQL_CONNECTION_NAME` / `THEMIS_SQL_DATABASE` /
-`THEMIS_SQL_IAM_USER`, and `THEMIS_MIGRATE_SUBSTITUTIONS`).
+`THEMIS_DB_USER`, and `THEMIS_MIGRATE_SUBSTITUTIONS`).
 
 A Cloud Run Job was considered, so that CI would only *trigger* migrations rather than hold a DB login. It buys nothing:
 the deploy identity already provisions Cloud SQL and IAM, so a compromised runner can grant itself a DB login or rewrite

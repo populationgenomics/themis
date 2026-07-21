@@ -11,7 +11,7 @@ from themis.migrate import config
 _SQL_ENV = {
     'THEMIS_SQL_CONNECTION_NAME': 'cpg-themis-dev:australia-southeast1:themis-sql',
     'THEMIS_SQL_DATABASE': 'themis',
-    'THEMIS_SQL_IAM_USER': 'themis-migrate@cpg-themis-dev.iam',
+    'THEMIS_DB_USER': 'themis-migrate@cpg-themis-dev.iam',
 }
 
 
@@ -19,12 +19,12 @@ def test_load_sql_config_reads_every_field() -> None:
     sql = config.load_sql_config(_SQL_ENV)
     assert sql.connection_name == _SQL_ENV['THEMIS_SQL_CONNECTION_NAME']
     assert sql.database == 'themis'
-    assert sql.iam_user == 'themis-migrate@cpg-themis-dev.iam'
+    assert sql.db_user == 'themis-migrate@cpg-themis-dev.iam'
 
 
 def test_load_sql_config_raises_on_a_missing_field() -> None:
-    with pytest.raises(RuntimeError, match='THEMIS_SQL_IAM_USER'):
-        config.load_sql_config({k: v for k, v in _SQL_ENV.items() if k != 'THEMIS_SQL_IAM_USER'})
+    with pytest.raises(RuntimeError, match='THEMIS_DB_USER'):
+        config.load_sql_config({k: v for k, v in _SQL_ENV.items() if k != 'THEMIS_DB_USER'})
 
 
 def test_load_substitutions_defaults_to_empty() -> None:
