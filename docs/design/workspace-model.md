@@ -72,9 +72,9 @@ Enforcement is a single default-on chokepoint ([`security.md`](security.md)), on
   verify membership before touching data; a point access (`getDocument`, `pollEvents`) resolves the Analysis's Project
   and checks membership — and the working document is addressable only through that resolved Analysis, so the check
   cannot be skipped. `listProjects` returns the Projects the user belongs to — the create/list selector.
-- **`ProjectMembership`** is the mapping the check reads — a `project_members(project_id, user_email, role)` table in
-  the real adapter, a seeded map offline. Empty ⇒ the user reaches nothing (default-deny); a real deploy is closed until
-  memberships are seeded.
+- **`ProjectMembership`** is the mapping the check reads — a `project_members(project_id, user_email)` table in the real
+  adapter, a seeded map offline. Membership is binary: no role column, because no access decision consults one. Empty ⇒
+  the user reaches nothing (default-deny); a real deploy is closed until memberships are seeded.
 
 This mirrors the session plane: `session_context(token_hash, project_id, …)` project-scopes the **agent's** data access
 (the store resolves a bearer → its Project); `project_members` is the same boundary for the **user's** access.

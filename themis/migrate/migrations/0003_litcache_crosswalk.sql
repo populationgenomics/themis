@@ -5,8 +5,7 @@
 -- table is the concurrency mint lock (themis.litcache.crosswalk). doc_id is TEXT, not uuid:
 -- it is a string everywhere the schema reaches (the manifest field, the proto wire, the
 -- paper directory name — proto has no uuid type), so TEXT keeps one representation across
--- the seam. Table grants land with the litcache DB-user (a later migration, as the BFF
--- write grant does in 0002_grants).
+-- the seam. Table grants land with the litcache DB-user (a later migration).
 CREATE SCHEMA IF NOT EXISTS litcache;
 
 CREATE TABLE IF NOT EXISTS litcache.crosswalk (
