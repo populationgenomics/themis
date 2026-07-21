@@ -14,13 +14,13 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-10T00:28:46.310467Z"
+exclude-newer = "2026-07-14T06:07:21.88296Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-litdown = { timestamp = "2026-07-17T00:28:46.31078Z", span = "PT0S" }
-pubmed-proto = { timestamp = "2026-07-17T00:28:46.31078Z", span = "PT0S" }
-litfetch = { timestamp = "2026-07-17T00:28:46.310531Z", span = "PT0S" }
+litdown = { timestamp = "2026-07-21T06:07:21.883465Z", span = "PT0S" }
+pubmed-proto = { timestamp = "2026-07-21T06:07:21.883465Z", span = "PT0S" }
+litfetch = { timestamp = "2026-07-21T06:07:21.883133Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -1664,15 +1664,15 @@ wheels = [
 
 [[package]]
 name = "litfetch"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/79/7470d55c7c951cce63360b88b0000b9ed27bc6089d7d82b0b2d4c522f6df/litfetch-0.1.0.tar.gz", hash = "sha256:cca2a4a220fbb617c38e4a752731407459eb878ce3ddc67a782935ca52c631e0", size = 48565, upload-time = "2026-07-03T06:04:36.206Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/de/0eb9e01a157eb5f7f1b1f01dc21a0c4d8041e05c4bd5bde1b6d565260ab3/litfetch-0.2.0.tar.gz", hash = "sha256:84ac180d8261b336e1ae693fd1aae20735c46b4588bdffe788dd8d73259070ae", size = 56741, upload-time = "2026-07-21T05:41:48.16Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/af/24dbf8efeeb2174a2d758d7c03c396fc2a76c14f0deedffab0a226cbd43a/litfetch-0.1.0-py3-none-any.whl", hash = "sha256:bf8dd8b4a3bde7494f202344a50fd4f819d3ea51415d2b15f7dca5d7f32a896f", size = 39214, upload-time = "2026-07-03T06:04:34.728Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/5e/92893d147dd6f6827671a6df0e50134a35124796d9a6e3ebcdfe936e3de9/litfetch-0.2.0-py3-none-any.whl", hash = "sha256:f230b1043ba2d803cea55b3e4303b68fc4c649705f66cc04869fe52a2970ce81", size = 44219, upload-time = "2026-07-21T05:41:46.94Z" },
 ]
 
 [[package]]
@@ -3557,7 +3557,7 @@ dataflow = [
     { name = "google-cloud-storage" },
     { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
-    { name = "litfetch", specifier = "==0.1.0" },
+    { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.1.0" },
@@ -3598,7 +3598,7 @@ lint = [
     { name = "grpcio-tools" },
     { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
-    { name = "litfetch", specifier = "==0.1.0" },
+    { name = "litfetch", specifier = "==0.2.0" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
     { name = "pre-commit" },
@@ -3624,7 +3624,7 @@ litcache = [
     { name = "google-cloud-storage" },
     { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
-    { name = "litfetch", specifier = "==0.1.0" },
+    { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.1.0" },
@@ -3671,7 +3671,7 @@ test = [
     { name = "grpcio-health-checking" },
     { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
-    { name = "litfetch", specifier = "==0.1.0" },
+    { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "protovalidate" },

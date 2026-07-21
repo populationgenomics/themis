@@ -40,7 +40,7 @@ screen = ["pyyaml"]
 # and Crossref metadata-resolution calls. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "protovalidate", "litfetch==0.1.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "protovalidate", "litfetch==0.2.0", "litdown==0.4.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
