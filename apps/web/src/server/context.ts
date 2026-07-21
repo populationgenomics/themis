@@ -18,7 +18,7 @@ interface Composition {
 }
 
 // On `globalThis` so Next's dev HMR (which re-evaluates modules) does not reset the
-// fixture's in-memory state, nor rebuild the real adapter's DB pool, between reloads.
+// fixture's in-memory state, nor rebuild the live adapter's DB pool, between reloads.
 function composition(): Composition {
   const holder = globalThis as typeof globalThis & {
     __themisComposition?: Composition;

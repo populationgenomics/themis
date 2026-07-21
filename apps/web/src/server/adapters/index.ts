@@ -1,7 +1,8 @@
 import type { AnalysisDataPlane, ProjectMembership } from "../ports";
-import { createFixtureDataPlane, createFixtureMembership } from "./fixture";
+import * as fixture from "./fixture";
+import * as live from "./live";
 
-export type Backend = "fixture" | "real";
+export type Backend = "fixture" | "live";
 
 // A narrow env shape so callers/tests need not supply a full ProcessEnv.
 type EnvLike = Record<string, string | undefined>;
@@ -14,35 +15,27 @@ type EnvLike = Record<string, string | undefined>;
  *  misconfiguration. */
 export function selectedBackend(env: EnvLike = process.env): Backend {
   const raw = env.THEMIS_BACKEND;
-  if (raw === "real") return "real";
+  if (raw === "live") return "live";
   if (raw === "fixture") return "fixture";
   throw new Error(
-    `THEMIS_BACKEND must be "fixture" or "real" (got ${JSON.stringify(raw)})`,
+    `THEMIS_BACKEND must be "fixture" or "live" (got ${JSON.stringify(raw)})`,
   );
 }
 
 /** Build a FRESH data plane. `context.ts` is the sole caller — it memoizes one and
- *  wraps it in an `AuthorizedBackend`, so routes never hold an unscoped backend.
- *  `real` fails loud: its adapter is not wired. */
+ *  wraps it in an `AuthorizedBackend`, so routes never hold an unscoped backend. */
 export function createDataPlane(env: EnvLike = process.env): AnalysisDataPlane {
-  if (selectedBackend(env) === "real") {
-    throw new Error(
-      "THEMIS_BACKEND=real: the real backend adapter is not wired yet",
-    );
-  }
-  return createFixtureDataPlane();
+  return selectedBackend(env) === "live"
+    ? live.createDataPlane()
+    : fixture.createDataPlane();
 }
 
 /** Build a FRESH membership — the user↔Project mapping the `AuthorizedBackend`
- *  authorizes against. Memoized by `context.ts`. `real` fails loud: its adapter is
- *  not wired. */
+ *  authorizes against. Memoized by `context.ts`. */
 export function createMembership(
   env: EnvLike = process.env,
 ): ProjectMembership {
-  if (selectedBackend(env) === "real") {
-    throw new Error(
-      "THEMIS_BACKEND=real: the real membership adapter is not wired yet",
-    );
-  }
-  return createFixtureMembership();
+  return selectedBackend(env) === "live"
+    ? live.createMembership()
+    : fixture.createMembership();
 }

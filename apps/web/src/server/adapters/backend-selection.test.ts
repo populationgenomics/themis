@@ -9,7 +9,7 @@ import { selectedBackend } from "./index";
 describe("selectedBackend", () => {
   test("resolves the two named backends", () => {
     expect(selectedBackend({ THEMIS_BACKEND: "fixture" })).toBe("fixture");
-    expect(selectedBackend({ THEMIS_BACKEND: "real" })).toBe("real");
+    expect(selectedBackend({ THEMIS_BACKEND: "live" })).toBe("live");
   });
 
   test("an absent value is a misconfiguration, not the fixture", () => {
@@ -23,7 +23,7 @@ describe("selectedBackend", () => {
   });
 
   test("an unrecognised value fails loud", () => {
-    expect(() => selectedBackend({ THEMIS_BACKEND: "REAL" })).toThrow(
+    expect(() => selectedBackend({ THEMIS_BACKEND: "LIVE" })).toThrow(
       /THEMIS_BACKEND/,
     );
     expect(() => selectedBackend({ THEMIS_BACKEND: "prod" })).toThrow(

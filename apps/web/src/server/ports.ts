@@ -25,7 +25,7 @@ export interface CreateAnalysisInput {
 }
 
 /** Raw analysis persistence + retrieval, with NO authorization. Only the
- *  composition root and `AuthorizedBackend` hold one; routes never do. The real
+ *  composition root and `AuthorizedBackend` hold one; routes never do. The live
  *  adapter composes SQL / Anthropic / KMS / GCS behind these methods. */
 export interface AnalysisDataPlane {
   /** Create the analysis and kick off its agent session: mint the id + session,
@@ -51,7 +51,7 @@ export interface AnalysisDataPlane {
 }
 
 /** The user↔Project membership mapping — the access boundary. Seeded offline by
- *  the fixture; read from the `project_members` table by the real adapter. */
+ *  the fixture; read from the `project_members` table by the live adapter. */
 export interface ProjectMembership {
   isMember(userEmail: string, projectId: string): Promise<boolean>;
 
