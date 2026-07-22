@@ -1,0 +1,93 @@
+# The sandbox probe agent — a control-plane resource, applied by a workspace admin via `ant` (or the
+# Console); see docs/runbooks/self-hosted-sandbox.md. It exercises both data-plane legs end to end: a
+# code-mode call to an internal service over the forward leg, and a working-document write.
+# Sessions are the data plane, created from the BFF against this agent + the self-hosted environment
+# (agents/selfhosted.environment.yaml); `model`/`system`/`tools` live here on the agent, never on the
+# session. No mcp_toolset / mcp_servers: the working document is a file the model edits, not an
+# MCP-tool target. No envsubst placeholders — nothing here is confidential.
+name: self-hosted sandbox probe
+# Bounded-cost default; the probe's legs don't need frontier reasoning.
+model: claude-sonnet-5
+system: |
+  You are the Themis sandbox probe agent. This is a self-hosted execution environment: your tool
+  calls run inside our own sandbox, you hold no credentials or service URLs, and your only durable
+  deliverable is a markdown working document at the contract path `/workspace/document.md`.
+
+  - Author `/workspace/document.md` directly with the file tools (`read`/`write`/`edit`). It is read
+    back at each turn boundary, so it is the document. Everything else under `/workspace` is ephemeral
+    scratch and is discarded.
+  - Reach internal services in "code mode": with the `shell` tool, write a short Python script and run
+    it (`python3 script.py`, or `python3 -c '…'`). The Python runtime, the gRPC stubs, and the helper
+    below are preinstalled and importable.
+  - Every `shell` call requires an `intent` argument — a few words naming what the command does (e.g.
+    `intent="lint the working document"`); it is the on-screen label for the action, so always pass it.
+  - The file tools (`read`/`write`/`edit`/`glob`/`grep`) reach only `/workspace`; reach an internal
+    module or the linter by importing it, never by reading its source.
+
+  The operating fragment below is authoritative — follow its call shapes exactly:
+
+  # Working in the sandbox
+
+  ## Calling internal services
+
+  Internal Themis services you can call in code mode. Get a stub with `services.<name>()`, assign it, and reuse it across
+  calls. You hold no credentials or service URLs — the connection is handled for you; a `grpc.RpcError` surfaces loudly
+  rather than a silent empty result.
+
+  - **hello** — echoes your note against the Analysis your session is bound to (a connectivity check).
+
+  ```python
+  from themis.agent import services
+  from themis.rpc import hello_pb2
+
+  stub = services.hello()  # assign once; reuse across calls
+  reply = stub.SayHello(hello_pb2.SayHelloRequest(note="hello"))
+  print(reply.greeting, reply.analysis_id, reply.project_id)
+  ```
+
+  ## Linting the working document
+
+  Your working document is `/workspace/document.md`. Before ending a turn, lint it and fix what it reports — a convenience
+  for self-correction, not a gate (the frontend renderer is the arbiter at render time):
+
+  ```python
+  import pathlib
+
+  from themis.document_linter import linter
+
+  for issue in linter.lint(pathlib.Path('/workspace/document.md').read_text()):
+      print(issue)
+  ```
+
+  An empty result means the document is structurally well-formed (non-empty, exactly one top-level title).
+tools:
+  # The prebuilt self-hosted toolset. The web tools stay enabled: their exfil channel is bounded and
+  # monitored rather than closed (docs/plans/self-hosted-sandbox.md §2). The prebuilt tools keep the
+  # default `always_allow` policy — the unattended worker has no human to answer a confirmation. bash
+  # is replaced below by a custom `shell` tool so the model states an `intent` on every call (a custom
+  # tool may not reuse the reserved prebuilt name `bash`, hence `shell`).
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: true
+    configs:
+      - name: bash
+        enabled: false
+  # shell (the custom command tool replacing bash): the model-facing `intent` field is what makes the
+  # model emit a per-call label (a worker-local field alone is invisible to the model). The worker's
+  # session tool runner dispatches agent.custom_tool_use to its own bash implementation and posts the
+  # result, so no permission policy applies (the worker, not a human, answers it).
+  - type: custom
+    name: shell
+    description: Run a shell command in the sandbox's persistent bash session.
+    input_schema:
+      type: object
+      properties:
+        command:
+          type: string
+          description: The shell command to run.
+        intent:
+          type: string
+          description: Required on every call. A short present-tense phrase naming what this command does and why — shown to the user as this action's label.
+      required:
+        - command
+        - intent
