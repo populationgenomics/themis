@@ -21,6 +21,7 @@ import dataclasses
 import json
 import re
 import urllib.parse
+from collections.abc import Sequence
 
 # Object names URL-encode `/` so it is safe in a flat key; a DOI's slash becomes
 # %2F, double-encoded as %252F. Decode until stable (bounded) to undo either
@@ -125,17 +126,21 @@ def read_docling_origin(docling_json: bytes | str) -> DoclingOrigin:
     )
 
 
-def determine_identity(bucket_key: str, origin: DoclingOrigin) -> Identity:
-    """Resolve a seed object's identity from its bucket key and Docling origin.
+def determine_identity(bucket_key: str, origin: DoclingOrigin, *, extra_candidates: Sequence[str] = ()) -> Identity:
+    """Resolve a seed object's identity from its bucket key, Docling origin, and extras.
 
-    Decodes and classifies the bucket key, classifies the origin filename as a
-    second id, and falls through to a `binhash:` content hash when neither names
-    a recognised external scheme.
+    Decodes and classifies the bucket key, the origin filename, and any
+    `extra_candidates` (e.g. a DOI harvested from the pdf's embedded metadata), then
+    falls through to a `binhash:` content hash when none names a recognised external
+    scheme.
 
     Args:
         bucket_key: The `ingest/` object name (with or without a `.json`/`.pdf`
             suffix), URL-encoded as stored.
         origin: The harvested Docling origin (see `read_docling_origin`).
+        extra_candidates: Further id candidates to classify — an id the seed carries
+            outside its key/origin (e.g. `pdf.doi_from_metadata`). Unrecognised
+            candidates are ignored, exactly like an unrecognised key.
 
     Returns:
         The `Identity`, carrying at least one external id.
@@ -145,7 +150,7 @@ def determine_identity(bucket_key: str, origin: DoclingOrigin) -> Identity:
             `origin.binary_hash` to content-address against.
     """
     ids: dict[str, ExternalId] = {}
-    for raw in (bucket_key, origin.filename):
+    for raw in (bucket_key, origin.filename, *extra_candidates):
         if raw is None:
             continue
         eid = _classify(_decode(_strip_suffix(raw)))

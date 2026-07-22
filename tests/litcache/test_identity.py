@@ -104,6 +104,26 @@ def test_pmcid_classification() -> None:
     assert result.claim_key == 'pmcid:PMC5664429'
 
 
+def test_extra_candidate_doi_resolves_a_pii_only_paper() -> None:
+    # An Elsevier deposit: bucket key + origin are the opaque PII, so without the
+    # extra candidate identity falls through to a content hash. The DOI harvested
+    # from the pdf metadata gives it a real, precedence-primary id.
+    origin = identity.DoclingOrigin(filename='1-s2.0-S1873506125000625-main.pdf', binary_hash='7')
+    result = identity.determine_identity(
+        '1-s2.0-S1873506125000625-main.json', origin, extra_candidates=['10.1016/j.scr.2025.103712']
+    )
+    assert result.mint_keys == ('doi:10.1016/j.scr.2025.103712', 'pii:S1873506125000625')
+    assert result.claim_key == 'doi:10.1016/j.scr.2025.103712'
+    assert result.content_addressed is False
+
+
+def test_unrecognised_extra_candidate_is_ignored() -> None:
+    origin = identity.DoclingOrigin(filename=None, binary_hash='42')
+    result = identity.determine_identity('opaque-key.json', origin, extra_candidates=['not-an-id'])
+    assert result.mint_keys == ('binhash:42',)
+    assert result.content_addressed is True
+
+
 def test_read_docling_origin_harvests_filename_and_hash() -> None:
     origin = _origin('ids/10.1234%2Fsynthetic.fixture.001.json')
     assert origin.filename == '30000001.pdf'
