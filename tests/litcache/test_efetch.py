@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import pathlib
+import urllib.parse
 
 import httpx
 import pubmed_proto
@@ -65,15 +66,27 @@ def test_fetch_requires_a_pmid() -> None:
         asyncio.run(run())
 
 
-def test_fetch_rejects_a_batch_over_the_get_ceiling() -> None:
-    # The GET path caps the inline id list; a larger batch fails loud rather than
-    # sending an over-long URL (the POST path is unimplemented).
-    async def run() -> None:
-        async with httpx.AsyncClient() as client:
-            await efetch.fetch([str(i) for i in range(201)], http_client=client)
+def test_fetch_posts_the_id_list_in_the_body() -> None:
+    # efetch always POSTs: the id list rides the body (no GET inline-id ceiling), so a
+    # batch of any size takes one path and the URL carries no `id=`.
+    pmids = [str(i) for i in range(250)]
+    seen: dict[str, str] = {}
 
-    with pytest.raises(ValueError, match='caps at 200'):
-        asyncio.run(run())
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen['method'] = request.method
+        seen['body'] = request.content.decode()
+        seen['query_id'] = request.url.params.get('id', '')
+        return httpx.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await efetch.fetch(pmids, http_client=client)
+
+    asyncio.run(run())
+
+    assert seen['method'] == 'POST'
+    assert 'id=' in seen['body']
+    assert seen['query_id'] == ''  # the id list is in the body, not the URL
 
 
 def test_resolve_drives_efetch_and_parses() -> None:
@@ -81,7 +94,8 @@ def test_resolve_drives_efetch_and_parses() -> None:
     seen: dict[str, str] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.update(request.url.params)
+        # efetch POSTs, so the query rides the form body, not the URL.
+        seen.update(dict(urllib.parse.parse_qsl(request.content.decode())))
         return httpx.Response(200, content=body)
 
     async def run() -> dict[str, efetch.ResolvedMetadata]:

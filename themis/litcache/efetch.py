@@ -9,8 +9,8 @@ The cross-ids (DOI↔PMID↔PMCID) fall out of the record's own `pubmed_data.art
 — no separate id-conversion call — and are harvested into the litcache manifest's
 `ExternalIds`. A paper with a DOI but no PubMed record is resolved from Crossref
 (`themis.litcache.crossref`) instead. Batch-first: efetch serves a whole PMID batch in one
-`PubmedArticleSet` — but over HTTP GET, so the batch is bounded (`_MAX_GET_IDS`); NCBI's
-guidance is to POST the id list above ~200 UIDs, which this GET path does not implement.
+`PubmedArticleSet`, POSTing the id list in the request body so one path serves any batch
+size (NCBI's GET path caps the inline `id=` list near 200 UIDs; POST has no such ceiling).
 """
 
 from __future__ import annotations
@@ -28,10 +28,6 @@ from themis.litcache.models import litcache_pb2
 _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 # eutils etiquette: identify the tool + a contact for rate-limit/abuse follow-up.
 _TOOL = 'themis-litcache'
-
-# NCBI's ceiling for an inline `id=` list on a GET; a larger batch must POST via the
-# history server (unimplemented). Fail loud rather than send a truncated/over-long URL.
-_MAX_GET_IDS = 200
 
 _ArticleId = pubmed_proto.pubmed_pb2.ArticleId
 
@@ -98,26 +94,21 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> byte
         The raw `PubmedArticleSet` XML bytes.
 
     Raises:
-        ValueError: If `pmids` is empty, or exceeds `_MAX_GET_IDS` (the GET path's
-            inline-id ceiling — a larger batch needs the unimplemented POST path).
+        ValueError: If `pmids` is empty.
         httpx.HTTPStatusError: If efetch returns a non-2xx status.
     """
     if not pmids:
         raise ValueError('efetch.fetch requires at least one PMID')
-    if len(pmids) > _MAX_GET_IDS:
-        raise ValueError(
-            f'efetch.fetch got {len(pmids)} PMIDs; the GET path caps at {_MAX_GET_IDS} (POST unimplemented)'
-        )
-    response = await http_client.get(
-        _EFETCH_URL,
-        params={
-            'db': 'pubmed',
-            'id': ','.join(pmids),
-            'retmode': 'xml',
-            'tool': _TOOL,
-            'email': constants.CONTACT_EMAIL,
-        },
-    )
+    params = {
+        'db': 'pubmed',
+        'id': ','.join(pmids),
+        'retmode': 'xml',
+        'tool': _TOOL,
+        'email': constants.CONTACT_EMAIL,
+    }
+    # POST the id list in the body: NCBI caps an inline `id=` list on a GET near 200
+    # UIDs, but POST has no such ceiling, so one path serves any batch size.
+    response = await http_client.post(_EFETCH_URL, data=params)
     response.raise_for_status()
     return response.content
 
