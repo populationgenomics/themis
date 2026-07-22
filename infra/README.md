@@ -53,6 +53,17 @@ prefix-scoped, and the parquet/audit consumers the design anticipates need diffe
 ingestion runtime's read/write grant is in `themis_infra/ingest.py`; the reader grant is still deferred. In dev,
 operators use their own IAM-gated `gcloud` ADC.
 
+## Deletion guards
+
+Guarded only where loss is unrecoverable or externally bound: the reserved load-balancer IP (DNS points at it), the
+Cloud SQL instance and its database, and the web runtime SA whose never-reissued `unique_id` the Anthropic WIF rule pins
+(`protect`, plus `retain_on_delete` on the SA). Buckets rely on the non-empty refusal above.
+
+Cloud Run services and jobs set `deletion_protection=False` explicitly: the provider defaults it to true, and it is a
+state-side flag rather than a GCP setting, so only a program that still declares the resource can clear it. A service
+dropped from the program is therefore undeletable, and one failed delete aborts the whole update — blocking every later
+deploy, not just its own.
+
 ## Two tiers: bootstrap vs program
 
 - **`bootstrap.sh`** creates only what Pulumi itself needs to already exist: the per-environment state bucket, the KMS

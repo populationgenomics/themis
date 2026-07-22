@@ -74,6 +74,7 @@ class AuthService(pulumi.ComponentResource):
             # Explicit, stable name (referenced by the deploy workflow and console).
             name='themis-auth',
             location=region,
+            deletion_protection=False,
             # Internal only: reachable service-to-service (the store, later), never
             # from the public internet. Egress to the Cloud SQL Admin API is unaffected.
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',

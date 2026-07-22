@@ -26,6 +26,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/artifactregistry.admin',
     'roles/cloudsql.admin',
     'roles/compute.admin',
+    'roles/dns.admin',
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',

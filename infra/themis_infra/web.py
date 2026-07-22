@@ -127,6 +127,7 @@ class WebService(pulumi.ComponentResource):
             # workflows and the console) — not an auto-generated one.
             name='themis-web',
             location=region,
+            deletion_protection=False,
             # Network gate: only the external LB (and internal traffic) may
             # reach the service — direct public requests to the run.app URL are
             # rejected here, before IAM. Paired with the IAP-service-agent-only

@@ -103,6 +103,7 @@ class StoreService(pulumi.ComponentResource):
             project=project,
             name='themis-store',
             location=region,
+            deletion_protection=False,
             # Reached only through the sandbox's internal load balancer; direct run.app calls rejected.
             ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             # The proxy dials the LB's private hostname, so its ID token's audience is that hostname.

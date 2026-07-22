@@ -359,6 +359,7 @@ class DispatcherService(pulumi.ComponentResource):
             project=project,
             name='themis-dispatcher',
             location=region,
+            deletion_protection=False,
             ingress='INGRESS_TRAFFIC_ALL',  # public: Anthropic cannot present a GCP token; HMAC is the auth (§5)
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
@@ -454,6 +455,7 @@ class SandboxJob(pulumi.ComponentResource):
             project=project,
             location=region,
             name='themis-sandbox',
+            deletion_protection=False,
             template=gcp.cloudrunv2.JobTemplateArgs(
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=service_account.email,
