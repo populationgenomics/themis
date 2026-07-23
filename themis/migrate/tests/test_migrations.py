@@ -20,6 +20,7 @@ def test_committed_migrations_are_the_expected_roster() -> None:
         'analyses',
         'project_members',
         'projects',
+        'litcache_crosswalk_grant',
     ]
 
 
@@ -36,6 +37,15 @@ def test_grants_migration_renders_and_splits_cleanly() -> None:
     assert 'GRANT SELECT ON session_context TO "themis-auth@cpg-themis-dev.iam"' in rendered
     # The comment block attaches to the single GRANT statement.
     assert len(migrate.split_statements(rendered)) == 1
+
+
+def test_litcache_crosswalk_grant_renders_and_splits_cleanly() -> None:
+    grant = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'litcache_crosswalk_grant')
+    rendered = migrate.render(grant.sql, {'INGEST_DB_USER': 'themis-ingest@cpg-themis-dev.iam'})
+    assert '${' not in rendered
+    assert 'GRANT USAGE ON SCHEMA litcache TO "themis-ingest@cpg-themis-dev.iam"' in rendered
+    assert 'GRANT SELECT, INSERT ON litcache.crosswalk TO "themis-ingest@cpg-themis-dev.iam"' in rendered
+    assert len(migrate.split_statements(rendered)) == 2  # the two GRANTs
 
 
 def test_analyses_migration_renders_and_splits_cleanly() -> None:
