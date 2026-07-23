@@ -24,11 +24,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# THEMIS_BACKEND defaults to the deployed Cloud SQL backend; the deploy supplies the
-# THEMIS_SQL_* connection env (a missing value fails loud at startup).
+# No backend is baked in: the runtime requires THEMIS_BACKEND (and, for cloudsql, the
+# THEMIS_SQL_* connection env) from whoever runs the image, and exits at startup without it.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app \
-    THEMIS_BACKEND=cloudsql
+    PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
 COPY themis/common/__init__.py themis/common/sql.py ./themis/common/
 COPY themis/services/auth ./themis/services/auth

@@ -24,12 +24,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# THEMIS_STORAGE_BACKEND / THEMIS_AUTHORIZER_BACKEND default to the deployed backends; the
-# deploy supplies the bucket + auth-URL env (a missing value fails loud at startup).
+# No backends are baked in: the runtime requires THEMIS_STORAGE_BACKEND and
+# THEMIS_AUTHORIZER_BACKEND (and the bucket + auth-URL env each selects) from whoever runs
+# the image, and exits at startup without them.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app \
-    THEMIS_STORAGE_BACKEND=gcs \
-    THEMIS_AUTHORIZER_BACKEND=http
+    PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
 COPY themis/clients ./themis/clients
 COPY themis/services/store ./themis/services/store

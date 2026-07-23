@@ -24,13 +24,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# The image boots standalone on the fixture authorizer with an empty context map; the deploy
-# overrides THEMIS_AUTHORIZER_BACKEND=http and supplies THEMIS_AUTH_URL (a missing value fails
-# loud at startup).
+# No authorizer is baked in: the runtime requires THEMIS_AUTHORIZER_BACKEND (and the
+# THEMIS_AUTH_URL or seed map it selects) from whoever runs the image, and exits at startup
+# without it.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH=/app \
-    THEMIS_AUTHORIZER_BACKEND=fixture \
-    THEMIS_HELLO_FIXTURE_CONTEXTS={}
+    PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
 COPY themis/clients ./themis/clients
 COPY themis/services/hello ./themis/services/hello
