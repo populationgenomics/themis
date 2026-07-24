@@ -3,6 +3,7 @@
 **Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
 [`spike-infrastructure.md`](spike-infrastructure.md) — what infrastructure the Spike needs; this doc decides how it is
 managed. Resolves that exploration's IaC-tool and secrets-management questions and the auth part of its CI/CD question.
+Also [`migrations.md`](migrations.md) — the database schema step the deploy pipeline runs after `pulumi up`.
 
 Constraint: every tracked file is mirrored publicly. The only hard exclusion is plaintext secret material. Identifiers
 and KMS-gated ciphertext are fine ("What lives where"); the leak-screen and security review policies are refined in step

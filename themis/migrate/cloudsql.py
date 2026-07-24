@@ -1,12 +1,12 @@
-"""The live Cloud SQL ledger and apply entry point (verified at deploy, not offline).
+"""The live Cloud SQL ledger and apply entry point.
 
 `CloudSqlLedger` tracks applied versions in `schema_migrations` and applies each
 migration's statements plus its version row in one transaction. `apply_migrations`
 holds a single IAM-authed connection for the whole run and takes a session-level
 advisory lock, so two concurrent deploys serialize rather than racing to apply the
-same version. Importing this module pulls the connector and pg8000, so it is
-imported only when migrating — never by the hermetic unit tests, which exercise
-`migrate.InMemoryLedger`.
+same version. Importing this module pulls the connector and pg8000, so outside
+`__main__` only the Docker-gated ledger test imports it; the hermetic tests exercise
+`migrate.InMemoryLedger` instead.
 """
 
 from __future__ import annotations

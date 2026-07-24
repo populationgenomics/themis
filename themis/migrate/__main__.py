@@ -2,7 +2,7 @@
 
 Reads the connection + GRANT-login config from the environment (`config`), then
 applies `themis/migrate/migrations/` idempotently. The deploy step runs it after `pulumi up`:
-`uv run python -m themis.migrate`.
+`uv run --group migrate python -m themis.migrate`.
 """
 
 from __future__ import annotations

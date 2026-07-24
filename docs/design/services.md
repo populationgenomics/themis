@@ -22,7 +22,7 @@ entry.
 - `themis.services.<name>` — a service's server implementation.
 - `themis.clients.<name>` — the client-side helpers for *calling* service `<name>` (see
   [Who calls a service](#who-calls-a-service)).
-- `themis.migrate` — the SQL migration runner.
+- `themis.migrate` — the SQL migration runner (see [`migrations.md`](migrations.md)).
 
 A service, its client helpers, and its generated `rpc` package share a domain name; nothing else is shared implicitly.
 
@@ -206,4 +206,4 @@ follow-up. Do not define shared tables inside a single service's PR.
 1. If it calls another service, use that service's generated stub over `themis.clients.id_token`; auth is
    `themis.clients.auth`.
 1. Validate: `uv run pytest`; `pyright`; `ruff`; `regen` → clean tree (freshness green); `buf breaking` clean.
-1. Follow-up PRs: the Cloud Run deploy, and any DB migrate-runner work the real backend needs.
+1. Follow-up PRs: the Cloud Run deploy, and any schema work the real backend needs ([`migrations.md`](migrations.md)).

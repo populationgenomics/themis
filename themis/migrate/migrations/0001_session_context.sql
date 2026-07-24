@@ -1,4 +1,4 @@
--- 0001_session_context.sql -- the session-token resolution table (docs/plans/migrate-runner.md).
+-- 0001_session_context.sql -- the session-token resolution table (docs/design/migrations.md).
 -- The auth service is the sole reader: it hashes an incoming session token and returns
 -- the bound Project and Analysis. token_hash is the SHA-256 hex of the bearer, never
 -- the plaintext. project_id and analysis_id are opaque text -- foreign keys to the

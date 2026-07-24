@@ -1,4 +1,4 @@
-"""The forward-only SQL migration runner (docs/plans/migrate-runner.md).
+"""The forward-only SQL migration runner (docs/design/migrations.md).
 
 Lean by design: plain `NNNN_name.sql` files under `themis/migrate/migrations/` and this small
 runner — no ORM, no Alembic. The runner discovers the files, renders their
@@ -6,8 +6,7 @@ runner — no ORM, no Alembic. The runner discovers the files, renders their
 DB-user logins), and applies the pending ones in version order through a `Ledger`.
 Forward-only: a pending migration whose version is at or below an already-applied
 one is rejected. The ordering / idempotency logic here is unit-tested against
-`InMemoryLedger`; the live DDL apply against Cloud SQL is `cloudsql.CloudSqlLedger`,
-verified at deploy.
+`InMemoryLedger`; the live DDL apply against Cloud SQL is `cloudsql.CloudSqlLedger`.
 """
 
 from __future__ import annotations
