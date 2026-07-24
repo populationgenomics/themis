@@ -16,7 +16,9 @@ import grpc.aio
 import pytest
 
 from themis.clients.auth import session
+from themis.clients.auth.tests import fixture_session
 from themis.rpc import auth_pb2, auth_pb2_grpc
+from themis.testing import in_process_grpc
 
 
 class _StubAuth(auth_pb2_grpc.AuthServicer):
@@ -51,21 +53,10 @@ class _GuardServicer(auth_pb2_grpc.AuthServicer):
 
 @contextlib.asynccontextmanager
 async def _serving(servicer: auth_pb2_grpc.AuthServicer) -> AsyncIterator[auth_pb2_grpc.AuthStub]:
-    server = grpc.aio.server()
-    auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
-    port = server.add_insecure_port('127.0.0.1:0')
-    await server.start()
-    try:
-        async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
-            yield auth_pb2_grpc.AuthStub(channel)
-    finally:
-        await server.stop(None)
-
-
-async def _fixture_session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='p1', analysis_id='a1')
-    raise session.UnresolvedSessionError
+    async with in_process_grpc.serving(
+        lambda server: auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
+    ) as channel:
+        yield auth_pb2_grpc.AuthStub(channel)
 
 
 def test_session_resolver_returns_the_binding() -> None:
@@ -100,19 +91,19 @@ def test_session_resolver_propagates_non_permission_denied() -> None:
 
 def test_require_session_returns_the_binding() -> None:
     async def run() -> auth_pb2.SessionContext:
-        async with _serving(_GuardServicer(_fixture_session_resolver)) as stub:
+        async with _serving(_GuardServicer(fixture_session.resolve_fixture_session)) as stub:
             return await stub.ResolveSession(
                 auth_pb2.ResolveTokenRequest(),
-                metadata=(('x-themis-session-token', 'good'),),
+                metadata=fixture_session.GOOD_METADATA,
             )
 
     result = asyncio.run(run())
-    assert result.project_id == 'p1'
+    assert result.project_id == fixture_session.PROJECT_ID
 
 
 def test_require_session_missing_token_is_unauthenticated() -> None:
     async def run() -> None:
-        async with _serving(_GuardServicer(_fixture_session_resolver)) as stub:
+        async with _serving(_GuardServicer(fixture_session.resolve_fixture_session)) as stub:
             await stub.ResolveSession(auth_pb2.ResolveTokenRequest())
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:
@@ -122,10 +113,10 @@ def test_require_session_missing_token_is_unauthenticated() -> None:
 
 def test_require_session_unresolvable_token_is_permission_denied() -> None:
     async def run() -> None:
-        async with _serving(_GuardServicer(_fixture_session_resolver)) as stub:
+        async with _serving(_GuardServicer(fixture_session.resolve_fixture_session)) as stub:
             await stub.ResolveSession(
                 auth_pb2.ResolveTokenRequest(),
-                metadata=(('x-themis-session-token', 'bad'),),
+                metadata=fixture_session.session_metadata('bad'),
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:

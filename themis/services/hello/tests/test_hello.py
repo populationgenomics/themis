@@ -10,41 +10,30 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, hello_pb2, hello_pb2_grpc
+from themis.clients.auth.tests import fixture_session
+from themis.rpc import hello_pb2, hello_pb2_grpc
 from themis.services.hello import servicer as servicer_mod
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.testing import in_process_grpc
 
 
 @contextlib.asynccontextmanager
 async def _serving() -> AsyncIterator[hello_pb2_grpc.HelloStub]:
-    server = grpc.aio.server()
-    hello_pb2_grpc.add_HelloServicer_to_server(servicer_mod.Servicer(_session_resolver), server)
-    port = server.add_insecure_port('127.0.0.1:0')
-    await server.start()
-    try:
-        async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
-            yield hello_pb2_grpc.HelloStub(channel)
-    finally:
-        await server.stop(None)
+    servicer = servicer_mod.Servicer(fixture_session.resolve_fixture_session)
+    async with in_process_grpc.serving(
+        lambda server: hello_pb2_grpc.add_HelloServicer_to_server(servicer, server)
+    ) as channel:
+        yield hello_pb2_grpc.HelloStub(channel)
 
 
 def test_say_hello_echoes_the_resolved_binding() -> None:
     async def run() -> hello_pb2.SayHelloResponse:
         async with _serving() as stub:
-            return await stub.SayHello(hello_pb2.SayHelloRequest(note='hi'), metadata=_GOOD_TOKEN)
+            return await stub.SayHello(hello_pb2.SayHelloRequest(note='hi'), metadata=fixture_session.GOOD_METADATA)
 
     reply = asyncio.run(run())
-    assert reply.analysis_id == 'ana'
-    assert reply.project_id == 'proj'
-    assert reply.greeting == 'hello from analysis ana: hi'
+    assert reply.analysis_id == fixture_session.ANALYSIS_ID
+    assert reply.project_id == fixture_session.PROJECT_ID
+    assert reply.greeting == f'hello from analysis {fixture_session.ANALYSIS_ID}: hi'
 
 
 def test_missing_session_token_is_unauthenticated() -> None:
@@ -61,7 +50,7 @@ def test_unresolvable_token_is_permission_denied() -> None:
     async def run() -> hello_pb2.SayHelloResponse:
         async with _serving() as stub:
             return await stub.SayHello(
-                hello_pb2.SayHelloRequest(note='hi'), metadata=(('x-themis-session-token', 'bad'),)
+                hello_pb2.SayHelloRequest(note='hi'), metadata=fixture_session.session_metadata('bad')
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:

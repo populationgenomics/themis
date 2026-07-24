@@ -12,22 +12,19 @@ import pytest
 from themis.rpc import auth_pb2, auth_pb2_grpc
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
+from themis.testing import in_process_grpc
 
 
 def _resolve(bindings: Mapping[str, auth_pb2.SessionContext], token: str) -> auth_pb2.SessionContext:
     """Drive one Resolve call through a real in-process server + stub."""
 
     async def run() -> auth_pb2.SessionContext:
-        server = grpc.aio.server()
-        auth_pb2_grpc.add_AuthServicer_to_server(servicer_mod.Servicer(auth_backend.FixtureBackend(bindings)), server)
-        port = server.add_insecure_port('127.0.0.1:0')
-        await server.start()
-        try:
-            async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
-                stub = auth_pb2_grpc.AuthStub(channel)
-                return await stub.ResolveSession(auth_pb2.ResolveTokenRequest(session_token=token))
-        finally:
-            await server.stop(None)
+        servicer = servicer_mod.Servicer(auth_backend.FixtureBackend(bindings))
+        async with in_process_grpc.serving(
+            lambda server: auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
+        ) as channel:
+            stub = auth_pb2_grpc.AuthStub(channel)
+            return await stub.ResolveSession(auth_pb2.ResolveTokenRequest(session_token=token))
 
     return asyncio.run(run())
 

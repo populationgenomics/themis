@@ -11,42 +11,33 @@ import grpc.aio
 import pytest
 from google.protobuf import empty_pb2
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, store_pb2, store_pb2_grpc
+from themis.clients.auth.tests import fixture_session
+from themis.rpc import store_pb2, store_pb2_grpc
 from themis.services.store import servicer as servicer_mod
 from themis.services.store import storage as storage_mod
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.testing import in_process_grpc
 
 
 @contextlib.asynccontextmanager
 async def _serving(storage: storage_mod.Storage) -> AsyncIterator[store_pb2_grpc.StoreStub]:
-    server = grpc.aio.server()
-    store_pb2_grpc.add_StoreServicer_to_server(servicer_mod.Servicer(storage, _session_resolver), server)
-    port = server.add_insecure_port('127.0.0.1:0')
-    await server.start()
-    try:
-        async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
-            yield store_pb2_grpc.StoreStub(channel)
-    finally:
-        await server.stop(None)
+    servicer = servicer_mod.Servicer(storage, fixture_session.resolve_fixture_session)
+    async with in_process_grpc.serving(
+        lambda server: store_pb2_grpc.add_StoreServicer_to_server(servicer, server)
+    ) as channel:
+        yield store_pb2_grpc.StoreStub(channel)
 
 
 def test_put_then_get_working_document() -> None:
     async def run() -> store_pb2.WorkingDocumentSnapshot:
         async with _serving(storage_mod.FixtureStorage()) as stub:
             first = await stub.PutWorkingDocument(
-                store_pb2.PutWorkingDocumentRequest(markdown='v1'), metadata=_GOOD_TOKEN
+                store_pb2.PutWorkingDocumentRequest(markdown='v1'), metadata=fixture_session.GOOD_METADATA
             )
             assert first.version == 1
-            await stub.PutWorkingDocument(store_pb2.PutWorkingDocumentRequest(markdown='v2'), metadata=_GOOD_TOKEN)
-            return await stub.GetWorkingDocument(empty_pb2.Empty(), metadata=_GOOD_TOKEN)
+            await stub.PutWorkingDocument(
+                store_pb2.PutWorkingDocumentRequest(markdown='v2'), metadata=fixture_session.GOOD_METADATA
+            )
+            return await stub.GetWorkingDocument(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
 
     snapshot = asyncio.run(run())
     assert snapshot.version == 2
@@ -56,7 +47,7 @@ def test_put_then_get_working_document() -> None:
 def test_get_working_document_absent_is_not_found() -> None:
     async def run() -> store_pb2.WorkingDocumentSnapshot:
         async with _serving(storage_mod.FixtureStorage()) as stub:
-            return await stub.GetWorkingDocument(empty_pb2.Empty(), metadata=_GOOD_TOKEN)
+            return await stub.GetWorkingDocument(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:
         asyncio.run(run())
@@ -66,8 +57,8 @@ def test_get_working_document_absent_is_not_found() -> None:
 def test_put_then_get_workspace_round_trips_the_archive() -> None:
     async def run() -> bytes:
         async with _serving(storage_mod.FixtureStorage()) as stub:
-            await stub.PutWorkspace(_chunks([b'hello ', b'world']), metadata=_GOOD_TOKEN)
-            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=_GOOD_TOKEN)
+            await stub.PutWorkspace(_chunks([b'hello ', b'world']), metadata=fixture_session.GOOD_METADATA)
+            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
             return b''.join([chunk.content async for chunk in call])
 
     assert asyncio.run(run()) == b'hello world'
@@ -78,8 +69,8 @@ def test_get_workspace_reassembles_multiple_output_chunks(monkeypatch: pytest.Mo
 
     async def run() -> list[bytes]:
         async with _serving(storage_mod.FixtureStorage()) as stub:
-            await stub.PutWorkspace(_chunks([b'abcdefghij']), metadata=_GOOD_TOKEN)
-            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=_GOOD_TOKEN)
+            await stub.PutWorkspace(_chunks([b'abcdefghij']), metadata=fixture_session.GOOD_METADATA)
+            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
             return [chunk.content async for chunk in call]
 
     chunks = asyncio.run(run())
@@ -91,7 +82,7 @@ def test_put_workspace_over_cap_is_resource_exhausted(monkeypatch: pytest.Monkey
 
     async def run() -> None:
         async with _serving(storage_mod.FixtureStorage()) as stub:
-            await stub.PutWorkspace(_chunks([b'abc', b'def']), metadata=_GOOD_TOKEN)
+            await stub.PutWorkspace(_chunks([b'abc', b'def']), metadata=fixture_session.GOOD_METADATA)
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:
         asyncio.run(run())
@@ -101,7 +92,7 @@ def test_put_workspace_over_cap_is_resource_exhausted(monkeypatch: pytest.Monkey
 def test_get_workspace_absent_is_not_found() -> None:
     async def run() -> None:
         async with _serving(storage_mod.FixtureStorage()) as stub:
-            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=_GOOD_TOKEN)
+            call = stub.GetWorkspace(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
             async for _ in call:
                 pass
 
@@ -125,7 +116,7 @@ def test_unresolvable_token_is_permission_denied() -> None:
         async with _serving(storage_mod.FixtureStorage()) as stub:
             return await stub.PutWorkingDocument(
                 store_pb2.PutWorkingDocumentRequest(markdown='v1'),
-                metadata=(('x-themis-session-token', 'bad'),),
+                metadata=fixture_session.session_metadata('bad'),
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:

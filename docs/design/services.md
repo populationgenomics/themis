@@ -23,6 +23,7 @@ entry.
 - `themis.clients.<name>` — the client-side helpers for *calling* service `<name>` (see
   [Who calls a service](#who-calls-a-service)).
 - `themis.migrate` — the SQL migration runner (see [`migrations.md`](migrations.md)).
+- `themis.testing` — helpers shared by tests across packages. No production module imports it and no image copies it.
 
 A service, its client helpers, and its generated `rpc` package share a domain name; nothing else is shared implicitly.
 
@@ -39,7 +40,9 @@ A service is `themis/services/<name>/`, the package `themis.services.<name>`:
   fail loud, no silent default), registers the servicer and a `grpc.health.v1` health servicer on a `grpc.aio` server,
   and serves on Cloud Run's `$PORT`.
 - **`tests/`** — behaviour tests against an in-process `grpc.aio` server (or the servicer methods directly), plus
-  `test_main.py` for the entrypoint wiring. No contract test — the servicer base is the interface.
+  `test_main.py` for the entrypoint wiring. `themis.testing.in_process_grpc.serving` is that server: it takes a callable
+  that registers the servicer, and yields a channel to wrap in the generated stub — don't hand-roll one. No contract
+  test — the servicer base is the interface.
 - **`Dockerfile`** — multi-stage; build context is the repo root.
 
 The messages, stub, and servicer base are **not** under the service — they live in the shared `themis/rpc/` (below),
@@ -157,7 +160,10 @@ service. Don't rebuild it — `themis.clients.auth` layers this on the generated
   it, and `context.abort`s `UNAUTHENTICATED` on a missing token or `PERMISSION_DENIED` on one that does not resolve. It
   never returns `None`: a servicer cannot proceed without a binding.
 - **In tests / offline** — pass a fixture `SessionResolver` that returns a `SessionContext` or **raises**
-  `UnresolvedSessionError` on a miss, so nothing calls a real auth and no path silently continues without a binding.
+  `UnresolvedSessionError` on a miss, so nothing calls a real auth and no path silently continues without a binding. In
+  tests that is `themis.clients.auth.tests.fixture_session.resolve_fixture_session`; its `GOOD_METADATA`, `PROJECT_ID`,
+  and `ANALYSIS_ID` are what a test sends and asserts on, in place of the literals. Offline, an entrypoint builds one
+  from its seeding env var through `session.fixture_session_resolver_from_json`.
 - **The pieces** (all under `themis.clients.auth`, usable apart): `session_resolver(auth_url)` builds a
   `SessionResolver` over the generated auth stub — presenting the SA ID token via `themis.clients.id_token`, mapping any
   resolve failure to `UnresolvedSessionError`; `require_session` is the servicer guard. Include the `session` dependency
@@ -201,7 +207,8 @@ follow-up. Do not define shared tables inside a single service's PR.
 1. Run `regen`; commit `schema/proto/themis/rpc/<domain>.proto` + the `themis/rpc/<domain>_pb2*.py` stubs.
 1. `themis/services/<name>/` — `servicer.py` (the `<Service>Servicer` subclass), the backend `abc.ABC` + fixture,
    `__main__` (env-selected backend, `grpc.aio` server + health servicer, fail-loud seeding).
-1. `themis/services/<name>/tests/` — behaviour tests (in-process `grpc.aio`), `test_main.py`.
+1. `themis/services/<name>/tests/` — behaviour tests over `themis.testing.in_process_grpc.serving`, authorized with
+   `themis.clients.auth.tests.fixture_session`; `test_main.py`.
 1. Wire root `pyproject.toml` (dep group + `test`/`lint` include, `testpaths`) and the `Dockerfile`.
 1. If it calls another service, use that service's generated stub over `themis.clients.id_token`; auth is
    `themis.clients.auth`.
