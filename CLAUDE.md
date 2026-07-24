@@ -73,6 +73,10 @@ Worktrees go in `.claude/worktrees/` (gitignored), never `../` siblings.
 See [`docs/plans/screen-and-mirror-workflow.md`](docs/plans/screen-and-mirror-workflow.md) for the screen-and-mirror
 design.
 
+- **Adversarially review before opening a PR.** For any change with non-trivial code or logic, run adversarial review
+  passes in subagents with fresh context — the reviewer sees only the diff, not the authoring conversation — and fix the
+  findings autonomously; repeat until a pass surfaces only diminishing findings, then open the PR. Exempt: trivial
+  changes, doc-only changes, resource/asset changes.
 - **Pin third-party GitHub Actions to the latest stable release**: the moving major tag (`@v3`) where the action
   publishes one, else the exact latest version (`@v8.2.0`). Verify against the action's releases when adding or bumping
   one.
