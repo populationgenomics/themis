@@ -15,14 +15,11 @@ from google.auth.transport import grpc as google_auth_grpc
 from google.auth.transport import requests as google_auth_requests
 
 
-def channel_credentials(audience: str, *, root_certificates: bytes | None = None) -> grpc.ChannelCredentials:
+def channel_credentials(audience: str) -> grpc.ChannelCredentials:
     """Composite channel credentials (TLS + SA ID token) for a channel to ``audience``.
 
     Args:
         audience: The callee's base URL; Cloud Run requires the ID token's audience to match.
-        root_certificates: PEM trust root for the TLS leg. ``None`` uses the system roots (a
-            public-CA run.app endpoint). The sandbox proxy passes the internal load balancer's
-            self-signed certificate, whose private hostname no public CA vouches for.
 
     Returns:
         Channel credentials to pass to ``grpc.aio.secure_channel``.
@@ -33,6 +30,6 @@ def channel_credentials(audience: str, *, root_certificates: bytes | None = None
     )
     plugin = google_auth_grpc.AuthMetadataPlugin(credentials, request)
     return grpc.composite_channel_credentials(
-        grpc.ssl_channel_credentials(root_certificates=root_certificates),
+        grpc.ssl_channel_credentials(),
         grpc.metadata_call_credentials(plugin),
     )
