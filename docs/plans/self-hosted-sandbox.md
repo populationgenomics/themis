@@ -1,5 +1,10 @@
 # Plan: Self-hosted sandbox on Cloud Run
 
+> **Execution + isolation model superseded** by [`postern-sandbox-swap.md`](postern-sandbox-swap.md): the two-container
+> Job + credential proxy + the §8 network subsystem (architecture §3–§4, sandbox job/proxy §6, egress §8, `/workspace`
+> sync §9) are replaced by a single trusted `EnvironmentWorker` over the `postern` sandbox. The why (§1–§2), the
+> dispatcher (§5), the credential model (§7), and the operations framing still stand.
+
 This plan decides the **self-hosted execution sandbox**: where the agent's tool execution runs, and how the credentials
 involved stay out of the agent's reach. It is the **execution model the wiring builds on**
 ([`../design/managed-agents.md`](../design/managed-agents.md)) — self-hosted from the first synthetic scenarios, not a
@@ -138,171 +143,15 @@ worker upgrades.
   relative path on `ANTHROPIC_BASE_URL`, carrying `Authorization: Bearer <environment key>` with `X-Api-Key` stripped.
   The spawned bash shell is additionally scrubbed of `ANTHROPIC_*` env vars.
 
-## 3. Architecture
+## 3. Architecture — superseded
 
-Three pieces on top of the wiring slice — a **dispatcher** (Cloud Run service), a **sandbox job** (Cloud Run Job, one
-execution per spawn, holding the untrusted agent container and a credential-proxy sidecar), and a **thin data plane**: a
-session-token **auth service** and a **store service** fronting two GCS buckets. The store is the wiring plan's,
-reshaped from an editor-tool MCP server into a session-token-authed put/get mediator (§9). The agent holds no credential
-of any kind.
+Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1–§2 — a single trusted `EnvironmentWorker` over a
+`postern` sandbox replaces the two-container Job + credential proxy.
 
-```mermaid
-flowchart TB
-  ma["Anthropic Managed Agents · external<br/>orchestration + work queue"]
-  subgraph gcp["GCP project · cpg-themis-dev"]
-    disp["sandbox dispatcher · Cloud Run<br/>webhook → poll (no ack) · derive session token · spawn"]
-    subgraph job["sandbox job · one Cloud Run Job execution per spawn"]
-      agentc["agent container<br/>Python worker · tool execution · no credentials"]
-      ws[("/workspace<br/>shared emptyDir")]
-      proxy["credential proxy sidecar<br/>env key + session token (only two)"]
-    end
-    store["store · Cloud Run<br/>session-token-authed put/get · keys objects server-side"]
-    auth["auth service · Cloud Run<br/>resolve session token → Analysis · SQL-read"]
-    docb[("working-document bucket · GCS<br/>immutable version-per-blob")]
-    scratch[("ephemeral workspace bucket · GCS<br/>TTL'd scratch")]
-    sql[("Cloud SQL<br/>analysis · session-token hashes")]
-  end
-  ma -->|"HMAC · session.status_run_started"| disp
-  disp -->|"poll work, no ack · environment key"| ma
-  disp -->|"jobs.run · per-container env"| job
-  agentc <-->|"read/write files (incl. the doc)"| ws
-  agentc -->|"localhost · Anthropic route only"| proxy
-  proxy <-->|"restore on start · checkpoint on idle"| ws
-  proxy -->|"env key · session/work paths"| ma
-  proxy -->|"session token · workspace put/get"| store
-  store -->|"resolve the session token"| auth
-  auth -->|"session-token-hash lookup"| sql
-  store -->|"doc versions"| docb
-  store -->|"scratch"| scratch
+## 4. The end-to-end flow — superseded
 
-  classDef untrusted fill:#ffe8cc,stroke:#d9480f,color:#000
-  classDef cred fill:#d3f9d8,stroke:#2b8a3e,color:#000
-  classDef data fill:#e7f5ff,stroke:#1971c2,color:#000
-  class agentc untrusted
-  class disp,proxy,store,auth cred
-  class ws,docb,scratch,sql data
-```
-
-Orange is the one untrusted component (the agent container); green are the credentialed mediators; blue is data. The
-agent edits files on the shared `/workspace` — the working document among them, at the contract path (§9) — and reaches
-Anthropic only through the proxy; it calls **no** data-plane service. The proxy syncs the filesystem to the store on its
-behalf, and the store resolves the session token through the auth service, the sole reader of the session-token table.
-In the diagram the **environment key** is the Anthropic worker credential (§2) and the **session token** is the
-per-session sync credential (§7). Sections 5–9 detail each piece; §4 is how they move together.
-
-## 4. The end-to-end flow
-
-One session, from spawn to release, then respawn:
-
-1. The session goes `running`; Anthropic enqueues a work item and fires the `run_started` webhook to the **dispatcher**.
-1. The dispatcher **polls** the item (without acking — §5), **derives** the session token (§7), and triggers **one Cloud
-   Run Job execution**, injecting the environment key and the session token into the **proxy** container only.
-1. The **proxy** starts first. It restores `/workspace` from the store — the latest working-document version into the
-   contract path, plus the session's ephemeral scratch (§9) — then **acks** the work item (only now, restore proven —
-   §5) and marks itself ready, gating the agent container's start, so the worker always boots onto the restored
-   filesystem.
-1. The **agent** (the Python worker) runs the tool loop: it **streams** the session's events (SSE), dispatches each
-   `agent.tool_use` / `agent.custom_tool_use` and posts back the matching result, and `shell`/file tools operate on the
-   shared `/workspace`, where the model **edits the working document as a plain file** at the contract path. It calls no
-   data-plane service.
-1. The **proxy** — which holds the environment key — runs its **own** subscription to the session's real-time event
-   stream (`GET /v1/sessions/{id}/events/stream`, SSE) through the Anthropic SDK, which handles keep-alive and
-   reconnect. When it sees `session.status_idle` with `stop_reason.type == end_turn` it **checkpoints**: snapshots the
-   durable glob (the paths marked for versioning, §9) into a new immutable working-document version and syncs the
-   ephemeral scratch, via the store under the session token. The worker detects the same idle on its own stream and
-   starts its 300 s release countdown, so the checkpoint runs concurrently with it (§9). (The checkpoint rides the
-   proxy's independent subscription, not the agent's traffic, so it does not depend on how the worker reads events; the
-   worker exposes no per-turn hook to hang it on either way — §9.)
-1. The worker releases, force-stops its work item, and the **job execution exits 0**. Scale-to-zero until the next
-   steer.
-1. The next steering turn fires another `run_started`; a fresh sandbox spawns and restores `/workspace` from the store.
-   This is the **run-lived** model — one Job execution per run, not one per session — held coherent across the gap by
-   §9's checkpoint/restore.
-
-```mermaid
-sequenceDiagram
-  participant MA as Anthropic MA
-  participant Disp as Dispatcher
-  participant Proxy as Proxy sidecar
-  participant Agent as Agent container
-  participant Store as Store
-  participant Auth as Auth service
-
-  MA-->>Disp: inbound webhook · session.status_run_started
-  Note over MA,Disp: the only inbound that triggers a spawn
-  Disp->>MA: poll work item (no ack — §5)
-  Disp->>Disp: derive session token = HMAC(session_id) via KMS-MAC
-  Disp->>Proxy: jobs.run (env: env key, session token, session id, work secret)
-  Note over Proxy: startup
-  Proxy->>Store: workspace get (session token)
-  Store->>Auth: resolve session token → Analysis
-  Auth-->>Store: SessionContext
-  Store-->>Proxy: latest doc version + scratch → unpack into /workspace (empty on first spawn)
-  Proxy->>MA: ack work item (restore proven — §5)
-  Proxy-->>Agent: ready — startup gate released
-  Agent->>Proxy: Python worker · open event stream
-  Proxy->>MA: subscribe session events (env key injected)
-  Note over MA,Agent: one held-open outbound SSE stream · worker-initiated, nothing routes in
-  loop each tool call · on the one open stream
-    MA-->>Proxy: agent.tool_use
-    Proxy-->>Agent: agent.tool_use
-    Agent->>Agent: read/write /workspace (incl. the doc file)
-    Agent->>Proxy: tool result
-    Proxy->>MA: events.send
-  end
-  MA-->>Proxy: session.status_idle (end_turn)
-  Proxy-->>Agent: session.status_idle (end_turn)
-  par checkpoint (runs inside the grace)
-    Proxy->>Store: workspace put (session token) · new doc version + scratch
-    Store->>Auth: resolve session token → Analysis
-    Store->>Store: key objects server-side, write version-per-blob
-  and release countdown
-    Note over Agent: --max-idle 300 s
-  end
-  Agent->>Proxy: force-stop work item
-  Proxy->>MA: forward stop · worker exits 0
-  Note over Proxy,Agent: job execution completes — instance torn down
-  Note over MA,Store: next run_started → new spawn restores via workspace get
-```
-
-**One outbound connection — no inbound path to the sandbox.** After the dispatcher spawns the job, the worker
-*initiates* every connection: it opens a single long-lived SSE subscription to the session's events on
-`ANTHROPIC_BASE_URL` (through the proxy, which injects the environment key) and holds it across the run, re-establishing
-and reconciling on drop (§2). Tool calls arrive on it; results post back via `events.send`. The proxy's sync calls to
-the store are also outbound and **proxy-initiated** — the agent never issues them. Nothing is dispatched *into* the
-sandbox: the only externally-initiated connection that triggers a sandbox spawn is the `run_started` webhook to the
-dispatcher (§5), and the sandbox exposes no port of its own. That is what lets it be a scale-to-zero Job behind
-internal-only networking (§8) rather than a reachable service.
-
-**Run-lived, with a grace window.** The worker exits 300 s (`--max-idle`, §2 — the deployed value; the SDK default
-`DEFAULT_MAX_IDLE` is 60 s) after the `end_turn` idle; a steer landing inside that window reuses the live sandbox
-instead of respawning. Latency is not what sizes the window — a steer invokes long-running work, not a chat reply (§1),
-so a cold start after a pause past the window is dominated by the work it triggers, not felt as UI lag. The window is
-sized to the worst-case checkpoint instead: the concurrent post-idle `workspace put` must finish under `--max-idle`
-before the sidecar is reaped (§9), and a cold-started store sets that floor. Reuse correctness does not depend on the
-window — `/workspace` is checkpoint/restored (§9); only the checkpoint does.
-
-**"Idle" is a protocol state, not a traffic heuristic** (§2). The release countdown arms only on the `end_turn` idle
-event, never on output silence; a `requires_action` idle never arms it (a `shell` call's `requires_action` is answered
-by the worker in-process and clears at once; an unanswered one would hold the sandbox rather than release it) — so the
-minutes-long thinking gaps *between* tool calls never read as idle. Nor does a long computation: it cannot be a single
-command (the runner caps each call at ~150 s, §2), so it runs as an agent-backgrounded process polled across `shell`
-calls while the session stays `running` and the background heartbeat holds the lease. A 30-minute analysis is many
-sub-150 s polls, not one in-flight call — and looks `running`, never idle, throughout.
-
-**Long-run maintenance events — connections break, `/workspace` survives.** For executions running **beyond ~1 h**,
-Cloud Run may migrate the task between machines during a maintenance event. The docs describe this as a **live
-migration** — the container is paused (`SIGTSTP`, with 10 s of warning) and resumed (`SIGCONT`) on the new machine, not
-restarted — so in-memory state, including the tmpfs `/workspace`, is preserved across it. What drops is in-flight
-network connections: the worker's SSE stream and any proxy sync in flight, both survivable (the worker reconnects and
-reconciles, §2; a sync retries). So the residual exposure is a torn in-flight connection, not a lost workspace — and the
-real bound on a runaway long computation is the **task timeout** (§6), not migration. Live migration is transparent to
-the workload — the pause/resume preserves memory, so `/workspace` is never lost to a maintenance event. What is *not*
-covered is a **non-migration** instance loss mid-turn (OOM, machine failure, the task-timeout kill): checkpoints run
-only at `end_turn` (§9), so an in-progress turn's scratch and uncommitted edits are lost and the turn re-runs from the
-last committed version. The deliverable is always safe — versions are immutable and minted only at `end_turn` — so this
-is a bounded re-run, cheap for the short turns of this slice; the long-computation (code-mode) case, where a re-run is
-expensive, is the gate on intra-turn durability (§12).
+The execution and isolation legs are superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1, §4. The
+dispatch → credential-derivation → persistence flow it described still stands — see §5, §7, and §9 below.
 
 ## 5. Dispatcher
 
@@ -364,111 +213,11 @@ never reaches the checkpoint that would mint a document version (§9); its redun
 already `starting`); and because both spawns derive the same per-session bearer, there is no stray session-token row to
 clean up (§7).
 
-## 6. Sandbox job & the credential proxy
+## 6. Sandbox job & the credential proxy — superseded
 
-One Cloud Run Job execution per sandbox spawn — its own instance (Cloud Run's per-instance gVisor/microVM sandbox) with
-a fresh filesystem, exiting when the worker releases the session (§4). A Job task has CPU allocated for its entire
-lifetime — there is no request-based throttling because there are no requests — so long computations run at full speed;
-this is why the sandbox is a Job and not a request-billed service. A long computation is not one long tool call (the
-runner caps each call at ~150 s, §2): the agent backgrounds the process and polls it across `shell` calls, keeping the
-session `running` — and the sandbox alive — until the work completes. The Job's **task timeout** is the ultimate
-backstop and must be **set explicitly**, sized to the longest legitimate session plus margin — not Cloud Run's short
-default, which would kill a long agent-backgrounded computation. It caps the cost of a worker network-partitioned from
-Anthropic — which can't even receive the heartbeat `412` that would otherwise stop it (§2), so only its own
-self-exit-on-failure (if any, §12) or the timeout ends it — and, defensively, of a `requires_action` hold the worker
-cannot clear (a tool routed to no local implementation, or an `always_ask` policy — §2; the custom `shell` tool's own
-`requires_action` the worker answers in-process). The timeout bounds one instance, not a session that keeps re-spawning;
-that is the queue-depth alert and runbook's job (§11).
-
-**One runner, one shell, one workspace per session.** The worker runs a single tool runner over one persistent bash
-session and one `/workspace` for the whole session — tool calls execute **serially**, so the coordinator's up-to-25
-concurrent threads (wiring §3) do not get parallel tool execution, and they share shell state, the background-job table,
-and scratch files. This is the Managed Agents worker's default (the cloud sandbox shares one container across threads
-the same way), not a self-hosting artifact — and it is largely harmless: serial dispatch only bites as **head-of-line
-blocking** when a single tool call runs long, and the throughput-relevant parallelism (LLM reasoning across the threads)
-is concurrent regardless. Short calls interleave fine. The discipline that keeps calls short is to background anything
-slow and poll it (§4) and to push heavyweight or long analyses to dedicated async API endpoints that return a monitor
-token (§12), so nothing long-blocking runs inline. The residual — shared mutable state across concurrent *inline*
-analysis — the async-RPC direction avoids; and self-hosting, unlike the cloud, holds the lever to add per-thread
-isolation later (the worker's tool runner is pluggable, §12). Two containers:
-
-- **Agent container** — the untrusted one; all tool execution happens here. Entrypoint the **Python worker**
-  (`python -m themis.agent.worker`); env: the session/work/environment ids,
-  `ANTHROPIC_BASE_URL=http://127.0.0.1:<proxy-port>`, and a **placeholder** `ANTHROPIC_ENVIRONMENT_KEY` (the SDK client
-  requires a bearer; the proxy replaces the header, so the value is never valid). Image: a slim Python base plus the
-  anthropic SDK, the generated gRPC stubs (code mode, §1), and the document linter (§9). Workdir `/workspace` (the
-  shared emptyDir, checkpoint/restored, §9); an in-memory volume at `/mnt/session/outputs` satisfies the harness
-  contract (the system prompt directs deliverables to the working-document file, so anything written there is discarded
-  by design).
-
-- **Credential proxy sidecar** — a **host-pinning reverse proxy** for the Anthropic route (not a forward proxy: a
-  forward proxy honors client-named upstreams, which would let agent code tunnel anywhere), **the sandbox's sync
-  client** for the store, and the issuer of the work-item **`ack`** once restore succeeds (§5, §9). It is configured
-  entirely by per-execution env (injected by the dispatcher).
-
-  **The agent-facing surface is a single route — the Anthropic API.** The model calls no data-plane service (it edits
-  files; the proxy syncs them, §9), so there is no agent-forwarded store route this slice. The proxy's calls to the blob
-  store are **proxy-initiated** (the proxy is a client, injecting the session token on its own `workspace put`/`get`),
-  not forwarded on the agent's behalf. The forward-and-inject machinery is retained but dormant: it is the mechanism the
-  genomics/compute RPCs will use when the model again calls an internal API through the proxy (§1, §12).
-
-  **Transport — gRPC (HTTP/2, binary protobuf).** The internal data-plane services (the store and auth this slice; the
-  genomics/compute APIs the model scripts later) speak gRPC, their contracts defined as `.proto` (see
-  [`../design/services.md`](../design/services.md)). Credential injection across the untrusted boundary drives the
-  shape, and this slice makes it trivial: the model calls no data-plane service, so the proxy is the store's gRPC
-  **client**, injecting the session token as `x-themis-session-token` metadata (and the SA ID token as `authorization`)
-  on its own `workspace put`/`get` — a per-call option, no forwarding involved. The Anthropic route stays an HTTP/1.1
-  reverse proxy (third-party REST, below). The dormant forward leg — agent → proxy → an internal gRPC service, for the
-  genomics/compute RPCs (§1, §12) — is a fixed-upstream, method-allowlisting, metadata-injecting HTTP/2 forwarder:
-  gRPC's structure (upstream from config, not client-named; `/pkg.Service/Method` paths allowlisted exactly;
-  HTTP/2-native streaming) keeps it small, not the Envoy-class rebuild REST framing would force. The committed `.proto`
-  is the contract: the server subclasses the generated servicer base — the interface is forced structurally,
-  `buf breaking` gates evolution, and the generated stub ships in the sandbox image for the model to call. gRPC is less
-  self-inspectable than JSON in code mode, but the model calls the typed stub, not raw HTTP, and streaming is
-  first-class (the workspace sync).
-
-  Its hardening, each property load-bearing on the Anthropic route (the store-client leg validates the store's hostname
-  and injects the session token as `x-themis-session-token` metadata):
-
-  - **No client-named upstream.** Ignores any client Host / absolute-form target; **rejects `CONNECT`**.
-  - **Path canonicalization.** Full percent-decode, then `..` collapse, rejecting any residual encoded slash; matches
-    *and forwards* the same canonical form, so `..%2f`-style traversal can neither match the allowed prefix nor resolve
-    elsewhere upstream.
-  - **No credential-carrying redirect.** Never follows a 3xx with the injected credential attached (a redirect to an
-    off-allowlist host would leak the key or session token).
-  - **Strict upstream TLS.** Validates the certificate on every leg; the L4 IP allow (§8) admits any connection to the
-    allowed IP, so cert validation — not the firewall — authenticates the upstream and stops a hijacked IP from
-    receiving the credential or injecting tool calls. The Anthropic leg validates against the public CA chain (Google
-    Trust Services) — the Anthropic SDK's default TLS, not an SPKI pin: pinning would harden against a CA compromise but
-    breaks on Anthropic's leaf/chain rotation and precludes the official SDK's HTTP client, a poor trade for egress to a
-    major provider over standard TLS. The store and forward legs trust the internal load balancer's self-signed
-    certificate as their gRPC root and validate the service's private hostname against its SAN (§8), which an IP
-    hijacker cannot forge.
-  - **Unbuffered streaming.** The Anthropic route streams — no response buffering, no idle timeout, per-chunk flush: it
-    carries the worker's long-lived SSE event stream (minutes quiet between tool calls, §2); a buffering or idle-timeout
-    proxy stalls tool delivery or tears the stream on every thinking gap.
-
-  The one agent-facing route forwards the Anthropic API base URL to `api.anthropic.com`, injecting
-  `Authorization: Bearer <environment key>`. Allowed paths: `/v1/sessions/<sid>`, `…/<sid>/**`,
-  `/v1/environments/<eid>/work/<wid>`, `…/work/<wid>/**` — literal ids, 403 otherwise.
-
-Matching is **path-only** (the query string is stripped first — every worker call carries `?beta=true`) and the ids are
-**literal, not wildcard segments**. Both the bare resource and its subtree are allowed on purpose: the worker issues a
-bare `GET /v1/sessions/<sid>` at startup — session retrieve, unconditionally, before the skills loop and whether or not
-the agent has any skills (verified in the SDK source, §2). A subtree-only `…/**` pattern would 403 that call, which the
-deployed Python worker turns into a **whole-job failure**: the retrieve sits outside the per-skill try/except
-(`download_session_skills`), so a 403 aborts the tool context's `__aenter__` rather than merely skipping skills. So the
-entry is required. Pinning the literal `<sid>`/`<wid>` (rather than a `*` segment) is what confines the sandbox to *its
-own* session and work item — a wildcard would admit other sessions' and other work items' paths, including the
-queue-level `/work/poll` and `/work/stats` that must never be reachable (§2). The one surface the allowlist **cannot**
-scope is skills: `/v1/skills` is org-wide, not session-scoped, so it stays out until skills are used. Adding it
-knowingly widens a sandbox compromise to an org-wide skill **read** — every Project's skill definitions — so it is gated
-on keeping skills free of sensitive content (§12).
-
-So compromised agent code can act only as *this* session on the Anthropic path, and it has **no data-plane path at
-all**: the session token lives only in the proxy (§7), so a request the agent crafts to the store carries no valid
-session token and is rejected (§8). The secrecy of the injected credentials rests on Cloud Run's per-container
-namespaces (§7).
+Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1, §3–§4 — the credential proxy is gone: the trusted
+worker calls Anthropic directly and marshals each command into the postern guest behind the method-allowlisted gRPC
+hatch.
 
 ## 7. Credentials & identities
 
@@ -543,73 +292,11 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
   tightens, the seam is KMS envelope encryption of the override values, decrypt granted to the job SA (agent code would
   hold the permission but can never read the ciphertext, which lives only in the sidecar's env). Deferred (§12).
 
-## 8. Egress & instance hardening
+## 8. Egress & instance hardening — superseded
 
-- **Direct VPC egress, all traffic**, for the sandbox job: a deny-all egress firewall for the job's SA/tag, allowing
-  Anthropic's published inbound range (`160.79.104.0/23`, `2607:6bc0::/48`) on `:443` and the internal load balancer's
-  IP (below) on `:443`. The sandbox reaches **only** Anthropic and the internal services the load balancer fronts (the
-  store and the hello forward-leg target, §6) — all workspace persistence goes through the store (§9), not GCS, so there
-  is no `storage.googleapis.com` in the sandbox's allowlist (the store reaches its own buckets with its own identity;
-  the auth service is reached only by the store and hello, not the sandbox). This bounds L3/L4 egress hard; the two
-  channels that would otherwise keep it from being an absolute seal — DNS resolution and the egress IP itself — are each
-  closed below:
-  - **DNS — closed by a response-policy allowlist.** An L3/L4 egress rule does not restrict which *names* the workload
-    resolves, so on its own it leaves recursive queries for `<base64-chunk>.attacker.example` as a low-bandwidth
-    exfiltration path (the query reaching the attacker's authoritative nameserver *is* the leak). Close it with a
-    **Cloud DNS response policy (RPZ)** on the sandbox VPC: a wildcard `*` catch-all sinkholed locally — answered
-    without recursing, so the query never leaves — resolving the two internal-service hostnames
-    (`store.internal.themis`, `hello.internal.themis`) from local data to the load balancer's IP, with a
-    `bypassResponsePolicy` exception for only `api.anthropic.com` (exact, not `*.anthropic.com`, so subdomain tunnelling
-    under an allowed parent is caught). Only the credential proxy resolves any name — the agent reaches every service
-    through the proxy on loopback — and the proxy reaches the metadata server by IP
-    (`GCE_METADATA_HOST=169.254.169.254`), so the sinkhole never touches it. That leaves `api.anthropic.com` as the one
-    name that leaves the VPC, kept on DNS because Anthropic rotates which IPs are live within the published range
-    (pinning a single IP would trade that resilience for nothing — the sinkhole already makes DNS a closed exfiltration
-    channel). Its two abuse paths — an external resolver, or DNS-over-HTTPS — are outbound to non-allowlisted hosts the
-    deny-all egress already drops.
-  - **Egress IP — pinned to Anthropic's published range.** Anthropic publishes fixed, dedicated inbound CIDRs for the
-    API ([`160.79.104.0/23`, `2607:6bc0::/48`](https://platform.claude.com/docs/en/api/ip-addresses), "will not change
-    without notice"), so the egress rule pins those directly rather than resolving `api.anthropic.com` firewall-side.
-    That removes the FQDN-object IP cap and any firewall/workload resolution mismatch, and — because the block is
-    Anthropic-owned, not shared-CDN — leaves no co-tenant for an SNI-mismatched connection to reach (the agent shares
-    the network namespace, below, and can open its own socket to the allowed range, bypassing the proxy entirely; a
-    dedicated block is what makes that harmless). Residual: watch the published list for changes, which arrive with
-    notice — a bounded operational watch, not a hole.
-- Containers in an instance share the network namespace, so the policy cannot distinguish agent from proxy. That is
-  acceptable because reachability without the session token is harmless: agent code can reach `api.anthropic.com` or the
-  internal services directly — and can mint the job SA's invoker token — but holds no environment key and no session
-  token, so every such request is rejected at the credential check; the scoped proxy is the only path that carries them.
-  (Credential *secrecy* across the container boundary rests on the PID/mount-namespace split, §7 — a separate mechanism
-  from network reachability.)
-- **The internal services sit behind one regional internal Application Load Balancer**, host-routing both private
-  hostnames to a single dedicated internal IP. A dedicated IP is what lets egress pin to one address, and that is the
-  whole point: the rejected alternative — Google's restricted VIP (`199.36.153.4/30`) — is one address shared by *every*
-  `*.run.app`, unfilterable by host, so agent code could POST the workspace to an attacker's `allowUnauthenticated`
-  Cloud Run service through it. That channel is uncontainable at L3/L4 without VPC-SC; a dedicated internal IP closes
-  it. The services take **load-balancer ingress** and accept the ID token minted for their private hostname
-  (`custom_audiences`), so a direct `run.app` call is rejected.
-  - **Why the LB serves a self-signed certificate.** A GCP Application Load Balancer negotiates HTTP/2 — which gRPC
-    requires — with clients only over TLS; there is no cleartext-HTTP/2 frontend, so the LB *must* present a
-    certificate. The private hostname has no public domain, so a publicly-trusted Google-managed certificate (which
-    validates via DNS authorization on a real zone) would need an out-of-band DNS record and a two-phase deploy, and a
-    Certificate Authority Service private CA would still make the proxy trust a private root while adding a CA pool. For
-    one LB with a single known client, a self-signed certificate injected as the proxy's gRPC trust root is the
-    self-contained choice; the proxy checks the LB's hostname against the certificate SAN, so a hijacked IP presenting a
-    different certificate is rejected.
-- **IAM and the load balancer are reachability, not authorization.** The proxy presents the job SA's ID token
-  (`run.invoker`, §7) *and* the session token; the agent shares the job SA and can mint that token, so invoke never
-  substitutes for the session token. The store and hello enforce it on **every** route, **default-deny** —
-  `workspace put`/`get` answering only after the auth service (reachable only from them, not the sandbox) resolves the
-  session token, with no unauthenticated surface beyond a trivial health check that leaks no version or dependency
-  detail (§12). What the invoker gate buys over an IAM-open service is a documented caller set and a second factor
-  against a session token forged by a non-sandbox identity (the signing-key blast radius, §7).
-- Sandbox sizing starts small — the agent container gets 1 vCPU / 2 GiB (the workload is CLI calls and small scripts,
-  and all 25 threads of a session share one sandbox) and the proxy sidecar 1 vCPU / 2 GiB (it buffers the workspace
-  archive whole to checkpoint, on top of the memory-backed `/workspace`); `/workspace` (384 MiB) and
-  `/mnt/session/outputs` (128 MiB) are memory-backed `emptyDir`s (§9). Tune from `agent_run` usage data.
-- The dispatcher keeps default egress — it reaches `api.anthropic.com` plus KMS, Secret Manager, and the Cloud Run Admin
-  API (`jobs.run`) over Google APIs, and does no DB access (§5, §7); it has no VPC-facing role and no Cloud SQL
-  connector.
+Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1–§2 — egress containment is the guest's empty
+network namespace, with the trusted worker on normal egress. No egress firewall, DNS sinkhole, or internal load
+balancer.
 
 ## 9. Persistence — the working document and `/workspace`
 

@@ -2,11 +2,10 @@
 
 Provisions the store data-plane service for one environment — a runtime SA, the
 working-document and ephemeral-workspace buckets, the SA's object-admin on both, and
-a Cloud Run service reached only through the sandbox's internal load balancer. The
-container runs the `gcs` storage backend and resolves each request's session through
-the auth service at `THEMIS_AUTH_URL` (self-hosted-sandbox.md §7, §9). The caller — the
-sandbox proxy — dials the LB's private hostname, so the service accepts the ID token
-minted for that hostname (`custom_audiences`) and admits only load-balancer ingress.
+an internal-ingress Cloud Run service. The container runs the `gcs` storage backend and
+resolves each request's session through the auth service at `THEMIS_AUTH_URL`
+(postern-sandbox-swap.md §2). The sandbox worker reaches it over Direct VPC egress at its
+`run.app` URL (the default ID-token audience), never publicly; no load balancer.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ class StoreService(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
-        custom_audiences: pulumi.Input[list[str]],
         vpc_network: pulumi.Input[str],
         vpc_subnetwork: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
@@ -104,10 +102,9 @@ class StoreService(pulumi.ComponentResource):
             name='themis-store',
             location=region,
             deletion_protection=False,
-            # Reached only through the sandbox's internal load balancer; direct run.app calls rejected.
-            ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
-            # The proxy dials the LB's private hostname, so its ID token's audience is that hostname.
-            custom_audiences=custom_audiences,
+            # Internal ingress: reachable from the sandbox worker's Direct VPC egress at its run.app
+            # URL (the default audience id_token mints), never publicly. No load balancer.
+            ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),

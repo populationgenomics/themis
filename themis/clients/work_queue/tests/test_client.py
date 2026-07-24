@@ -1,8 +1,10 @@
-"""Tests for the work-item mapping and the offline fixture queue."""
+"""Tests for the work-item mapping, the ack/stop SDK calls, and the offline fixture queue."""
 
 from __future__ import annotations
 
 import asyncio
+import types
+from unittest import mock
 
 from anthropic.types.beta.environments import beta_self_hosted_work, beta_session_work_data
 
@@ -23,6 +25,20 @@ def test_to_work_item_maps_session_work() -> None:
     item = work_queue_mod._to_work_item(work)
     assert item == work_queue_mod.WorkItem(work_id='work-1', session_id='sess-1', item_type='session')
     assert item.is_session
+
+
+def test_anthropic_work_queue_acks_and_stops_by_work_id_with_environment_and_timeout() -> None:
+    # The adapter must pass the work id positionally and bind environment_id + the per-call timeout; the
+    # worker's reclaim fix depends on ack targeting the *work* id (not the session id).
+    work = mock.AsyncMock()
+    client = types.SimpleNamespace(beta=types.SimpleNamespace(environments=types.SimpleNamespace(work=work)))
+    queue = work_queue_mod.AnthropicWorkQueue(client, environment_id='env-1')  # type: ignore[arg-type]
+
+    asyncio.run(queue.ack('work-1'))
+    asyncio.run(queue.stop('work-2'))
+
+    work.ack.assert_awaited_once_with('work-1', environment_id='env-1', timeout=work_queue_mod._ACK_TIMEOUT_S)
+    work.stop.assert_awaited_once_with('work-2', environment_id='env-1', timeout=work_queue_mod._ACK_TIMEOUT_S)
 
 
 def test_fixture_queue_yields_items_then_none() -> None:

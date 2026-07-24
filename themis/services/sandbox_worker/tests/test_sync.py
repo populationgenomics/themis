@@ -7,9 +7,10 @@ import io
 import pathlib
 import tarfile
 
+import postern
 import pytest
 
-from themis.services.proxy import store_client, sync, workspace
+from themis.services.sandbox_worker import store_client, sync
 
 
 def _scratch_tar(name: str, content: bytes) -> bytes:
@@ -21,8 +22,13 @@ def _scratch_tar(name: str, content: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _sync(store: store_client.Store, root: pathlib.Path) -> sync.WorkspaceSync:
-    return sync.WorkspaceSync(store, root=root, document_path=root / 'document.md')
+def _sync(store: store_client.Store, root: pathlib.Path, *, exclude: tuple[str, ...] = ()) -> sync.WorkspaceSync:
+    return sync.WorkspaceSync(store, accessor=postern.Workspace(root), exclude=exclude)
+
+
+def _restore(archive: bytes, dest: pathlib.Path) -> None:
+    with postern.Workspace(dest) as ws:
+        ws.restore_tar(io.BytesIO(archive))
 
 
 def test_restore_writes_document_and_scratch(tmp_path: pathlib.Path) -> None:
@@ -65,7 +71,7 @@ def test_checkpoint_puts_document_then_scratch_excluding_the_document(tmp_path: 
     assert len(store.put_workspaces) == 1
     restored = tmp_path / 'restored'
     restored.mkdir()
-    workspace.unpack(store.put_workspaces[0], restored)
+    _restore(store.put_workspaces[0], restored)
     assert (restored / 'note.txt').read_bytes() == b'note'
     assert not (restored / 'document.md').exists()  # the durable document is excluded from scratch
 
@@ -98,3 +104,29 @@ def test_checkpoint_after_an_edit_mints_a_version(tmp_path: pathlib.Path) -> Non
     asyncio.run(workspace_sync.checkpoint())
 
     assert store.put_documents == ['edited']
+
+
+def test_checkpoint_excludes_the_skills_tree(tmp_path: pathlib.Path) -> None:
+    (tmp_path / 'note.txt').write_bytes(b'keep')
+    (tmp_path / 'skills' / 'foo').mkdir(parents=True)
+    (tmp_path / 'skills' / 'foo' / 'script.py').write_bytes(b'print(1)')
+    store = store_client.FixtureStore()
+    asyncio.run(_sync(store, tmp_path, exclude=('skills',)).checkpoint())
+
+    restored = tmp_path / 'restored'
+    restored.mkdir()
+    _restore(store.put_workspaces[0], restored)
+    assert (restored / 'note.txt').read_bytes() == b'keep'
+    assert not (restored / 'skills').exists()  # re-downloaded each spawn; never checkpointed or restored
+
+
+def test_checkpoint_does_not_dereference_a_symlinked_document(tmp_path: pathlib.Path) -> None:
+    # A guest that replaces document.md with a symlink to an out-of-workspace path must not have it read
+    # (the confined accessor would ELOOP); the checkpoint skips it and mints no version.
+    secret = tmp_path.parent / 'secret'
+    secret.write_text('SECRET')
+    (tmp_path / 'document.md').symlink_to(secret)
+    store = store_client.FixtureStore()
+    asyncio.run(_sync(store, tmp_path).checkpoint())
+
+    assert store.put_documents == []  # never dereferenced, never stored

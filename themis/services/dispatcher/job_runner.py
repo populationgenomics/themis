@@ -1,10 +1,11 @@
 """Spawn one sandbox Job execution per work item via the Cloud Run Admin API (self-hosted-sandbox.md §5, §7).
 
 ``gcloud run jobs execute`` cannot set per-container env, so the dispatcher POSTs the REST ``:run``
-endpoint with ``containerOverrides`` (spike-validated). Per-container targeting is the security
-boundary: the session/work/environment ids reach both containers, but the environment key and the
-per-session token reach the **proxy container only** — the agent container never receives either
-(§7). A container is targeted by ``name``, which must match the Job manifest's container names.
+endpoint with ``containerOverrides`` (spike-validated). The Job is a single trusted worker container:
+the claimed session's ids, the environment key, and the per-session token are all injected into it — it
+holds the credentials and runs untrusted code only inside the postern sandbox, so there is no
+co-resident untrusted container to keep them from (postern-sandbox-swap.md §4). The container is
+targeted by ``name``, which must match the Job manifest's container name.
 
 ``JobRunner`` is the port; ``CloudRunJobRunner`` the adapter (dispatcher-SA access token). The
 spawn-recording double the orchestration tests drive lives in the test scaffolding.
@@ -20,8 +21,7 @@ import aiohttp
 import google.auth.credentials
 import google.auth.transport.requests
 
-_AGENT_CONTAINER = 'agent'
-_PROXY_CONTAINER = 'proxy'
+_WORKER_CONTAINER = 'worker'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,18 +82,15 @@ class _ContainerOverride:
 
 
 def _container_overrides(request: SpawnRequest) -> list[_ContainerOverride]:
-    """The per-container env: the agent env to both; the env key + session token to the proxy only (§7)."""
-    agent = {
+    """The single worker container's per-execution env: session ids, the environment key, session token."""
+    env = {
         'ANTHROPIC_SESSION_ID': request.session_id,
         'ANTHROPIC_WORK_ID': request.work_id,
         'ANTHROPIC_ENVIRONMENT_ID': request.environment_id,
-    }
-    proxy = {
-        **agent,
         'ANTHROPIC_ENVIRONMENT_KEY': request.environment_key,
         'THEMIS_SESSION_TOKEN': request.session_token,
     }
-    return [_ContainerOverride(_AGENT_CONTAINER, agent), _ContainerOverride(_PROXY_CONTAINER, proxy)]
+    return [_ContainerOverride(_WORKER_CONTAINER, env)]
 
 
 def _overrides_body(request: SpawnRequest) -> dict[str, object]:

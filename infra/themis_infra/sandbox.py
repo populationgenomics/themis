@@ -1,175 +1,23 @@
-"""Self-hosted sandbox: the network, credentials, dispatcher, and Cloud Run Job.
+"""Self-hosted sandbox: credentials, dispatcher, and the postern Cloud Run Job (postern-sandbox-swap.md).
 
-The self-hosted execution sandbox (docs/plans/self-hosted-sandbox.md §5-§8). It provisions:
+The self-hosted execution sandbox after the postern swap. It provisions:
 
-- a VPC + regional subnet dedicated to the sandbox job's Direct VPC egress,
-- a deny-all egress firewall opening only Anthropic's published API range — the internal store
-  and hello services are reached through the internal load balancer (internal_lb.py), which opens
-  its own egress rule to a dedicated IP,
-- a Cloud DNS response policy that sinkholes every name except Anthropic (bypassed to its
-  public host) — the load balancer adds the internal-service records (§8),
 - the use-only KMS MAC key that signs per-session tokens (§7) and the environment-key and
   webhook-signing-key secrets,
-- the dispatcher service and the sandbox Cloud Run Job (agent + credential proxy).
+- the dispatcher service (public HMAC webhook → jobs.run) and the sandbox Cloud Run Job.
 
-The network is dedicated to the sandbox job — the sole Direct-VPC-egress tenant — so the
-egress rules govern it network-wide without a per-SA target. The SA-scoped key/secret
-bindings are granted where the consuming identities are wired (the program entrypoint).
+The Job is a single trusted container: the EnvironmentWorker worker that runs each `run_python`
+inside a postern bubblewrap sandbox (empty netns) whose only exit is a method-allowlisted hatch.
+There is no dedicated VPC / egress firewall / NAT / DNS sinkhole and no internal load balancer —
+the guest has zero network by construction, and the trusted worker reaches the internal-ingress
+store over Direct VPC egress on the shared services network. The SA-scoped key/secret bindings are
+granted where the consuming identities are wired (the program entrypoint).
 """
 
 from __future__ import annotations
 
 import pulumi
 import pulumi_gcp as gcp
-
-# Anthropic's published, dedicated inbound API range — "will not change without notice"
-# (https://platform.claude.com/docs/en/api/ip-addresses). Pinned directly so the egress
-# rule needs no firewall-side FQDN resolution, and the block is Anthropic-owned so an
-# SNI-mismatched connection reaches no co-tenant (§8). IPv6 (2607:6bc0::/48) is additive
-# once the subnet is dual-stack.
-_ANTHROPIC_API_CIDR = '160.79.104.0/23'
-_ANTHROPIC_API_HOST = 'api.anthropic.com'
-
-_SANDBOX_SUBNET_CIDR = '10.90.0.0/24'
-
-# The agent and proxy share this in-memory workspace (restore/checkpoint, §6, §9); the harness
-# output dir is a required mount whose content is discarded (deliverables go to the document).
-_WORKSPACE_MOUNT = '/workspace'
-_SESSION_OUTPUTS_MOUNT = '/mnt/session/outputs'
-
-
-class SandboxNetwork(pulumi.ComponentResource):
-    """The sandbox job's dedicated VPC, egress firewall, and DNS response policy.
-
-    Attributes:
-        network: The VPC the sandbox job attaches to (Direct VPC egress).
-        subnetwork: The regional subnet the job's instances draw addresses from.
-        response_policy: The Cloud DNS response policy on the network; the compute
-            slice adds the store-host bypass rule to it.
-    """
-
-    def __init__(
-        self,
-        *,
-        project: str,
-        region: str,
-        opts: pulumi.ResourceOptions | None = None,
-    ) -> None:
-        super().__init__('themis:infra:SandboxNetwork', 'themis', None, opts)
-        child = pulumi.ResourceOptions(parent=self)
-
-        self.network = gcp.compute.Network(
-            'themis-sandbox',
-            project=project,
-            name='themis-sandbox',
-            auto_create_subnetworks=False,
-            opts=child,
-        )
-        self.subnetwork = gcp.compute.Subnetwork(
-            'themis-sandbox',
-            project=project,
-            name='themis-sandbox',
-            region=region,
-            network=self.network.id,
-            ip_cidr_range=_SANDBOX_SUBNET_CIDR,
-            # Reach Google APIs (and internal Cloud Run) over the private path, never
-            # a public IP; the job's instances carry no external address.
-            private_ip_google_access=True,
-            opts=child,
-        )
-
-        # Egress lockdown (§8): deny all, then admit only Anthropic's API range on :443.
-        # The subnet is sandbox-dedicated, so these govern the job network-wide without a
-        # target SA/tag; the internal-store route lands with the SA that reaches it.
-        gcp.compute.Firewall(
-            'themis-sandbox-egress-deny-all',
-            project=project,
-            network=self.network.id,
-            direction='EGRESS',
-            priority=65534,
-            denies=[gcp.compute.FirewallDenyArgs(protocol='all')],
-            destination_ranges=['0.0.0.0/0'],
-            opts=child,
-        )
-        gcp.compute.Firewall(
-            'themis-sandbox-egress-anthropic',
-            project=project,
-            network=self.network.id,
-            direction='EGRESS',
-            priority=1000,
-            allows=[gcp.compute.FirewallAllowArgs(protocol='tcp', ports=['443'])],
-            destination_ranges=[_ANTHROPIC_API_CIDR],
-            opts=child,
-        )
-        # The job's instances carry no external address, so reaching Anthropic — the one public
-        # destination the egress firewall admits — needs a SNAT path. Cloud NAT provides it; the
-        # firewall above (Anthropic CIDR only) stays the destination seal, NAT just the route. The
-        # internal load balancer is an RFC1918 address, reached over the VPC without NAT.
-        router = gcp.compute.Router(
-            'themis-sandbox', project=project, region=region, network=self.network.id, opts=child
-        )
-        gcp.compute.RouterNat(
-            'themis-sandbox',
-            project=project,
-            region=region,
-            router=router.name,
-            nat_ip_allocate_option='AUTO_ONLY',
-            source_subnetwork_ip_ranges_to_nat='LIST_OF_SUBNETWORKS',
-            subnetworks=[
-                gcp.compute.RouterNatSubnetworkArgs(name=self.subnetwork.id, source_ip_ranges_to_nats=['ALL_IP_RANGES'])
-            ],
-            opts=child,
-        )
-        # DNS lockdown (§8): sinkhole every name locally so a query for an
-        # attacker-controlled name never recurses to an external nameserver (the query
-        # reaching it is the leak), with exact-name bypasses for the hosts the sandbox
-        # needs. The metadata resolver (169.254.169.254) forwards to this policy, so it
-        # is governed too, not a bypass.
-        self.response_policy = gcp.dns.ResponsePolicy(
-            'themis-sandbox',
-            project=project,
-            response_policy_name='themis-sandbox',
-            networks=[gcp.dns.ResponsePolicyNetworkArgs(network_url=self.network.id)],
-            opts=child,
-        )
-        gcp.dns.ResponsePolicyRule(
-            'themis-sandbox-sinkhole',
-            project=project,
-            response_policy=self.response_policy.response_policy_name,
-            rule_name='sinkhole-all',
-            dns_name='*.',
-            # Answered locally with a non-routable address: resolved without recursion,
-            # and the egress firewall drops any connection to it regardless.
-            local_data=gcp.dns.ResponsePolicyRuleLocalDataArgs(
-                local_datas=[
-                    gcp.dns.ResponsePolicyRuleLocalDataLocalDataArgs(
-                        name='*.',
-                        type='A',
-                        ttl=300,
-                        rrdatas=['0.0.0.0'],  # noqa: S104 — DNS sinkhole target, not a socket bind
-                    )
-                ],
-            ),
-            opts=child,
-        )
-        gcp.dns.ResponsePolicyRule(
-            'themis-sandbox-bypass-anthropic',
-            project=project,
-            response_policy=self.response_policy.response_policy_name,
-            rule_name='bypass-anthropic',
-            # Exact, not `*.anthropic.com` — a subdomain under an allowed parent must not
-            # tunnel out (§8).
-            dns_name=f'{_ANTHROPIC_API_HOST}.',
-            behavior='bypassResponsePolicy',
-            opts=child,
-        )
-        self.register_outputs(
-            {
-                'network': self.network.id,
-                'subnetwork': self.subnetwork.id,
-                'response_policy': self.response_policy.response_policy_name,
-            }
-        )
 
 
 def session_token_signing_key(
@@ -406,18 +254,20 @@ def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateT
 
 
 class SandboxJob(pulumi.ComponentResource):
-    """The sandbox Cloud Run Job (agent + proxy sidecar) and its invoke-only SA.
+    """The sandbox Cloud Run Job (one trusted worker container) and its invoke-only SA.
 
-    One execution per spawn: the agent (main) runs ``python -m themis.agent.worker`` and its exit-0
-    completes the execution; the proxy sidecar holds the credentials. The agent depends on the proxy's
-    startup probe, which the proxy passes only after it restores /workspace — so the agent always boots
-    restored.
-    Per-execution secrets (env key, session token, ids) are injected by the dispatcher's ``jobs.run``,
-    never baked here.
+    One execution per spawn: the worker runs ``EnvironmentWorker.handle_item()`` for the claimed session
+    and its exit-0 completes the execution. The worker is trusted — it holds the environment key and the
+    session token (injected per-execution by the dispatcher's ``jobs.run``, never baked) — and runs every
+    ``shell`` command inside a postern bubblewrap sandbox, so no untrusted code shares the container.
+
+    Direct VPC egress on the shared services network reaches the internal-ingress store and hello services;
+    egress is private-ranges-only, so those go over the VPC while Anthropic (public) uses Cloud Run's
+    managed egress — no NAT, no egress firewall (the guest has zero network regardless).
 
     Attributes:
-        service_account_email: The job's runtime SA — ``run.invoker`` on the sandbox-reachable services
-            only; inert without the session token the proxy holds.
+        service_account_email: The job's runtime SA — ``run.invoker`` on the store and hello services (the
+            hatch's forward targets); inert without the session token the worker holds.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
     """
 
@@ -426,15 +276,11 @@ class SandboxJob(pulumi.ComponentResource):
         *,
         project: str,
         region: str,
-        agent_image: pulumi.Input[str],
-        proxy_image: pulumi.Input[str],
+        worker_image: pulumi.Input[str],
         network: pulumi.Input[str],
         subnetwork: pulumi.Input[str],
         store_url: pulumi.Input[str],
         hello_url: pulumi.Input[str],
-        internal_ca_cert: pulumi.Input[str],
-        forward_methods: str,
-        working_document_path: str,
         task_timeout_seconds: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
@@ -463,6 +309,11 @@ class SandboxJob(pulumi.ComponentResource):
                     # short default, which would kill a long agent-backgrounded computation.
                     timeout=f'{task_timeout_seconds}s',
                     max_retries=0,
+                    # ALL_TRAFFIC so the internal-ingress store is reachable at its (public) run.app IP over
+                    # the VPC — private-ranges-only would send that straight to the internet and the store
+                    # would refuse it. Trade-off (postern-sandbox-swap.md §2): the trusted worker then has
+                    # unrestricted public egress, so post-compromise exfil containment rests on the worker
+                    # being trusted-only code and the guest having zero network.
                     vpc_access=gcp.cloudrunv2.JobTemplateTemplateVpcAccessArgs(
                         egress='ALL_TRAFFIC',
                         network_interfaces=[
@@ -472,77 +323,17 @@ class SandboxJob(pulumi.ComponentResource):
                         ],
                     ),
                     containers=[
-                        # agent first = main: its exit-0 completes the execution while the sidecar is torn
-                        # down (§12); it depends on the proxy's post-restore readiness.
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
-                            name='agent',
-                            image=agent_image,
-                            # The worker stops this long after a turn's end_turn (worker default 60s); widened
-                            # so the proxy's post-idle checkpoint has room to ride out a cold-started store
-                            # within the window (§9). The sandbox is billed only for this idle, per session.
-                            # Plain seconds — themis/agent/worker.py's --max-idle parses a float.
-                            args=['--max-idle', '300'],
-                            depends_ons=['proxy'],
-                            resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
-                                limits={'cpu': '1', 'memory': '2Gi'}
-                            ),
-                            volume_mounts=[
-                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
-                                    name='workspace', mount_path=_WORKSPACE_MOUNT
-                                ),
-                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
-                                    name='session-outputs', mount_path=_SESSION_OUTPUTS_MOUNT
-                                ),
-                            ],
-                        ),
-                        gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
-                            name='proxy',
-                            image=proxy_image,
+                            name='worker',
+                            image=worker_image,
                             envs=[
                                 _job_env('THEMIS_STORE_URL', store_url),
-                                _job_env('THEMIS_FORWARD_UPSTREAM_URL', hello_url),
-                                _job_env('THEMIS_INTERNAL_CA_CERT', internal_ca_cert),
-                                _job_env('THEMIS_FORWARD_METHODS', forward_methods),
-                                _job_env('THEMIS_WORKING_DOCUMENT_PATH', working_document_path),
-                                # The DNS sinkhole answers metadata.google.internal with 0.0.0.0; reach the
-                                # metadata server by IP so google-auth mints the store ID token.
-                                _job_env('GCE_METADATA_HOST', '169.254.169.254'),
+                                _job_env('THEMIS_HELLO_URL', hello_url),
                             ],
-                            # Buffers the whole workspace archive in memory to checkpoint (a copy of the
-                            # scratch tmpfs, below) on top of the runtime.
+                            # Bounds the trusted worker + the co-located guest together (the one-session
+                            # blast radius review L3 accepts): a guest memory bomb OOMs only this execution.
                             resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
                                 limits={'cpu': '1', 'memory': '2Gi'}
-                            ),
-                            # Binds only after restore, so the agent's dependency means "restore complete".
-                            # The window must cover worst-case restore — cold-starting the store and auth
-                            # services plus the workspace fetch — so the default 30s (3 x 10s) is too tight.
-                            startup_probe=gcp.cloudrunv2.JobTemplateTemplateContainerStartupProbeArgs(
-                                tcp_socket=gcp.cloudrunv2.JobTemplateTemplateContainerStartupProbeTcpSocketArgs(
-                                    port=8080
-                                ),
-                                period_seconds=10,
-                                failure_threshold=18,
-                            ),
-                            volume_mounts=[
-                                gcp.cloudrunv2.JobTemplateTemplateContainerVolumeMountArgs(
-                                    name='workspace', mount_path=_WORKSPACE_MOUNT
-                                ),
-                            ],
-                        ),
-                    ],
-                    volumes=[
-                        gcp.cloudrunv2.JobTemplateTemplateVolumeArgs(
-                            name='workspace',
-                            # Below the store's archive cap (servicer.py) with margin: the checkpoint tars
-                            # this scratch whole, and the tar of a full scratch must stay under that cap.
-                            empty_dir=gcp.cloudrunv2.JobTemplateTemplateVolumeEmptyDirArgs(
-                                medium='MEMORY', size_limit='384Mi'
-                            ),
-                        ),
-                        gcp.cloudrunv2.JobTemplateTemplateVolumeArgs(
-                            name='session-outputs',
-                            empty_dir=gcp.cloudrunv2.JobTemplateTemplateVolumeEmptyDirArgs(
-                                medium='MEMORY', size_limit='128Mi'
                             ),
                         ),
                     ],

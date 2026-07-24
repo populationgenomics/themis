@@ -1,5 +1,10 @@
 # Runbook: self-hosted sandbox
 
+> **Superseded (pending rewrite).** This runbook describes the pre-postern `ant`-worker + credential-proxy architecture,
+> which [`postern-sandbox-swap.md`](../plans/postern-sandbox-swap.md) replaces (single `EnvironmentWorker` container;
+> the agent container and its `prompt.md` no longer exist). Do not follow the container/proxy steps below until this is
+> rewritten for the worker model.
+
 Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The infra (`infra/themis_infra/sandbox.py`,
 `hello.py`) and images (`deploy.yml`) deploy on merge to `main`; the steps below are the Console-only and validation
 actions Pulumi cannot do.

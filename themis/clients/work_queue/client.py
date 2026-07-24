@@ -2,11 +2,11 @@
 
 On a ``session.status_run_started`` webhook the dispatcher drains the queue: the webhook is only the
 trigger and carries no work, so items are claimed by polling. It polls (draining, without acking) and
-force-stops non-session items; the sandbox proxy acks its own item once restore is proven.
+force-stops non-session items; the sandbox worker acks its own item once restore is proven.
 
 The queue is driven through the SDK's low-level ``work.poll`` / ``work.ack`` / ``work.stop``, not the
 high-level ``work.poller``: the poller acks each item on yield, which would break the restore-gated
-deferred ack — the dispatcher polls without acking, and the proxy acks only after restore proves.
+deferred ack — the dispatcher polls without acking, and the worker acks only after restore proves.
 
 ``WorkQueue`` is the port; ``AnthropicWorkQueue`` is the SDK adapter. The in-memory double the
 dispatcher's orchestration tests drive lives in the test scaffolding.
@@ -21,9 +21,9 @@ import anthropic
 from anthropic.types.beta.environments import beta_self_hosted_work
 
 _SESSION_ITEM_TYPE = 'session'
-# Ack/stop are quick request/response calls, but the proxy's shared client carries a long stream-read
-# timeout tuned for its minutes-long SSE stream. Bound them per-call so a stalled call fails loud
-# instead of hanging the proxy's startup (the ack gates the agent) forever.
+# Ack/stop are quick request/response calls; bound them per-call so a stalled one fails loud instead of
+# inheriting the client's long default (the worker shares this client with the EnvironmentWorker's
+# minutes-long SSE stream).
 _ACK_TIMEOUT_S = 30.0
 
 
@@ -41,7 +41,7 @@ class WorkItem:
 
 
 class WorkQueue(abc.ABC):
-    """The work-queue operations the dispatcher and proxy need — poll (no ack), ack, force-stop."""
+    """The work-queue operations the dispatcher and worker need — poll (no ack), ack, force-stop."""
 
     @abc.abstractmethod
     async def poll(self, *, reclaim_older_than_ms: int) -> WorkItem | None: ...
@@ -62,7 +62,7 @@ class AnthropicWorkQueue(WorkQueue):
 
     async def poll(self, *, reclaim_older_than_ms: int) -> WorkItem | None:
         # Low-level poll, never work.poller: the poller acks on yield, but our ack is deferred until the
-        # proxy proves restore. Omitting block_ms is the non-blocking default — the run_started webhook
+        # worker proves restore. Omitting block_ms is the non-blocking default — the run_started webhook
         # already enqueued the item, so there is nothing to long-poll for.
         work = await self._client.beta.environments.work.poll(
             self._environment_id, reclaim_older_than_ms=reclaim_older_than_ms

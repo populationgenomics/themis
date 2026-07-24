@@ -18,7 +18,7 @@ requires-python = ">=3.13"
 # past 7 days and Dependabot re-bumps it.
 [tool.uv]
 exclude-newer = "7 days"
-# litfetch, litdown, and pubmed-proto are CPG-owned and first-party: we cut the
+# litfetch, litdown, pubmed-proto, and postern are CPG-owned and first-party: we cut the
 # releases, so the supply-chain window the global gate guards against (a compromised
 # third-party upload) doesn't apply. `0 days` (relative, prior-to-now) exempts them
 # so a just-cut release is resolvable. Removing the age cushion is paired with an
@@ -26,7 +26,7 @@ exclude-newer = "7 days"
 # stops a re-lock from silently adopting a new — possibly account-compromised —
 # release; a bump is then an explicit, reviewed pyproject edit. Keep this list and
 # those pins in lock-step: anything exempted here must be exact-pinned.
-exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days" }
+exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", postern = "0 days" }
 
 [dependency-groups]
 screen = ["pyyaml"]
@@ -76,33 +76,32 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # (google-crc32c verifies its response integrity); google-auth mints the Cloud Run Admin API token for
 # the jobs.run spawn. Also covers the shared themis/clients/work_queue and themis/clients/auth.
 dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
-# credential-proxy sidecar (themis/services/proxy): the sandbox's agent-facing forwarder. aiohttp is
-# the Anthropic HTTP/1.1 reverse proxy + its upstream client; anthropic is the SDK the turn-watcher
-# subscribes to the session event stream through; grpcio (via the session group) is the generic gRPC
-# forward proxy. Includes the session client for id_token (the SA ID token on the forward channel).
-proxy = ["aiohttp", "anthropic", { include-group = "session" }]
-# sandbox agent image (themis/agent): the untrusted first-party worker container. anthropic supplies the
-# EnvironmentWorker the entrypoint runs and the custom-tool decorator the model-stated-intent shell tool
-# uses; grpcio + protobuf back the generated stubs the model imports to call internal services in code
-# mode; the working-document linter (themis/document_linter) is stdlib-only.
-agent = ["grpcio", "protobuf", "anthropic"]
+# sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
+# postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
+# worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
+# id_token + the store stubs (the worker's own checkpoint client).
+sandbox_worker = ["postern[grpc]==0.3.0", "anthropic", "anyio", { include-group = "session" }]
+# sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
+# interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
+# protobuf backs the shipped hello stubs. Locked rather than a floating pip install so the guest inherits the
+# age gate and stays version-aligned with the worker's own grpcio/protobuf.
+guest = ["grpcio", "protobuf"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
-# (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`. pulumi-tls
-# mints the internal ALB's self-signed serving cert (infra/themis_infra/internal_lb.py).
-infra = ["pulumi", "pulumi-gcp", "pulumi-tls"]
+# (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
+infra = ["pulumi", "pulumi-gcp"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "proxy" }, { include-group = "agent" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/proxy/tests", "themis/document_linter/tests", "themis/agent/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/document_linter/tests"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -158,10 +157,6 @@ ignore = [
     "SLF001", # tests legitimately reach into module privates
     "S106",   # throwaway test-container credentials are not secrets
 ]
-"themis/agent/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
 "schema/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
@@ -194,7 +189,7 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]
-"themis/services/proxy/tests/**" = [
+"themis/services/sandbox_worker/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture env keys / session tokens are not secrets

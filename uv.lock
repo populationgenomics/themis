@@ -14,13 +14,14 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-14T06:07:21.88296Z"
+exclude-newer = "2026-07-17T05:07:39.487722Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-litdown = { timestamp = "2026-07-21T06:07:21.883465Z", span = "PT0S" }
-pubmed-proto = { timestamp = "2026-07-21T06:07:21.883465Z", span = "PT0S" }
-litfetch = { timestamp = "2026-07-21T06:07:21.883133Z", span = "PT0S" }
+litdown = { timestamp = "2026-07-24T05:07:39.488141Z", span = "PT0S" }
+postern = { timestamp = "2026-07-24T05:07:39.488142Z", span = "PT0S" }
+pubmed-proto = { timestamp = "2026-07-24T05:07:39.488142Z", span = "PT0S" }
+litfetch = { timestamp = "2026-07-24T05:07:39.487786Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -2396,6 +2397,20 @@ wheels = [
 ]
 
 [[package]]
+name = "postern"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/56/d1c179e59becdb734f99107afcbda080d117328e6b6655863fb8ed04eb37/postern-0.3.0.tar.gz", hash = "sha256:7d219793b943e034d53a40c489f3db664cfcf8b95103c21620ddba8a2eef40df", size = 49286, upload-time = "2026-07-24T05:02:08.275Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/0a/498494d4fa8b47027709ee93cfa99a0bc1311f8b223fdf9caa7fb9b65377/postern-0.3.0-py3-none-any.whl", hash = "sha256:23abfa680d7d369804f7829ac350d895d7daf2ec6255c437544d32dfaadbfd4c", size = 35664, upload-time = "2026-07-24T05:02:07.053Z" },
+]
+
+[package.optional-dependencies]
+grpc = [
+    { name = "grpcio" },
+]
+
+[[package]]
 name = "pre-commit"
 version = "4.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2576,20 +2591,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a3/4c/ade58e37935bd4ce1228bd3a10dbef3989652409ffd49aebe4b2d7f53c11/pulumi_gcp-9.25.0.tar.gz", hash = "sha256:2a6b7d18dff0dce5a5cc7d4be1c69226d4bd66f14211779854b23d26fbea2f57", size = 10439810, upload-time = "2026-05-22T14:58:52.498Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/30/407e49a62768b7c65c43ba3c406ccae244fbf2bc6d513b4cc62ba5a2e3e2/pulumi_gcp-9.25.0-py3-none-any.whl", hash = "sha256:102dc97d3f2c59fc4fb85de8c43568c07bd23abe1c1f2e46060d09e5f6663faf", size = 12788530, upload-time = "2026-05-22T14:58:48.87Z" },
-]
-
-[[package]]
-name = "pulumi-tls"
-version = "5.5.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "parver" },
-    { name = "pulumi" },
-    { name = "semver" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/72/2c62b6e16ebd36095d9f03e4639ecd80221d51fb1214d2bcb43b4071a145/pulumi_tls-5.5.0.tar.gz", hash = "sha256:6ff61f53ffc9f5704254b0b30d7e6df451f47555dbeb1735fb37a006c5696abd", size = 30482, upload-time = "2026-05-22T12:48:03.823Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/4f/e3ec5f28ea46733ba58fa244e5e7d011038e57c27ac02bf6b93efebe17f4/pulumi_tls-5.5.0-py3-none-any.whl", hash = "sha256:a7bf276b4f525b0eb578cdca7c19e86d6a8d1d9448122c4a9a3e4b51917460a1", size = 38715, upload-time = "2026-05-22T12:48:02.488Z" },
 ]
 
 [[package]]
@@ -3375,11 +3376,6 @@ version = "0.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
-agent = [
-    { name = "anthropic" },
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
@@ -3415,6 +3411,10 @@ dispatcher = [
     { name = "google-crc32c" },
     { name = "standardwebhooks" },
 ]
+guest = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
 hello = [
     { name = "google-auth" },
     { name = "grpcio" },
@@ -3425,11 +3425,11 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
-    { name = "pulumi-tls" },
 ]
 lint = [
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
@@ -3445,13 +3445,13 @@ lint = [
     { name = "litfetch" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
+    { name = "postern", extra = ["grpc"] },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
-    { name = "pulumi-tls" },
     { name = "pypdfium2" },
     { name = "pyright" },
     { name = "pytest" },
@@ -3478,11 +3478,12 @@ migrate = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
-proxy = [
-    { name = "aiohttp" },
+sandbox-worker = [
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "postern", extra = ["grpc"] },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -3506,6 +3507,7 @@ store = [
 test = [
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
@@ -3519,6 +3521,7 @@ test = [
     { name = "litdown" },
     { name = "litfetch" },
     { name = "pg8000" },
+    { name = "postern", extra = ["grpc"] },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto" },
@@ -3533,11 +3536,6 @@ test = [
 [package.metadata]
 
 [package.metadata.requires-dev]
-agent = [
-    { name = "anthropic" },
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
@@ -3571,6 +3569,10 @@ dispatcher = [
     { name = "google-crc32c" },
     { name = "standardwebhooks" },
 ]
+guest = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
 hello = [
     { name = "google-auth" },
     { name = "grpcio" },
@@ -3581,11 +3583,11 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
-    { name = "pulumi-tls" },
 ]
 lint = [
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
@@ -3601,13 +3603,13 @@ lint = [
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.1.0" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
-    { name = "pulumi-tls" },
     { name = "pypdfium2" },
     { name = "pyright" },
     { name = "pytest" },
@@ -3634,11 +3636,12 @@ migrate = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
-proxy = [
-    { name = "aiohttp" },
+sandbox-worker = [
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -3660,6 +3663,7 @@ store = [
 test = [
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
@@ -3673,6 +3677,7 @@ test = [
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.1.0" },

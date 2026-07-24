@@ -67,18 +67,12 @@ jobs:
           docker build -f themis/services/dispatcher/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
           echo "THEMIS_DISPATCHER_IMAGE=$IMAGE" >> "$GITHUB_ENV"
-      - name: Build and push proxy image
+      - name: Build and push sandbox worker image
         run: |
-          IMAGE="${IMAGE_PREFIX}/proxy:${GITHUB_SHA}"
-          docker build -f themis/services/proxy/Dockerfile -t "$IMAGE" .
+          IMAGE="${IMAGE_PREFIX}/worker:${GITHUB_SHA}"
+          docker build -f themis/services/sandbox_worker/Dockerfile -t "$IMAGE" .
           docker push "$IMAGE"
-          echo "THEMIS_PROXY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
-      - name: Build and push sandbox agent image
-        run: |
-          IMAGE="${IMAGE_PREFIX}/agent:${GITHUB_SHA}"
-          docker build -f themis/agent/Dockerfile -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "THEMIS_AGENT_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "THEMIS_SANDBOX_WORKER_IMAGE=$IMAGE" >> "$GITHUB_ENV"
       - uses: pulumi/actions@v7
         id: pulumi
         with:

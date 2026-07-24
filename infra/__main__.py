@@ -19,7 +19,6 @@ from themis_infra import (
     deploy_iam,
     hello,
     ingest,
-    internal_lb,
     sandbox,
     secrets,
     services_network,
@@ -34,12 +33,7 @@ _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
-_AGENT_IMAGE_ENV = 'THEMIS_AGENT_IMAGE'
-_PROXY_IMAGE_ENV = 'THEMIS_PROXY_IMAGE'
-
-# The sandbox forward leg's single consumer, and the working-document contract path.
-_HELLO_METHOD = '/themis.rpc.hello.Hello/SayHello'
-_WORKING_DOCUMENT_PATH = '/workspace/document.md'
+_SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
 # Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
 # it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
 # the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.
@@ -152,7 +146,6 @@ store_service = store.StoreService(
     region=region,
     image=_image(_STORE_IMAGE_ENV, lambda: _live_service_image('themis-store')),
     auth_url=auth_service.url,
-    custom_audiences=[internal_lb.audience(internal_lb.STORE_HOST)],
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
@@ -162,7 +155,6 @@ hello_service = hello.HelloService(
     region=region,
     image=_image(_HELLO_IMAGE_ENV, lambda: _live_service_image('themis-hello')),
     auth_url=auth_service.url,
-    custom_audiences=[internal_lb.audience(internal_lb.HELLO_HOST)],
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
@@ -241,27 +233,10 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
 )
-# Self-hosted sandbox: the network + Anthropic secrets, then the internal load balancer, the sandbox
-# job, and the dispatcher that run on it.
-sandbox_network = sandbox.SandboxNetwork(
-    project=project,
-    region=region,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
-# The internal load balancer that makes the store and hello services reachable from the locked-down
-# sandbox at stable private hostnames on one IP (self-hosted-sandbox.md §8).
-internal_services = internal_lb.InternalServiceLoadBalancer(
-    project=project,
-    region=region,
-    network=sandbox_network.network.id,
-    subnetwork=sandbox_network.subnetwork.id,
-    response_policy=sandbox_network.response_policy.response_policy_name,
-    services={
-        internal_lb.STORE_HOST: store_service.service_name,
-        internal_lb.HELLO_HOST: hello_service.service_name,
-    },
-    opts=pulumi.ResourceOptions(depends_on=[sandbox_network, store_service, hello_service]),
-)
+# Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
+# (postern-sandbox-swap.md). No dedicated VPC / egress firewall / internal load balancer — the guest has
+# zero network, and the trusted worker reaches the internal store over Direct VPC egress. (The
+# session-token KMS key is the shared substrate created above.)
 anthropic_environment_key_secret = sandbox.environment_key_secret(
     project=project,
     region=region,
@@ -277,20 +252,16 @@ anthropic_webhook_signing_key_secret = sandbox.webhook_signing_key_secret(
 sandbox_job = sandbox.SandboxJob(
     project=project,
     region=region,
-    agent_image=_image(_AGENT_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'agent')),
-    proxy_image=_image(_PROXY_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'proxy')),
-    network=sandbox_network.network.id,
-    subnetwork=sandbox_network.subnetwork.id,
-    # The proxy dials the services at their load-balancer hostnames and trusts the LB's self-signed cert.
-    store_url=internal_lb.audience(internal_lb.STORE_HOST),
-    hello_url=internal_lb.audience(internal_lb.HELLO_HOST),
-    internal_ca_cert=internal_services.ca_cert_pem,
-    forward_methods=_HELLO_METHOD,
-    working_document_path=_WORKING_DOCUMENT_PATH,
+    worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
+    network=services_net.network.id,
+    subnetwork=services_net.subnetwork.id,
+    store_url=store_service.url,
+    hello_url=hello_service.url,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
-    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_network, internal_services]),
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net, store_service, hello_service]),
 )
-# The job SA invokes only the sandbox-reachable services; inert without the proxy-held session token (§7).
+# The job SA invokes the services the hatch forwards to (store + hello); inert without the worker-held
+# session token (§7).
 for label, invoke_target in (('store', store_service.service_name), ('hello', hello_service.service_name)):
     gcp.cloudrunv2.ServiceIamMember(
         f'themis-sandbox-invokes-{label}',
@@ -354,7 +325,6 @@ pulumi.export('store_working_document_bucket', store_service.working_document_bu
 pulumi.export('store_workspace_bucket', store_service.workspace_bucket)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
-pulumi.export('internal_lb_ip', internal_services.ip_address)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the
 # session_context SELECT grant.
 pulumi.export('auth_db_user', auth_service.db_user)
@@ -365,9 +335,6 @@ pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
 # The ingestion SA's DB login — the identity the Dataflow worker mints as.
 pulumi.export('ingest_db_user', ingestion.db_user.name)
-pulumi.export('sandbox_network', sandbox_network.network.id)
-pulumi.export('sandbox_subnetwork', sandbox_network.subnetwork.id)
-pulumi.export('sandbox_dns_response_policy', sandbox_network.response_policy.response_policy_name)
 pulumi.export('session_token_signing_key', session_token_key.id)
 pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)
 pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)

@@ -8,11 +8,11 @@ provisions that VPC: the services attach to it with Direct VPC egress (all traff
 run.app call to auth traverses the VPC and is delivered internally), while the subnet's Private Google
 Access keeps their Google-API traffic (GCS, logging) on the private path.
 
-This VPC is deliberately not sealed. The egress boundary is the sandbox VPC (sandbox.py) — the untrusted
-job reaches the outside world only through a service's controlled interface, never directly. The trusted
-services on this network may reach the public internet (a genomics fetcher pulling ClinVar, say); a
-service that needs it adds a Cloud NAT. store and hello need only auth, GCS, and the metadata server, so
-no NAT is provisioned yet.
+This VPC is deliberately not sealed. The egress boundary is the sandbox guest's empty network namespace
+(postern) — the untrusted code reaches the outside world only through the hatch, never directly. The
+trusted services on this network may reach the public internet: the sandbox worker calls Anthropic
+directly (postern-sandbox-swap.md), so a Cloud NAT gives it a SNAT route out. Internal-ingress services
+stay on the private path (subnet PGA); only non-Google public egress uses the NAT.
 """
 
 from __future__ import annotations
@@ -59,6 +59,21 @@ class ServicesNetwork(pulumi.ComponentResource):
             # No external addresses on the instances: Google APIs (and same-project internal-ingress
             # Cloud Run) reach over the private path, not a public IP.
             private_ip_google_access=True,
+            opts=child,
+        )
+        # The sandbox worker (Direct VPC egress on this network) calls Anthropic directly — a public
+        # endpoint no private path covers. Cloud NAT gives it a SNAT route out; internal-ingress services
+        # keep reaching auth/GCS on the private path (subnet PGA), so only non-Google public egress NATs.
+        router = gcp.compute.Router(
+            'themis-services', project=project, region=region, network=self.network.id, opts=child
+        )
+        gcp.compute.RouterNat(
+            'themis-services',
+            project=project,
+            region=region,
+            router=router.name,
+            nat_ip_allocate_option='AUTO_ONLY',
+            source_subnetwork_ip_ranges_to_nat='ALL_SUBNETWORKS_ALL_IP_RANGES',
             opts=child,
         )
         self.register_outputs({'network': self.network.id, 'subnetwork': self.subnetwork.id})
