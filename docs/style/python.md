@@ -251,6 +251,40 @@ class MergeBaseTest(unittest.TestCase):
 Use `pytest` fixtures (`tmp_path`, `monkeypatch`, `capsys`, custom-defined) for setup, not class-level setup methods.
 Parametrise tests with `@pytest.mark.parametrize` rather than writing N near-identical test functions.
 
+Assert architectural and logical invariants, not the current shape of the code. A test that pins today's values — the
+exact set of committed migration files, a whole serialized payload — is a *change detector*: it fails on every
+legitimate addition, and the extra signal it buys is not worth that. Name the property that has to hold for any valid
+state. Where production code already enforces that property, test the enforcement — hand it a violating input, assert it
+raises — rather than restating its current output: an assertion that production code makes unreachable can never fail.
+Swapping in the invariant replaces the assertion, not the test: it governs what a test asserts, never how many.
+
+```python
+# Good — the committed set keeps a check, in a form no addition invalidates
+def test_committed_migrations_are_discoverable() -> None:
+    # `discover` raises on a malformed filename or a version gap; non-empty rules out a vacuous pass.
+    assert migrate.discover(_MIGRATIONS_DIR)
+
+# Good — already there: the enforcement can regress; the property it guards cannot
+def test_discover_rejects_a_version_gap(tmp_path: pathlib.Path) -> None:
+    (tmp_path / '0001_a.sql').write_text('SELECT 1;', 'utf-8')
+    (tmp_path / '0003_c.sql').write_text('SELECT 1;', 'utf-8')
+    with pytest.raises(ValueError, match='contiguous'):
+        migrate.discover(tmp_path)
+
+# Bad — change detector: every added migration edits this list
+def test_committed_migrations_are_contiguous() -> None:
+    migrations = migrate.discover(_MIGRATIONS_DIR)
+    assert [(m.version, m.name) for m in migrations] == [
+        (1, 'session_context'),
+        (2, 'grants'),
+        (3, 'litcache_crosswalk'),
+    ]
+```
+
+The same trap catches a test that mocks every collaborator and asserts the exact calls made: it restates the
+implementation, so it breaks on any refactor and passes even when the behaviour is wrong. Assert the observable result,
+not the interaction sequence.
+
 ______________________________________________________________________
 
 *Adapted from the [Google Python Style Guide][pyguide], licensed under [CC-BY-3.0]. Sections covered by [ruff]'s lint

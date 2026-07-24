@@ -2,7 +2,12 @@
 
 Adapted from claude-code-action's
 [automatic PR code review template](https://github.com/anthropics/claude-code-action/blob/main/docs/solutions.md#automatic-pr-code-review).
-Security is out of scope here — it is handled separately above. Focus on:
+Security is out of scope here — it is handled separately above.
+
+When flagging an entry below that ends with a `Cite:` line, include that line verbatim in your inline comment so the
+reader can jump straight to the policy.
+
+Focus on:
 
 **Correctness and likely bugs.** Off-by-one errors, null/None handling, error cases that aren't covered, race conditions
 in non-security-critical code paths, misuse of APIs, mistaken assumptions about iteration order, mutation of arguments,
@@ -22,7 +27,9 @@ micro-optimisations.
 
 **Tests.** Logic added without corresponding tests; tests that don't actually exercise the new behaviour; tests whose
 assertion is too weak to catch the regression they're nominally guarding against; tests that duplicate existing coverage
-without adding signal.
+without adding signal; change-detector tests that assert the code's current shape — a hardcoded list of today's files, a
+whole serialized payload — where an invariant is what matters. Suggest the invariant instead of the pinned value. Cite:
+`[Style: assert invariants, not the current shape](docs/style/python.md#pytest)`
 
 **Documentation.** Public APIs or behaviour changed without a docstring update; comments that describe what code did
 before, not what it does now; misleading or stale comments in the surrounding context that the PR touches.
@@ -45,8 +52,7 @@ commented-out blocks that look like work-in-progress rather than deliberate alte
 flag them if the author has worked around the lint somehow.
 
 **Python idiom and style.** This repo follows [`docs/style/python.md`](docs/style/python.md) for the high-level
-human-judgement layer of Python style; ruff handles the mechanical parts. When flagging any of the items below, include
-the indicated `Cite:` line in your inline comment verbatim so the reader can jump straight to the policy.
+human-judgement layer of Python style; ruff handles the mechanical parts.
 
 - **Import modules, not symbols.** `from pathlib import Path`, `from dataclasses import dataclass`,
   `from foo.bar import baz_func` — flag all of these. The carved-out exceptions are `typing.*`, `collections.abc.*`, and

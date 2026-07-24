@@ -9,19 +9,9 @@ from themis.migrate import migrate
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
 
 
-def test_committed_migrations_are_the_expected_roster() -> None:
-    # Versions are the filename prefixes, which `discover` already checks are contiguous
-    # from 1 — so a name's position in this list is its version.
-    migrations = migrate.discover(_MIGRATIONS_DIR)
-    assert [m.name for m in migrations] == [
-        'session_context',
-        'grants',
-        'litcache_crosswalk',
-        'analyses',
-        'project_members',
-        'projects',
-        'litcache_crosswalk_grant',
-    ]
+def test_committed_migrations_are_discoverable() -> None:
+    # `discover` raises on a malformed filename or a version gap; non-empty rules out a vacuous pass.
+    assert migrate.discover(_MIGRATIONS_DIR)
 
 
 def test_litcache_crosswalk_migration_splits_cleanly() -> None:
