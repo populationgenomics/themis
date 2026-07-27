@@ -19,6 +19,7 @@ from themis_infra import (
     deploy_iam,
     hello,
     ingest,
+    ingest_network,
     sandbox,
     secrets,
     services_network,
@@ -226,12 +227,19 @@ semantic_scholar = secrets.semantic_scholar_secret(
     api_key=semantic_scholar_api_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+ingest_net = ingest_network.IngestionNetwork(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 ingestion = ingest.IngestionRuntime(
     project=project,
+    project_number=project_number,
+    subnetwork=ingest_net.subnetwork,
     sql_instance=database.instance,
     fulltext_bucket=fulltext.name,
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
-    opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar, ingest_net]),
 )
 # Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
 # (postern-sandbox-swap.md). No dedicated VPC / egress firewall / internal load balancer — the guest has
@@ -335,6 +343,8 @@ pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
 # The ingestion SA's DB login — the identity the Dataflow worker mints as.
 pulumi.export('ingest_db_user', ingestion.db_user.name)
+# The subnet the Dataflow launch targets (`--subnetwork`), consumed from outside this program.
+pulumi.export('ingest_subnetwork', ingest_net.subnetwork.self_link)
 pulumi.export('session_token_signing_key', session_token_key.id)
 pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)
 pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)

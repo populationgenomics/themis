@@ -36,6 +36,8 @@ class IngestionRuntime(pulumi.ComponentResource):
         self,
         *,
         project: str,
+        project_number: str,
+        subnetwork: gcp.compute.Subnetwork,
         sql_instance: gcp.sql.DatabaseInstance,
         fulltext_bucket: pulumi.Input[str],
         secret_accessors: Mapping[str, pulumi.Input[str]],
@@ -45,6 +47,10 @@ class IngestionRuntime(pulumi.ComponentResource):
 
         Args:
             project: The GCP project to create the SA and project-level grant in.
+            project_number: The project's numeric id, used to name the Dataflow
+                service agent that needs `networkUser` on the workers' subnet.
+            subnetwork: The ingestion workers' subnet; `networkUser` is granted
+                on it to both principals that place workers there.
             sql_instance: The Cloud SQL instance holding the crosswalk; the SA is
                 attached as an IAM DB user on it (the mint login).
             fulltext_bucket: The full-text store bucket name; the SA gets
@@ -76,6 +82,22 @@ class IngestionRuntime(pulumi.ComponentResource):
             member=member,
             opts=child,
         )
+
+        # networkUser on the subnet for both principals that place workers on it: the worker SA and
+        # the Dataflow service agent (which creates the worker VMs on the job's behalf).
+        dataflow_agent = (
+            f'serviceAccount:service-{project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com'
+        )
+        for label, principal in (('worker', member), ('agent', dataflow_agent)):
+            gcp.compute.SubnetworkIAMMember(
+                f'{ingest_name}-subnet-{label}',
+                project=project,
+                region=subnetwork.region,
+                subnetwork=subnetwork.name,
+                role='roles/compute.networkUser',
+                member=principal,
+                opts=child,
+            )
         # Read seed sources and write the content-addressed cache — both live in
         # the full-text bucket. objectUser, not objectAdmin: the bucket enforces
         # uniform access (no object ACLs to manage), and the writer is write-once.
