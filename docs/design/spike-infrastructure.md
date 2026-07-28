@@ -71,8 +71,14 @@ OIDC/IAM-first (see [`deployment.md`](deployment.md)): Anthropic API via WIF, Cl
 workload SA. A secret is stored only where there is **no WIF path** — currently just the optional **Semantic Scholar API
 key** (raises the litcache id-resolver's rate limit; not strictly required).
 
-No DB password (IAM auth), no Anthropic key (WIF), no IAP OAuth client secret (Google-managed IAP for Cloud Run), no app
-session key (the app trusts the IAP JWT per request, stateless).
+No DB password (IAM auth), no Anthropic key (WIF), no app session key (the app trusts the IAP JWT per request,
+stateless). IAP's own browser path likewise needs none — it uses a Google-managed OAuth client.
+
+One exception sits outside Secret Manager: `themis:iapProgrammaticClientSecret`, the Desktop OAuth client local
+automation authenticates as ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)). No service reads it, so it is
+KMS-encrypted in `Pulumi.<stack>.yaml` rather than deployed — the stack's KMS key already gates decryption to
+developers, which is precisely the boundary that keeps programmatic access away from curators. Rotated in the Console on
+exposure; every developer must then consent again.
 
 Self-hosted sandboxes (§8) add **two scoped stored secrets**: the `ANTHROPIC_ENVIRONMENT_KEY` the sandbox worker uses to
 claim its work queue, and the **webhook signing key** (`whsec_…`) that verifies the wake webhook letting the worker

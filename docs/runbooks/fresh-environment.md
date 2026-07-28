@@ -16,6 +16,12 @@ program change.
   `gcloud auth application-default login`.
 - The IAP access group exists — see [`iap-access.md`](iap-access.md). It must exist before `pulumi up` (the IAP IAM
   binding targets it).
+- This environment's own programmatic Desktop OAuth client exists in the Console — a fresh one, never another
+  environment's — and its id is in `Pulumi.<stack>.yaml` as `themis:iapProgrammaticClients`; see
+  [`iap-access.md`](iap-access.md). The allowlist is required, and an environment that admits no programmatic client yet
+  declares it as `[]`, which is what makes the program leave the backend's IAP settings undeclared. A stand-in client id
+  is not the inert value: it would be written into those settings for real. The paired secret is an encrypted write, so
+  it cannot be set until the stack exists — §2 does it.
 
 ### Local-operator KMS access (named individuals)
 
@@ -49,6 +55,12 @@ rules). Idempotent. The deploy/preview SA emails and the WIF provider path it pr
 The registry is created by the program, so the first `pulumi up` uses a public placeholder image — that one `up` creates
 the registry *and* brings the edge up running the placeholder; later deploys push real images to that registry.
 
+Two of the required keys name values this same `up` produces, so they carry placeholders for this one run —
+[§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads must already hold its real value,
+including the allowlist from Prerequisites: `preview` stops at the first `config.require*` the stack does not satisfy,
+before anything is created. The client secret is not one of them — the program never reads it, so a missing one is
+silent here and surfaces at the first `login`.
+
 ```sh
 cd infra
 pulumi login gs://cpg-themis-dev-pulumi-state
@@ -56,6 +68,9 @@ pulumi login gs://cpg-themis-dev-pulumi-state
 # from the committed Pulumi.dev.yaml; without it Pulumi falls back to passphrase.
 pulumi stack init dev \
   --secrets-provider="gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi"
+# Encrypted to the stack's key, so it waits for the init above. No `up` reads it,
+# so a stack that never gets it deploys clean and fails at the first `login`.
+pulumi config set --secret themis:iapProgrammaticClientSecret <secret-from-the-console>
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi preview   # review the plan
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
 ```
@@ -63,7 +78,33 @@ THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
 `stack init` writes a generated `encryptedkey` line into `Pulumi.dev.yaml`; commit it (inert without KMS access, safe on
 the mirror). Requires the operator KMS grant from the prerequisites above.
 
-## 3. DNS handoff (external — IT team)
+## 3. Values that only exist after the first `up`
+
+Some of what the program requires, the program itself produces — circular by construction, so a fresh environment cannot
+declare it up front. The first `up` runs against placeholders; each real value is then read from a stack output and set,
+and a second `up` applies it. Whatever each one feeds stays inert until then, which costs nothing on a first bring-up:
+the edge is still serving the placeholder image.
+
+| Key                                | Real value                                                                                                                                    | Inert until set                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `themis:iapBackendServiceId`       | `pulumi stack output web_backend_service_id`                                                                                                  | The web app verifies the IAP-JWT audience against this id, so it refuses every assertion IAP hands it. |
+| `themis:anthropicFederationRuleId` | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B | The BFF cannot mint a Managed-Agents token.                                                            |
+
+Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
+remaining `themis:anthropic*` ids are Anthropic-side entities that exist before the GCP service account does, so they
+are set for real from the start.
+
+```sh
+pulumi config set themis:iapBackendServiceId "$(pulumi stack output web_backend_service_id)"
+pulumi config set themis:anthropicFederationRuleId fdrl_...   # from the Anthropic console
+pulumi up
+```
+
+Never copy either value from another environment's `Pulumi.<stack>.yaml`. A stale `iapBackendServiceId` points the app
+at another environment's backend, so it refuses the traffic its own IAP admits — a failure that reads as a broken deploy
+rather than a wrong constant.
+
+### DNS handoff (external — IT team)
 
 ```sh
 pulumi stack output lb_ip

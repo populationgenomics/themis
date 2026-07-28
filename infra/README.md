@@ -84,29 +84,43 @@ deploy, not just its own.
 
 ## Config
 
-Per-environment (in `Pulumi.<stack>.yaml`): `gcp:project`, `gcp:region`, `themis:domain`, `themis:iapAccessGroup`. The
-deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to deploy a specific image
+Per-environment, in `Pulumi.<stack>.yaml`. The `config.require*` calls at the top of `__main__.py` are the list of what
+the program reads — a missing key fails `pulumi up`; `Pulumi.dev.yaml` is the worked example of every one. Two things
+that list cannot express:
+
+- `themis:iapProgrammaticClientSecret` is declared but never read by the program. `themis.clients.iap login` reads it
+  out of stack config itself, at consent time ([`docs/runbooks/iap-access.md`](../docs/runbooks/iap-access.md)), so an
+  environment still has to carry it.
+- `themis:iapBackendServiceId` and `themis:anthropicFederationRuleId` name values the stack itself produces, so a fresh
+  environment holds placeholders for them until its first `up`
+  ([`fresh-environment.md`](../docs/runbooks/fresh-environment.md) §3).
+
+The deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to deploy a specific image
 (`deploy.yml` sets the freshly-pushed ref). With no override the program pins to the service's live image, so a preview
 shows no spurious diff — except on a first bring-up, when no live service exists yet and the override is required.
 
 ## Lifecycle (a fresh environment)
 
-See [`docs/runbooks/fresh-environment.md`](../docs/runbooks/fresh-environment.md) for the full runbook. In short:
+[`docs/runbooks/fresh-environment.md`](../docs/runbooks/fresh-environment.md) owns the commands. The shape:
 
-1. `PROJECT=cpg-themis-dev infra/bootstrap/bootstrap.sh`
-1. First bring-up (creates the registry + edge running a placeholder):
-   ```sh
-   cd infra && pulumi login gs://cpg-themis-dev-pulumi-state && pulumi stack init dev
-   THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi preview   # review, then `up`
-   pulumi stack output lb_ip                                # hand to IT for the A record
-   ```
+1. `bootstrap.sh`, once, by an operator with Owner.
+1. First bring-up, against a placeholder image and placeholder values for the config the stack itself produces — that
+   one `up` creates the registry and brings the edge up.
+1. Set the values that now exist (§3) and `up` again; hand the LB IP to IT for the A record.
 1. Thereafter CI owns deploys: PRs get a read-only `pulumi preview` comment (`preview.yml`); merge to `main` builds the
    image and runs `pulumi up` (`deploy.yml`).
 
 ## Adding an environment
 
-Add `Pulumi.prod.yaml` (its project, hostname, access group, KMS key) and run
-`PROJECT=cpg-themis-prod infra/bootstrap/bootstrap.sh`. No program change.
+Run `PROJECT=cpg-themis-prod infra/bootstrap/bootstrap.sh` first — it creates the state bucket and the KMS key the
+stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.yaml` and replace every value, including
+`secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
+each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId` and
+`themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
+copied one breaks loudly. `themis:iapProgrammaticClients` is the quiet one: dev's client id deploys clean onto another
+environment's IAP gate, and a developer holding a dev consent then mints tokens that gate admits. Each environment gets
+its own Console client. No program change; the full sequence is
+[`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

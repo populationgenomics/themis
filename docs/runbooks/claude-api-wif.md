@@ -110,7 +110,9 @@ the BFF does.
    pulumi stack output web_sa_unique_id   # or: gcloud iam service-accounts describe <email> --format='value(uniqueId)'
    ```
    For `cpg-themis-dev` this is currently `111207962341197569515` — a snapshot; the `pulumi stack output` above is the
-   source of truth (the literal can drift if the SA is recreated).
+   source of truth (the literal can drift if the SA is recreated). On a fresh environment the SA does not exist until
+   the first `up`, so `themis:anthropicFederationRuleId` holds a placeholder until the rule below is registered —
+   [`fresh-environment.md`](fresh-environment.md) §3.
 1. **Federation rule** `cpg-themis-dev-web-rule` (`fdrl_01JXLFyrG8PnJ62qPFzTmp4P`) — match `sub` + `email` (Google's
    `sub` has no stable prefix; never use `subject_prefix`):
    ```json

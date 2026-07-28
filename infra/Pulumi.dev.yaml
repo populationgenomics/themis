@@ -31,4 +31,11 @@ config:
   # The IAP backend service's numeric id (= the web_backend_service_id output) — the web app
   # verifies the IAP-JWT audience against it.
   themis:iapBackendServiceId: "7475211739280005859"
+  # The Desktop OAuth client `themis.clients.iap` mints developer ID tokens from
+  # (docs/runbooks/iap-access.md). A client id is public; the paired secret is
+  # `themis:iapProgrammaticClientSecret`.
+  themis:iapProgrammaticClients:
+    - 698160839187-a795noio4k4g6slu28rqbuu4p18sq0q2.apps.googleusercontent.com
+  themis:iapProgrammaticClientSecret:
+    secure: v1:Rii3EzEbvUwkE3RI:jcg6yy3Z7MGkPWBzltwi1Ad0VIve+wWSKCCB1M3FeJ2tVMT3k0Lk4+5KWYzBqfYXzK5S
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=

@@ -14,14 +14,14 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-17T05:07:39.487722Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-litdown = { timestamp = "2026-07-24T05:07:39.488141Z", span = "PT0S" }
-postern = { timestamp = "2026-07-24T05:07:39.488142Z", span = "PT0S" }
-pubmed-proto = { timestamp = "2026-07-24T05:07:39.488142Z", span = "PT0S" }
-litfetch = { timestamp = "2026-07-24T05:07:39.487786Z", span = "PT0S" }
+litdown = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+postern = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+pubmed-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -830,6 +830,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e0/83/7ef576d1c7ccea214e7b001e69c006bc75e058a3a1f2ab810167204b698b/google_auth_httplib2-0.2.1.tar.gz", hash = "sha256:5ef03be3927423c87fb69607b42df23a444e434ddb2555b73b3679793187b7de", size = 11086, upload-time = "2025-10-30T21:13:16.569Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/44/a7/ca23dd006255f70e2bc469d3f9f0c82ea455335bfd682ad4d677adc435de/google_auth_httplib2-0.2.1-py3-none-any.whl", hash = "sha256:1be94c611db91c01f9703e7f62b0a59bbd5587a95571c7b6fade510d648bc08b", size = 9525, upload-time = "2025-10-30T21:13:15.758Z" },
+]
+
+[[package]]
+name = "google-auth-oauthlib"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-auth" },
+    { name = "requests-oauthlib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/70/18/90c7fac516e63cf2058166fce0c88c353647c677b51cc036c09c49bb5cbb/google_auth_oauthlib-1.4.0.tar.gz", hash = "sha256:18b5e28880eb8eba9065c436becdc0ee8e4b59117a73a510679c82f70cd363d2", size = 21675, upload-time = "2026-05-07T08:03:47.816Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/d3/d7dff0d58a9e9244b48044bfb6a898bfcc8ecc42e0031d1bebc695344725/google_auth_oauthlib-1.4.0-py3-none-any.whl", hash = "sha256:251314f213a9ee46a5ae73988e84fd7cca8bb68e7ecf4bfd45940f9e7f51d070", size = 19261, upload-time = "2026-05-07T08:02:13.798Z" },
 ]
 
 [[package]]
@@ -1978,6 +1991,15 @@ wheels = [
 ]
 
 [[package]]
+name = "oauthlib"
+version = "3.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4372da4812c50edbd1434f678c90c2733e1188edfc63/oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9", size = 185918, upload-time = "2025-06-19T22:48:08.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1", size = 160065, upload-time = "2025-06-19T22:48:06.508Z" },
+]
+
+[[package]]
 name = "objsize"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3090,6 +3112,19 @@ wheels = [
 ]
 
 [[package]]
+name = "requests-oauthlib"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "oauthlib" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/f2/05f29bc3913aea15eb670be136045bf5c5bbf4b99ecb839da9b422bb2c85/requests-oauthlib-2.0.0.tar.gz", hash = "sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9", size = 55650, upload-time = "2024-03-22T20:32:29.939Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl", hash = "sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36", size = 24179, upload-time = "2024-03-22T20:32:28.055Z" },
+]
+
+[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3422,6 +3457,12 @@ hello = [
     { name = "protobuf" },
     { name = "requests" },
 ]
+iap = [
+    { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
+    { name = "oauthlib" },
+    { name = "requests" },
+]
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
@@ -3434,6 +3475,7 @@ lint = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
@@ -3444,6 +3486,7 @@ lint = [
     { name = "litdown" },
     { name = "litfetch" },
     { name = "lxml-stubs" },
+    { name = "oauthlib" },
     { name = "pg8000" },
     { name = "postern", extra = ["grpc"] },
     { name = "pre-commit" },
@@ -3512,6 +3555,7 @@ test = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
@@ -3520,6 +3564,7 @@ test = [
     { name = "httpx" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "oauthlib" },
     { name = "pg8000" },
     { name = "postern", extra = ["grpc"] },
     { name = "protobuf" },
@@ -3580,6 +3625,12 @@ hello = [
     { name = "protobuf" },
     { name = "requests" },
 ]
+iap = [
+    { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
+    { name = "oauthlib" },
+    { name = "requests" },
+]
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
@@ -3592,6 +3643,7 @@ lint = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
@@ -3602,6 +3654,7 @@ lint = [
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "lxml-stubs" },
+    { name = "oauthlib" },
     { name = "pg8000" },
     { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
     { name = "pre-commit" },
@@ -3668,6 +3721,7 @@ test = [
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-auth" },
+    { name = "google-auth-oauthlib" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
@@ -3676,6 +3730,7 @@ test = [
     { name = "httpx" },
     { name = "litdown", specifier = "==0.4.0" },
     { name = "litfetch", specifier = "==0.2.0" },
+    { name = "oauthlib" },
     { name = "pg8000" },
     { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
     { name = "protobuf" },

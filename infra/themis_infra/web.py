@@ -14,6 +14,7 @@ resolves, the managed certificate stays PROVISIONING.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import pulumi
@@ -55,10 +56,10 @@ class WebService(pulumi.ComponentResource):
             `session_context` write grants substitute.
         backend_service_id: The IAP backend service's server-generated numeric id.
             The app verifies IAP JWTs against the audience
-            `/projects/<number>/global/backendServices/<backend_service_id>`; the
-            backend can't be an env input on this same service (it fronts it — a
-            cycle), so it is exported and fed back as `iap_backend_service_id`
-            config after the first deploy (like the LB IP's out-of-band A record).
+            `/projects/<number>/global/backendServices/<backend_service_id>`. The
+            backend fronts this service, so it cannot be a live input here; it is
+            exported and fed back as config
+            (`docs/runbooks/fresh-environment.md` §3).
     """
 
     def __init__(
@@ -69,6 +70,7 @@ class WebService(pulumi.ComponentResource):
         domain: str,
         image: pulumi.Input[str],
         iap_member: pulumi.Input[str],
+        iap_programmatic_clients: Sequence[str],
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
@@ -199,7 +201,16 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
 
-        load_balancer = self._build_load_balancer('themis', project, region, domain, iap_member, child)
+        load_balancer = self._build_load_balancer(
+            'themis',
+            project=project,
+            project_number=project_number,
+            region=region,
+            domain=domain,
+            iap_member=iap_member,
+            iap_programmatic_clients=iap_programmatic_clients,
+            child=child,
+        )
         self.ip_address = load_balancer.ip_address
         self.backend_service_id = load_balancer.backend_service_id
         self.url = pulumi.Output.format('https://{0}', domain)
@@ -217,10 +228,13 @@ class WebService(pulumi.ComponentResource):
     def _build_load_balancer(
         self,
         name: str,
+        *,
         project: str,
+        project_number: pulumi.Input[str],
         region: str,
         domain: str,
         iap_member: pulumi.Input[str],
+        iap_programmatic_clients: Sequence[str],
         child: pulumi.ResourceOptions,
     ) -> _LoadBalancer:
         """Build the external HTTPS load balancer chain.
@@ -257,11 +271,29 @@ class WebService(pulumi.ComponentResource):
             protocol='HTTPS',
             load_balancing_scheme='EXTERNAL_MANAGED',
             backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
-            # Google-managed OAuth client — no client id/secret to store
-            # (see docs/design/deployment.md §4). IAP is the authentication gate.
+            # Google-managed OAuth client (../../docs/design/spike-infrastructure.md §4).
             iap=gcp.compute.BackendServiceIapArgs(enabled=True),
             opts=child,
         )
+
+        # This resource owns the backend's whole IapSettings object — the provider PATCHes it
+        # unmasked — so an environment that allowlists nobody must not declare it at all.
+        if iap_programmatic_clients:
+            gcp.iap.Settings(
+                f'{name}-iap-settings',
+                # IAP resolves the backend service's name to its id here; `generated_id` can't
+                # be used, as the id exceeds 2^53 and the int output rounds to a float64.
+                name=pulumi.Output.format('projects/{0}/iap_web/compute/services/{1}', project_number, backend.name),
+                access_settings=gcp.iap.SettingsAccessSettingsArgs(
+                    oauth_settings=gcp.iap.SettingsAccessSettingsOauthSettingsArgs(
+                        programmatic_clients=iap_programmatic_clients,
+                    ),
+                ),
+                # Emptying the client list drops this resource; DELETE makes that destroy PATCH
+                # the settings empty in GCP, where ABANDON would leave the allowlist live.
+                deletion_policy='DELETE',
+                opts=child,
+            )
 
         # Grant the access group "may reach the app" on the IAP-protected backend.
         gcp.iap.WebBackendServiceIamMember(

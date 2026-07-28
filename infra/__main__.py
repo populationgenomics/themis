@@ -67,11 +67,12 @@ anthropic_organization_id = config.require('anthropicOrganizationId')
 anthropic_service_account_id = config.require('anthropicServiceAccountId')
 anthropic_workspace_id = config.require('anthropicWorkspaceId')
 # IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
-# lookup) and the backend service's numeric id. The backend fronts the web service, so its
-# id can't be a live input to it (a cycle) — it is exported as web_backend_service_id and
-# set here out of band after the first deploy, like the LB IP's A record.
+# lookup) and the backend service's numeric id — this stack's own web_backend_service_id
+# output, fed back as config (docs/runbooks/fresh-environment.md §3).
 project_number = gcp.organizations.get_project(project_id=project).number
 iap_backend_service_id = config.require('iapBackendServiceId')
+# OAuth client ids IAP accepts programmatically (docs/runbooks/iap-access.md).
+iap_programmatic_clients: list[str] = config.require_object('iapProgrammaticClients')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -188,6 +189,7 @@ site = web.WebService(
     domain=domain,
     image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
     iap_member=f'group:{iap_access_group}',
+    iap_programmatic_clients=iap_programmatic_clients,
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,

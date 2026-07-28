@@ -62,6 +62,12 @@ migrate = [{ include-group = "cloudsql" }]
 # google-auth mints the caller SA's ID token from the metadata server and requests is its
 # HTTP transport; protobuf backs the generated messages.
 session = ["grpcio", "google-auth", "requests", "protobuf"]
+# developer-identity IAP client (themis/clients/iap): local automation reaching the
+# IAP-protected web app as the developer running it. google-auth-oauthlib runs the one-time
+# loopback consent; google-auth exchanges the refresh token for an ID token per run; requests
+# carries the request to the app. oauthlib is google-auth-oauthlib's granted-scope validator,
+# imported directly by the scope test that drives it against Google's real response.
+iap = ["google-auth-oauthlib", "google-auth", "requests", "oauthlib"]
 # store service (themis/services/store): the grpc.aio server + generated stubs + the GCS
 # backend (google-cloud-storage) for the working document and workspace archive. Includes the
 # session client — every request is authorized through auth before it touches storage.
@@ -89,7 +95,7 @@ guest = ["grpcio", "protobuf"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -97,11 +103,11 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/document_linter/tests"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -184,6 +190,13 @@ ignore = [
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture env keys / session tokens are not secrets
     "S106",   # fixture env keys / session tokens passed as kwargs are not secrets
+]
+"themis/clients/iap/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "ARG001", # a stand-in for json.dump takes the call's arguments without reading them
+    "ARG002", # a faked transport keeps the interface signature even where a param is unused
+    "SLF001", # tests legitimately reach into module privates
+    "S105",   # fixture client secrets / refresh tokens are not secrets
 ]
 "themis/clients/work_queue/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
