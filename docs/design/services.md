@@ -201,19 +201,7 @@ follow-up. Do not define shared tables inside a single service's PR.
 
 ## Checklist
 
-1. `schema/proto/themis/rpc/<domain>.proto` — author the wire contract ([`proto.md`](proto.md) authoring rules):
-   `package themis.rpc.<domain>`, a `service`, an explicit number on every message field, `stream` for streaming; one
-   `Request` in, one `Response` out.
-1. Run `regen`; commit `schema/proto/themis/rpc/<domain>.proto` + the `themis/rpc/<domain>_pb2*.py` stubs.
-1. `themis/services/<name>/` — `servicer.py` (the `<Service>Servicer` subclass), the backend `abc.ABC` + fixture,
-   `__main__` (env-selected backend, `grpc.aio` server + health servicer, fail-loud seeding).
-1. `themis/services/<name>/tests/` — behaviour tests over `themis.testing.in_process_grpc.serving`, authorized with
-   `themis.clients.auth.tests.fixture_session`; `test_main.py`.
-1. Wire root `pyproject.toml` (dep group + `test`/`lint` include, `testpaths`) and the `Dockerfile`.
-1. If it calls another service, use that service's generated stub over `themis.clients.id_token`; auth is
-   `themis.clients.auth`.
-1. If it is agent-facing (callable from the sandbox), expose it via the `agent_exposed` proto option + `@agent_exposed`
-   servicer decorator — `regen` derives the hatch allowlist, forwarders, guest stubs, image manifest, and prompt
-   fragment. See [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md). Worker-only services omit it.
-1. Validate: `uv run pytest`; `pyright`; `ruff`; `regen` → clean tree (freshness green); `buf breaking` clean.
-1. Follow-up PRs: the Cloud Run deploy, and any schema work the real backend needs ([`migrations.md`](migrations.md)).
+The step-by-step is the [add-a-service runbook](../runbooks/add-a-service.md): author the proto → `regen` → servicer +
+port + fixture + `__main__` → tests → wire `pyproject.toml`/`Dockerfile`/`.github/images.json` → service-to-service and
+agent-exposure where they apply → validate → the deploy follow-up. This doc is the anatomy and rationale behind those
+steps.
