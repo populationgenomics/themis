@@ -212,5 +212,8 @@ follow-up. Do not define shared tables inside a single service's PR.
 1. Wire root `pyproject.toml` (dep group + `test`/`lint` include, `testpaths`) and the `Dockerfile`.
 1. If it calls another service, use that service's generated stub over `themis.clients.id_token`; auth is
    `themis.clients.auth`.
+1. If it is agent-facing (callable from the sandbox), expose it via the `agent_exposed` proto option + `@agent_exposed`
+   servicer decorator — `regen` derives the hatch allowlist, forwarders, guest stubs, image manifest, and prompt
+   fragment. See [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md). Worker-only services omit it.
 1. Validate: `uv run pytest`; `pyright`; `ruff`; `regen` → clean tree (freshness green); `buf breaking` clean.
 1. Follow-up PRs: the Cloud Run deploy, and any schema work the real backend needs ([`migrations.md`](migrations.md)).
