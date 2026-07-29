@@ -101,8 +101,8 @@ GRANT.
 
 ### How it runs
 
-`.github/workflows/deploy.yml`, on push to `main`, authenticates as `themis-deploy@` through Workload Identity
-Federation, builds and pushes the service images, runs `pulumi up`, and then runs
+`.github/workflows/deploy.yml`, run from a deployable ref (`main` or `deployed/<env>`), authenticates as
+`themis-deploy@` through Workload Identity Federation, builds and pushes the service images, runs `pulumi up`, then runs
 `uv run --group migrate python -m themis.migrate` with the stack's outputs as environment: `sql_connection_name`,
 `sql_database`, and `migrator_db_user`, plus every runtime SA's exported `*_db_user` login folded into
 `THEMIS_MIGRATE_SUBSTITUTIONS` under the `${VAR}` name its GRANT migration uses. The order is load-bearing in one

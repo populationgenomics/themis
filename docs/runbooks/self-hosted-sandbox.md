@@ -6,8 +6,8 @@
 > rewritten for the worker model.
 
 Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The infra (`infra/themis_infra/sandbox.py`,
-`hello.py`) and images (`deploy.yml`) deploy on merge to `main`; the steps below are the Console-only and validation
-actions Pulumi cannot do.
+`hello.py`) and images (`deploy.yml`) reach the environment on a deploy — pushing `deployed/<env>`, or dispatching on
+`main`; the steps below are the Console-only and validation actions Pulumi cannot do.
 
 ## One-time setup (per environment)
 

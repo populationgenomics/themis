@@ -45,7 +45,7 @@ This is the only standing human grant on the key; revoke it to off-board an oper
 PROJECT=cpg-themis-dev infra/bootstrap/bootstrap.sh
 ```
 
-Creates: the per-environment state bucket, the KMS key, the GitHub WIF pool + `themis-deploy` (write, main-only) /
+Creates: the per-environment state bucket, the KMS key, the GitHub WIF pool + `themis-deploy` (write, deployable refs) /
 `themis-preview` (read-only, PRs) service accounts, and network hardening (drops the default VPC + its permissive
 rules). Idempotent. The deploy/preview SA emails and the WIF provider path it prints are already wired into
 `.github/workflows/{deploy,preview}.yml`.
@@ -117,8 +117,47 @@ the cert is live.
 
 ## 4. Hand off to CI
 
-Once bootstrap + the first bring-up are done, CI owns deploys: PRs get a read-only preview comment; merge to `main`
-builds the image and `pulumi up`s. Nothing else manual.
+Once bootstrap + the first bring-up are done, CI owns deploys: PRs get a read-only preview comment; `deploy` builds the
+images and `pulumi up`s when `deployed/<env>` is pushed, or when dispatched on `main`. Merging does not deploy
+([`../design/deployment.md`](../design/deployment.md)).
+
+### Enabling the ad-hoc deploy branch
+
+Optional, and dev-only — `prod` should deploy from `main` alone. The steps are ordered: the WIF member is the credential
+and the ruleset is the only thing in front of it, so granting the member first opens a window in which any repo write
+can take the deploy SA ([`../design/deployment.md`](../design/deployment.md)).
+
+1. **Confirm the branch does not exist yet.** `git ls-remote origin 'refs/heads/deployed/*'` must print nothing. A ref
+   created before the ruleset is not retroactively covered by it — `Restrict creations` only blocks future creations, so
+   an existing branch is simply frozen with whatever it already points at. If anything comes back, find out who pushed
+   it before going further.
+1. **Create the ruleset**, targeting `deployed/*` — rules `Restrict creations`, `Restrict updates`,
+   `Restrict deletions`; bypass list: the **repository-admin role**, a role rather than named people. Bypass covers the
+   whole ruleset, so admins keep the force-push that repointing the branch needs while everyone else cannot even create
+   it. Do **not** add `Require a pull request before merging`: it would let a non-admin land content through a PR that
+   `Restrict updates` would otherwise refuse.
+1. **Check the ruleset actually matches.** The ruleset UI lists matching branches; a pattern that silently matches
+   nothing looks configured and enforces nothing. Confirm a non-admin can neither push nor merge into `deployed/dev`.
+1. **Only then grant the WIF member:**
+   ```sh
+   ADHOC_DEPLOY_BRANCH=deployed/dev PROJECT=cpg-themis-dev infra/bootstrap/bootstrap.sh
+   ```
+
+### Disabling it again
+
+Re-running `bootstrap.sh` without `ADHOC_DEPLOY_BRANCH` does **not** revoke the member — the script only adds bindings,
+so that an unrelated rerun cannot silently cut off a deploy path someone is using. Withdrawing it is deliberate and
+manual, in this order (member first: while the member exists, the ruleset is the only thing holding the branch):
+
+```sh
+gcloud iam service-accounts remove-iam-policy-binding \
+  themis-deploy@cpg-themis-dev.iam.gserviceaccount.com \
+  --project=cpg-themis-dev --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/github/attribute.ref/refs/heads/deployed/dev"
+git push origin --delete deployed/dev
+```
+
+Leave the ruleset in place: it costs nothing and keeps the branch un-creatable, which is the safer residue.
 
 ## Tearing down
 

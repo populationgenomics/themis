@@ -1,0 +1,50 @@
+name: images
+
+# Builds every service image without pushing — the only check that the Dockerfiles
+# still build, since deploy.yml (the sole place they are built for real) does not run
+# on merge. No registry, no WIF, no cloud state. The image set is read from
+# .github/images.json, the same list deploy.yml builds from.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  list:
+    # A matrix cannot read a file directly, so the set is lifted into an output first.
+    if: github.repository == 'populationgenomics/themis-internal'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      images: ${{ steps.read.outputs.images }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: read
+        run: |
+          IMAGES="$(jq -c . .github/images.json)"
+          # An empty list would yield zero matrix jobs, which reads as a green run.
+          if [[ "${IMAGES}" == "[]" ]]; then
+            echo "::error::.github/images.json declares no images"
+            exit 1
+          fi
+          echo "images=${IMAGES}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: list
+    runs-on: ubuntu-latest
+    strategy:
+      # One broken Dockerfile shouldn't hide the state of the others.
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.list.outputs.images) }}
+    name: build ${{ matrix.image.name }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      # Bound as env, not interpolated: `${{ }}` is substituted before bash parses the
+      # script, so a manifest value would otherwise be shell rather than an argument.
+      - run: docker build -f "$DOCKERFILE" "$CONTEXT"
+        env:
+          DOCKERFILE: ${{ matrix.image.file }}
+          CONTEXT: ${{ matrix.image.context }}

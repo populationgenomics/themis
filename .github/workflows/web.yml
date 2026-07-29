@@ -1,7 +1,7 @@
 name: web
 
 # Production build of the Next.js web app on PRs and pushes to main. The image
-# build + deploy is owned by deploy.yml (main only). Bun toolchain; see
+# build + deploy is owned by deploy.yml; images.yml build-checks it on merge. Bun toolchain; see
 # apps/web/README.md.
 on:
   pull_request:

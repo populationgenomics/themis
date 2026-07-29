@@ -9,6 +9,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
+      - id: check-json
       # Generated stubs are committed verbatim from buf generate; a hygiene rewrite would
       # drift them from the generator and break the freshness gate.
       - id: end-of-file-fixer

@@ -101,14 +101,17 @@ scale-to-zero; smallest dev tier).
 
 ### 6. CI/CD pipeline
 
-Deploy auth and gating per [`deployment.md`](deployment.md): GitHub OIDC → WIF; **write** deploys only on push to
-`main`. PRs get a **read-only** preview identity that runs `pulumi preview` and posts it as a comment (informing the
-single PR-approval gate), plus cloud-free validation. No PR job can mutate cloud state — preview only, never apply.
+Deploy auth, gating, and trigger per [`deployment.md`](deployment.md): GitHub OIDC → WIF; **write** deploys only from a
+deployable ref (`main`, or the admin-only `deployed/<env>`), never on merge. PRs get a **read-only** preview identity
+that runs `pulumi preview` and posts it as a comment (informing the single PR-approval gate), plus cloud-free
+validation. No PR job can mutate cloud state — preview only, never apply.
 
 - PR: lint, type-check, unit tests (no cloud), and a read-only `pulumi preview` posted as a comment.
-- On squash-merge to `main`: **GitHub Actions builds the image(s)**, pushes to a **per-project Artifact Registry**
-  (authenticated via WIF), then `pulumi up` points the Cloud Run service at the new image — deploying to
-  **cpg-themis-dev**.
+- On merge to `main`: the same cloud-free validation, plus a no-push build of every service image (`images.yml`) so a
+  broken Dockerfile surfaces at merge rather than at the next deploy.
+- On a deploy — pushing `deployed/<env>`, or dispatching on `main`: **GitHub Actions builds the image(s)**, pushes to a
+  **per-project Artifact Registry** (authenticated via WIF), then `pulumi up` points the Cloud Run service at the new
+  image — deploying to **cpg-themis-dev**.
 - **Separate Cloud Run services, sized and scaled independently** (distinct images and identities): the **web app**
   (`themis-web` — the IAP-fronted UI/BFF) and the **internal gRPC services** (the agent's data plane, holding the
   GCP/Cloud SQL identity — §8), which carry no public endpoint. The self-hosted phase (§8) adds the **sandbox worker**
@@ -171,8 +174,8 @@ schema, the deployed services, agent definitions — is a coordination point, no
 complete cure is full per-developer isolation, which is overkill for the Spike; so for the Spike (small team) we
 **coordinate**, and if it chafes we go to **per-developer projects** (cheap given the Pulumi setup — one stack per
 project), not partial isolation. The schema-rollback case specifically: migrations are **forward-only**, applied to dev
-only via the merge→deploy pipeline (§6), so the deployed schema only advances; in-progress schema changes run against
-the embedded Postgres harness until merged.
+only via the CI deploy pipeline (§6), so the deployed schema only advances; in-progress schema changes run against the
+embedded Postgres harness until merged.
 
 No Docker — everything is a local process making outbound, IAM-gated connections, so it runs inside the Claude Code
 sandbox. The constraint is **Docker-free** (to avoid dev-time sandbox issues), not emulator-free: a service emulator is

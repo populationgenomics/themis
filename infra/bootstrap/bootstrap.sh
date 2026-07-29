@@ -14,6 +14,23 @@ set -euo pipefail
 PROJECT="${PROJECT:-cpg-themis-dev}"
 REGION="${REGION:-australia-southeast1}"
 REPO='populationgenomics/themis-internal'
+# Refs whose Actions runs may impersonate the deploy SA. `main` carries reviewed
+# code. The ad-hoc branch is opt-in per environment and its whole gate is the
+# GitHub ruleset over it, so adding this member before that ruleset exists hands
+# the deploy SA to anyone with repo write — see docs/runbooks/fresh-environment.md,
+# which orders the two.
+DEPLOY_REFS=("refs/heads/main")
+if [[ -n "${ADHOC_DEPLOY_BRANCH:-}" ]]; then
+  # The ruleset gating this member targets `deployed/*`, which does not cross a
+  # `/`. A value outside that shape binds a ref nothing restricts, and the grant
+  # succeeds whether or not the branch exists — so reject it here rather than
+  # leave a credential keyed to an ungated ref.
+  if [[ ! "${ADHOC_DEPLOY_BRANCH}" =~ ^deployed/[A-Za-z0-9._-]+$ ]]; then
+    echo "ADHOC_DEPLOY_BRANCH must match deployed/<env>; got '${ADHOC_DEPLOY_BRANCH}'" >&2
+    exit 1
+  fi
+  DEPLOY_REFS+=("refs/heads/${ADHOC_DEPLOY_BRANCH}")
+fi
 
 STATE_BUCKET="${PROJECT}-pulumi-state"
 KMS_KEYRING='themis'
@@ -45,9 +62,9 @@ gcloud kms keyrings create "${KMS_KEYRING}" --project="${PROJECT}" --location="$
 gcloud kms keys create "${KMS_KEY}" --project="${PROJECT}" --location="${REGION}" \
   --keyring="${KMS_KEYRING}" --purpose=encryption 2>/dev/null || true
 
-# --- Service accounts: deploy (write, main only) and preview (read-only, PRs) --
+# --- Service accounts: deploy (write, deployable refs) and preview (read-only, PRs) --
 gcloud iam service-accounts create themis-deploy --project="${PROJECT}" \
-  --display-name='Themis Pulumi deploy (write; push to main)' 2>/dev/null || true
+  --display-name='Themis Pulumi deploy (write; deployable refs)' 2>/dev/null || true
 gcloud iam service-accounts create themis-preview --project="${PROJECT}" \
   --display-name='Themis Pulumi preview (read-only; pull requests)' 2>/dev/null || true
 
@@ -87,18 +104,30 @@ done
 # --- GitHub WIF: pool + OIDC provider, pinned to this repo --------------------
 gcloud iam workload-identity-pools create "${POOL}" --project="${PROJECT}" \
   --location=global --display-name='GitHub Actions' 2>/dev/null || true
+ATTRIBUTE_MAPPING='google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.event_name=assertion.event_name'
+ATTRIBUTE_CONDITION="assertion.repository == '${REPO}'"
 gcloud iam workload-identity-pools providers create-oidc "${PROVIDER}" \
   --project="${PROJECT}" --location=global --workload-identity-pool="${POOL}" \
   --display-name='themis-internal' \
   --issuer-uri='https://token.actions.githubusercontent.com' \
-  --attribute-mapping='google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.event_name=assertion.event_name' \
-  --attribute-condition="assertion.repository == '${REPO}'" 2>/dev/null || true
+  --attribute-mapping="${ATTRIBUTE_MAPPING}" \
+  --attribute-condition="${ATTRIBUTE_CONDITION}" 2>/dev/null || true
+# create-oidc no-ops on an existing provider, so the mapping and condition are
+# re-applied here — otherwise an edit to either never reaches an environment
+# bootstrapped before it, silently.
+gcloud iam workload-identity-pools providers update-oidc "${PROVIDER}" \
+  --project="${PROJECT}" --location=global --workload-identity-pool="${POOL}" \
+  --attribute-mapping="${ATTRIBUTE_MAPPING}" \
+  --attribute-condition="${ATTRIBUTE_CONDITION}" >/dev/null
 
 POOL_PATH="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}"
-# Deploy SA: only tokens on refs/heads/main (push to main) may impersonate it.
-gcloud iam service-accounts add-iam-policy-binding "${DEPLOY_SA}" --project="${PROJECT}" \
-  --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.ref/refs/heads/main" >/dev/null
+# Deploy SA: only tokens carrying a deployable ref may impersonate it. Scoped by
+# ref, not event, so it covers both triggers deploy.yml uses.
+for REF in "${DEPLOY_REFS[@]}"; do
+  gcloud iam service-accounts add-iam-policy-binding "${DEPLOY_SA}" --project="${PROJECT}" \
+    --role=roles/iam.workloadIdentityUser \
+    --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.ref/${REF}" >/dev/null
+done
 # Preview SA: only pull_request-event tokens may impersonate it.
 gcloud iam service-accounts add-iam-policy-binding "${PREVIEW_SA}" --project="${PROJECT}" \
   --role=roles/iam.workloadIdentityUser \

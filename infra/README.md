@@ -107,8 +107,9 @@ shows no spurious diff — except on a first bring-up, when no live service exis
 1. First bring-up, against a placeholder image and placeholder values for the config the stack itself produces — that
    one `up` creates the registry and brings the edge up.
 1. Set the values that now exist (§3) and `up` again; hand the LB IP to IT for the A record.
-1. Thereafter CI owns deploys: PRs get a read-only `pulumi preview` comment (`preview.yml`); merge to `main` builds the
-   image and runs `pulumi up` (`deploy.yml`).
+1. Thereafter CI owns deploys: PRs get a read-only `pulumi preview` comment (`preview.yml`); `deploy.yml` builds the
+   images and runs `pulumi up` when the `deployed/<env>` branch is pushed, or when dispatched on `main`. Merging does
+   not deploy — see [`docs/design/deployment.md`](../docs/design/deployment.md).
 
 ## Adding an environment
 

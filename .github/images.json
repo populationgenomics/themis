@@ -1,0 +1,8 @@
+[
+  { "name": "web", "context": "apps/web", "file": "apps/web/Dockerfile", "env": "THEMIS_WEB_IMAGE" },
+  { "name": "auth", "context": ".", "file": "themis/services/auth/Dockerfile", "env": "THEMIS_AUTH_IMAGE" },
+  { "name": "store", "context": ".", "file": "themis/services/store/Dockerfile", "env": "THEMIS_STORE_IMAGE" },
+  { "name": "hello", "context": ".", "file": "themis/services/hello/Dockerfile", "env": "THEMIS_HELLO_IMAGE" },
+  { "name": "dispatcher", "context": ".", "file": "themis/services/dispatcher/Dockerfile", "env": "THEMIS_DISPATCHER_IMAGE" },
+  { "name": "worker", "context": ".", "file": "themis/services/sandbox_worker/Dockerfile", "env": "THEMIS_SANDBOX_WORKER_IMAGE" }
+]
