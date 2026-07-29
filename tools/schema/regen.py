@@ -7,8 +7,8 @@ Fully local — no BSR remote plugins:
    execution — so it is not subject to the remote-plugin rate limit.
 2. ``grpcio-tools``' ``protoc`` emits the Python stubs from that tree: message classes + ``.pyi``
    over every proto (plus the used ``buf/validate`` dep — the ``protovalidate`` wheels ship no
-   Python stub); the gRPC stub + servicer base over the service protos only
-   (``themis/rpc/``; a data proto such as litcache declares no service). Its bundled ``protoc``
+   Python stub); the gRPC stub + servicer base over the service-declaring protos only (selected from
+   the descriptor set — a proto that declares no service, data or options, gets none). Its bundled ``protoc``
    pins the generated-code version to the protobuf 6.x runtime. Well-known types
    (``google.protobuf.*``) resolve from ``grpcio-tools``' bundled includes and stay
    runtime-provided.
@@ -34,9 +34,9 @@ import tempfile
 
 from grpc_tools import protoc
 
+from tools.schema import agent_exposed
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-# Service protos, relative to the export root: gRPC stubs are generated only for these.
-_RPC_PREFIX = 'themis/rpc/'
 # grpcio-tools' bundled well-known-type protos (descriptor.proto, timestamp.proto, …). The
 # protoc.main() API — unlike the `python -m grpc_tools.protoc` CLI — does not add this itself.
 _WELL_KNOWN = importlib.resources.files('grpc_tools') / '_proto'
@@ -65,6 +65,12 @@ def main() -> int:
     if shutil.which('buf') is None:
         raise SystemExit('buf not found on PATH; install buf (https://buf.build) to regenerate stubs')
 
+    # Compile the module once: the descriptor set both selects the service-bearing protos for the gRPC pass
+    # (a proto that declares no service — a data or options proto — gets no `_pb2_grpc.py`) and drives the
+    # agent-exposure surface below.
+    image = agent_exposed.build_image()
+    service_files = agent_exposed.service_files(image)
+
     with tempfile.TemporaryDirectory() as tmp:
         export = pathlib.Path(tmp)
         # Materialize the protos + buf.lock-pinned deps (buf/validate) for protoc's include path.
@@ -74,9 +80,12 @@ def main() -> int:
         print('schema/regen: python message + pyi stubs (all protos + used deps)')
         _protoc(export, protos, grpc=False)
 
-        services = [p for p in protos if p.startswith(_RPC_PREFIX)]
+        services = [p for p in protos if p in service_files]
         print('schema/regen: grpc stubs (service protos)')
         _protoc(export, services, grpc=True)
+
+    print('schema/regen: sandbox agent-exposure surface (hatch allowlist)')
+    agent_exposed.generate(image)
 
     print('schema/regen: protobuf-es stubs (apps/web)')
     es = ['buf', 'generate', '--template', 'apps/web/buf.gen.yaml', '--include-imports']

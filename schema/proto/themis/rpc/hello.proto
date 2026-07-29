@@ -4,6 +4,11 @@ syntax = "proto3";
 
 package themis.rpc.hello;
 
+import "themis/rpc/sandbox_options.proto";
+
+// Hello is reachable from the sandbox agent through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
+
 // The caller's note, echoed back in the greeting.
 message SayHelloRequest {
   string note = 1;

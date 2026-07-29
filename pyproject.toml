@@ -122,7 +122,7 @@ target-version = "py313"
 # `themis/workbench/models` are the generated proto/gRPC stubs; `buf` is the vendored
 # buf.validate stub (protovalidate options). The pre-commit ruff hooks pass
 # --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["themis/litcache/models", "themis/workbench/models", "themis/rpc", "buf"]
+extend-exclude = ["themis/litcache/models", "themis/workbench/models", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -254,6 +254,6 @@ include = ["tools", "tests", "schema/tests", "infra", "themis"]
 # output (dynamic message classes); the committed .pyi gives importers static types, but
 # the stubs themselves are not standard-mode clean, so exclude them from checking. Re-list
 # pyright's auto-excludes, which specifying `exclude` would otherwise drop.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "themis/workbench/models", "buf"]
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "themis/workbench/models", "themis/services/sandbox_worker/_generated.py", "buf"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"

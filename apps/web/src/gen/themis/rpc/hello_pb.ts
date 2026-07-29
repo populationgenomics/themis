@@ -7,13 +7,14 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_themis_rpc_sandbox_options } from "./sandbox_options_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/hello.proto.
  */
 export const file_themis_rpc_hello: GenFile = /*@__PURE__*/
-  fileDesc("ChZ0aGVtaXMvcnBjL2hlbGxvLnByb3RvEhB0aGVtaXMucnBjLmhlbGxvIh8KD1NheUhlbGxvUmVxdWVzdBIMCgRub3RlGAEgASgJIk0KEFNheUhlbGxvUmVzcG9uc2USEAoIZ3JlZXRpbmcYASABKAkSEgoKcHJvamVjdF9pZBgCIAEoCRITCgthbmFseXNpc19pZBgDIAEoCTJaCgVIZWxsbxJRCghTYXlIZWxsbxIhLnRoZW1pcy5ycGMuaGVsbG8uU2F5SGVsbG9SZXF1ZXN0GiIudGhlbWlzLnJwYy5oZWxsby5TYXlIZWxsb1Jlc3BvbnNlYgZwcm90bzM");
+  fileDesc("ChZ0aGVtaXMvcnBjL2hlbGxvLnByb3RvEhB0aGVtaXMucnBjLmhlbGxvIh8KD1NheUhlbGxvUmVxdWVzdBIMCgRub3RlGAEgASgJIk0KEFNheUhlbGxvUmVzcG9uc2USEAoIZ3JlZXRpbmcYASABKAkSEgoKcHJvamVjdF9pZBgCIAEoCRITCgthbmFseXNpc19pZBgDIAEoCTJaCgVIZWxsbxJRCghTYXlIZWxsbxIhLnRoZW1pcy5ycGMuaGVsbG8uU2F5SGVsbG9SZXF1ZXN0GiIudGhlbWlzLnJwYy5oZWxsby5TYXlIZWxsb1Jlc3BvbnNlQgSQtRgBYgZwcm90bzM", [file_themis_rpc_sandbox_options]);
 
 /**
  * The caller's note, echoed back in the greeting.

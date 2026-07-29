@@ -12,16 +12,13 @@ import grpc
 from postern import grpc as postern_grpc
 
 from themis.rpc import hello_pb2, hello_pb2_grpc
+from themis.services.sandbox_worker import _generated
 
 _SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
-_HELLO = 'themis.rpc.hello.Hello'
 
-# The only method the guest may reach: hello's connectivity check. The store is worker-only — the working
-# document and scratch are checkpointed/restored by the worker, never over the hatch — so the guest gets no
-# store method (a guest-facing store API, if ever wanted, must be designed scoped and size-capped).
-# TODO: generate GUEST_METHODS (and guest/services.py's stubs) from the proto so the allowlist matches the
-# exposed RPCs by construction rather than by hand.
-GUEST_METHODS = frozenset({f'/{_HELLO}/SayHello'})
+# The methods the guest may reach, generated from the `agent_exposed` proto option (sandbox-rpc-exposure.md):
+# whichever files carry it. store/auth carry no option, so the worker-only surface stays off the hatch.
+GUEST_METHODS = _generated.GUEST_METHODS
 
 
 class HelloForwarder(hello_pb2_grpc.HelloServicer):
