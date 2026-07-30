@@ -78,11 +78,11 @@ registered before a membership references it (FK).
 
 ## Operations
 
-- **End-to-end smoke** — with a seeded Project and membership (above), create one Analysis (BFF `POST /api/analyses`)
-  whose first `user.message` is the user prompt that drives both data-plane legs: a `hello` code-mode call plus a
-  `/workspace/document.md` write embedding the returned `greeting`, `analysis_id`, and `project_id`. A well-formed
-  document (one `#` title, non-empty) carrying the binding ids the session token resolved to is the proof signal that
-  the forward leg and working-document persistence both work.
+- **End-to-end smoke** — with a seeded Project and membership (above), create one Analysis (BFF
+  `POST /api/rpc/themis.workbench.rpc.Workbench/CreateAnalysis`) whose first `user.message` is the user prompt that
+  drives both data-plane legs: a `hello` code-mode call plus a `/workspace/document.md` write embedding the returned
+  `greeting`, `analysis_id`, and `project_id`. A well-formed document (one `#` title, non-empty) carrying the binding
+  ids the session token resolved to is the proof signal that the forward leg and working-document persistence both work.
 
 - **Queue-depth / liveness alert** — off `work.stats` (org API key, run from ops tooling, never a worker). `depth`
   growing while `workers_polling == 0` is the signature of a silently auto-disabled webhook endpoint (~20 consecutive

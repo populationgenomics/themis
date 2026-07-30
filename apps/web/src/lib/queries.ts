@@ -5,7 +5,7 @@ import {
   useMutation,
   useQuery,
 } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { workbench } from "@/lib/rpc";
 import type {
   Analysis,
   DocumentResponse,
@@ -13,8 +13,8 @@ import type {
   Project,
 } from "@/models/workbench";
 
-// TanStack Query wiring over the typed client (`@/lib/api`). The poll drives the
-// workbench: one ~2.5s tick returns the FULL projected event list each time
+// TanStack Query wiring over the generated Workbench client (`@/lib/rpc`). The poll drives
+// the workbench: one ~2.5s tick returns the FULL projected event list each time
 // (replace-by-id, never append), plus the working-document version signal. The
 // document refetches only when that version changes.
 
@@ -26,7 +26,7 @@ export function useProjects(): UseQueryResult<Project[]> {
   return useQuery({
     queryKey: ["projects"],
     queryFn: async () => {
-      const { projects } = await api.listProjects();
+      const { projects } = await workbench.listProjects({});
       return projects;
     },
   });
@@ -35,7 +35,7 @@ export function useProjects(): UseQueryResult<Project[]> {
 export function useCreateAnalysis() {
   return useMutation({
     mutationFn: (input: { prompt: string; projectId: string }) =>
-      api.createAnalysis(input),
+      workbench.createAnalysis(input),
   });
 }
 
@@ -54,7 +54,7 @@ export function useAnalyses(
       if (projectId === null) {
         throw new Error("useAnalyses query ran with a null project id");
       }
-      const { analyses } = await api.listAnalyses(projectId);
+      const { analyses } = await workbench.listAnalyses({ projectId });
       return analyses;
     },
     enabled: projectId !== null,
@@ -72,7 +72,7 @@ export function usePoll(id: string | null): UseQueryResult<PollResponse> {
       if (id === null) {
         throw new Error("usePoll query ran with a null analysis id");
       }
-      return api.pollAnalysis(id);
+      return workbench.poll({ analysisId: id });
     },
     enabled: id !== null,
     refetchInterval: POLL_INTERVAL_MS,
@@ -91,7 +91,7 @@ export function useDocument(
       if (id === null) {
         throw new Error("useDocument query ran with a null analysis id");
       }
-      return api.getDocument(id);
+      return workbench.getDocument({ analysisId: id });
     },
     enabled: id !== null && version !== null,
   });

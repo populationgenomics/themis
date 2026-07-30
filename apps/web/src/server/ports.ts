@@ -7,13 +7,13 @@ import type {
 
 // The server's ports — what an adapter implements. `AnalysisDataPlane` is the raw,
 // unauthorized persistence layer; `ProjectMembership` is the user↔Project mapping.
-// Routes reach neither directly: `AuthorizedBackend` (authorized-backend.ts) wraps
-// the pair, bound to the verified user, and `userContext` is its sole constructor —
-// so every access is membership-scoped by construction. See
+// RPC handlers reach neither directly: `AuthorizedBackend` (authorized-backend.ts)
+// wraps the pair, bound to the verified user, and `userContext` is its sole
+// constructor — so every access is membership-scoped by construction. See
 // docs/design/workspace-model.md (Authorization) and docs/design/security.md.
 //
-// The methods return protobuf-es view-model messages (constructed with `create`);
-// the routes serialize them with `toJson` and never reshape the payload.
+// The methods return protobuf-es view-model messages (constructed with `create`), which
+// Connect serializes as they are.
 
 export interface CreateAnalysisInput {
   prompt: string;
@@ -25,7 +25,7 @@ export interface CreateAnalysisInput {
 }
 
 /** Raw analysis persistence + retrieval, with NO authorization. Only the
- *  composition root and `AuthorizedBackend` hold one; routes never do. The live
+ *  composition root and `AuthorizedBackend` hold one; a handler never does. The live
  *  adapter composes SQL / Anthropic / KMS / GCS behind these methods. */
 export interface AnalysisDataPlane {
   /** Create the analysis and kick off its agent session: mint the id + session,

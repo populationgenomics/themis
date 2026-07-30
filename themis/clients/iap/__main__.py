@@ -5,7 +5,9 @@ browser consent, and immediately spends the result once, so a grant that cannot 
 caught now rather than on the next run. It reaches only Google — whether IAP admits the client is
 settled by the first real request. ``token`` prints a fresh ID token for an ad-hoc call:
 
-    curl -H "Authorization: Bearer $(python -m themis.clients.iap token)" https://HOST/api/projects
+    curl -H "Authorization: Bearer $(python -m themis.clients.iap token)" \
+         -H "content-type: application/json" -d '{}' \
+         https://HOST/api/rpc/themis.workbench.rpc.Workbench/ListProjects
 """
 
 from __future__ import annotations

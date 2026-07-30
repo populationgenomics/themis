@@ -86,17 +86,33 @@ class CreateAnalysisResponse(_message.Message):
     id: str
     def __init__(self, id: _Optional[str] = ...) -> None: ...
 
+class ListAnalysesRequest(_message.Message):
+    __slots__ = ("project_id",)
+    PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
+    project_id: str
+    def __init__(self, project_id: _Optional[str] = ...) -> None: ...
+
 class ListAnalysesResponse(_message.Message):
     __slots__ = ("analyses",)
     ANALYSES_FIELD_NUMBER: _ClassVar[int]
     analyses: _containers.RepeatedCompositeFieldContainer[Analysis]
     def __init__(self, analyses: _Optional[_Iterable[_Union[Analysis, _Mapping]]] = ...) -> None: ...
 
+class ListProjectsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
 class ListProjectsResponse(_message.Message):
     __slots__ = ("projects",)
     PROJECTS_FIELD_NUMBER: _ClassVar[int]
     projects: _containers.RepeatedCompositeFieldContainer[Project]
     def __init__(self, projects: _Optional[_Iterable[_Union[Project, _Mapping]]] = ...) -> None: ...
+
+class PollRequest(_message.Message):
+    __slots__ = ("analysis_id",)
+    ANALYSIS_ID_FIELD_NUMBER: _ClassVar[int]
+    analysis_id: str
+    def __init__(self, analysis_id: _Optional[str] = ...) -> None: ...
 
 class PollResponse(_message.Message):
     __slots__ = ("events", "working_document_version")
@@ -113,6 +129,14 @@ class WorkingDocument(_message.Message):
     version: int
     markdown: str
     def __init__(self, version: _Optional[int] = ..., markdown: _Optional[str] = ...) -> None: ...
+
+class DocumentRequest(_message.Message):
+    __slots__ = ("analysis_id", "version")
+    ANALYSIS_ID_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    analysis_id: str
+    version: int
+    def __init__(self, analysis_id: _Optional[str] = ..., version: _Optional[int] = ...) -> None: ...
 
 class DocumentResponse(_message.Message):
     __slots__ = ("document",)

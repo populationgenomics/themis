@@ -9,10 +9,11 @@ deps:
 lint:
   # BASIC (structural) + the two enum-canonical rules (UPPER_SNAKE prefixed values, a
   # *_UNSPECIFIED zero member) + PROTOVALIDATE. The package/directory rules are excepted:
-  # the RPC services co-locate distinct-package protos (themis.rpc.auth, .store, .hello) in
-  # themis/rpc/ because each package names a distinct gRPC service wire path that deployed
-  # clients bind — consolidating to one package, or splitting to one directory each, would
-  # break those wire paths or churn every import.
+  # the internal RPC services co-locate distinct-package protos (themis.rpc.auth, .store,
+  # .hello) in themis/rpc/ because each package names a distinct gRPC service wire path that
+  # deployed clients bind — consolidating to one package, or splitting to one directory each,
+  # would break those wire paths or churn every import. themis/workbench/models/ likewise
+  # carries a package the compat gate now pins in place.
   use:
     - BASIC
     - ENUM_VALUE_PREFIX

@@ -17,6 +17,7 @@ import {
   usePoll,
   useProjects,
 } from "@/lib/queries";
+import { errorMessage } from "@/lib/rpc";
 
 const ANALYSIS_PARAM = "analysis";
 
@@ -98,7 +99,7 @@ export function Workbench({ userEmail }: { userEmail: string }) {
             </div>
             {create.isError && (
               <p role="alert" className="text-[12.5px] text-error-text">
-                Could not create the analysis: {create.error.message}
+                Could not create the analysis: {errorMessage(create.error)}
               </p>
             )}
           </div>

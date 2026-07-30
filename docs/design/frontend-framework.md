@@ -60,7 +60,7 @@ Anthropic runs the agent loop; the web tier never holds a connection for the run
   returns the whole projected stream (the client replaces by id, never appends). The BFF holds the Anthropic API key and
   is the **authorization and projection point** — the browser never reaches Anthropic directly. Anthropic's log *is* the
   live transcript; the BFF relays it, it does not copy it.
-- **Steering** — occasional curator interjections are plain POSTs to the BFF that call `sessions.events.send`
+- **Steering** — occasional curator interjections are a Workbench method that calls `sessions.events.send`
   (`user.message` / `user.interrupt`). SSE/WebSocket push is deferred (Open questions).
 
 The poll-through fits the async, progressive-disclosure interaction model (PRODUCT §7): agent messages and thinking
@@ -98,14 +98,31 @@ no assertion. It is not an IAP exemption and grants no reachability: ingress is 
 `run.invoker` is held only by the IAP service agent. **This tier has no unauthenticated inbound surface** — an
 Anthropic-inbound delivery is the dispatcher's, a separate service. The asserted email is the identity for comment
 attribution and audit; roles, Project membership, and per-report authorization are app-DB, enforced by the BFF. The
-browser carries the IAP cookie on same-origin requests (including the polling fetch).
+browser carries the IAP cookie on same-origin requests, the RPC calls included. A refusal at the perimeter is a Connect
+error body, so the generated client reads it as one rather than as an error with no message.
 
 ### Data fetching
 
-- **Stored state** (projects, analyses, working-document versions, reports, projected trace, comments) — REST/JSON over
-  the BFF, types generated from the protos as protobuf-es ([`proto.md`](proto.md)), TanStack Query on the client. Not
-  GraphQL: a single first-party client does not earn it.
-- **Liveness** — polling, as above.
+- **Stored state** (projects, analyses, working-document versions, reports, projected trace, comments) — the **Workbench
+  Connect service** over the BFF, generated from the protos by protobuf-es ([`proto.md`](proto.md)), with TanStack Query
+  on the client. Not GraphQL: a single first-party client does not earn it.
+- **Liveness** — polling, as above. `Poll` is deliberately *not* `NO_SIDE_EFFECTS`, though a tick reads and nothing
+  more: the option binds every future implementation of the method and the compat gate freezes it, and what it buys — a
+  `GET` form, and the retry-freely licence an intermediary reads from it — has no caller here. The cache property it
+  used to guard is now unconditional (Caching, below).
+- **Where it is served** — one App Router catch-all (`app/api/rpc/[...connect]/`) over a small adapter around
+  `createFetchHandler` ([`proto.md`](proto.md), bucket 2). Hooks call the generated client; nothing calls `fetch`.
+- **Failures** — Connect codes, mapped from thrown errors by a router interceptor: an unrecognized one is logged
+  server-side and answered `internal` with a generic message, and a not-found never names the resource. Validation is
+  layered *outside* that mask, so a rejection describing the caller's own message reaches them with its field
+  violations, while everything raised inside it is server state and masked — a service the BFF called answering
+  `InvalidArgument` included, since a request the BFF built wrong is an internal fault. Interceptors wrap the method
+  call only, so the mount masks a second time: decoding, reply serialization, and timeout parsing fail outside the
+  chain, and Connect would otherwise answer those with the raw reason and no server-side log.
+- **Caching** — route handlers are uncached unless a `GET` opts in, and none does. Every RPC reply additionally carries
+  `Cache-Control: private, no-store`, so no shared cache — CDN or forward proxy — may store one: replies are per-caller,
+  and the IAP cookie that authenticates them is invisible to RFC 9111's `Authorization` rule, so a cache keyed on the
+  URL alone would cross curators.
 
 ### Component library
 
@@ -145,7 +162,5 @@ Cloud SQL.
   push; host where it suits (Cloud Run, or GCE/GKE).
 - **`events.list` incremental cursor** — a clean `since` / `starting_after` parameter vs.
   fetch-newest-and-dedupe-by-event-`id`; confirm against the Managed Agents API at build.
-- **BFF data-access shape** — RSC/server-actions reading Cloud SQL directly vs. explicit API routes with client
-  fetching; a within-Next.js tuning call, deferred to build.
 - **Editor choice** — ProseMirror vs. Lexical vs. Tiptap for the working document; resolved with the editable-artifact
   work.

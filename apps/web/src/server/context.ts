@@ -6,10 +6,10 @@ import type { AnalysisDataPlane, ProjectMembership } from "./ports";
 
 // The authenticated + authorized per-request context — the data-seam half of the
 // request-auth chokepoint (docs/design/security.md; proxy.ts is the perimeter half).
-// A route obtains its backend only through `userContext`, so it cannot reach the
+// A handler obtains its backend only through `userContext`, so it cannot reach the
 // data plane without the caller being verified (identity) and scoped to their
 // Projects (AuthorizedBackend). The raw data plane and membership are memoized here,
-// module-private and never exported, so there is no accessor a route could import to
+// module-private and never exported, so there is no accessor a handler could import to
 // go around the decorator.
 
 interface Composition {
@@ -47,16 +47,16 @@ export interface UserContext {
 }
 
 /** Verify the request's caller and return the authenticated, Project-scoped
- *  data-plane context. Throws UnauthenticatedError (mapped to 401 at the route
- *  boundary) when the request carries no verifiable identity. */
-export async function userContext(request: Request): Promise<UserContext> {
-  const userEmail = await getUserIdentity().assertedEmail(request.headers);
+ *  data-plane context. Throws UnauthenticatedError (mapped to `unauthenticated` by the
+ *  RPC error interceptor) when the request carries no verifiable identity. */
+export async function userContext(headers: Headers): Promise<UserContext> {
+  const userEmail = await getUserIdentity().assertedEmail(headers);
   const backend = new AuthorizedBackend(dataPlane(), membership(), userEmail);
   return { userEmail, backend };
 }
 
 /** The verified caller of the request being rendered. For server components, which
- *  reach the headers ambiently; a route handler holds a Request and uses
+ *  reach the headers ambiently; an RPC handler is handed the request headers and uses
  *  `userContext`. */
 export async function currentUserEmail(): Promise<string> {
   return getUserIdentity().assertedEmail(await headers());

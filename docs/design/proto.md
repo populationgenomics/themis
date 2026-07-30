@@ -17,22 +17,37 @@ compatibility, `buf export` feeds the generators — and codegen itself is local
 
 Serialized data falls into three buckets by *who owns the schema* and *who consumes it*:
 
-| Bucket                                                                        | Format                                               | Compat gate    | Owner    |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------- | -------------- | -------- |
-| Authored, internal machine-to-machine (at-rest artifacts + inter-service RPC) | **binary proto**                                     | `buf breaking` | us       |
-| Authored, browser-facing (browser↔BFF)                                        | **JSON**, typed by protobuf-es (`fromJson`/`toJson`) | —              | us       |
-| Externally-defined, ingested (raw upstream payloads we cache)                 | JSON, our model a documented **subset/view**         | read-side only | upstream |
+| Bucket                                                                        | Format                                       | Compat gate    | Owner    |
+| ----------------------------------------------------------------------------- | -------------------------------------------- | -------------- | -------- |
+| Authored, internal machine-to-machine (at-rest artifacts + inter-service RPC) | **binary proto**                             | `buf breaking` | us       |
+| Authored, browser-facing (browser↔BFF)                                        | **JSON**, over the Connect protocol          | `buf breaking` | us       |
+| Externally-defined, ingested (raw upstream payloads we cache)                 | JSON, our model a documented **subset/view** | read-side only | upstream |
 
 - **Bucket 1 — binary proto.** At-rest artifacts and inter-service RPC. Binary, not a name-keyed text projection
   (proto-JSON, pbtxt), for the read-modify-write property below. `buf breaking` gates it.
-- **Bucket 2 — browser↔BFF is JSON, typed by protobuf-es.** The browser and the BFF exchange `application/json` over the
-  normal `/api/...` route handlers (the BFF stays the JSON API surface). Both sides parse and serialize that JSON with
-  the **protobuf-es generated types + JSON codec** — `fromJson(Schema, …)` / `toJson(Schema, …)` derived from the
-  `.proto` — rather than hand-written types or Zod. The wire stays readable JSON (inspectable in the Network tab) while
-  the types come from the one `.proto` source: a drop-in replacement for Zod, on both ends. We deliberately **don't**
-  adopt gRPC-web / Connect (`connect-es`) — a binary RPC transport with typed service methods would take the API surface
-  away from the Next route handlers, not worth it here. Keeping HTTP+JSON also leaves the endpoints consumable by code
-  we don't control (e.g. WebMCP).
+
+- **Bucket 2 — browser↔BFF is JSON, over the Connect protocol.** The seam is an authored service
+  (`themis/workbench/rpc/workbench.proto`), served by the BFF's Connect handler and called by a generated client. The
+  wire stays `application/json`: a Connect unary call is `POST /api/rpc/{package}.{Service}/{Method}` whose body is the
+  bare proto3-JSON message, so it is readable in the Network tab and reachable with `curl` — the property that keeps the
+  surface consumable by code we don't control (e.g. WebMCP). A method declaring `idempotency_level = NO_SIDE_EFFECTS`
+  also answers a `GET` carrying the message in the query; a read may still decline the option, and one does
+  ([`frontend-framework.md`](frontend-framework.md) §Data fetching). The handler rejects a field the schema does not
+  declare (connect-es tolerates one by default): a misspelled `version` must not quietly read the current document.
+
+  Connect is not a second serialization: it is the *envelope* around the same protobuf-es types the browser and the BFF
+  already shared. What it removes is the hand-written part of that seam — per-endpoint fetch wrappers, a bespoke error
+  shape, and path/query parsing that arrived as unvalidated strings. Errors are Connect codes; request validation is a
+  protovalidate interceptor on the router rather than a call each handler remembers to make. The message shapes were
+  already under `buf breaking`; what the service adds is the *method set* — names, request/reply pairing, idempotency —
+  which was previously spelled only in route directories and gated by nothing.
+
+  The BFF's handler mounts at one App Router catch-all. Connect-ES's packaged adapters target Node `req`/`res` hosts
+  (`connect-next` is Pages-Router-only), but an App Router handler is already passed a fetch `Request`, which is what
+  Connect's universal layer speaks; the adapter is `createFetchHandler` from `@connectrpc/connect/protocol` plus a path
+  lookup. Those are public, semver-covered exports, and the fetch server path carries the project's own conformance
+  coverage.
+
 - **Bucket 3 — external JSON, tolerant subset.** Raw upstream payloads we cache (Crossref, Unpaywall): stored as the
   upstream's JSON, modelled only for the fields we read, tolerant of extras. Never round-tripped through a lossy typed
   write. See External data.
@@ -59,10 +74,13 @@ Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque
 
 ### Using a schema from TypeScript
 
-- Import the committed protobuf-es stubs under `apps/web/src/gen/` (`@bufbuild/protobuf`). Both the browser and the BFF
-  use the generated message types (a tagged union for each `oneof`) + the JSON codec (`fromJson`/`toJson`) at the
-  browser↔BFF seam — a typed, single-source replacement for hand-written types or Zod. The BFF additionally speaks
-  binary proto/gRPC to the internal services.
+- Import the committed protobuf-es stubs under `apps/web/src/gen/` (`@bufbuild/protobuf`) — the generated message types
+  (a tagged union for each `oneof`) and, for a service, its descriptor. Connect-ES v2 needs no second code generator:
+  `protoc-gen-es` emits the `GenService` descriptor that `createClient` and `router.service` both take, so
+  `buf.gen.yaml` is unchanged by adding a service.
+- The browser↔BFF seam is that descriptor on both ends: the BFF registers the implementation on its router, the browser
+  calls the generated client, and neither restates the wire contract. The BFF additionally speaks binary proto/gRPC to
+  the internal services.
 
 Consumers import committed generated code from their own tree; nothing depends on `buf` at build or run time — the
 generated-code-is-committed policy buys that.
@@ -71,7 +89,9 @@ generated-code-is-committed policy buys that.
 
 ```
 schema/proto/                     # hand-authored .proto — the source of truth
-  themis/rpc/                     # gRPC service contracts (auth, store, hello)
+  themis/rpc/                     # internal gRPC service contracts (auth, store, hello)
+  themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
+  themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
   themis/litcache/models/         # at-rest domain contracts (the manifest)
 buf.yaml                          # module, lint rules, buf breaking config, deps
 buf.lock                          # pinned buf deps (protovalidate)
@@ -180,7 +200,15 @@ The internal wire transport is gRPC (HTTP/2, binary protobuf). RPC shapes are au
 `schema/proto/themis/rpc/` protos and gated by the same `buf breaking`; [`services.md`](services.md) is the service
 pattern (the servicer base, the `themis.rpc.<domain>` stubs, the deploy). Rolling deploys keep several message
 generations in flight; additive-only evolution plus proto's tolerant readers keeps that skew safe. The BFF↔services leg
-is this same gRPC/proto; the browser↔BFF leg is JSON (Serialization posture, bucket 2).
+is this same gRPC/proto; the browser↔BFF leg is the Connect protocol as JSON (Serialization posture, bucket 2).
+
+The two legs differ because a browser cannot speak gRPC: it has no access to HTTP/2 trailers, which gRPC uses to carry
+final status. That is why the browser-facing service lives outside `themis/rpc/` — under
+`schema/proto/themis/workbench/rpc/`, its own package, so the surface a curator's browser reaches never shares a
+namespace with the ones only the sandbox and the internal services may. It is the one service proto with no Python
+implementation; the gRPC-stub pass selects on *declares a service*, so it emits a `_pb2_grpc.py` nothing imports. That
+is the same generate-uniformly, consume-selectively posture the TypeScript side already has (`apps/web/src/gen/` carries
+stubs for the internal protos the browser never calls), and it is preferred to teaching the generator an exception.
 
 ## Protos in Cloud SQL columns
 
@@ -235,6 +263,9 @@ descriptions. Generate any agent/skill doc from the contract (the `.proto`, or a
   browser↔BFF seam typed by the same protobuf-es JSON codec on both ends, no separate Zod schema — makes that agreement
   automatic, so the disciplines are unnecessary. Hand-authored `.proto` is then simpler and unlocks two things the
   TypeSpec emitter could not express: **protovalidate** options and real **`oneof`**.
+- **The seam is a declared service, not a set of routes.** Naming the browser↔BFF methods in the `.proto` is what lets
+  the envelope be generated rather than written: adding a method is a proto edit and an implementation, not a new route
+  directory plus a fetch wrapper plus an error mapping.
 - **Structural over validated.** A `oneof` makes an illegal sum-type state unrepresentable; the residual constraints are
   declarative protovalidate options, buf-lint-checked — not hand-written validators.
 - **Binary at rest for RMW safety** (above) — the one property a text projection cannot provide.

@@ -131,8 +131,14 @@ would name an environment the cache cannot honour.
 ### Per run
 
 ```bash
-curl -H "Authorization: Bearer $(uv run --group iap python -m themis.clients.iap token)" https://<hostname>/api/projects
+curl -H "Authorization: Bearer $(uv run --group iap python -m themis.clients.iap token)" \
+     -H "content-type: application/json" -d '{}' \
+     https://<hostname>/api/rpc/themis.workbench.rpc.Workbench/ListProjects
 ```
+
+The BFF's surface is Connect (`docs/design/proto.md`): one `POST` per method at `/api/rpc/{package}.{Service}/{Method}`,
+request and reply both proto3-JSON. The read methods declare `NO_SIDE_EFFECTS`, so a `GET` carrying its message in the
+query works too — `...?encoding=json&message=%7B%7D&connect=v1` — which is the shorter form for a browser address bar.
 
 Each invocation exchanges the refresh token for a fresh ID token. Because the allowlisted client is our own, the token
 Google issues already carries `aud = <our client id>` — the audience IAP wants — so there is no second client to swap

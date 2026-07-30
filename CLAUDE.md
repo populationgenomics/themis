@@ -82,7 +82,7 @@ design.
   one.
 - **A change to a rendered surface ships with screenshots** in the PR description — the surface before and after, or
   after alone when it is new. A reviewer cannot see layout, spacing, or state in a diff, and prose describing them is
-  unfalsifiable. `apps/web` runs offline against the fixture backend (`THEMIS_BACKEND` unset), so capturing one needs no
-  cloud access: build, start, drive the surface to the state under review, and screenshot it. GitHub hosts PR images
+  unfalsifiable. `apps/web` runs offline against the fixture backend (`THEMIS_BACKEND=fixture`), so capturing one needs
+  no cloud access: build, start, drive the surface to the state under review, and screenshot it. GitHub hosts PR images
   only through its web UI, so an agent captures the file and hands over the path for a human to attach. Say so
   explicitly when a change is not capturable — a state reachable only against real data, say.

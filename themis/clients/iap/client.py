@@ -89,7 +89,8 @@ class Client:
 
         Args:
             method: The HTTP method.
-            path: Path on the environment, e.g. ``/api/projects``.
+            path: Path on the environment, e.g.
+                ``/api/rpc/themis.workbench.rpc.Workbench/ListProjects``.
             json_body: Body to send as JSON, if any.
 
         Returns:

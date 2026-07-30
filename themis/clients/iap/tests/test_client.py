@@ -18,6 +18,13 @@ from themis.clients.iap.tests import fixture_app, fixture_token
 
 _BASE_URL = 'https://themis-dev.example.org'
 
+# The BFF's surface is the method-addressed Connect one. Reads declare NO_SIDE_EFFECTS and so
+# accept a Connect GET, which carries its request message in the query; writes are POSTs whose
+# body is the message. Spelled once here — the tests below are about the gates, not the paths.
+_LIST_PROJECTS = '/api/rpc/themis.workbench.rpc.Workbench/ListProjects?encoding=json&message=%7B%7D&connect=v1'
+_LIST_ANALYSES = '/api/rpc/themis.workbench.rpc.Workbench/ListAnalyses'
+_CREATE_ANALYSIS = '/api/rpc/themis.workbench.rpc.Workbench/CreateAnalysis'
+
 
 def _stored() -> credentials.StoredCredentials:
     return credentials.StoredCredentials(
@@ -39,17 +46,17 @@ def test_a_request_bears_the_minted_token_as_a_bearer_credential() -> None:
     token = fixture_token.unsigned_jwt()
     client, adapter = _client(200, transport=fixture_token.granting(token))
 
-    client.get('/api/projects')
+    client.get(_LIST_PROJECTS)
 
     (sent,) = adapter.calls
     assert sent.headers['Authorization'] == f'Bearer {token}'
-    assert sent.url == f'{_BASE_URL}/api/projects'
+    assert sent.url == f'{_BASE_URL}{_LIST_PROJECTS}'
 
 
 def test_a_post_carries_its_body_as_json() -> None:
     client, adapter = _client(201)
 
-    client.post('/api/analyses', {'projectId': 'p1', 'prompt': 'hello'})
+    client.post(_CREATE_ANALYSIS, {'projectId': 'p1', 'prompt': 'hello'})
 
     (sent,) = adapter.calls
     assert sent.headers['Content-Type'] == 'application/json'
@@ -62,7 +69,7 @@ def test_a_request_carries_a_timeout() -> None:
     # `requests` has no default; a smoke check that hangs is worse than one that fails.
     client, adapter = _client(200)
 
-    client.get('/api/projects')
+    client.get(_LIST_PROJECTS)
 
     assert adapter.timeouts == [pytest.approx(30.0)]
 
@@ -72,7 +79,7 @@ def test_a_relative_path_fails_loud() -> None:
     client, adapter = _client(200)
 
     with pytest.raises(ValueError, match='must start with'):
-        client.get('api/projects')
+        client.get(_LIST_PROJECTS.removeprefix('/'))
 
     assert adapter.calls == []
 
@@ -90,7 +97,7 @@ def test_a_sign_in_redirect_is_reported_as_a_refusal() -> None:
     client, _ = _client(302)
 
     with pytest.raises(iap_client.AccessRefusedError, match='redirect'):
-        client.get('/api/projects')
+        client.get(_LIST_PROJECTS)
 
 
 def test_a_permitted_response_is_returned_whatever_its_status() -> None:
@@ -98,7 +105,7 @@ def test_a_permitted_response_is_returned_whatever_its_status() -> None:
     # the caller's to read.
     client, _ = _client(500)
 
-    assert client.get('/api/projects').status_code == 500
+    assert client.get(_LIST_PROJECTS).status_code == 500
 
 
 def test_an_unadmitted_audience_names_the_consent_it_spent() -> None:
@@ -108,7 +115,7 @@ def test_an_unadmitted_audience_names_the_consent_it_spent() -> None:
     client, _ = _client(401, 'Invalid IAP credentials')
 
     with pytest.raises(iap_client.AccessRefusedError, match='iapProgrammaticClients') as refusal:
-        client.get('/api/projects')
+        client.get(_LIST_PROJECTS)
 
     assert fixture_token.CLIENT_ID in str(refusal.value)
     assert _BASE_URL in str(refusal.value)
@@ -118,7 +125,7 @@ def test_an_unadmitted_identity_points_at_the_access_group() -> None:
     client, _ = _client(403)
 
     with pytest.raises(iap_client.AccessRefusedError, match='access group'):
-        client.get('/api/projects')
+        client.get(_LIST_PROJECTS)
 
 
 def test_not_found_names_the_membership_row_it_may_really_mean() -> None:
@@ -127,7 +134,7 @@ def test_not_found_names_the_membership_row_it_may_really_mean() -> None:
     client, _ = _client(404)
 
     with pytest.raises(iap_client.NotProvisionedError, match='project_members'):
-        client.get('/api/analyses?project=p1')
+        client.post(_LIST_ANALYSES, {'projectId': 'p1'})
 
 
 @pytest.mark.parametrize(
@@ -139,7 +146,7 @@ def test_every_refusal_names_the_identity_that_was_refused(status: int, error: t
     client, _ = _client(status)
 
     with pytest.raises(error, match=fixture_token.EMAIL):
-        client.get('/api/projects')
+        client.get(_LIST_PROJECTS)
 
 
 def test_a_live_token_is_reused_across_requests() -> None:
@@ -148,8 +155,8 @@ def test_a_live_token_is_reused_across_requests() -> None:
     transport = fixture_token.granting(fixture_token.unsigned_jwt())
     client, _ = _client(200, transport=transport)
 
-    client.get('/api/projects')
-    client.get('/api/projects')
+    client.get(_LIST_PROJECTS)
+    client.get(_LIST_PROJECTS)
 
     assert len(transport.calls) == 1
 
@@ -159,8 +166,8 @@ def test_a_spent_token_is_replaced_before_the_next_request() -> None:
     transport = fixture_token.granting(fixture_token.unsigned_jwt(expires_in=1))
     client, _ = _client(200, transport=transport)
 
-    client.get('/api/projects')
-    client.get('/api/projects')
+    client.get(_LIST_PROJECTS)
+    client.get(_LIST_PROJECTS)
 
     assert len(transport.calls) == 2
 

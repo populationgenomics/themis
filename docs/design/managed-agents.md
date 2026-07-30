@@ -27,8 +27,8 @@ map: the order of the hops, and which doc decides each. It states no mechanism t
 1. **Observe** — the browser polls the BFF, which reads Anthropic's event log, authorizes the caller against Project
    membership, and projects it to the display model. → [`frontend-framework.md`](frontend-framework.md) §Session
    observation
-1. **Steer** — a curator interjection is a POST to the BFF that sends a `user.message` to the same session. →
-   [`frontend-framework.md`](frontend-framework.md)
+1. **Steer** — a curator interjection is a Workbench method on the BFF that sends a `user.message` to the same session.
+   → [`frontend-framework.md`](frontend-framework.md)
 1. **Session end** — Anthropic's delivery is HMAC-verified by the dispatcher, the only public non-IAP surface; the
    durable trace is materialized from one `events.list` read. → [`frontend-framework.md`](frontend-framework.md)
    §Durable trace

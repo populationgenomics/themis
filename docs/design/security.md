@@ -51,7 +51,8 @@ mechanically, not by convention. A per-call-site check guarded only by reviewer 
 
 - **Web request auth** — a proxy default-deny perimeter plus a shared, request-scoped accessor that re-verifies the IAP
   assertion at the data seam; `healthz` is the sole allowlisted exemption, reached directly by the Cloud Run probe
-  rather than through the load balancer. Owned by [`frontend-framework.md`](frontend-framework.md) §Auth. In flight.
+  rather than through the load balancer. The data-seam check is an interceptor on the RPC router, so it covers every
+  method by construction. Owned by [`frontend-framework.md`](frontend-framework.md) §Auth. In flight.
 - **Sandbox egress** — deny-by-default VPC egress plus a curated allowlist, and a binary allowlist in the sandbox image.
   Owned by [`spike-infrastructure.md`](spike-infrastructure.md).
 - **Cross-Project data** — default-deny sharing; case-level content never crosses Project boundaries implicitly. Owned

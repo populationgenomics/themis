@@ -13,12 +13,13 @@ and [`docs/design/agent-runtime.md`](../../docs/design/agent-runtime.md) for the
 
 ## Layout
 
-| Path                | Holds                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `src/app`           | App Router routes, root layout, page tree                                           |
-| `src/app/api`       | BFF route handlers (data API, webhook receiver, session relay — see the design doc) |
-| `src/components/ui` | shadcn/ui copy-in components                                                        |
-| `src/lib`           | Shared helpers (`cn`, …)                                                            |
+| Path                | Holds                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `src/app`           | App Router routes, root layout, page tree                                              |
+| `src/app/api`       | The BFF's inbound surface: the Connect data API under `rpc/`, plus the `healthz` probe |
+| `src/server/rpc`    | The Connect router: adapter, interceptors, and the Workbench implementation            |
+| `src/components/ui` | shadcn/ui copy-in components                                                           |
+| `src/lib`           | Shared helpers (`cn`, …)                                                               |
 
 ## Develop
 

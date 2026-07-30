@@ -1,0 +1,44 @@
+// The `workbench` service: the browser↔BFF contract (proto.md, serialization posture bucket 2).
+// The BFF's Connect handler serves it and the browser's generated client calls it, both over the
+// Connect protocol as proto3-JSON. Unlike the themis/rpc/ services this one has no Python
+// implementation — it is served by the web tier, in TypeScript.
+//
+// Message shapes live in the workbench models proto and are referenced fully-qualified from here;
+// this file adds only the service. The split is the models file's history, not a rule: its
+// request/reply envelopes predate this service and the compat gate forbids moving them.
+syntax = "proto3";
+
+package themis.workbench.rpc;
+
+import "themis/workbench/models/workbench.proto";
+
+// The workbench surface a curator reaches. Every method is scoped to the caller the BFF verified
+// from the request's IAP assertion, so no method takes a user identity: it is never the client's to
+// name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
+// distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+service Workbench {
+  // The Projects the caller belongs to — the app-bar's Project selector and the scope for
+  // create/list.
+  rpc ListProjects(themis.workbench.models.workbench.ListProjectsRequest) returns (themis.workbench.models.workbench.ListProjectsResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Create an Analysis in the named Project and kick off its run. Mints an id and a backend
+  // session, so it is not idempotent and must not be auto-retried by a caller.
+  rpc CreateAnalysis(themis.workbench.models.workbench.CreateAnalysisRequest) returns (themis.workbench.models.workbench.CreateAnalysisResponse);
+
+  // The Project's prior Analyses, newest first — what the session switcher browses.
+  rpc ListAnalyses(themis.workbench.models.workbench.ListAnalysesRequest) returns (themis.workbench.models.workbench.ListAnalysesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // One liveness tick: the whole projected event stream plus the working-document version signal.
+  // Not NO_SIDE_EFFECTS: the option binds every future implementation of this method and the compat
+  // gate freezes it, and the GET form it buys has no caller.
+  rpc Poll(themis.workbench.models.workbench.PollRequest) returns (themis.workbench.models.workbench.PollResponse);
+
+  // The current working document as a produced|not-produced result, or a named historical version.
+  rpc GetDocument(themis.workbench.models.workbench.DocumentRequest) returns (themis.workbench.models.workbench.DocumentResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}

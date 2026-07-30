@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { UnauthenticatedError } from "@/server/errors";
+import type { UserIdentity } from "@/server/identity";
 import { getUserIdentity } from "@/server/identity";
 
 // The container liveness probe carries no IAP credential.
@@ -15,19 +16,32 @@ function isPublic(pathname: string): boolean {
 // Request-auth perimeter (docs/design/security.md): every matched path except
 // PUBLIC_PATHS must present a verifiable IAP assertion. server/context.ts re-verifies
 // at the data seam and is the authoritative check.
-export async function proxy(request: NextRequest): Promise<NextResponse> {
+//
+// The refusal is a Connect error body — top-level `code`/`message`. The perimeter sits in
+// front of the RPC mount, so a refusal here has to parse as one: a shape the generated
+// client cannot read reaches a curator as an error with no message.
+export async function enforceRequestAuth(
+  request: NextRequest,
+  identity: UserIdentity,
+): Promise<NextResponse> {
   if (!isPublic(request.nextUrl.pathname)) {
     try {
-      await getUserIdentity().assertedEmail(request.headers);
+      await identity.assertedEmail(request.headers);
     } catch (error) {
       if (!(error instanceof UnauthenticatedError)) throw error;
       return NextResponse.json(
-        { error: { code: "unauthenticated", message: "unauthenticated" } },
+        { code: "unauthenticated", message: "unauthenticated" },
         { status: 401 },
       );
     }
   }
   return NextResponse.next();
+}
+
+// Next's entry point. It calls this with a second argument of its own, so the identity is
+// resolved here rather than taken as a parameter.
+export async function proxy(request: NextRequest): Promise<NextResponse> {
+  return enforceRequestAuth(request, getUserIdentity());
 }
 
 // Skips Next's own asset serving — a performance filter, not an auth exemption:
