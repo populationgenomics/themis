@@ -151,7 +151,15 @@ export function DropdownMenu({
           )}
         >
           {items.length === 0
-            ? emptyLabel
+            ? // A bare child of `role="menu"` carries no allowed role, so assistive tech skips it
+              // and an empty menu announces nothing at all. As a disabled item it is announced and
+              // arrow-reachable; `tabIndex={-1}` keeps focus managed by the menu, as for a real
+              // item, and with no handler activating it does nothing.
+              emptyLabel !== undefined && (
+                <div role="menuitem" aria-disabled="true" tabIndex={-1}>
+                  {emptyLabel}
+                </div>
+              )
             : items.map((item) => (
                 <MenuItemButton
                   key={item.key}

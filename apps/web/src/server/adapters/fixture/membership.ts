@@ -3,13 +3,19 @@ import { type Project, ProjectSchema } from "@/models/workbench";
 import type { ProjectMembership } from "../../ports";
 import { DEV_USER_EMAIL } from "./identity";
 
-const FIXTURE_PROJECT = { id: "proj_fixture", name: "Fixture Project" };
+// Two, so the offline path exercises a caller who has to choose between Projects
+// rather than one who lands on their only one. Ordered by name, as the SQL
+// membership returns them.
+const FIXTURE_PROJECTS = [
+  { id: "proj_fixture", name: "Fixture Project" },
+  { id: "proj_fixture_second", name: "Second Fixture Project" },
+];
 
 // Seeded user↔Project membership for the offline path: the dev user belongs to the
-// single seeded Project. An unrecognized user belongs to nothing — default-deny, not
-// a landing default.
+// seeded Projects. An unrecognized user belongs to nothing — default-deny, not a
+// landing default.
 const MEMBERSHIP = new Map<string, readonly { id: string; name: string }[]>([
-  [DEV_USER_EMAIL, [FIXTURE_PROJECT]],
+  [DEV_USER_EMAIL, FIXTURE_PROJECTS],
 ]);
 
 /** In-memory membership for the fixture path. */
