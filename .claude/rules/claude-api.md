@@ -13,5 +13,5 @@ These directories integrate with the Claude API / Managed Agents: the Python `an
 (`apps/web/src/server/adapters/real`), and the agent/environment YAML (`agents`).
 
 The SDK surface and the Managed Agents beta diverge from training data and deprecate quickly — model IDs, `thinking`
-config, and the `beta.sessions` / `beta.environments` shapes all change. Before writing or modifying code here, load the
-`claude-api` skill and verify against the installed SDK source rather than recalled patterns.
+config, and the `beta.sessions` / `beta.environments` shapes all change. Before writing or modifying code here, verify
+against the installed SDK source and the `claude-api` skill rather than recalled patterns.

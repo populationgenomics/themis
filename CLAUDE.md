@@ -20,6 +20,8 @@ Operating directives for Claude (and any agent) in this repo; they counteract de
   it and the trade-offs — don't just execute the ask.
 - **Investigate before producing.** Read the code and verify constraints first. Don't treat a training-pattern
   convention as load-bearing unchecked; don't speculate about what you can read.
+- **Look up Anthropic/Claude API facts; don't recall them.** Model ids, pricing, limits, SDK and API behavior come from
+  the `claude-api` skill — use it freely, but only inside a subagent: loading it costs ~300k tokens of context.
 - **Explain non-obvious changes first.** For a change whose rationale isn't self-evident, give the why before showing or
   applying the diff.
 - **Ask when unsure** rather than assume intent.
