@@ -39,7 +39,9 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
 # hello_pb2_grpc`), the code-mode `services` helper (shipped as `themis.agent.services` — the stable name
 # the agent's prompt imports), and the stdlib-only working-document linter. Only the hello stubs ship — the
 # store stubs would be an unused capability, since the guest reaches the store through no hatch method.
-COPY themis/rpc/hello_pb2.py themis/rpc/hello_pb2_grpc.py /usr/local/lib/python3.13/site-packages/themis/rpc/
+# `hello_pb2` imports `sandbox_options_pb2` at module load: hello.proto carries the `agent_exposed` option.
+COPY themis/rpc/hello_pb2.py themis/rpc/hello_pb2_grpc.py themis/rpc/sandbox_options_pb2.py \
+    /usr/local/lib/python3.13/site-packages/themis/rpc/
 COPY themis/document_linter /usr/local/lib/python3.13/site-packages/themis/document_linter
 COPY themis/services/sandbox_worker/guest/services.py /usr/local/lib/python3.13/site-packages/themis/agent/services.py
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
