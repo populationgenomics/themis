@@ -21,7 +21,6 @@ Only an XML body opens the OA branch.
 from __future__ import annotations
 
 import dataclasses
-import typing
 from collections.abc import Sequence
 
 import litfetch
@@ -47,6 +46,18 @@ _FREE_TO_READ_TOKENS = frozenset({'open-access', 'gold', 'green', 'hybrid', 'bro
 # authority's name (`unpaywall`, …); litcache collapses every authority to
 # `asserted`, the only non-artifact basis its schema models.
 _ARTIFACT_BASIS = 'artifact'
+
+# litfetch's OA-ladder source name -> the manifest `SourceKind`. The proto names mirror litfetch's
+# (europe_pmc -> SOURCE_KIND_EUROPE_PMC), but the map is explicit rather than derived by string-munging
+# the enum name: an unrecognised source is then a loud `OaSourceError`, never a silent map onto a
+# litcache-internal kind (SEED / UPLOAD) or a break when a name diverges upstream. A new litfetch source
+# is a deliberate line here.
+_SOURCE_KINDS: dict[str, litcache_pb2.SourceKind] = {
+    'pmc_oa_s3': litcache_pb2.SourceKind.SOURCE_KIND_PMC_OA_S3,
+    'europe_pmc': litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC,
+    'elsevier_oa': litcache_pb2.SourceKind.SOURCE_KIND_ELSEVIER_OA,
+    'biorxiv': litcache_pb2.SourceKind.SOURCE_KIND_BIORXIV,
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,6 +132,17 @@ def _access(meta: artifacts.SourceMetadata) -> litcache_pb2.Access:
     return litcache_pb2.Access(unknown=litcache_pb2.UnknownAccess())
 
 
+class OaSourceError(Exception):
+    """A served OA body is a real anomaly, not a silently-degraded paper.
+
+    Raised for the two documented cases — an unknown source kind, or no access terms — so callers can
+    tell this permanent-for-this-paper failure apart from a `ValueError` litfetch's own dependencies
+    may raise incidentally on a transient upstream blip (a truncated JSON body decodes as a
+    `json.JSONDecodeError`, itself a `ValueError`). The producer treats this as permanent; a bare
+    `ValueError` it lets propagate to be retried.
+    """
+
+
 def from_source_metadata(meta: artifacts.SourceMetadata) -> AccessTerms:
     """Map litfetch source metadata to a source's licence / basis / access.
 
@@ -133,13 +155,13 @@ def from_source_metadata(meta: artifacts.SourceMetadata) -> AccessTerms:
         The `AccessTerms` to store on the source.
 
     Raises:
-        ValueError: If `meta` is empty (no basis): litfetch resolved no access
+        OaSourceError: If `meta` is empty (no basis): litfetch resolved no access
             terms, so there is nothing to map. The fully-unresolved case — no
             licence, no basis, and no publisher for the `licensed` variant — is
             bibliographic resolution's to decide, not a value this mapper invents.
     """
     if meta.basis is None:
-        raise ValueError('litfetch returned no access terms (empty SourceMetadata): nothing to map')
+        raise OaSourceError('litfetch returned no access terms (empty SourceMetadata): nothing to map')
     return AccessTerms(
         licence=meta.licence or '',
         licence_basis=_licence_basis(meta.basis),
@@ -256,9 +278,10 @@ async def fetch_oa_source(
         obtainable, else `None`.
 
     Raises:
-        ValueError: If the served body's source is not a known `SourceKind`, or
+        OaSourceError: If the served body's source is not a known `SourceKind`, or
             litfetch read no access terms from an XML body it served off its OA
-            ladder (both are real anomalies, not silently degraded papers).
+            ladder (both are real anomalies, not silently degraded papers). A
+            transient upstream failure surfaces as litfetch's own error, not this.
     """
     fetch_body = session.fetch_body if session is not None else litfetch.fetch_body
     blob = await fetch_body(
@@ -268,13 +291,12 @@ async def fetch_oa_source(
     )
     if blob is None or blob.file.media_type not in _XML_MEDIA_TYPES:
         return None
+    kind = _SOURCE_KINDS.get(blob.file.source)
+    if kind is None:
+        raise OaSourceError(f'litfetch served an unknown source kind {blob.file.source!r}')
     return OaSource(
         content=blob.content,
-        # litfetch's source name is the SourceKind value sans the SOURCE_KIND_ prefix
-        # (e.g. `europe_pmc` -> SOURCE_KIND_EUROPE_PMC); Value raises on an unknown source.
-        kind=typing.cast(
-            'litcache_pb2.SourceKind', litcache_pb2.SourceKind.Value(f'SOURCE_KIND_{blob.file.source.upper()}')
-        ),
+        kind=kind,
         access=from_source_metadata(source_metadata.extract_source_metadata(blob)),
         origin_url=blob.file.uri,
     )

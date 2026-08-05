@@ -26,6 +26,13 @@ GCS upload is atomic), so a re-put is a no-op. `write_paper` skips a paper whose
 manifest already exists; that manifest is the resumability checkpoint, not the
 crosswalk row. The commit itself is create-only (`if_generation_match=0`), so if two
 workers race past the skip check the first to commit wins and the loser adopts it.
+
+`add_rendering` and `add_source_and_rendering` are the paths that mutate a
+committed paper. Both use a generation-matched read-modify-write, so a concurrent
+writer is detected and retried rather than clobbered: `add_rendering` adds a
+`Rendering` against a source already in the manifest (the PDF-convert case);
+`add_source_and_rendering` adds a new `Source` and its `Rendering` together (the
+OA-fetch case, where the fetched XML is a source the paper lacked).
 """
 
 from __future__ import annotations
@@ -71,6 +78,21 @@ def manifest_path(doc_id: str) -> str:
     expensive conversion work `write_paper` would redo.
     """
     return posixpath.join(_PAPERS_PREFIX, doc_id, _MANIFEST_NAME)
+
+
+def source_revision_path(doc_id: str, handle: str, revision_hash: str, media_type: litcache_pb2.SourceFormat) -> str:
+    """The GCS key for a source revision's content-addressed bytes.
+
+    The read-side counterpart to `_write_source`'s placement: a caller resolves a
+    manifest's `Source.handle` + `Revision.hash` to the object to download.
+
+    Raises:
+        ValueError: If `media_type` has no known on-disk extension.
+    """
+    ext = _SOURCE_EXTENSIONS.get(media_type)
+    if ext is None:
+        raise ValueError(f'source {handle!r} has unknown media type {media_type!r}')
+    return posixpath.join(_PAPERS_PREFIX, doc_id, _SOURCES_DIR, handle, f'{revision_hash}.{ext}')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,6 +195,21 @@ class PaperInput:
 
 
 @dataclasses.dataclass(frozen=True)
+class AddRenderingResult:
+    """The outcome of `add_rendering`.
+
+    Attributes:
+        hash: The rendering's markdown content hash — its `Manifest.renderings` key
+            and the `renderings/{hash}.md` blob name.
+        added: True when this call added the rendering; False when a rendering with
+            that hash was already present (an idempotent no-op).
+    """
+
+    hash: str
+    added: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class WriteResult:
     """The outcome of `write_paper`.
 
@@ -246,6 +283,185 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
     return WriteResult(manifest=manifest, written=True)
 
 
+_MANIFEST_RMW_ATTEMPTS = 5
+
+
+class ConcurrentWriteError(Exception):
+    """A manifest RMW lost its generation race `_MANIFEST_RMW_ATTEMPTS` times — **retryable**.
+
+    Distinct from the `ValueError` these functions raise for a malformed rendering, which is a
+    permanent programming error: a caller (the convert worker) retries this but not that.
+    """
+
+
+def add_rendering(bucket: gcs.Bucket, doc_id: str, rendering: RenderingInput) -> AddRenderingResult:
+    """Add a rendering to an existing paper via a generation-matched manifest RMW.
+
+    Writes the markdown blob (content-addressed, so idempotent and safe before the
+    manifest), then reads the manifest at its current generation, adds the
+    `Rendering` keyed by the markdown hash, and rewrites the manifest with
+    `if_generation_match`. A concurrent writer (another conversion of the same
+    paper, or an ingestion re-commit) invalidates the generation; the read-modify-
+    write retries against the new manifest. Idempotent: a rendering whose hash is
+    already present is a no-op, so a re-delivered conversion re-adds nothing.
+
+    Args:
+        bucket: The cache bucket holding the paper.
+        doc_id: The paper whose manifest gains the rendering.
+        rendering: The `Rendering` record plus its markdown (and optional docling
+            json). `from_source`/`from_revision` are validated against the
+            manifest's own sources.
+
+    Returns:
+        An `AddRenderingResult`: the rendering hash and whether it was newly added.
+
+    Raises:
+        google.api_core.exceptions.NotFound: If the paper's manifest is absent.
+        ValueError: If the rendering names no source/revision present in the
+            manifest, or its `model`/converter are inconsistent (a permanent
+            programming error — do not retry).
+        ConcurrentWriteError: If the RMW lost its generation race the whole retry
+            budget (contention — retryable).
+    """
+    paper_dir = posixpath.join(_PAPERS_PREFIX, doc_id)
+    markdown_bytes = rendering.markdown.encode('utf-8')
+    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
+    key = posixpath.splitext(posixpath.basename(name))[0]
+    if rendering.docling_json is not None:
+        docling_name = posixpath.join(paper_dir, _RENDERINGS_DIR, f'{key}.docling.json')
+        bucket.blob(docling_name).upload_from_string(rendering.docling_json)
+
+    manifest_blob = bucket.blob(manifest_path(doc_id))
+    for _ in range(_MANIFEST_RMW_ATTEMPTS):
+        manifest_blob.reload()  # NotFound when the paper does not exist; sets .generation
+        generation = manifest_blob.generation
+        try:
+            manifest_bytes = manifest_blob.download_as_bytes(if_generation_match=generation)
+        except api_exceptions.PreconditionFailed:
+            continue  # a concurrent writer bumped the generation between reload and read; re-read
+        manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
+        if key in manifest.renderings:
+            return AddRenderingResult(hash=key, added=False)
+        revision_hashes = {s.handle: {rev.hash for rev in s.revisions} for s in manifest.sources}
+        _validate_rendering(rendering.rendering, revision_hashes)
+        manifest.renderings[key].CopyFrom(rendering.rendering)
+        try:
+            manifest_blob.upload_from_string(manifest.SerializeToString(), if_generation_match=generation)
+        except api_exceptions.PreconditionFailed:
+            continue  # a concurrent writer bumped the generation; re-read and retry
+        return AddRenderingResult(hash=key, added=True)
+    raise ConcurrentWriteError(f'manifest RMW for {doc_id} did not converge in {_MANIFEST_RMW_ATTEMPTS} attempts')
+
+
+def add_source_and_rendering(
+    bucket: gcs.Bucket, doc_id: str, source: SourceInput, rendering: RenderingInput
+) -> AddRenderingResult:
+    """Add a new source and its rendering to an existing paper via a manifest RMW.
+
+    The OA-fetch write-back: the fetch produced an XML source the paper lacked, so
+    both the `Source` and the `Rendering` derived from it must land in one
+    generation-matched read-modify-write. Writes the content-addressed source and
+    markdown blobs first (idempotent, safe before the manifest), then reads the
+    manifest at its current generation, merges the source into `manifest.sources`,
+    adds the `Rendering` keyed by the markdown hash, and rewrites with
+    `if_generation_match`; a concurrent writer invalidates the generation and the
+    read-modify-write retries.
+
+    The source merge is by `handle`: an absent lineage is appended whole; a present
+    one gains the revision only if its hash is new. Idempotent throughout — a
+    re-delivered fetch re-adds no source, revision, or rendering.
+
+    Args:
+        bucket: The cache bucket holding the paper.
+        doc_id: The paper whose manifest gains the source and rendering.
+        source: The new source lineage plus its single revision's bytes.
+        rendering: The `Rendering` record plus its markdown. `from_source`/
+            `from_revision` are validated against the post-merge manifest sources,
+            so they must name `source` (or a source already present).
+
+    Returns:
+        An `AddRenderingResult`: the rendering hash and whether it was newly added.
+
+    Raises:
+        google.api_core.exceptions.NotFound: If the paper's manifest is absent.
+        ValueError: If the rendering names no source/revision present after the
+            merge, its `model`/converter are inconsistent, or an incoming lineage's
+            media_type disagrees with the manifest's (permanent — do not retry).
+        ConcurrentWriteError: If the RMW lost its generation race the whole retry
+            budget (contention — retryable).
+    """
+    paper_dir = posixpath.join(_PAPERS_PREFIX, doc_id)
+    source_proto = _write_source(bucket, paper_dir, source)
+    markdown_bytes = rendering.markdown.encode('utf-8')
+    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
+    key = posixpath.splitext(posixpath.basename(name))[0]
+    if rendering.docling_json is not None:
+        docling_name = posixpath.join(paper_dir, _RENDERINGS_DIR, f'{key}.docling.json')
+        bucket.blob(docling_name).upload_from_string(rendering.docling_json)
+
+    manifest_blob = bucket.blob(manifest_path(doc_id))
+    for _ in range(_MANIFEST_RMW_ATTEMPTS):
+        manifest_blob.reload()  # NotFound when the paper does not exist; sets .generation
+        generation = manifest_blob.generation
+        try:
+            manifest_bytes = manifest_blob.download_as_bytes(if_generation_match=generation)
+        except api_exceptions.PreconditionFailed:
+            continue  # a concurrent writer bumped the generation between reload and read; re-read
+        manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
+        source_changed = _merge_source(manifest, source_proto)
+        rendering_present = key in manifest.renderings
+        if not source_changed and rendering_present:
+            return AddRenderingResult(hash=key, added=False)
+        if not rendering_present:
+            revision_hashes = {s.handle: {rev.hash for rev in s.revisions} for s in manifest.sources}
+            _validate_rendering(rendering.rendering, revision_hashes)
+            manifest.renderings[key].CopyFrom(rendering.rendering)
+        try:
+            manifest_blob.upload_from_string(manifest.SerializeToString(), if_generation_match=generation)
+        except api_exceptions.PreconditionFailed:
+            continue  # a concurrent writer bumped the generation; re-read and retry
+        return AddRenderingResult(hash=key, added=not rendering_present)
+    raise ConcurrentWriteError(f'manifest RMW for {doc_id} did not converge in {_MANIFEST_RMW_ATTEMPTS} attempts')
+
+
+def _merge_source(manifest: litcache_pb2.Manifest, source: litcache_pb2.Source) -> bool:
+    """Merge `source` into `manifest.sources` by handle; return whether it changed anything.
+
+    An absent lineage is appended whole; a present one gains only the revisions whose
+    hash it lacks. Lineage-level fields (media_type, licence, access) are stable across
+    a lineage's revisions, so a present lineage keeps its own and only the revisions merge.
+    """
+    existing = next((s for s in manifest.sources if s.handle == source.handle), None)
+    if existing is None:
+        manifest.sources.append(source)
+        return True
+    # The revision blob's path extension derives from media_type (`_write_source`), so a handle whose
+    # media_type disagrees with the manifest's would advertise a revision under one extension with the
+    # bytes at another — a dangling reference discovered only at read time. Fail loud instead.
+    if existing.media_type != source.media_type:
+        raise ValueError(
+            f'source lineage {source.handle!r} is {existing.media_type!r} in the manifest, not {source.media_type!r}'
+        )
+    present = {rev.hash for rev in existing.revisions}
+    changed = False
+    for revision in source.revisions:
+        if revision.hash not in present:
+            existing.revisions.append(revision)
+            present.add(revision.hash)
+            changed = True
+    return changed
+
+
+def _validate_rendering(r: litcache_pb2.Rendering, revision_hashes: dict[str, set[str]]) -> None:
+    if r.from_source not in revision_hashes:
+        raise ValueError(f'rendering from_source {r.from_source!r} names no source')
+    if r.from_revision not in revision_hashes[r.from_source]:
+        raise ValueError(f'rendering from_revision {r.from_revision!r} names no revision of source {r.from_source!r}')
+    # model identifies the LLM iff the converter is model-driven (llm-ocr).
+    if (r.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR) != r.HasField('model'):
+        raise ValueError(f'rendering converter {r.converter!r} and model presence are inconsistent')
+
+
 def _write_source(bucket: gcs.Bucket, paper_dir: str, src: SourceInput) -> litcache_pb2.Source:
     ext = _SOURCE_EXTENSIONS.get(src.media_type)
     if ext is None:
@@ -279,16 +495,7 @@ def _write_renderings(
     renderings: dict[str, litcache_pb2.Rendering] = {}
     for rin in rins:
         r = rin.rendering
-        if r.from_source not in revision_hashes:
-            raise ValueError(f'rendering from_source {r.from_source!r} names no source')
-        if r.from_revision not in revision_hashes[r.from_source]:
-            raise ValueError(
-                f'rendering from_revision {r.from_revision!r} names no revision of source {r.from_source!r}'
-            )
-        # model identifies the LLM iff the converter is model-driven (llm-ocr).
-        if (r.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR) != r.HasField('model'):
-            raise ValueError(f'rendering converter {r.converter!r} and model presence are inconsistent')
-
+        _validate_rendering(r, revision_hashes)
         markdown_bytes = rin.markdown.encode('utf-8')
         name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
         key = posixpath.splitext(posixpath.basename(name))[0]

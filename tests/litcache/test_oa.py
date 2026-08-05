@@ -87,6 +87,15 @@ def test_empty_ladder_closes_oa_branch() -> None:
     assert asyncio.run(oa.fetch_oa_source(_ARTICLE, fetchers=[])) is None
 
 
+def test_unknown_source_kind_fails_loud() -> None:
+    # litfetch serving an XML body under a source name with no SOURCE_KIND_ mapping is a real anomaly:
+    # fetch_oa_source retypes the SourceKind.Value ValueError as OaSourceError so the producer treats it
+    # as permanent, not as a transient ValueError to retry forever.
+    xml = b'<article><body>Full text.</body></article>'
+    with pytest.raises(oa.OaSourceError, match='unknown source kind'):
+        _fetch(_BodyFetcher(_body_blob(artifacts.JATS_XML, xml, source='not_a_real_source')))
+
+
 class _SuppSource:
     """A FileSource serving in-memory files, bypassing the network."""
 
@@ -219,7 +228,7 @@ def test_unrecognised_access_token_is_unknown() -> None:
 
 
 def test_empty_source_metadata_fails_loud() -> None:
-    with pytest.raises(ValueError, match='no access terms'):
+    with pytest.raises(oa.OaSourceError, match='no access terms'):
         oa.from_source_metadata(artifacts.SourceMetadata())
 
 

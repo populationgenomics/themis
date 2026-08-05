@@ -13,6 +13,7 @@ import hashlib
 import posixpath
 
 import pytest
+from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
@@ -28,6 +29,8 @@ _PDF_BYTES = b'%PDF-1.7 fake pdf bytes'
 _PDF_HASH = hashlib.sha256(_PDF_BYTES).hexdigest()
 _MARKDOWN = '# Title\n\nBody.\n'
 _MARKDOWN_HASH = hashlib.sha256(_MARKDOWN.encode('utf-8')).hexdigest()
+_XML_BYTES = b'<article><body>Full text.</body></article>'
+_XML_HASH = hashlib.sha256(_XML_BYTES).hexdigest()
 
 
 def _metadata(pmid: str = '29089047') -> bytes:
@@ -51,6 +54,26 @@ def _source(data: bytes = _PDF_BYTES, *, handle: str = 'pdf', has_text_layer: bo
         access=_access(),
         captured_at=_CAPTURED_AT,
         has_text_layer=has_text_layer,
+    )
+
+
+def _xml_source(data: bytes = _XML_BYTES, *, handle: str = 'xml') -> writer.SourceInput:
+    return writer.SourceInput(
+        handle=handle,
+        media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML,
+        kind=litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC,
+        data=data,
+        licence='https://creativecommons.org/licenses/by/4.0/',
+        licence_basis=litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT,
+        access=_access(),
+        captured_at=_CAPTURED_AT,
+        origin_url='https://europepmc.org/full-text.xml',
+    )
+
+
+def _xml_rendering(from_revision: str = _XML_HASH) -> litcache_pb2.Rendering:
+    return _rendering(
+        from_source='xml', from_revision=from_revision, converter=litcache_pb2.Converter.CONVERTER_LITDOWN
     )
 
 
@@ -323,3 +346,170 @@ def test_metadata_is_written_verbatim(gcs_bucket: gcs.Bucket) -> None:
     metadata = _metadata(pmid='12345678')
     writer.write_paper(gcs_bucket, _paper(metadata=metadata))
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, 'metadata.pb')) == metadata
+
+
+_MD2 = '# Title\n\nA second rendering.\n'
+_MD2_HASH = hashlib.sha256(_MD2.encode('utf-8')).hexdigest()
+
+
+def _load_manifest(bucket: gcs.Bucket, doc_id: str = _DOC_ID) -> litcache_pb2.Manifest:
+    return litcache_pb2.Manifest.FromString(_read(bucket, writer.manifest_path(doc_id)))
+
+
+def test_add_rendering_appends_to_an_existing_manifest(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
+    manifest = _load_manifest(gcs_bucket)
+    # The original rendering survives; the new one is added, keyed by its markdown hash.
+    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'renderings/{_MD2_HASH}.md')) == _MD2.encode('utf-8')
+
+
+def test_add_rendering_is_idempotent_on_a_repeated_hash(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    # Re-adding the rendering the paper already carries (same markdown) is a no-op.
+    result = writer.add_rendering(
+        gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN)
+    )
+    assert result == writer.AddRenderingResult(hash=_MARKDOWN_HASH, added=False)
+    assert set(_load_manifest(gcs_bucket).renderings) == {_MARKDOWN_HASH}
+
+
+def test_add_rendering_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(api_exceptions.NotFound):
+        writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+
+
+def test_add_rendering_naming_no_source_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    with pytest.raises(ValueError, match='names no source'):
+        writer.add_rendering(
+            gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(from_source='xml'), markdown=_MD2)
+        )
+
+
+def test_add_source_and_rendering_adds_a_new_lineage_and_rendering(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    result = writer.add_source_and_rendering(
+        gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
+    )
+    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
+    manifest = _load_manifest(gcs_bucket)
+    # The seed pdf lineage survives; the fetched xml lineage is added alongside it.
+    assert {s.handle for s in manifest.sources} == {'pdf', 'xml'}
+    xml = next(s for s in manifest.sources if s.handle == 'xml')
+    assert [r.hash for r in xml.revisions] == [_XML_HASH]
+    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'sources/xml/{_XML_HASH}.xml')) == _XML_BYTES
+    assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'renderings/{_MD2_HASH}.md')) == _MD2.encode('utf-8')
+
+
+def test_add_source_and_rendering_is_idempotent_on_re_add(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    rendering = writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
+    first = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
+    second = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
+    assert first.added is True
+    assert second == writer.AddRenderingResult(hash=_MD2_HASH, added=False)
+    manifest = _load_manifest(gcs_bucket)
+    xml = next(s for s in manifest.sources if s.handle == 'xml')
+    # A re-delivery duplicates neither the source revision nor the rendering.
+    assert [r.hash for r in xml.revisions] == [_XML_HASH]
+    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+
+
+def test_add_source_and_rendering_appends_a_revision_to_an_existing_lineage(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    writer.add_source_and_rendering(
+        gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
+    )
+    xml2 = b'<article><body>Revised full text.</body></article>'
+    xml2_hash = hashlib.sha256(xml2).hexdigest()
+    md3 = '# Title\n\nRevised body.\n'
+    md3_hash = hashlib.sha256(md3.encode('utf-8')).hexdigest()
+    result = writer.add_source_and_rendering(
+        gcs_bucket,
+        _DOC_ID,
+        _xml_source(data=xml2),
+        writer.RenderingInput(rendering=_xml_rendering(from_revision=xml2_hash), markdown=md3),
+    )
+    assert result == writer.AddRenderingResult(hash=md3_hash, added=True)
+    manifest = _load_manifest(gcs_bucket)
+    xmls = [s for s in manifest.sources if s.handle == 'xml']
+    # A second capture of the same lineage appends a revision — it does not fork a new source.
+    assert len(xmls) == 1
+    assert [r.hash for r in xmls[0].revisions] == [_XML_HASH, xml2_hash]
+    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH, md3_hash}
+
+
+def test_add_source_and_rendering_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(api_exceptions.NotFound):
+        writer.add_source_and_rendering(
+            gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
+        )
+
+
+def test_add_source_and_rendering_with_a_mismatched_revision_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    with pytest.raises(ValueError, match='names no revision'):
+        writer.add_source_and_rendering(
+            gcs_bucket,
+            _DOC_ID,
+            _xml_source(),
+            writer.RenderingInput(rendering=_xml_rendering(from_revision='deadbeef'), markdown=_MD2),
+        )
+
+
+def test_add_rendering_retries_and_keeps_a_concurrent_rendering(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The load-bearing CAS claim: a rendering a concurrent writer commits between this RMW's read and
+    # write is not clobbered. Fire one competing add_rendering during the first reload so the ensuing
+    # generation-matched read then conflicts; the loop must re-read and both renderings must survive.
+    writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    original_reload = gcs.Blob.reload
+    fired: list[int] = []
+
+    def racing_reload(self: gcs.Blob) -> None:
+        original_reload(self)
+        if self.name and self.name.endswith('manifest.pb') and not fired:
+            fired.append(1)
+            writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+
+    monkeypatch.setattr(gcs.Blob, 'reload', racing_reload)
+    result = writer.add_rendering(
+        gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN)
+    )
+
+    assert result.added is True
+    assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).renderings)  # neither is lost
+
+
+def test_add_rendering_raises_when_the_rmw_never_converges(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every generation-matched read conflicts → the RMW exhausts its budget and fails loud rather than
+    # silently dropping the rendering (exercises the retry-guarded read for the reload/read race).
+    writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    original_download = gcs.Blob.download_as_bytes
+
+    def always_conflict(self: gcs.Blob, **kwargs: object) -> bytes:
+        if 'if_generation_match' in kwargs:  # the RMW's generation-matched read — the only one here
+            raise api_exceptions.PreconditionFailed('a concurrent writer keeps winning')
+        return original_download(self)
+
+    monkeypatch.setattr(gcs.Blob, 'download_as_bytes', always_conflict)
+    with pytest.raises(writer.ConcurrentWriteError, match='did not converge'):
+        writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+
+
+def test_merge_source_rejects_a_media_type_mismatch() -> None:
+    # A handle whose media_type disagrees with the manifest's would dangle the revision blob (its path
+    # extension is media_type-derived), so the merge fails loud rather than committing a bad reference.
+    manifest = litcache_pb2.Manifest(
+        sources=[litcache_pb2.Source(handle='doc', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)]
+    )
+    incoming = litcache_pb2.Source(handle='doc', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML)
+    with pytest.raises(ValueError, match='in the manifest'):
+        writer._merge_source(manifest, incoming)
