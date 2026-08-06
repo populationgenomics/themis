@@ -274,6 +274,11 @@
   html {
     @apply font-sans;
   }
+  /* The citation-quote highlight painted by the CSS Custom Highlight API (highlight.ts registers
+     ranges under this name). Absent the rule, registration succeeds but nothing is drawn. */
+  ::highlight(themis-citation) {
+    background-color: var(--color-mark);
+  }
 }
 
 /* Keyframes. Defined at top level so they are referenceable by
