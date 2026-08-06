@@ -12,7 +12,7 @@ time). The BFF has no Direct VPC egress (it reaches GCS / Cloud SQL / Anthropic 
 services VPC), so an internal-ingress service would be unreachable from it.
 Ingress is therefore `ALL` gated by IAM, with no `run.invoker` binding yet: the BFF that calls it is
 not wired in this component. Its `run.invoker` (audience = this service's URL) and its object-viewer on
-the fulltext bucket — the BFF streams the resolved object itself — attach with the BFF. Until then the
+the fulltext bucket — the BFF reads/serves the resolved object — attach with the BFF. Until then the
 URL is resolvable but every request is refused, Cloud Run's default-deny with no invoker member.
 """
 

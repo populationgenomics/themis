@@ -5,8 +5,8 @@
 // source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the server
 // subclasses the servicer base, a caller uses the stub.
 //
-// Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and streams
-// the named bytes itself; the sandbox agent calls Validate at authoring time. The corpus is shared
+// Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and serves
+// the named object itself; the sandbox agent calls Validate at authoring time. The corpus is shared
 // (litcache is not session-scoped yet — entitlement is a deferred non-goal, literature-evidence-layer.md),
 // so requests carry no session binding this slice.
 syntax = "proto3";
@@ -70,8 +70,8 @@ message ResolveContentRequest {
   }
 }
 
-// The named GCS object the BFF streams. The service resolves identity → object; it never returns
-// bytes (the BFF holds the authz boundary and streams).
+// The named GCS object. The service resolves identity → object and returns its location; it never
+// returns bytes — serving the object to the browser is the BFF's concern (it holds the authz boundary).
 message ContentLocation {
   string gcs_uri = 1;  // gs://bucket/object
   string media_type = 2;
