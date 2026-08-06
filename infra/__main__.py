@@ -22,6 +22,7 @@ from themis_infra import (
     ingest,
     ingest_network,
     sandbox,
+    screenshots,
     secrets,
     services_network,
     sql,
@@ -52,6 +53,9 @@ project = gcp_config.require('project')
 region = gcp_config.require('region')
 domain = config.require('domain')
 iap_access_group = config.require('iapAccessGroup')
+# Whether this environment hosts the public-read PR review screenshot bucket. Required, not
+# defaulted: a stack must decide, so no environment inherits a public bucket by omission.
+enable_pr_screenshot_bucket = config.require_bool('enablePrScreenshotBucket')
 # Third-party ingestion key (no keyless/WIF path); the value is encrypted stack
 # config. Provisioned into Secret Manager below; its runtime reader lands later.
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
@@ -321,6 +325,19 @@ gcp.cloudrunv2.JobIamMember(
     role=sandbox_job_runner_role.name,
     member=pulumi.Output.concat('serviceAccount:', dispatcher_service.service_account_email),
 )
+
+# Developer-workflow storage, unattached to the data plane: the review screenshots a
+# rendered-surface PR ships with (docs/design/pr-screenshots.md).
+if enable_pr_screenshot_bucket:
+    pulumi.export(
+        'pr_screenshot_bucket',
+        screenshots.pr_screenshot_bucket(
+            project=project,
+            region=region,
+            team_group=iap_access_group,
+            opts=pulumi.ResourceOptions(depends_on=[base]),
+        ).name,
+    )
 
 pulumi.export('image_registry', base.image_prefix)
 pulumi.export('lb_ip', site.ip_address)

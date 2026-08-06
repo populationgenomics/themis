@@ -30,6 +30,9 @@ exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto 
 
 [dependency-groups]
 screen = ["pyyaml"]
+# PR review screenshot upload (tools/screenshot/upload.py): the GCS client, driven by the
+# developer's own gcloud ADC.
+screenshot = ["google-cloud-storage"]
 # litcache runtime (litcache/), one clause per dep: google-cloud-storage — GCS
 # Storage backend; the cloudsql group (connector + pg8000, IAM auth) — the crosswalk
 # mint's Cloud SQL access, shared with auth/migrate; docling-core —
@@ -104,7 +107,7 @@ guest = ["grpcio", "protobuf"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -112,7 +115,7 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).

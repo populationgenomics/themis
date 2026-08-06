@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import shutil
 import subprocess
+import time
 import uuid
 from collections.abc import Iterator
 
@@ -17,6 +18,8 @@ import pytest
 import requests
 from google.auth import credentials
 from google.cloud import storage
+
+_READY_TIMEOUT_S = 30
 
 
 @functools.cache
@@ -49,6 +52,32 @@ def docker_daemon() -> None:
         pytest.skip('needs a reachable Docker daemon')
 
 
+def _set_external_url(endpoint: str) -> None:
+    """Point the emulator at `endpoint`, once it is reachable there.
+
+    fake-gcs-server builds object mediaLinks from ``-public-host``, which can't know the
+    testcontainers-mapped port at start; the resolved endpoint makes a download from a listed
+    blob (which carries a mediaLink) reach the mapped port, not :4443.
+
+    Args:
+        endpoint: The emulator's GCS JSON-API URL on the host.
+
+    Raises:
+        TimeoutError: If the endpoint never accepts a connection.
+    """
+    # `server started` in the container log precedes the host-side port forward on some Docker
+    # backends, so the first request can be refused before the emulator is reachable.
+    deadline = time.monotonic() + _READY_TIMEOUT_S
+    while True:
+        try:
+            requests.put(f'{endpoint}/_internal/config', json={'externalUrl': endpoint}, timeout=10).raise_for_status()
+            return
+        except requests.exceptions.ConnectionError as e:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'fake-gcs-server never accepted a connection at {endpoint}') from e
+            time.sleep(0.2)
+
+
 @pytest.fixture(scope='session')
 def gcs_endpoint(docker_daemon: None) -> Iterator[str]:
     """A session-lived ``fake-gcs-server``; yields its GCS JSON-API endpoint URL."""
@@ -65,10 +94,7 @@ def gcs_endpoint(docker_daemon: None) -> Iterator[str]:
     with container:
         testcontainers.core.waiting_utils.wait_for_logs(container, 'server started')
         endpoint = f'http://{container.get_container_host_ip()}:{container.get_exposed_port(4443)}'
-        # fake-gcs-server builds object mediaLinks from -public-host, which can't know the
-        # testcontainers-mapped port at start; point it at the resolved endpoint so a download
-        # from a listed blob (which carries a mediaLink) reaches the mapped port, not :4443.
-        requests.put(f'{endpoint}/_internal/config', json={'externalUrl': endpoint}, timeout=10).raise_for_status()
+        _set_external_url(endpoint)
         yield endpoint
 
 

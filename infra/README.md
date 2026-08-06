@@ -6,22 +6,23 @@ all differences live in `Pulumi.<stack>.yaml`.
 
 ## Layout
 
-| Path                         | What                                                                                                                                                                 |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Pulumi.yaml`                | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                          |
-| `Pulumi.<stack>.yaml`        | Per-environment config + `gcpkms` secrets provider.                                                                                                                  |
-| `__main__.py`                | Entrypoint: read config, compose the modules, export outputs.                                                                                                        |
-| `themis_infra/baseline.py`   | Enabled GCP services + the shared Artifact Registry.                                                                                                                 |
-| `themis_infra/web.py`        | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                   |
-| `themis_infra/auth.py`       | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                           |
-| `themis_infra/store.py`      | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                          |
-| `themis_infra/sql.py`        | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                |
-| `themis_infra/storage.py`    | The literature full-text store bucket (durable GCS).                                                                                                                 |
-| `themis_infra/secrets.py`    | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
-| `themis_infra/ingest.py`     | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                                                                         |
-| `themis_infra/sandbox.py`    | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret. |
-| `themis_infra/deploy_iam.py` | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                               |
-| `bootstrap/bootstrap.sh`     | One-time substrate setup (below). Run locally, never CI.                                                                                                             |
+| Path                          | What                                                                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pulumi.yaml`                 | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                          |
+| `Pulumi.<stack>.yaml`         | Per-environment config + `gcpkms` secrets provider.                                                                                                                  |
+| `__main__.py`                 | Entrypoint: read config, compose the modules, export outputs.                                                                                                        |
+| `themis_infra/baseline.py`    | Enabled GCP services + the shared Artifact Registry.                                                                                                                 |
+| `themis_infra/web.py`         | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                   |
+| `themis_infra/auth.py`        | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                           |
+| `themis_infra/store.py`       | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                          |
+| `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                |
+| `themis_infra/storage.py`     | The literature full-text store bucket (durable GCS).                                                                                                                 |
+| `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                             |
+| `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
+| `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                                                                         |
+| `themis_infra/sandbox.py`     | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret. |
+| `themis_infra/deploy_iam.py`  | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                               |
+| `bootstrap/bootstrap.sh`      | One-time substrate setup (below). Run locally, never CI.                                                                                                             |
 
 Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
 
@@ -47,6 +48,16 @@ the 37M abstract *corpus* (in Cloud SQL, not a bucket). Policy:
 Deletion is a safeguard, not a lock: `force_destroy` is False so `pulumi destroy` won't drop a non-empty bucket, but
 intentional removal — a copyright takedown, a retraction — is always available manually (`gcloud storage rm`, or
 empty-then-destroy).
+
+The **PR review screenshot** bucket, `gs://cpg-themis-dev-pr-screenshots`, is the one exception to that private policy
+and the only bucket in the project that permits public access: GitHub renders a PR-body image through its Camo proxy,
+which fetches the origin anonymously, so the read is necessarily unauthenticated
+([`docs/design/pr-screenshots.md`](../docs/design/pr-screenshots.md)). `allUsers` holds
+`roles/storage.legacyObjectReader` — `storage.objects.get` and nothing else — so an object is fetchable by exact name
+but the bucket is not enumerable; the `themis-dev-access` group holds `objectAdmin` so an uploader can also retract, and
+a developer's own `gcloud` ADC is the writer. Objects are `<sha256>.png`, kept forever, Autoclass-tiered, with soft
+delete off so a takedown is immediate. A stack only gets a bucket if it sets `themis:enablePrScreenshotBucket` —
+screenshots are of the fixture UI, so no other environment has a reason to expose a public one.
 
 A dedicated bucket per storage concern (not one shared bucket): these are bucket-level policies that can't be
 prefix-scoped, and the parquet/audit consumers the design anticipates need different whole-bucket profiles. The
@@ -118,10 +129,11 @@ stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.ya
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
 each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId` and
 `themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
-copied one breaks loudly. `themis:iapProgrammaticClients` is the quiet one: dev's client id deploys clean onto another
-environment's IAP gate, and a developer holding a dev consent then mints tokens that gate admits. Each environment gets
-its own Console client. No program change; the full sequence is
-[`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+copied one breaks loudly. Two are quiet instead, deploying clean onto a wrong outcome: `themis:iapProgrammaticClients`,
+because dev's client id deploys onto another environment's IAP gate and a developer holding a dev consent then mints
+tokens that gate admits — each environment gets its own Console client; and `themis:enablePrScreenshotBucket`, because a
+copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one. No program
+change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 
