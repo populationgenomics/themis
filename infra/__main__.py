@@ -17,6 +17,7 @@ from themis_infra import (
     auth,
     baseline,
     deploy_iam,
+    evidence,
     hello,
     ingest,
     ingest_network,
@@ -35,6 +36,7 @@ _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
 _SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
+_EVIDENCE_IMAGE_ENV = 'THEMIS_EVIDENCE_IMAGE'
 # Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
 # it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
 # the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.
@@ -183,6 +185,20 @@ session_token_key = sandbox.session_token_signing_key(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoKeyVersions/1')
+# The litcache fulltext bucket + the evidence service that reads it — created before the web app so
+# its URL can be passed to the BFF (THEMIS_EVIDENCE_URL).
+fulltext = storage.fulltext_bucket(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+evidence_service = evidence.EvidenceService(
+    project=project,
+    region=region,
+    image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
+    fulltext_bucket=fulltext.name,
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+)
 site = web.WebService(
     project=project,
     region=region,
@@ -217,11 +233,6 @@ gcp.storage.BucketIAMMember(
     bucket=store_service.working_document_bucket,
     role='roles/storage.objectViewer',
     member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
-)
-fulltext = storage.fulltext_bucket(
-    project=project,
-    region=region,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 semantic_scholar = secrets.semantic_scholar_secret(
     project=project,
@@ -340,6 +351,8 @@ pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('auth_db_user', auth_service.db_user)
 pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
+pulumi.export('evidence_url', evidence_service.url)
+pulumi.export('evidence_sa_email', evidence_service.service_account_email)
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)

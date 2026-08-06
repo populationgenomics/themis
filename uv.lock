@@ -19,6 +19,7 @@ exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 litdown = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+anchorite = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 postern = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 pubmed-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
@@ -132,6 +133,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl", hash = "sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e", size = 7490, upload-time = "2025-07-03T22:54:42.156Z" },
+]
+
+[[package]]
+name = "anchorite"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fsspec" },
+    { name = "pypdfium2" },
+    { name = "seq-smith" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/75/64/77d43489f5fb3f9c10ba9a0dd6ea1e9c46713bdd7e24c33cac1d3a1955dc/anchorite-0.5.1.tar.gz", hash = "sha256:50e12ba4a96f7a116b9f54afbe5ecd90f9ecbc275aa78a0a1576390b9735d6d6", size = 4326525, upload-time = "2026-06-02T06:44:29.565Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/e7/7e1ea5a13a7b38fefb65ff7b0069da836f83a0d00149ff5139e0377bb23f/anchorite-0.5.1-py3-none-any.whl", hash = "sha256:af2ae20b77361c6e912d1c2adaf0b2cf8ea7d8f7a3183e97212957265e79109f", size = 61234, upload-time = "2026-06-02T06:44:27.686Z" },
 ]
 
 [[package]]
@@ -759,6 +774,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/89/76/c615883b7b521ead2944bb3480398cbb07e12b7b4e4d073d3752eb721558/frozenlist-1.8.0-cp314-cp314t-win_amd64.whl", hash = "sha256:06be8f67f39c8b1dc671f5d83aaefd3358ae5cdcf8314552c57e7ed3e6475bdd", size = 49451, upload-time = "2025-10-06T05:37:53.425Z" },
     { url = "https://files.pythonhosted.org/packages/e0/a3/5982da14e113d07b325230f95060e2169f5311b1017ea8af2a29b374c289/frozenlist-1.8.0-cp314-cp314t-win_arm64.whl", hash = "sha256:102e6314ca4da683dca92e3b1355490fed5f313b768500084fbe6371fddfdb79", size = 42507, upload-time = "2025-10-06T05:37:54.513Z" },
     { url = "https://files.pythonhosted.org/packages/9a/9a/e35b4a917281c0b8419d4207f4334c8e8c5dbf4f3f5f9ada73958d937dcc/frozenlist-1.8.0-py3-none-any.whl", hash = "sha256:0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d", size = 13409, upload-time = "2025-10-06T05:38:16.721Z" },
+]
+
+[[package]]
+name = "fsspec"
+version = "2026.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/78/f34251dadb8f3921264a1d9b8946f5e542014ee2614b285261b4e40e6775/fsspec-2026.7.0.tar.gz", hash = "sha256:c803c40f4cf860b49dea58ee3e1c33cb9c790520e233537e1340049f89b82a88", size = 317040, upload-time = "2026-07-28T16:34:51.052Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl", hash = "sha256:b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279", size = 206583, upload-time = "2026-07-28T16:34:49.538Z" },
 ]
 
 [[package]]
@@ -3304,6 +3328,22 @@ wheels = [
 ]
 
 [[package]]
+name = "seq-smith"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/01/5226b44550490e8fd77f60ac72df3ad32cead1757dece33e9b5b0619a0ab/seq_smith-0.6.0.tar.gz", hash = "sha256:820d941cb81c324d7ca8408aacebbc5f832023617954b25110853a82271f7563", size = 141595, upload-time = "2026-05-12T22:56:36.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/b9/d212c97d24e0e11e176fd4303b2a64d1ede0b56c2aa75e159a04eeaf75b1/seq_smith-0.6.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:9bc96dfc6706ec0935e6b757addc460a0ebd5dab963ca9c00de712e31985437e", size = 422016, upload-time = "2026-05-12T22:56:29.201Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/74/e928c2a239b9f63efed92f00d1cec1677f48b40f1f0e419095121750c7a7/seq_smith-0.6.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:4359a457898f8f95adc017ec00fa6a188711514b68aaba99f3246acb36ed39d8", size = 411437, upload-time = "2026-05-12T22:56:30.839Z" },
+    { url = "https://files.pythonhosted.org/packages/99/8a/28d0afca9b9691b08c377b3a826f85eac340b5483f547eb0594dcb35f521/seq_smith-0.6.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:01c1f99fe164c856451633456337c0747ee358945b400babb0588d55b991bb4c", size = 458608, upload-time = "2026-05-12T22:56:32.191Z" },
+    { url = "https://files.pythonhosted.org/packages/33/5d/200f071fc5eb40f9d33fd38124417601043051af4f4cc0f642881d185448/seq_smith-0.6.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:69a6a578a044b187de02e31f90d91c90a29eed9b421ac56f0c6d01fe88a73007", size = 473464, upload-time = "2026-05-12T22:56:34.071Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/74/05ef8f2fe2e1551575b844534b3dca53a9f4f00a9154bb727033cd3c68c9/seq_smith-0.6.0-cp313-cp313-win_amd64.whl", hash = "sha256:66b0a65c73217d374bf5b339b5cc5cfc146edac1c287deec4300be0575bb5b06", size = 287407, upload-time = "2026-05-12T22:56:35.632Z" },
+]
+
+[[package]]
 name = "setuptools"
 version = "82.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3447,6 +3487,14 @@ dispatcher = [
     { name = "google-crc32c" },
     { name = "standardwebhooks" },
 ]
+evidence = [
+    { name = "anchorite" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "pubmed-proto" },
+]
 guest = [
     { name = "grpcio" },
     { name = "protobuf" },
@@ -3470,6 +3518,7 @@ infra = [
 ]
 lint = [
     { name = "aiohttp" },
+    { name = "anchorite" },
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
@@ -3551,6 +3600,7 @@ store = [
 ]
 test = [
     { name = "aiohttp" },
+    { name = "anchorite" },
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
@@ -3617,6 +3667,14 @@ dispatcher = [
     { name = "google-crc32c" },
     { name = "standardwebhooks" },
 ]
+evidence = [
+    { name = "anchorite", specifier = "==0.5.1" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "pubmed-proto", specifier = "==0.1.0" },
+]
 guest = [
     { name = "grpcio" },
     { name = "protobuf" },
@@ -3640,6 +3698,7 @@ infra = [
 ]
 lint = [
     { name = "aiohttp" },
+    { name = "anchorite", specifier = "==0.5.1" },
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
@@ -3719,6 +3778,7 @@ store = [
 ]
 test = [
     { name = "aiohttp" },
+    { name = "anchorite", specifier = "==0.5.1" },
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },

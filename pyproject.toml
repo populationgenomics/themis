@@ -18,7 +18,7 @@ requires-python = ">=3.13"
 # past 7 days and Dependabot re-bumps it.
 [tool.uv]
 exclude-newer = "7 days"
-# litfetch, litdown, pubmed-proto, and postern are CPG-owned and first-party: we cut the
+# litfetch, litdown, pubmed-proto, postern, and anchorite are CPG-owned and first-party: we cut the
 # releases, so the supply-chain window the global gate guards against (a compromised
 # third-party upload) doesn't apply. `0 days` (relative, prior-to-now) exempts them
 # so a just-cut release is resolvable. Removing the age cushion is paired with an
@@ -26,7 +26,7 @@ exclude-newer = "7 days"
 # stops a re-lock from silently adopting a new — possibly account-compromised —
 # release; a bump is then an explicit, reviewed pyproject edit. Keep this list and
 # those pins in lock-step: anything exempted here must be exact-pinned.
-exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", postern = "0 days" }
+exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", postern = "0 days", anchorite = "0 days" }
 
 [dependency-groups]
 screen = ["pyyaml"]
@@ -77,6 +77,14 @@ store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage",
 # consumer. grpc.aio server + generated stubs; includes the session client — every request is
 # authorized through auth. No storage backend of its own.
 hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "session" }]
+# evidence service (themis/services/evidence): the workbench's literature read surface — litcache
+# resolution + quote location. grpc.aio server + generated stubs. No session client: the corpus is
+# shared, not session-scoped (B1). The live backend (B2) reads the litcache GCS layout:
+# google-cloud-storage for the bucket, pubmed_proto for the metadata.pb title. The litcache_pb2 stubs
+# pull the vendored buf/validate stubs (shipped in the image), which need only protobuf at runtime;
+# no protovalidate, no conversion/fetch deps — the read path never validates or converts. anchorite
+# locates a verbatim quote to markdown offsets (and PDF page regions when B4 lands), exact-pinned like the others.
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", "pubmed_proto==0.1.0", "anchorite==0.5.1"]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
 # is the SDK the work queue is driven through; google-cloud-kms derives the per-session token
@@ -96,7 +104,7 @@ guest = ["grpcio", "protobuf"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -104,11 +112,11 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/document_linter/tests"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -208,6 +216,10 @@ ignore = [
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture env keys / session tokens are not secrets
     "S106",   # fixture credentials passed as kwargs are not secrets
+]
+"themis/services/evidence/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
 ]
 "themis/document_linter/tests/**" = [
     "S101",   # asserts are the standard pytest idiom

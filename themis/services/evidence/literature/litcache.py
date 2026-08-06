@@ -1,0 +1,244 @@
+"""The litcache-reading literature backend (docs/design/document-pane.md §Backend seam).
+
+Resolves a canonical ``doc_id`` against the real litcache GCS layout: reads ``papers/{doc_id}/
+manifest.pb``, picks the canonical rendering (xml-faithful over pdf-derived), and names the GCS
+object for a rendering, the current PDF revision, or an associated file. ``locate``/``validate`` run
+anchorite's quote-to-offset location over the rendering bytes — manifest +
+rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, and its
+absence falls back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-only
+paper is reported unknown-not-checked, never a false "not located".
+
+Read-only: the backend never writes to the bucket (the cache warms via the ingestion pipeline). An
+associated file the manifest lists without a ``path`` is not yet fetched; resolving it raises
+``MissingContentError`` rather than fetching-and-writing (deferred — the seed corpus has every file
+fetched). PDF quote location (anchorite page regions) is deferred to B4; ``locate`` for a PDF raises
+``PdfLocationUnavailableError`` rather than reporting a false ``not_located``.
+
+Blocking GCS I/O is offloaded with ``asyncio.to_thread`` so it never stalls the ``grpc.aio`` loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import mimetypes
+
+import anchorite
+from google.api_core import exceptions as api_exceptions
+from google.cloud import storage
+from google.protobuf import message as _message
+from pubmed_proto import pubmed_pb2
+
+from themis.litcache.models import litcache_pb2
+from themis.rpc import literature_pb2
+from themis.services.evidence.literature import backend as literature_backend
+
+_MANIFEST = 'manifest.pb'
+_METADATA = 'metadata.pb'
+
+# Canonical-rendering preference: an xml-faithful litdown rendering over a pdf-derived one, and
+# llm-ocr over the legacy docling route (litcache-manifest.md — fidelity is a read-path policy).
+_CONVERTER_RANK = {
+    litcache_pb2.Converter.CONVERTER_LITDOWN: 0,
+    litcache_pb2.Converter.CONVERTER_LLM_OCR: 1,
+    litcache_pb2.Converter.CONVERTER_DOCLING: 2,
+}
+_CONVERTER_RANK_MISS = max(_CONVERTER_RANK.values()) + 1
+
+# litcache associated-file role -> evidence FileRole (values align; mapped by name to stay explicit).
+_FILE_ROLE = {
+    litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_FIGURE: literature_pb2.FILE_ROLE_FIGURE,
+    litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY: literature_pb2.FILE_ROLE_SUPPLEMENTARY,
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class _Paper:
+    """A paper's parsed litcache record: its manifest and the canonical rendering (if any)."""
+
+    manifest: litcache_pb2.Manifest
+    rendering: tuple[str, litcache_pb2.Rendering] | None  # (hash, rendering) — the canonical one
+
+
+class LitcacheBackend(literature_backend.LiteratureBackend):
+    """Serve the evidence RPCs by reading the litcache directory for each ``doc_id``."""
+
+    def __init__(self, bucket: storage.Bucket, *, papers_prefix: str = 'papers') -> None:
+        self._bucket = bucket
+        self._prefix = papers_prefix.strip('/')
+
+    async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
+        paper, metadata = await asyncio.to_thread(self._read_for_describe, doc_id)
+        has_markdown = paper.rendering is not None
+        has_pdf = _source_by_format(paper.manifest, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF) is not None
+        markdown_from_xml = paper.rendering is not None and _renders_from_xml(paper.manifest, paper.rendering[1])
+        return literature_pb2.PaperInfo(
+            doc_id=doc_id,
+            title=_title(metadata, paper.manifest, doc_id),
+            has_markdown=has_markdown,
+            markdown_from_xml=markdown_from_xml,
+            has_pdf=has_pdf,
+            default_representation=literature_backend.default_representation(has_markdown, markdown_from_xml, has_pdf),
+            files=[
+                literature_pb2.FileInfo(
+                    name=f.name,
+                    role=_FILE_ROLE.get(f.role, literature_pb2.FILE_ROLE_UNSPECIFIED),
+                    media_type=_media_type_for(f.name or f.path),
+                )
+                for f in paper.manifest.files
+            ],
+        )
+
+    async def resolve_content(
+        self, doc_id: str, selector: literature_backend.ContentSelector
+    ) -> literature_pb2.ContentLocation:
+        paper = await asyncio.to_thread(self._read_manifest, doc_id)
+        match selector:
+            case literature_backend.MarkdownContent():
+                if paper.rendering is None:
+                    raise literature_backend.MissingContentError(f'{doc_id} has no markdown rendering')
+                rendering_hash, _ = paper.rendering
+                return self._location(doc_id, f'renderings/{rendering_hash}.md', 'text/markdown')
+            case literature_backend.PdfContent():
+                source = _source_by_format(paper.manifest, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)
+                if source is None:
+                    raise literature_backend.MissingContentError(f'{doc_id} has no PDF')
+                revision = _current_revision(source)
+                return self._location(doc_id, f'sources/{source.handle}/{revision.hash}.pdf', 'application/pdf')
+            case literature_backend.FileContent(name=name):
+                file = next((f for f in paper.manifest.files if f.name == name), None)
+                if file is None:
+                    raise literature_backend.MissingContentError(f'{doc_id} has no file {name!r}')
+                if not file.path:
+                    raise literature_backend.MissingContentError(f'{doc_id} file {name!r} is not fetched')
+                return self._location(doc_id, file.path, _media_type_for(file.path))
+            case _:  # unreachable over the closed ContentSelector union — fail loud if it ever opens
+                raise ValueError(f'unhandled content selector {selector!r}')
+
+    async def locate(
+        self, doc_id: str, quote: str, representation: literature_pb2.Representation
+    ) -> literature_pb2.LocateResponse:
+        if representation == literature_pb2.REPRESENTATION_MARKDOWN:
+            offsets = await asyncio.to_thread(self._locate_markdown, doc_id, quote)
+            if offsets is None:
+                return literature_pb2.LocateResponse(not_located=literature_pb2.QuoteNotLocated())
+            start, end = offsets
+            return literature_pb2.LocateResponse(offsets=literature_pb2.TextOffsets(start=start, end=end))
+        if representation == literature_pb2.REPRESENTATION_PDF:
+            paper = await asyncio.to_thread(self._read_manifest, doc_id)
+            if _source_by_format(paper.manifest, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF) is None:
+                raise literature_backend.RepresentationUnavailableError(f'{doc_id} has no PDF')
+            raise literature_backend.PdfLocationUnavailableError(f'{doc_id}: PDF quote location is not yet available')
+        raise ValueError(f'unsupported representation {representation!r}')
+
+    async def validate(self, doc_id: str, quote: str) -> literature_pb2.ValidateResponse:
+        # Markdown-only: PDF quote validation is deferred (B4), so a PDF-only paper is "unknown",
+        # not "absent" — the reason says what was and wasn't checked, never a false "not located".
+        try:
+            offsets = await asyncio.to_thread(self._locate_markdown, doc_id, quote)
+        except literature_backend.UnknownPaperError:
+            return literature_pb2.ValidateResponse(ok=False, reason=f'unknown doc_id {doc_id!r}')
+        except literature_backend.RepresentationUnavailableError:
+            return literature_pb2.ValidateResponse(
+                ok=False, reason='no markdown rendering to validate against; PDF validation is not yet available'
+            )
+        except literature_backend.MissingContentError as e:
+            return literature_pb2.ValidateResponse(
+                ok=False, reason=f'markdown rendering is missing (corpus fault): {e}'
+            )
+        if offsets is None:
+            return literature_pb2.ValidateResponse(ok=False, reason='quote not located in the markdown rendering')
+        return literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
+
+    # --- GCS reads (synchronous; called via asyncio.to_thread) -----------------------------------
+
+    def _read_manifest(self, doc_id: str) -> _Paper:
+        """The paper's manifest + canonical rendering, or ``UnknownPaperError`` if absent."""
+        manifest_bytes = self._download(f'{doc_id}/{_MANIFEST}')
+        if manifest_bytes is None:
+            raise literature_backend.UnknownPaperError(doc_id)
+        manifest = _parse(litcache_pb2.Manifest(), manifest_bytes)
+        return _Paper(manifest=manifest, rendering=_select_rendering(manifest))
+
+    def _read_for_describe(self, doc_id: str) -> tuple[_Paper, bytes | None]:
+        """The manifest and the ``metadata.pb`` bytes (absent ⇒ the title falls back)."""
+        return self._read_manifest(doc_id), self._download(f'{doc_id}/{_METADATA}')
+
+    def _locate_markdown(self, doc_id: str, quote: str) -> tuple[int, int] | None:
+        paper = self._read_manifest(doc_id)
+        if paper.rendering is None:
+            raise literature_backend.RepresentationUnavailableError(f'{doc_id} has no markdown rendering')
+        rendering_hash, _ = paper.rendering
+        markdown = self._download(f'{doc_id}/renderings/{rendering_hash}.md')
+        if markdown is None:
+            raise literature_backend.MissingContentError(f'{doc_id} rendering {rendering_hash} is missing')
+        return anchorite.locate_quote_span(markdown.decode('utf-8'), quote)
+
+    def _download(self, name: str) -> bytes | None:
+        blob = self._bucket.blob(f'{self._prefix}/{name}')
+        try:
+            return blob.download_as_bytes()
+        except api_exceptions.NotFound:
+            return None
+
+    def _location(self, doc_id: str, rel_path: str, media_type: str) -> literature_pb2.ContentLocation:
+        uri = f'gs://{self._bucket.name}/{self._prefix}/{doc_id}/{rel_path}'
+        return literature_pb2.ContentLocation(gcs_uri=uri, media_type=media_type)
+
+
+def _parse[M: _message.Message](target: M, data: bytes) -> M:
+    target.ParseFromString(data)
+    return target
+
+
+def _select_rendering(manifest: litcache_pb2.Manifest) -> tuple[str, litcache_pb2.Rendering] | None:
+    """The canonical rendering ``(hash, rendering)``: highest-fidelity route, then newest, or None.
+
+    Ranks by converter preference (litcache-manifest.md §5), breaking ties toward the most recent
+    ``created_at`` (a re-render of a newer revision is newer) and finally the hash — a total,
+    deterministic order, since protobuf-map iteration order is unspecified.
+    """
+    if not manifest.renderings:
+        return None
+
+    def _key(item: tuple[str, litcache_pb2.Rendering]) -> tuple[int, int, int, str]:
+        rendering_hash, rendering = item
+        rank = _CONVERTER_RANK.get(rendering.converter, _CONVERTER_RANK_MISS)
+        created = rendering.created_at
+        return (rank, -created.seconds, -created.nanos, rendering_hash)
+
+    return min(manifest.renderings.items(), key=_key)
+
+
+def _source_by_format(manifest: litcache_pb2.Manifest, fmt: litcache_pb2.SourceFormat) -> litcache_pb2.Source | None:
+    # The newest lineage of this media type by its current revision's captured_at, never array order
+    # (litcache-manifest.md); a revision-less lineage is skipped (nothing to name, and _current_revision
+    # would raise on it).
+    candidates = [s for s in manifest.sources if s.media_type == fmt and s.revisions]
+    return max(candidates, key=lambda s: _current_revision(s).captured_at.ToDatetime(), default=None)
+
+
+def _renders_from_xml(manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Rendering) -> bool:
+    source = next((s for s in manifest.sources if s.handle == rendering.from_source), None)
+    return source is not None and source.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_XML
+
+
+def _current_revision(source: litcache_pb2.Source) -> litcache_pb2.Revision:
+    """The latest revision of a lineage — recency is ``captured_at``, never array order (litcache-manifest.md)."""
+    return max(source.revisions, key=lambda r: r.captured_at.ToDatetime())
+
+
+def _media_type_for(name: str) -> str:
+    guessed, _ = mimetypes.guess_type(name)
+    return guessed or 'application/octet-stream'
+
+
+def _title(metadata: bytes | None, manifest: litcache_pb2.Manifest, doc_id: str) -> str:
+    """The bibliographic title, falling back to an external id then the doc_id if unavailable."""
+    if metadata is not None:
+        article = _parse(pubmed_pb2.PubmedArticle(), metadata)
+        title = article.medline_citation.article.article_title.value
+        if title:
+            return title
+    external = manifest.external_ids
+    return external.doi or external.pmid or doc_id

@@ -1,0 +1,147 @@
+// The `Literature` service — the literature evidence layer's read surface for the workbench,
+// (docs/design/document-pane.md). It owns litcache resolution — given a canonical doc_id it names
+// the GCS object for a rendering, the PDF, or an associated file, and it locates a citation's quote
+// within a chosen representation (offsets in markdown; a page region in a PDF). This proto is the
+// source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the server
+// subclasses the servicer base, a caller uses the stub.
+//
+// Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and streams
+// the named bytes itself; the sandbox agent calls Validate at authoring time. The corpus is shared
+// (litcache is not session-scoped yet — entitlement is a deferred non-goal, literature-evidence-layer.md),
+// so requests carry no session binding this slice.
+syntax = "proto3";
+
+package themis.rpc.literature;
+
+// Which rendering of a paper a request concerns. Markdown is a converter's output; PDF is the
+// primary artifact. Locate answers offsets for markdown and a page region for PDF.
+enum Representation {
+  REPRESENTATION_UNSPECIFIED = 0;
+  REPRESENTATION_MARKDOWN = 1;
+  REPRESENTATION_PDF = 2;
+}
+
+// The role of an associated file (mirrors litcache AssociatedFileRole): a figure referenced inline
+// from the markdown, or a supplementary file opened as its own tab.
+enum FileRole {
+  FILE_ROLE_UNSPECIFIED = 0;
+  FILE_ROLE_FIGURE = 1;
+  FILE_ROLE_SUPPLEMENTARY = 2;
+}
+
+message DescribePaperRequest {
+  string doc_id = 1;  // litcache canonical doc_id (UUID)
+}
+
+message FileInfo {
+  string name = 1;  // the reference used in markdown (figures) and the tab label (supplementary)
+  FileRole role = 2;
+  string media_type = 3;
+}
+
+// What a paper offers, for the pane to pick a default representation and list its files. A paper
+// with a source-XML-derived markdown prefers markdown; one whose only rendering is a lossy PDF OCR
+// prefers the PDF.
+message PaperInfo {
+  string doc_id = 1;
+  string title = 2;
+  bool has_markdown = 3;
+  bool markdown_from_xml = 4;  // the markdown rendering derives from source XML (high fidelity)
+  bool has_pdf = 5;
+  Representation default_representation = 6;
+  repeated FileInfo files = 7;
+}
+
+message MarkdownSelector {}
+
+message PdfSelector {}
+
+message FileSelector {
+  string name = 1;
+}
+
+message ResolveContentRequest {
+  string doc_id = 1;
+  // Which object of the paper to name. Unset is an INVALID_ARGUMENT the server adds.
+  oneof selector {
+    MarkdownSelector markdown = 2;
+    PdfSelector pdf = 3;
+    FileSelector file = 4;
+  }
+}
+
+// The named GCS object the BFF streams. The service resolves identity → object; it never returns
+// bytes (the BFF holds the authz boundary and streams).
+message ContentLocation {
+  string gcs_uri = 1;  // gs://bucket/object
+  string media_type = 2;
+}
+
+message LocateRequest {
+  string doc_id = 1;
+  string quote = 2;
+  Representation representation = 3;  // REPRESENTATION_UNSPECIFIED is an INVALID_ARGUMENT
+}
+
+// Unicode code-point offsets into the markdown rendering (the anchor convention comments use;
+// frontend-framework.md). The client converts to UTF-16 to build a DOM Range.
+message TextOffsets {
+  int32 start = 1;
+  int32 end = 2;
+}
+
+// A rectangle on a PDF page. PROVISIONAL coordinate space: page fractions in [0,1], origin
+// top-left. The real space is anchorite's and is reconciled in B4 (the anchorite coordinate
+// contract is an open question in document-pane.md); the fixture uses this placeholder.
+message Rect {
+  float x = 1;
+  float y = 2;
+  float width = 3;
+  float height = 4;
+}
+
+message PdfRegion {
+  int32 page = 1;  // 0-based page index
+  repeated Rect rects = 2;
+}
+
+// The quote did not locate in the requested representation — a first-class outcome (the pane shows a
+// warning chip), distinct from a NOT_FOUND doc_id (a broken citation).
+message QuoteNotLocated {}
+
+message LocateResponse {
+  oneof result {
+    TextOffsets offsets = 1;
+    PdfRegion region = 2;
+    QuoteNotLocated not_located = 3;
+  }
+}
+
+message ValidateRequest {
+  string doc_id = 1;
+  string quote = 2;
+}
+
+// Authoring-time answer for the agent: whether the quote locates in any representation, and which.
+// `ok` is false with a `reason` when the doc_id is unknown or the quote locates nowhere. Shares the
+// matcher with Locate, so what the agent validates is what the UI later resolves.
+message ValidateResponse {
+  bool ok = 1;
+  repeated Representation located_in = 2;
+  string reason = 3;
+}
+
+service Literature {
+  // What representations and files a paper offers; the pane's default-representation choice.
+  // An unknown doc_id is a NOT_FOUND the server adds.
+  rpc DescribePaper(DescribePaperRequest) returns (PaperInfo);
+  // Name the GCS object for a rendering, the PDF, or an associated file. NOT_FOUND for an unknown
+  // doc_id or a selected object the paper lacks.
+  rpc ResolveContent(ResolveContentRequest) returns (ContentLocation);
+  // Locate a quote within a representation. NOT_FOUND for an unknown doc_id; FAILED_PRECONDITION
+  // when the paper lacks the requested representation; a `not_located` result when the quote is
+  // absent (not an error).
+  rpc Locate(LocateRequest) returns (LocateResponse);
+  // Whether a quote locates in any representation — the agent's authoring-time check.
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+}

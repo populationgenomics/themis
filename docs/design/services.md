@@ -186,9 +186,11 @@ Root `pyproject.toml`:
 `Dockerfile` (copy `themis/services/auth/Dockerfile`) — multi-stage; **build context is the repo root** so the committed
 stubs ship; deps from the committed `uv.lock` via `uv sync --locked --group <name>` (the age-gated lock the whole repo
 uses); `COPY` the `themis/rpc/<domain>_pb2*` stubs plus the `themis/…` subtrees the service needs; `PYTHONPATH=/app`;
-Cloud Run injects `$PORT`. Set explicit `ENV` defaults for every required var — the image is a caller, so it supplies
-required inputs rather than relying on a code default (auth pins `THEMIS_BACKEND=fixture` and
-`THEMIS_FIXTURE_BINDINGS="{}"` so the image boots).
+Cloud Run injects `$PORT`. Do **not** bake a working backend default into the image: the runtime requires its
+`THEMIS_BACKEND` (and the fixture's seed) and exits at startup without them, and the deploy supplies them. A baked
+fixture default would let a deploy that dropped the real override come up *serving* — an empty store answering every
+lookup "not found", which reads as "genuinely absent" rather than a fault — so the fail-loud check must reach the
+deployed revision (auth, store, hello, and evidence all follow this).
 
 ## Deploy (a separate, stacked PR)
 
