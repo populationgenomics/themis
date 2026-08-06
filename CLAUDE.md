@@ -14,6 +14,8 @@ Operating directives for Claude (and any agent) in this repo; they counteract de
   papering over root causes). Aim for the correct fix at the right complexity level — not the smallest, not gold-plated.
 - **Fail loudly and early.** Raise on a missing expected input or precondition; never fall back to a default/placeholder
   to limp along. A placeholder is an explicit caller input, never a code default.
+- **Never instruct around a defect — fix the defect.** Don't write prose telling readers to work around broken code —
+  "pass it as a string, the converter loses precision". Prose is untested, and callers who didn't read it stay broken.
 - **Push back; don't just comply.** When a design, name, or approach seems worse — including a shortcut you're asked to
   take — say so with reasoning, unprompted. The author owns the final call.
 - **Offer better alternatives with trade-offs.** When a materially better approach than the proposed one exists, present
