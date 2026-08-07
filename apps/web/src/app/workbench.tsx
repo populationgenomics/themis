@@ -3,12 +3,29 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalysisBrowser } from "@/components/analysis-browser";
 import { AppBar, type ProjectsState } from "@/components/app-bar";
 import { Eyebrow } from "@/components/eyebrow";
+import { useGroupRef } from "@/components/ui/resizable";
+import { REGISTRY } from "@/components/workbench/content-kinds";
 import { ConversationPane } from "@/components/workbench/conversation-pane";
-import { WorkingDocumentPane } from "@/components/workbench/working-document-pane";
+import type { Citation } from "@/components/workbench/markdown";
+import { revealCitation } from "@/components/workbench/reveal";
+import { TabArea } from "@/components/workbench/tab-area";
+import { useWorkspaceModelController } from "@/components/workbench/use-workspace-model";
+import { useWorkspaceWindow } from "@/components/workbench/use-workspace-window";
+import {
+  CONVERSATION_PANEL_ID,
+  ConversationSplit,
+  edgeToOrientation,
+  TAB_AREA_PANEL_ID,
+} from "@/components/workbench/workbench-layout";
+import { WorkspaceDataProvider } from "@/components/workbench/workspace-context";
+import {
+  computeTarget,
+  type Source,
+} from "@/components/workbench/workspace-model";
 import {
   ANALYSES_QUERY_KEY,
   useAnalyses,
@@ -73,6 +90,57 @@ export function Workbench({ userEmail }: { userEmail: string }) {
   const analysisId = searchParams.get(ANALYSIS_PARAM);
   const queryClient = useQueryClient();
 
+  const workspace = useWorkspaceModelController();
+  const mainWindow = workspace.state.windows.find(
+    (w) => w.id === workspace.state.mainId,
+  );
+  if (!mainWindow) throw new Error("main window not found");
+  // An empty tab area (its sole pane holds no tabs — e.g. the working document moved to a child) shows
+  // as nothing rather than an empty panel: the conversation fills the window. A reveal or reparent adds
+  // a tab and the split returns. The reducer keeps the zero-tab pane as the reveal/reparent target.
+  const tabAreaEmpty =
+    mainWindow.panes.length === 1 && mainWindow.panes[0].tabs.length === 0;
+  const edge = workspace.state.conversation.edge;
+  const orientation = edgeToOrientation(edge);
+
+  // The outer split ratio persists per orientation (localStorage, via the controller). It loads
+  // post-mount so SSR and the first client render match the reducer default, and re-applies on an edge
+  // flip so a width % never carries into a height %. react-resizable-panels manages the live layout;
+  // the controller only reads/writes the persisted fraction.
+  const groupRef = useGroupRef();
+  const { readOuterRatio, writeOuterRatio } = workspace;
+  const defaultConversationRatio =
+    orientation === "horizontal"
+      ? workspace.state.conversation.ratioH
+      : workspace.state.conversation.ratioV;
+  // Apply the persisted ratio for the current orientation (or its default when none is saved) whenever
+  // the group (re)mounts or the edge flips. The group unmounts while the tab area is empty and remounts
+  // at its `defaultSize` when tabs return, so `tabAreaEmpty` is a trigger; without the reset on an edge
+  // flip a width % would carry into a height %, as react-resizable-panels keeps the last layout.
+  useEffect(() => {
+    if (tabAreaEmpty) return;
+    const ratio = readOuterRatio(orientation) ?? defaultConversationRatio;
+    groupRef.current?.setLayout({
+      [CONVERSATION_PANEL_ID]: ratio * 100,
+      [TAB_AREA_PANEL_ID]: (1 - ratio) * 100,
+    });
+  }, [
+    orientation,
+    readOuterRatio,
+    groupRef,
+    defaultConversationRatio,
+    tabAreaEmpty,
+  ]);
+  const onLayoutChanged = useCallback(
+    (layout: Record<string, number>, meta: { isUserInteraction: boolean }) => {
+      if (!meta.isUserInteraction) return;
+      const conversation = layout[CONVERSATION_PANEL_ID];
+      if (typeof conversation === "number")
+        writeOuterRatio(orientation, conversation / 100);
+    },
+    [orientation, writeOuterRatio],
+  );
+
   const [prompt, setPrompt] = useState("");
   const projects = useProjects();
   const projectsState = membershipState(projects.data, projects.isError);
@@ -84,6 +152,45 @@ export function Workbench({ userEmail }: { userEmail: string }) {
   const poll = usePoll(analysisId);
   const workingDocumentVersion = poll.data?.workingDocumentVersion ?? null;
   const doc = useDocument(analysisId, workingDocumentVersion);
+  const workingDocument = doc.data?.document ?? null;
+  const events = poll.data?.events ?? [];
+
+  // The working-document refetch signal every window shares: version + analysisId, never the body.
+  // Each window (main and children) fetches its own body keyed on this, so a popped doc re-renders when
+  // the agent republishes.
+  const workingDocumentSignal = useMemo(
+    () =>
+      analysisId !== null && workingDocumentVersion !== null
+        ? { analysisId, version: workingDocumentVersion }
+        : null,
+    [analysisId, workingDocumentVersion],
+  );
+  const { windowActions, crossWindowDrag, focusWindow } = useWorkspaceWindow(
+    workspace,
+    workingDocumentSignal,
+  );
+
+  // A `:paper`/`:quote` click reveals the paper beside its source (see reveal.ts). When the paper is
+  // already open in another window, raise that window and activate it there (surface, not yank); if the
+  // browser blocks the raise, fall back to moving it into this window's computed target.
+  const reveal = useCallback(
+    (src: Source, citation: Citation) => {
+      const paperId = REGISTRY.paper.id({ docId: citation.docId });
+      const target = computeTarget(workspace.state, src, paperId);
+      if (target.op === "surface") {
+        if (focusWindow(target.winId)) {
+          workspace.activateTab(paperId);
+          if (citation.kind === "quote")
+            workspace.setHighlight(paperId, citation.quote);
+          return;
+        }
+        void revealCitation(workspace, src, citation, { forceLocal: true });
+        return;
+      }
+      void revealCitation(workspace, src, citation);
+    },
+    [workspace, focusWindow],
+  );
 
   // The Project as of the latest commit, for a callback that outlives the render it closed over.
   const liveProjectId = useRef<string | null>(null);
@@ -149,6 +256,8 @@ export function Workbench({ userEmail }: { userEmail: string }) {
         projects={projectsState}
         activeProject={activeProject}
         onSelectProject={selectProject}
+        conversationEdge={edge}
+        onConversationEdge={workspace.setConversationEdge}
       />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 border-b border-line-primary bg-white px-[56px] py-[16px]">
@@ -196,10 +305,40 @@ export function Workbench({ userEmail }: { userEmail: string }) {
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1">
-          <ConversationPane events={poll.data?.events ?? []} />
-          <WorkingDocumentPane document={doc.data?.document ?? null} />
-        </div>
+        <WorkspaceDataProvider value={{ events, workingDocument }}>
+          {(() => {
+            const conversation = (
+              <ConversationPane
+                events={events}
+                onCitation={(citation) =>
+                  reveal({ kind: "conversation" }, citation)
+                }
+              />
+            );
+            if (tabAreaEmpty)
+              return <div className="flex min-h-0 flex-1">{conversation}</div>;
+            return (
+              <ConversationSplit
+                edge={edge}
+                groupRef={groupRef}
+                onLayoutChanged={onLayoutChanged}
+                defaultConversationRatio={defaultConversationRatio}
+                conversation={conversation}
+                tabArea={
+                  <TabArea
+                    win={mainWindow}
+                    controller={workspace}
+                    windowActions={windowActions}
+                    crossWindowDrag={crossWindowDrag}
+                    onCitation={(winId, paneId, citation) =>
+                      reveal({ kind: "document", winId, paneId }, citation)
+                    }
+                  />
+                }
+              />
+            );
+          })()}
+        </WorkspaceDataProvider>
       </div>
     </div>
   );

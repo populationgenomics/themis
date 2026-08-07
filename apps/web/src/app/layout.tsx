@@ -28,15 +28,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // suppressHydrationWarning: browser extensions inject attributes (e.g. data-spf-installed) onto
+    // html/body before hydration; the diff is theirs, not ours, and would otherwise error under React.
     <html
       lang="en"
+      suppressHydrationWarning
       className={cn(
         "font-sans",
         familjenGrotesk.variable,
         splineSansMono.variable,
       )}
     >
-      <body className="min-h-svh bg-background font-sans text-ink-body antialiased">
+      <body
+        suppressHydrationWarning
+        className="min-h-svh bg-background font-sans text-ink-body antialiased"
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

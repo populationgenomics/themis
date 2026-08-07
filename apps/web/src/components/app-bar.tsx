@@ -1,10 +1,29 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import {
+  ChevronDown,
+  PanelBottom,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
+} from "lucide-react";
 import { Eyebrow } from "@/components/eyebrow";
 import { Logo } from "@/components/logo";
 import { DropdownMenu, type MenuItem } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import type { Project } from "@/models/workbench";
+import type { Edge } from "./workbench/workspace-model";
+
+const EDGES: ReadonlyArray<{
+  value: Edge;
+  label: string;
+  Icon: typeof PanelLeft;
+}> = [
+  { value: "left", label: "Dock conversation left", Icon: PanelLeft },
+  { value: "right", label: "Dock conversation right", Icon: PanelRight },
+  { value: "top", label: "Dock conversation top", Icon: PanelTop },
+  { value: "bottom", label: "Dock conversation bottom", Icon: PanelBottom },
+];
 
 /** The membership as the app bar needs it: one value per outcome, so none can be read as
  *  another and no two props can disagree about which holds. */
@@ -29,17 +48,21 @@ export function projectName(
 }
 
 // The shared chrome (design-spec §2.0): logo + wordmark, a divider, the Project
-// selector, and the verified caller.
+// selector, the four-edge conversation-dock selector, and the verified caller.
 export function AppBar({
   userEmail,
   projects,
   activeProject,
   onSelectProject,
+  conversationEdge,
+  onConversationEdge,
 }: {
   userEmail: string;
   projects: ProjectsState;
   activeProject: Project | null;
   onSelectProject: (id: string) => void;
+  conversationEdge: Edge;
+  onConversationEdge: (edge: Edge) => void;
 }) {
   const listed = projects.status === "ready" ? projects.projects : [];
   const items: MenuItem[] = listed.map((project) => ({
@@ -94,6 +117,30 @@ export function AppBar({
       </div>
 
       <div className="flex items-center gap-[9px] pl-[4px]">
+        <div className="flex items-center gap-[2px] rounded-field border border-line-primary p-[2px]">
+          {EDGES.map(({ value, label, Icon }) => {
+            const active = conversationEdge === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                aria-label={label}
+                title={label}
+                onClick={() => onConversationEdge(value)}
+                className={cn(
+                  "flex size-[26px] items-center justify-center rounded-[5px]",
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-ink-muted hover:bg-surface-idle hover:text-ink-primary",
+                )}
+              >
+                <Icon className="size-[14px]" aria-hidden />
+              </button>
+            );
+          })}
+        </div>
+        <span className="h-[24px] w-px bg-line-primary" aria-hidden />
         <span className="max-w-[280px] truncate font-mono text-[12px] text-ink-muted">
           {userEmail}
         </span>

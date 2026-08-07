@@ -1,3 +1,4 @@
+import type { Citation } from "@/components/workbench/markdown";
 import { Markdown } from "@/components/workbench/markdown";
 import { ToolCallRow } from "@/components/workbench/tool-call-row";
 import type { ConversationEvent } from "@/models/workbench";
@@ -7,19 +8,35 @@ import type { ConversationEvent } from "@/models/workbench";
 // bubble), and tool calls (the expandable tool-call row). Speaker is conveyed by
 // alignment + styling only; no avatars, no per-turn labels. The event is a proto
 // oneof, so `kind.case` selects the variant and `kind.value` is narrowed to it.
-export function ConversationPane({ events }: { events: ConversationEvent[] }) {
+export function ConversationPane({
+  events,
+  onCitation,
+}: {
+  events: ConversationEvent[];
+  onCitation: (citation: Citation) => void;
+}) {
   return (
-    <div className="flex min-w-0 flex-1 flex-col border-r border-line-primary">
+    <div className="flex h-full min-w-0 flex-col">
       <div className="tscroll flex flex-1 flex-col gap-[22px] overflow-auto px-[26px] pt-[22px] pb-[26px]">
         {events.map((event) => (
-          <ConversationItem key={event.id} event={event} />
+          <ConversationItem
+            key={event.id}
+            event={event}
+            onCitation={onCitation}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function ConversationItem({ event }: { event: ConversationEvent }) {
+function ConversationItem({
+  event,
+  onCitation,
+}: {
+  event: ConversationEvent;
+  onCitation: (citation: Citation) => void;
+}) {
   switch (event.kind.case) {
     case "user":
       return (
@@ -32,7 +49,7 @@ function ConversationItem({ event }: { event: ConversationEvent }) {
     case "tool":
       return <ToolCallRow call={event.kind.value} />;
     case "assistant":
-      return <Markdown text={event.kind.value.text} />;
+      return <Markdown text={event.kind.value.text} onCitation={onCitation} />;
     case undefined:
       throw new Error(`conversation event ${event.id} has no kind`);
   }
