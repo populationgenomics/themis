@@ -10,10 +10,10 @@ Its callers are the web BFF — quote location for the document pane, plus some 
 the primary consumer, the sandbox agents (reading a paper's full text and validating quotes at authoring
 time). The BFF has no Direct VPC egress (it reaches GCS / Cloud SQL / Anthropic over Google APIs, not the
 services VPC), so an internal-ingress service would be unreachable from it.
-Ingress is therefore `ALL` gated by IAM, with no `run.invoker` binding yet: the BFF that calls it is
-not wired in this component. Its `run.invoker` (audience = this service's URL) and its object-viewer on
-the fulltext bucket — the BFF reads/serves the resolved object — attach with the BFF. Until then the
-URL is resolvable but every request is refused, Cloud Run's default-deny with no invoker member.
+Ingress is therefore `ALL`, gated by IAM: only the web SA is granted `run.invoker` (audience = this
+service's URL), and the web SA also holds object-viewer on the fulltext bucket — the BFF serves the
+resolved object. Those grants and the BFF's `THEMIS_EVIDENCE_URL` are wired in the program
+(`infra/__main__.py`); an unauthenticated request is refused (Cloud Run default-deny, no other member).
 """
 
 from __future__ import annotations
@@ -69,8 +69,8 @@ class EvidenceService(pulumi.ComponentResource):
             location=region,
             deletion_protection=False,
             # IAM-gated public ingress: the BFF (no VPC egress) reaches the run.app URL with an ID
-            # token. No invoker binding here — it attaches with the BFF; until then Cloud Run's
-            # default-deny (no invoker member) refuses every request.
+            # token. The invoker binding is not in this component — the web SA's `run.invoker` is
+            # granted in the program (`infra/__main__.py`); Cloud Run default-deny refuses any other.
             ingress='INGRESS_TRAFFIC_ALL',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,

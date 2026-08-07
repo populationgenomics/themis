@@ -1,7 +1,11 @@
 import type { Interceptor } from "@connectrpc/connect";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { userContext } from "@/server/context";
-import { ResourceNotFoundError, UnauthenticatedError } from "@/server/errors";
+import {
+  ClientInputError,
+  ResourceNotFoundError,
+  UnauthenticatedError,
+} from "@/server/errors";
 import { setUserContext } from "./context";
 
 // The two layers every RPC passes through, applied to the router rather than to each
@@ -43,6 +47,11 @@ function toConnectError(error: unknown): ConnectError {
   }
   if (error instanceof UnauthenticatedError) {
     return new ConnectError("unauthenticated", Code.Unauthenticated);
+  }
+  if (error instanceof ClientInputError) {
+    // The caller's own malformed request. Its message names the offending field and is theirs to
+    // read — this is not internal state, so it is not masked.
+    return new ConnectError(error.message, Code.InvalidArgument);
   }
   console.error("unhandled rpc error", error);
   return new ConnectError(INTERNAL_MESSAGE, Code.Internal);

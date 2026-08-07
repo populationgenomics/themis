@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Representation } from "@/models/evidence";
+import { Representation } from "@/models/literature";
 import {
   computeTarget,
   INITIAL_WORKSPACE_STATE,

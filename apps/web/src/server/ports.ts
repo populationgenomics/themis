@@ -1,4 +1,9 @@
 import type {
+  LocateResponse,
+  PaperInfo,
+  Representation,
+} from "@/models/literature";
+import type {
   Analysis,
   DocumentResponse,
   PollResponse,
@@ -58,4 +63,53 @@ export interface ProjectMembership {
   /** Every Project the user belongs to (id + name). Empty ⇒ the user can reach
    *  nothing (default-deny). */
   projectsOf(userEmail: string): Promise<Project[]>;
+}
+
+/** A stored content object and how to serve it. Backend-neutral: the object lives in a GCS bucket
+ *  (live) or the fixture's in-memory store (fixture). `mediaType` / `downloadName` come from the
+ *  resolving surface and drive the egress typing the `ContentPort` applies. */
+export interface ContentObject {
+  bucket: string;
+  object: string;
+  mediaType: string;
+  downloadName?: string;
+}
+
+/** Serves a stored object to the browser. The live implementation signs a short-lived V4 read URL and
+ *  answers a `302` (the bytes then flow browser↔GCS, never through the BFF); the fixture streams the
+ *  seeded bytes with the egress headers. One reusable primitive across content surfaces (the
+ *  literature corpus, per-tenant working documents): each surface resolves its own objects — bounding
+ *  which bucket it trusts — and hands them here. */
+export interface ContentPort {
+  serve(object: ContentObject): Promise<Response>;
+}
+
+/** Which object of a paper to fetch. Mirrors the literature proto's ResolveContent selector. */
+export type ContentSelector =
+  | { kind: "markdown" }
+  | { kind: "pdf" }
+  | { kind: "file"; name: string };
+
+/** The literature read surface the pane needs. Unlike the data plane it is NOT
+ *  Project-scoped: a paper is a shared-corpus resource, IAP-gated at the route, so routes reach it
+ *  directly (no `AuthorizedBackend`). The fixture serves a seeded corpus offline; the live adapter
+ *  calls the evidence gRPC service and resolves each object through an injected `ContentPort`. */
+export interface LiteraturePort {
+  /** The paper's representations, default representation, and files. Raises
+   *  `ResourceNotFoundError` for an unknown doc_id. */
+  describePaper(docId: string): Promise<PaperInfo>;
+
+  /** Serve the selected object: resolve it to a `ContentObject` and hand it to the `ContentPort` (a
+   *  signed-URL `302` live, the seeded bytes offline). Raises `ResourceNotFoundError` for an unknown
+   *  doc_id or an object the paper lacks. */
+  serveContent(docId: string, selector: ContentSelector): Promise<Response>;
+
+  /** Locate a citation's quote within a representation — code-point offsets for markdown, a page
+   *  region for a PDF, or a `not_located` result when the quote is absent (a first-class outcome
+   *  the pane shows as a warning chip). Raises `ResourceNotFoundError` for an unknown doc_id. */
+  locate(
+    docId: string,
+    quote: string,
+    representation: Representation,
+  ): Promise<LocateResponse>;
 }

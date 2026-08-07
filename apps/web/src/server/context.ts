@@ -1,8 +1,16 @@
 import { headers } from "next/headers";
-import { createDataPlane, createMembership } from "./adapters";
+import {
+  createDataPlane,
+  createLiterature,
+  createMembership,
+} from "./adapters";
 import { AuthorizedBackend } from "./authorized-backend";
 import { getUserIdentity } from "./identity";
-import type { AnalysisDataPlane, ProjectMembership } from "./ports";
+import type {
+  AnalysisDataPlane,
+  LiteraturePort,
+  ProjectMembership,
+} from "./ports";
 
 // The authenticated + authorized per-request context — the data-seam half of the
 // request-auth chokepoint (docs/design/security.md; proxy.ts is the perimeter half).
@@ -15,6 +23,7 @@ import type { AnalysisDataPlane, ProjectMembership } from "./ports";
 interface Composition {
   dataPlane?: AnalysisDataPlane;
   membership?: ProjectMembership;
+  literature?: LiteraturePort;
 }
 
 // On `globalThis` so Next's dev HMR (which re-evaluates modules) does not reset the
@@ -41,9 +50,28 @@ function membership(): ProjectMembership {
   return c.membership;
 }
 
+function literature(): LiteraturePort {
+  const c = composition();
+  if (!c.literature) c.literature = createLiterature();
+  return c.literature;
+}
+
+/** The shared-corpus literature read surface. Deliberately not wrapped in `AuthorizedBackend`: a
+ *  paper is IAP-only, not Project-scoped (document-pane.md §Backend seam), so — unlike `dataPlane`/
+ *  `membership` — exposing an accessor bypasses no per-Project decorator. The RPC identity
+ *  interceptor still gates every call on a verified caller. */
+export function literaturePort(): LiteraturePort {
+  return literature();
+}
+
 export interface UserContext {
   readonly userEmail: string;
   readonly backend: AuthorizedBackend;
+}
+
+export interface LiteratureContext {
+  readonly userEmail: string;
+  readonly literature: LiteraturePort;
 }
 
 /** Verify the request's caller and return the authenticated, Project-scoped
@@ -53,6 +81,17 @@ export async function userContext(headers: Headers): Promise<UserContext> {
   const userEmail = await getUserIdentity().assertedEmail(headers);
   const backend = new AuthorizedBackend(dataPlane(), membership(), userEmail);
   return { userEmail, backend };
+}
+
+/** Verify the request's caller and return the literature read surface. IAP-only: a paper is a
+ *  shared-corpus resource, not Project-scoped, so this gates on a verified identity but does not
+ *  wrap `AuthorizedBackend`. Throws UnauthenticatedError (→ 401) when the request carries no
+ *  verifiable identity. */
+export async function literatureContext(
+  request: Request,
+): Promise<LiteratureContext> {
+  const userEmail = await getUserIdentity().assertedEmail(request.headers);
+  return { userEmail, literature: literature() };
 }
 
 /** The verified caller of the request being rendered. For server components, which

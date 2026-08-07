@@ -20,3 +20,13 @@ export class UnauthenticatedError extends Error {
     this.name = "UnauthenticatedError";
   }
 }
+
+/** Thrown when the caller's own request is malformed — a blank required field, an unspecified enum.
+ *  Maps to Connect `InvalidArgument`, and unlike the masked internal errors its message (a field-level
+ *  description, never internal state) reaches the caller, since the fault is theirs to fix. */
+export class ClientInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClientInputError";
+  }
+}

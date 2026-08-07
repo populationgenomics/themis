@@ -1,4 +1,9 @@
-import type { AnalysisDataPlane, ProjectMembership } from "../ports";
+import type {
+  AnalysisDataPlane,
+  ContentPort,
+  LiteraturePort,
+  ProjectMembership,
+} from "../ports";
 import * as fixture from "./fixture";
 import * as live from "./live";
 
@@ -38,4 +43,21 @@ export function createMembership(
   return selectedBackend(env) === "live"
     ? live.createMembership()
     : fixture.createMembership();
+}
+
+/** Build a FRESH content port — the generic GCS-object serving surface (signed-URL 302 live, seeded
+ *  bytes offline), reusable by any surface that serves content off a bucket. */
+export function createContent(env: EnvLike = process.env): ContentPort {
+  return selectedBackend(env) === "live"
+    ? live.createContent()
+    : fixture.createContent();
+}
+
+/** Build a FRESH literature port — the literature read surface, IAP-gated (not Project-scoped) — with
+ *  the matching content port injected. Memoized by `context.ts`. */
+export function createLiterature(env: EnvLike = process.env): LiteraturePort {
+  const content = createContent(env);
+  return selectedBackend(env) === "live"
+    ? live.createLiterature(content)
+    : fixture.createLiterature(content);
 }

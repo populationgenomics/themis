@@ -76,6 +76,8 @@ class WebService(pulumi.ComponentResource):
         sql_database: pulumi.Input[str],
         session_token_key_version: pulumi.Input[str],
         working_document_bucket: pulumi.Input[str],
+        evidence_url: pulumi.Input[str],
+        evidence_corpus_bucket: pulumi.Input[str],
         anthropic_environment_id: str,
         anthropic_agent_id: str,
         anthropic_federation_rule_id: str,
@@ -104,6 +106,19 @@ class WebService(pulumi.ComponentResource):
         )
         self.service_account_email = service_account.email
         self.service_account_unique_id = service_account.unique_id
+
+        # Sign V4 read URLs for corpus content with no stored key: the SA signs blobs as itself
+        # through the IAM Credentials API (getSignedUrl's keyless path), which needs
+        # serviceAccountTokenCreator on its own identity. The BFF 302s the paper-content routes to
+        # these URLs (document-pane.md §Backend seam); the object-viewer grant (in __main__) is what
+        # the signed URL then reads as.
+        gcp.serviceaccount.IAMMember(
+            'themis-web-sign-blob',
+            service_account_id=service_account.name,
+            role='roles/iam.serviceAccountTokenCreator',
+            member=pulumi.Output.concat('serviceAccount:', service_account.email),
+            opts=child,
+        )
 
         # The SA's Cloud SQL IAM DB-user login and its connect roles; the analyses and
         # session_context write grants are applied by the migration, keyed on this login.
@@ -157,6 +172,8 @@ class WebService(pulumi.ComponentResource):
                             _env('THEMIS_SQL_DATABASE', sql_database),
                             _env('THEMIS_DB_USER', db_user.name),
                             _env('THEMIS_STORE_WORKING_DOCUMENT_BUCKET', working_document_bucket),
+                            _env('THEMIS_EVIDENCE_URL', evidence_url),
+                            _env('THEMIS_EVIDENCE_CORPUS_BUCKET', evidence_corpus_bucket),
                             _env('THEMIS_PROJECT_NUMBER', project_number),
                             _env('THEMIS_IAP_BACKEND_SERVICE_ID', iap_backend_service_id),
                         ],

@@ -38,6 +38,17 @@ export interface GcsConfig {
   workingDocumentBucket: string;
 }
 
+/** The evidence gRPC service the BFF resolves papers through. `evidenceUrl` is both
+ *  the transport base URL and the audience the ID-token interceptor mints for
+ *  (Cloud Run IAM authenticates an ID token whose `aud` is the service URL). */
+export interface EvidenceConfig {
+  evidenceUrl: string;
+  /** The single corpus bucket the BFF will read. The evidence service names the object; the BFF holds
+   *  the authz boundary and refuses any object outside this bucket — so a service bug can't turn a
+   *  paper-content route into a read of another bucket the web SA holds (e.g. per-tenant working docs). */
+  corpusBucket: string;
+}
+
 /** IAP JWT audience inputs. The `aud` an IAP assertion carries is the backend
  *  service resource fronted by the load balancer, NOT the Cloud Run service. */
 export interface IapConfig {
@@ -112,5 +123,14 @@ export function loadGcsConfig(env: EnvLike = process.env): GcsConfig {
       env,
       "THEMIS_STORE_WORKING_DOCUMENT_BUCKET",
     ),
+  };
+}
+
+/** Read + validate the evidence service URL. Content reveal + resolution run
+ *  through it on the pane's requests, independent of the data-plane wiring. */
+export function loadEvidenceConfig(env: EnvLike = process.env): EvidenceConfig {
+  return {
+    evidenceUrl: required(env, "THEMIS_EVIDENCE_URL"),
+    corpusBucket: required(env, "THEMIS_EVIDENCE_CORPUS_BUCKET"),
   };
 }

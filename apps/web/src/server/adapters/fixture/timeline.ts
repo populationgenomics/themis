@@ -5,6 +5,7 @@ import {
   type ConversationEvent,
   ConversationEventSchema,
 } from "@/models/workbench";
+import { DOC_OCR, DOC_XML, XML_QUOTE } from "./literature";
 
 // The scripted run the fixture reveals one stage per poll. Deterministic: a pure
 // function of (analysis, revealed-stage-count), so the poll→update loop is
@@ -31,6 +32,11 @@ function renderDocument(analysis: Analysis): string {
     "The agent wrote this file to `/workspace/document.md` and called the **hello** service over the forward leg in code mode.",
     "### hello result",
     `The **hello** probe resolved the injected session token to its binding — greeting \`${HELLO_GREETING}\`, analysis \`${analysis.id}\`, project \`${analysis.projectId}\`.`,
+    "### Sources",
+    // Citation directives (`:paper` / `:quote`) the document pane renders as clickable citations —
+    // a locatable quote, a quote absent from its paper (the warning chip), and a malformed id (the
+    // broken-citation marker). The ids and quote come from the FixtureLiterature corpus.
+    `The finding draws on :paper[${DOC_XML}], specifically that :quote[${DOC_XML}, ${XML_QUOTE}]. A scanned source :paper[${DOC_OCR}] is also cited, though the phrase :quote[${DOC_OCR}, a sentence not present in the scan] cannot be located in it. A malformed reference :paper[not-a-real-id] renders as broken.`,
   ].join("\n\n");
 }
 
@@ -129,7 +135,7 @@ const STAGES: ReadonlyArray<(analysis: Analysis) => ConversationEvent[]> = [
       "assistant",
       "ev-close",
       4,
-      "Wrote the working document and confirmed the **hello** probe over the forward leg. The run is now complete.",
+      `Wrote the working document and confirmed the **hello** probe over the forward leg. The regulatory finding is supported by :paper[${DOC_XML}]. The run is now complete.`,
     ),
   ],
 ];

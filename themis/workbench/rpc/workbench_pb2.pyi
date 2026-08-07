@@ -1,3 +1,4 @@
+from themis.rpc import literature_pb2 as _literature_pb2
 from themis.workbench.models import workbench_pb2 as _workbench_pb2
 from google.protobuf import descriptor as _descriptor
 from typing import ClassVar as _ClassVar

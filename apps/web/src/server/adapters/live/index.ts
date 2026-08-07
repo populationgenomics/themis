@@ -130,4 +130,6 @@ export function createMembership(): ProjectMembership {
   return new Membership(sharedSql());
 }
 
+export { createContent } from "./content";
 export { createIdentity } from "./identity";
+export { createLiterature } from "./literature";

@@ -22,10 +22,11 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from themis.rpc import literature_pb2 as themis_dot_rpc_dot_literature__pb2
 from themis.workbench.models import workbench_pb2 as themis_dot_workbench_dot_models_dot_workbench__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$themis/workbench/rpc/workbench.proto\x12\x14themis.workbench.rpc\x1a\'themis/workbench/models/workbench.proto2\x87\x05\n\tWorkbench\x12\x84\x01\n\x0cListProjects\x12\x36.themis.workbench.models.workbench.ListProjectsRequest\x1a\x37.themis.workbench.models.workbench.ListProjectsResponse\"\x03\x90\x02\x01\x12\x85\x01\n\x0e\x43reateAnalysis\x12\x38.themis.workbench.models.workbench.CreateAnalysisRequest\x1a\x39.themis.workbench.models.workbench.CreateAnalysisResponse\x12\x84\x01\n\x0cListAnalyses\x12\x36.themis.workbench.models.workbench.ListAnalysesRequest\x1a\x37.themis.workbench.models.workbench.ListAnalysesResponse\"\x03\x90\x02\x01\x12g\n\x04Poll\x12..themis.workbench.models.workbench.PollRequest\x1a/.themis.workbench.models.workbench.PollResponse\x12{\n\x0bGetDocument\x12\x32.themis.workbench.models.workbench.DocumentRequest\x1a\x33.themis.workbench.models.workbench.DocumentResponse\"\x03\x90\x02\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$themis/workbench/rpc/workbench.proto\x12\x14themis.workbench.rpc\x1a\x1bthemis/rpc/literature.proto\x1a\'themis/workbench/models/workbench.proto2\xc8\x06\n\tWorkbench\x12\x84\x01\n\x0cListProjects\x12\x36.themis.workbench.models.workbench.ListProjectsRequest\x1a\x37.themis.workbench.models.workbench.ListProjectsResponse\"\x03\x90\x02\x01\x12\x85\x01\n\x0e\x43reateAnalysis\x12\x38.themis.workbench.models.workbench.CreateAnalysisRequest\x1a\x39.themis.workbench.models.workbench.CreateAnalysisResponse\x12\x84\x01\n\x0cListAnalyses\x12\x36.themis.workbench.models.workbench.ListAnalysesRequest\x1a\x37.themis.workbench.models.workbench.ListAnalysesResponse\"\x03\x90\x02\x01\x12g\n\x04Poll\x12..themis.workbench.models.workbench.PollRequest\x1a/.themis.workbench.models.workbench.PollResponse\x12{\n\x0bGetDocument\x12\x32.themis.workbench.models.workbench.DocumentRequest\x1a\x33.themis.workbench.models.workbench.DocumentResponse\"\x03\x90\x02\x01\x12\x63\n\rDescribePaper\x12+.themis.rpc.literature.DescribePaperRequest\x1a .themis.rpc.literature.PaperInfo\"\x03\x90\x02\x01\x12Z\n\x06Locate\x12$.themis.rpc.literature.LocateRequest\x1a%.themis.rpc.literature.LocateResponse\"\x03\x90\x02\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -38,6 +39,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_WORKBENCH'].methods_by_name['ListAnalyses']._serialized_options = b'\220\002\001'
   _globals['_WORKBENCH'].methods_by_name['GetDocument']._loaded_options = None
   _globals['_WORKBENCH'].methods_by_name['GetDocument']._serialized_options = b'\220\002\001'
-  _globals['_WORKBENCH']._serialized_start=104
-  _globals['_WORKBENCH']._serialized_end=751
+  _globals['_WORKBENCH'].methods_by_name['DescribePaper']._loaded_options = None
+  _globals['_WORKBENCH'].methods_by_name['DescribePaper']._serialized_options = b'\220\002\001'
+  _globals['_WORKBENCH'].methods_by_name['Locate']._loaded_options = None
+  _globals['_WORKBENCH'].methods_by_name['Locate']._serialized_options = b'\220\002\001'
+  _globals['_WORKBENCH']._serialized_start=133
+  _globals['_WORKBENCH']._serialized_end=973
 # @@protoc_insertion_point(module_scope)

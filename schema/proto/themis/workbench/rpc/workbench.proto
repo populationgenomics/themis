@@ -5,11 +5,14 @@
 //
 // Message shapes live in the workbench models proto and are referenced fully-qualified from here;
 // this file adds only the service. The split is the models file's history, not a rule: its
-// request/reply envelopes predate this service and the compat gate forbids moving them.
+// request/reply envelopes predate this service and the compat gate forbids moving them. The paper
+// read methods reuse the literature proto's messages directly — that read surface is itself the
+// BFF↔frontend view model, so there is no second envelope to define.
 syntax = "proto3";
 
 package themis.workbench.rpc;
 
+import "themis/rpc/literature.proto";
 import "themis/workbench/models/workbench.proto";
 
 // The workbench surface a curator reaches. Every method is scoped to the caller the BFF verified
@@ -39,6 +42,18 @@ service Workbench {
 
   // The current working document as a produced|not-produced result, or a named historical version.
   rpc GetDocument(themis.workbench.models.workbench.DocumentRequest) returns (themis.workbench.models.workbench.DocumentResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // A corpus paper's representations, default, and files. IAP-only: a paper is a shared-corpus
+  // resource, so this is not Project-scoped. NOT_FOUND for an unknown doc_id.
+  rpc DescribePaper(themis.rpc.literature.DescribePaperRequest) returns (themis.rpc.literature.PaperInfo) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Locate a citation's quote within a representation: markdown offsets, a PDF region, or
+  // not-located (a first-class outcome, distinct from a NOT_FOUND doc_id).
+  rpc Locate(themis.rpc.literature.LocateRequest) returns (themis.rpc.literature.LocateResponse) {
     option idempotency_level = NO_SIDE_EFFECTS;
   }
 }

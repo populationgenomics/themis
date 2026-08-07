@@ -9,6 +9,7 @@
         "@bufbuild/protobuf": "^2.9.0",
         "@bufbuild/protovalidate": "^1.2.0",
         "@connectrpc/connect": "2.1.2",
+        "@connectrpc/connect-node": "2.1.2",
         "@connectrpc/connect-web": "2.1.2",
         "@connectrpc/validate": "0.2.0",
         "@google-cloud/cloud-sql-connector": "^1.11.1",
@@ -139,6 +140,8 @@
     "@bufbuild/protovalidate": ["@bufbuild/protovalidate@1.2.0", "", { "dependencies": { "@bufbuild/cel": "0.4.0" }, "peerDependencies": { "@bufbuild/protobuf": "^2.8.0" } }, "sha512-tD08DwGrHIV88khLz1Kdz9DYUwEo1TsoepaIg7/B/zd//AymaTx67kvCS1jlkcG/+vgQaSOl6f0HCE3sL8vI7w=="],
 
     "@connectrpc/connect": ["@connectrpc/connect@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0" } }, "sha512-MXkBijtcX09R10Eb6sFeIetc6w6746eio6xtfuyVOH7oQAacT1X0GzMIQFux6Qy8cq3W/T5qX5Bei8YbFtmRGA=="],
+
+    "@connectrpc/connect-node": ["@connectrpc/connect-node@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0", "@connectrpc/connect": "2.1.2" } }, "sha512-+i/aAOpsI8sIx1mbYp6d99zvxaUSF6t/jP9Ux9maAmjsZPgmIQ3JuIeYi0zJIP9zlCnBlJjkpPosshCgdRuThQ=="],
 
     "@connectrpc/connect-web": ["@connectrpc/connect-web@2.1.2", "", { "peerDependencies": { "@bufbuild/protobuf": "^2.7.0", "@connectrpc/connect": "2.1.2" } }, "sha512-1tfaK85MU+gJjwwmL31d2rzdf0XCYX99chZf63uG89SGBUd4XuZ4ZzhGo2u79TPXOE6nLIZQ2okrpyey42PYdg=="],
 

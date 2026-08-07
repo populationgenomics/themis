@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MethodOptions_IdempotencyLevel } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { Workbench } from "@/models/workbench";
+import { DOC_XML, XML_QUOTE } from "@/server/adapters/fixture/literature";
 import { UnauthenticatedError } from "@/server/errors";
 import type { FetchRouter } from "./fetch-router";
 import { createFetchRouter } from "./fetch-router";
@@ -151,6 +152,65 @@ describe("the served surface", () => {
       path,
     );
     expect(response.status).toBe(404);
+  });
+});
+
+describe("the paper read surface", () => {
+  test("describePaper returns a seeded paper's metadata", async () => {
+    const { status, body } = await call("DescribePaper", { docId: DOC_XML });
+    expect(status).toBe(200);
+    expect(body?.title).toBeTruthy();
+    expect(body?.hasMarkdown).toBe(true);
+  });
+
+  test("describePaper is not-found for an unknown doc_id, and never says which", async () => {
+    const { status, body } = await call("DescribePaper", {
+      docId: "99999999-9999-4999-8999-999999999999",
+    });
+    expect(status).toBe(404);
+    expect(body?.code).toBe("not_found");
+  });
+
+  test("locate resolves a seeded quote to markdown offsets", async () => {
+    const { status, body } = await call("Locate", {
+      docId: DOC_XML,
+      quote: XML_QUOTE,
+      representation: "REPRESENTATION_MARKDOWN",
+    });
+    expect(status).toBe(200);
+    const offsets = body?.offsets as { start?: number; end: number };
+    expect(offsets).toBeDefined();
+    expect(offsets.end).toBeGreaterThan(offsets.start ?? 0);
+  });
+
+  test("a quote absent from the paper is not-located, not not-found", async () => {
+    // not-located is a first-class outcome (the pane shows a warning chip), distinct from a
+    // broken-citation NOT_FOUND doc_id — so the call succeeds and carries the notLocated variant.
+    const { status, body } = await call("Locate", {
+      docId: DOC_XML,
+      quote: "a phrase that appears nowhere in the seeded paper",
+      representation: "REPRESENTATION_MARKDOWN",
+    });
+    expect(status).toBe(200);
+    expect(body?.notLocated).toBeDefined();
+  });
+
+  test("locate without a representation is invalid_argument, not a masked 500", async () => {
+    // The representation is the caller's field; an unspecified one is their contract slip, so it
+    // surfaces as invalid_argument (from the ClientInputError → InvalidArgument mapping), never a
+    // masked Internal that also log-spams. Omitting it sends the proto3 default (UNSPECIFIED).
+    const { status, body } = await call("Locate", {
+      docId: DOC_XML,
+      quote: XML_QUOTE,
+    });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
+  });
+
+  test("a blank doc_id is invalid_argument", async () => {
+    const { status, body } = await call("DescribePaper", { docId: "" });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
   });
 });
 

@@ -236,39 +236,66 @@ mirror** with a tab area only. A **group** never pops; a **window** does, holdin
 - Since windows have no user-assigned titles, **move-to-window names each destination by its active (or pinned) tab**.
   After a tab leaves a window (move-to-window) or a pane collapses, focus lands on the source pane's new active tab.
 
-### Backend seam: service resolves, BFF streams
+### Backend seam: structured over Connect, bytes over presigned redirects
 
 Litcache resolution logic (`doc_id → chosen rendering hash → object path`,
-`figure name → AssociatedFile → content- addressed path`, lazy-fetch of un-fetched files) stays in **one language** —
-the Python evidence service — and is not reimplemented in the TypeScript BFF. The evidence service, per `services.md`
-(hand-authored proto, `grpc.aio` servicer, port ABC + fail-loud fixture backend), gains:
+`figure name → AssociatedFile → content-addressed path`, lazy-fetch of un-fetched files) stays in **one language** — the
+Python evidence service — and is not reimplemented in the TypeScript BFF. The service (per `services.md`) exposes
+`DescribePaper`, `ResolveContent` (`(id, what) → gs:// object`), `Locate`, and `Validate`; the BFF reaches it behind a
+TypeScript **literature port** (`server/adapters`, the `THEMIS_BACKEND` fixture/live split), the live adapter a gRPC
+client (ID-token interceptor, audience = the service URL), the fixture serving a seeded corpus offline.
 
-- `Locate(id, quote, representation)` — the shared matcher above (absorbs anchorite for the PDF path).
-- `Validate(id, quote)` — an **agent tool** (sandbox-side, authoring-time): "does `Locate` succeed in any
-  representation?", preventing broken citations at the source.
-- Content resolution — given `(id, what)`, return the **GCS object path** (fetching first when a file's `path` is
-  absent).
+The browser reaches the BFF over **two seams**, split by payload shape:
 
-The BFF reaches the service behind a TypeScript **evidence port** (`server/adapters`, the existing `THEMIS_BACKEND`
-fixture/live split): a fixture adapter serves a seeded corpus offline (all pane dev runs on it), and a live adapter
-calls the gRPC service. The BFF holds no litcache logic; the port answers "describe this paper" and returns **content
-bytes** for a selected object — the fixture returns bundled bytes, the live adapter resolves the object via the service
-then **streams it from GCS** (`gcs.ts`), so the gcs read is the live adapter's internal detail, not the route's. Routes:
-`GET /api/papers/[id]` (PaperInfo), `GET /api/papers/[id]/markdown` (chosen rendering, figure refs rewritten to the
-files route), `GET /api/papers/[id]/pdf`, `GET /api/papers/[id]/files/[name]` (figures inline; supplementary as
-download).
+**Structured messages ride Connect.** `DescribePaper(doc_id) → PaperInfo` and
+`Locate(doc_id, quote, representation) → LocateResponse` are methods on the browser↔BFF `Workbench` service
+(`workbench/rpc/workbench.proto`), reusing the `literature` proto messages as the view model. They inherit that
+service's protovalidate interceptor, one Connect error model, and default-on IAP-identity auth — the consolidation
+`proto.md`/`security.md` require and `#272` established. The BFF servicer delegates straight to the literature port.
+They are **not** hand-rolled REST routes: a bespoke per-route validation/error/auth surface is exactly what `#272`
+removed.
+
+**Content bytes ride plain HTTP, served by GCS directly.** `GET /api/papers/[id]/{markdown,pdf}` and
+`/api/papers/[id]/files/[name]` are deterministic routes that resolve the object and, on the live adapter, **`302` to a
+short-lived presigned GCS URL** — so the bytes flow browser↔GCS with no BFF proxying: `react-pdf` gets HTTP Range
+requests back (progressive paging of publisher-sized PDFs) and there is no Cloud Run buffering. Bytes do not ride
+Connect because proto3-JSON base64-inflates and buffers them, and the consumers (`<Document file>`, `<img>`) want a URL,
+not an RPC reply. The fixture adapter has no bucket to sign against, so offline those same routes serve the seeded bytes
+inline (the one place a byte-stream path survives — behind the port, live never streams).
+
+The literature port **resolves** each selected object to a `ContentObject` (its `gs://` location live, a store path
+offline) and hands it to an injected **`ContentPort`** that serves it: a `302` to a signed URL (live) or the seeded
+bytes (fixture). `ContentPort` is the generic "serve a GCS object to the browser" primitive — signing, egress typing,
+the `302` — reusable by any surface backed by a bucket (the per-tenant working documents are the next); resolution
+(`doc_id + selector → object`) stays evidence-specific. Presign specifics:
+
+- The web SA signs V4 URLs via IAM `signBlob` (no stored key; `serviceAccountTokenCreator` on itself).
+- The **evidence adapter pins the corpus bucket**: it refuses a resolution naming an object outside it before handing it
+  to the `ContentPort`, so an evidence-service bug can't turn a content route into a signed read of another bucket the
+  web SA holds (the per-tenant working-document bucket). The pin is the resolver's (which bucket it trusts), not the
+  generic port's — a second surface pins its own.
+- Egress typing — corpus content is third-party, so anything off the inline allowlist is forced to
+  `Content-Disposition: attachment`, carried on the live path by the signed URL's `response-content-disposition`
+  override (`response-content-type` sets the media type). A downloaded file's declared name rides that same disposition
+  (RFC 5987 `filename*`), so it does not save under the resolved object's content-addressed key.
+  `X-Content-Type-Options: nosniff` cannot ride a signed URL — GCS serves no such header — but it is moot there: the
+  bytes come from the GCS origin, cross-origin to the workbench, so publisher HTML/SVG cannot execute into it
+  regardless. The fixture's same-origin byte path still sets `nosniff`.
+- The bucket needs a **CORS** rule for the workbench origin: `pdf.js` and `fetch().text()` read the body cross-origin
+  (an `<img>` figure does not).
+- The `302`'s `Cache-Control` `max-age` is capped **strictly below** the signature lifetime (a skew/latency margin): the
+  browser's cache clock starts at response receipt, not at mint, so a redirect reused at the edge of its window must
+  still point at a live signature (past it is a 403). The TTL itself is chosen for the bearer-capability window, not
+  freshness — the corpus is immutable.
+
+**Offsets stay stable because the markdown is never rewritten.** `Locate` returns code-point offsets into the markdown
+*as served*; the renderer resolves a figure ref `![](name)` to the deterministic files route **at render time** (an
+image-renderer lookup, never a string substitution on the source), so both sides index the identical text. Rewriting
+refs into signed URLs would shift every following offset and mislocate the highlight.
 
 **Authorization is IAP-only.** A paper belongs to no Project — litcache is a shared corpus and entitlement is a deferred
-non-goal (`literature-evidence-layer.md`) — so, unlike the Project-scoped analysis routes, the paper routes require only
-a verified IAP identity (`proxy.ts` + `context.ts`, app-wide), not Project membership: there is no Project to scope
-against. A real entitlement model lands at the evidence service later, not bolted onto these routes.
-
-The live adapter is the BFF's **first gRPC client** — today the BFF speaks only Anthropic HTTP (`client.ts`), Cloud SQL,
-and GCS, with no TS→Python gRPC transport. It reuses the `protobuf-es` messages `regen` already emits
-(`apps/web/src/gen/themis/rpc/evidence_pb.ts`) over a Connect gRPC transport (`@connectrpc/connect-node`
-`createGrpcTransport`), authenticated by an ID-token interceptor (audience = the service URL), mirroring Python's
-`id_token.channel_credentials`. The fixture adapter carries no transport, so the pane is built and tested without it;
-the live adapter (and its dependency) lands with the deploy.
+non-goal (`literature-evidence-layer.md`) — so both seams require only a verified IAP identity (`proxy.ts` +
+`context.ts`, app-wide), not Project membership. A real entitlement model lands at the evidence service later.
 
 ## Alternatives considered
 

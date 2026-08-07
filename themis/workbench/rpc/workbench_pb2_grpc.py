@@ -3,6 +3,7 @@
 import grpc
 import warnings
 
+from themis.rpc import literature_pb2 as themis_dot_rpc_dot_literature__pb2
 from themis.workbench.models import workbench_pb2 as themis_dot_workbench_dot_models_dot_workbench__pb2
 
 GRPC_GENERATED_VERSION = '1.81.1'
@@ -63,6 +64,16 @@ class WorkbenchStub:
                 request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
                 response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
                 _registered_method=True)
+        self.DescribePaper = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/DescribePaper',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.PaperInfo.FromString,
+                _registered_method=True)
+        self.Locate = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/Locate',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.LocateRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.LocateResponse.FromString,
+                _registered_method=True)
 
 
 class WorkbenchServicer:
@@ -111,6 +122,22 @@ class WorkbenchServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DescribePaper(self, request, context):
+        """A corpus paper's representations, default, and files. IAP-only: a paper is a shared-corpus
+        resource, so this is not Project-scoped. NOT_FOUND for an unknown doc_id.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Locate(self, request, context):
+        """Locate a citation's quote within a representation: markdown offsets, a PDF region, or
+        not-located (a first-class outcome, distinct from a NOT_FOUND doc_id).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_WorkbenchServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -138,6 +165,16 @@ def add_WorkbenchServicer_to_server(servicer, server):
                     servicer.GetDocument,
                     request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.FromString,
                     response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.SerializeToString,
+            ),
+            'DescribePaper': grpc.unary_unary_rpc_method_handler(
+                    servicer.DescribePaper,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.PaperInfo.SerializeToString,
+            ),
+            'Locate': grpc.unary_unary_rpc_method_handler(
+                    servicer.Locate,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.LocateRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.LocateResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -279,6 +316,60 @@ class Workbench:
             '/themis.workbench.rpc.Workbench/GetDocument',
             themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
             themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DescribePaper(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/DescribePaper',
+            themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.PaperInfo.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Locate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/Locate',
+            themis_dot_rpc_dot_literature__pb2.LocateRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.LocateResponse.FromString,
             options,
             channel_credentials,
             insecure,

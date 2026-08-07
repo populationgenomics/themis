@@ -194,6 +194,9 @@ session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoK
 fulltext = storage.fulltext_bucket(
     project=project,
     region=region,
+    # The BFF 302s paper-content reads to signed URLs on this bucket, so the browser fetches its
+    # bytes cross-origin from the workbench; allow that origin (pdf.js / fetch read the body).
+    cors_origins=[f'https://{domain}'],
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 evidence_service = evidence.EvidenceService(
@@ -215,6 +218,8 @@ site = web.WebService(
     sql_database=database.database_name,
     session_token_key_version=session_token_key_version,
     working_document_bucket=store_service.working_document_bucket,
+    evidence_url=evidence_service.url,
+    evidence_corpus_bucket=fulltext.name,
     anthropic_environment_id=anthropic_environment_id,
     anthropic_agent_id=anthropic_agent_id,
     anthropic_federation_rule_id=anthropic_federation_rule_id,
@@ -235,6 +240,23 @@ gcp.kms.CryptoKeyIAMMember(
 gcp.storage.BucketIAMMember(
     'themis-web-working-document-viewer',
     bucket=store_service.working_document_bucket,
+    role='roles/storage.objectViewer',
+    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+)
+# The BFF resolves papers through the evidence service (its ID token, audience = the service URL)
+# and serves the resolved object from the fulltext bucket itself — so grant the web SA invoke on
+# evidence and read on the bucket.
+gcp.cloudrunv2.ServiceIamMember(
+    'themis-web-invokes-evidence',
+    project=project,
+    location=region,
+    name=evidence_service.service_name,
+    role='roles/run.invoker',
+    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+)
+gcp.storage.BucketIAMMember(
+    'themis-web-fulltext-object-viewer',
+    bucket=fulltext.name,
     role='roles/storage.objectViewer',
     member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
 )
