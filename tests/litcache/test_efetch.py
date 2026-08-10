@@ -12,6 +12,7 @@ import asyncio
 import os
 import pathlib
 import urllib.parse
+from collections.abc import Callable
 
 import httpx
 import pubmed_proto
@@ -124,3 +125,57 @@ def test_live_efetch() -> None:
     resolved = asyncio.run(run())
     assert pmid in resolved
     pubmed_proto.pubmed_pb2.PubmedArticle.FromString(resolved[pmid].metadata)
+
+
+def _counting_handler(
+    status_sequence: list[int],
+) -> tuple[list[int], Callable[[httpx.Request], httpx.Response]]:
+    """A MockTransport handler returning each status in turn (last repeats); records call count."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request  # the response depends only on call count, not the request
+        calls.append(1)
+        status = status_sequence[min(len(calls) - 1, len(status_sequence) - 1)]
+        content = b'<PubmedArticleSet/>' if status == 200 else b''
+        return httpx.Response(status, content=content)
+
+    return calls, handler
+
+
+def test_fetch_retries_transient_error_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls, handler = _counting_handler([502, 502, 200])
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    assert asyncio.run(run()) == b'<PubmedArticleSet/>'
+    assert len(calls) == 3  # two transient 502s, then the 200
+
+
+def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls, handler = _counting_handler([503])  # never recovers
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(run())
+    assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
+
+
+def test_fetch_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls, handler = _counting_handler([400])  # deterministic; retrying can't help
+
+    async def run() -> bytes:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(run())
+    assert len(calls) == 1

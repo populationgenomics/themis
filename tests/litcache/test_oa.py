@@ -154,6 +154,57 @@ def test_fetch_supplementary_empty_when_no_sources() -> None:
     assert asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[])) == []
 
 
+def test_fetch_supplementary_derives_filename_and_media_type_from_uri() -> None:
+    # litfetch listed this real PMC OA file with neither filename nor media type; both are
+    # recoverable from the URI (basename + extension) so the writer can still store it.
+    supp = artifacts.File(
+        kind=artifacts.FileKind.SUPPLEMENTARY,
+        source='fixture',
+        media_type=None,
+        uri='https://pmc-oa-opendata.s3.amazonaws.com/PMC10366952.1/jamaneurol-e232363-s002.xlsx',
+        filename=None,
+    )
+    source = _SuppSource([(supp, b'PK\x03\x04')])
+
+    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+
+    assert [(s.filename, s.media_type) for s in out] == [
+        ('jamaneurol-e232363-s002.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    ]
+
+
+def test_fetch_supplementary_falls_back_to_octet_stream_for_unmapped_extension() -> None:
+    # A real extension mimetypes does not know (.R) is still storable — the writer keys the
+    # path off the extension; the media type falls back to octet-stream rather than dropping
+    # the whole paper over one odd supplementary attachment.
+    supp = artifacts.File(
+        kind=artifacts.FileKind.SUPPLEMENTARY,
+        source='fixture',
+        media_type=None,
+        uri='https://pmc-oa-opendata.s3.amazonaws.com/PMC1.1/ANA-99-1277-s002.R',
+        filename=None,
+    )
+    source = _SuppSource([(supp, b'library(x)')])
+
+    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+
+    assert [(s.filename, s.media_type) for s in out] == [('ANA-99-1277-s002.R', 'application/octet-stream')]
+
+
+def test_fetch_supplementary_raises_when_uri_has_no_extension() -> None:
+    # No extension at all: the writer can't key a blob path, so it is genuinely unstorable.
+    supp = artifacts.File(
+        kind=artifacts.FileKind.SUPPLEMENTARY,
+        source='fixture',
+        media_type=None,
+        uri='https://example.test/supplement',
+        filename=None,
+    )
+    source = _SuppSource([(supp, b'data')])
+    with pytest.raises(ValueError, match='no storable extension'):
+        asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+
+
 def test_article_ids_maps_fetchable_schemes() -> None:
     external_ids = (
         identity.ExternalId(scheme='doi', value='10.1/x'),

@@ -21,6 +21,9 @@ Only an XML body opens the OA branch.
 from __future__ import annotations
 
 import dataclasses
+import mimetypes
+import posixpath
+import urllib.parse
 from collections.abc import Sequence
 
 import litfetch
@@ -175,10 +178,10 @@ def default_resolver() -> resolvers.Resolver:
     The ladder's PMC / Europe-PMC fetchers key on `pmcid`, but the seed is
     DOI/PMID-keyed, so the bundle must be enriched to a `pmcid` before they can
     fire. litfetch's `default_resolver` (Europe PMC + NCBI ID Converter) maps
-    `pmid -> pmcid` but not `doi -> pmcid`; appending `SemanticScholarResolver`
-    (keyless, maps `doi -> PubMedCentral`) closes that gap — litfetch's own
-    documented extension point. Without this the OA branch never fires for a
-    DOI-keyed paper and every paper falls to the non-OA docling path.
+    both `pmid -> pmcid` and `doi -> pmcid`; appending `SemanticScholarResolver`
+    (keyless) adds coverage for the papers those two miss. This is for a caller
+    resolving inline; the batch pipeline pre-resolves the `pmcid` and fetches
+    with `resolver=None`, so it does not use this.
 
     Semantic Scholar's keyless endpoint is rate-limited; a bulk (Dataflow) run
     should supply an API key or a higher-throughput DOI->PMCID source.
@@ -201,6 +204,35 @@ def article_ids(external_ids: Sequence[identity.ExternalId]) -> ids.ArticleIds |
     if not fetchable:
         return None
     return ids.ArticleIds(doi=fetchable.get('doi'), pmid=fetchable.get('pmid'), pmcid=fetchable.get('pmcid'))
+
+
+def article_ids_for_fetch(
+    external_ids: Sequence[identity.ExternalId], resolved: litcache_pb2.ExternalIds
+) -> ids.ArticleIds | None:
+    """Build the OA-fetch id bundle from identity plus the resolved cross-ids.
+
+    The PMC fetchers key on `pmcid`; `article_ids` alone rarely carries one (the seed
+    is DOI/PMID). Resolution supplies it — efetch harvests it from the PubMed record,
+    idconv maps it from a DOI — so the fetch bundle is the identity's fetchable ids
+    unioned with the resolved doi/pmid/pmcid, identity taking precedence. This is why
+    the OA fetch needs no live resolver: the `pmcid` is already resolved.
+
+    Args:
+        external_ids: The paper's identity ids (any scheme).
+        resolved: The cross-ids from `resolve.ResolvedPaper` (efetch-harvested or
+            idconv-mapped); unset fields are the empty string.
+
+    Returns:
+        An `ArticleIds` carrying every doi / pmid / pmcid known, or `None` when none
+        is (no OA fetch to attempt).
+    """
+    fetchable = {eid.scheme: eid.value for eid in external_ids if eid.scheme in _FETCHABLE_SCHEMES}
+    doi = fetchable.get('doi') or resolved.doi or None
+    pmid = fetchable.get('pmid') or resolved.pmid or None
+    pmcid = fetchable.get('pmcid') or resolved.pmcid or None
+    if doi is None and pmid is None and pmcid is None:
+        return None
+    return ids.ArticleIds(doi=doi, pmid=pmid, pmcid=pmcid)
 
 
 async def fetch_supplementary(
@@ -235,14 +267,18 @@ async def fetch_supplementary(
         blob = await fetch_file(file, sources=sources)
         if blob is None:
             continue
-        # The writer keys the blob path off the filename extension and records the
-        # media type; a supplementary file missing either can't be stored faithfully.
-        if file.filename is None or file.media_type is None:
-            raise ValueError(f'supplementary file lacks filename/media_type: {file.uri}')
+        # The writer keys the blob path off the filename extension, so a filename with no
+        # extension can't be placed — the one genuinely unstorable case. The filename is
+        # recoverable from the URI basename when litfetch didn't parse one. An unmapped
+        # extension is still storable: the bytes are opaque, so record octet-stream rather
+        # than dropping the whole paper over one odd supplementary attachment.
+        uri_path = urllib.parse.urlparse(file.uri).path if file.uri else ''
+        filename = file.filename or posixpath.basename(uri_path)
+        if not filename or not posixpath.splitext(filename)[1]:
+            raise ValueError(f'supplementary file has no storable extension: {file.uri}')
+        media_type = file.media_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         fetched.append(
-            SupplementaryFile(
-                content=blob.content, filename=file.filename, media_type=file.media_type, origin_url=file.uri
-            )
+            SupplementaryFile(content=blob.content, filename=filename, media_type=media_type, origin_url=file.uri)
         )
     return fetched
 
@@ -264,11 +300,12 @@ async def fetch_oa_source(
     Args:
         article_ids: The identifier bundle to retrieve.
         resolver: Optional resolver litfetch invokes once to fill missing ids a
-            later fetcher needs; defaults to litfetch's own, which maps
-            `pmid→pmcid` but not `doi→pmcid`. A DOI-only bundle therefore needs
-            its `pmcid` filled before this call (the pipeline resolves upstream
-            via `default_resolver`) — or pass `default_resolver()` here — else
-            the ladder finds no OA body and the caller falls to the non-OA path.
+            later fetcher needs. `None` (the default) runs no resolver at all —
+            litfetch skips any fetcher whose required ids the bundle lacks. A
+            DOI-only bundle therefore needs its `pmcid` filled before this call
+            (the pipeline resolves upstream) — or pass `default_resolver()` here
+            — else the ladder finds no OA body and the caller falls to the
+            non-OA path.
         fetchers: The fetcher ladder; defaults to `litfetch.default_fetchers()`.
         session: Optional shared litfetch session (its own HTTP client + pacing);
             `None` opens an ephemeral session per call.

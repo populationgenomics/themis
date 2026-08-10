@@ -37,12 +37,14 @@ import dataclasses
 import uuid
 from collections.abc import Iterable
 
-import pg8000.dbapi
 import pg8000.exceptions
 
-# The Cloud SQL connection type litcache holds (connector + pg8000, IAM), aliased so the
-# fully-qualified name doesn't repeat across every signature.
-Connection = pg8000.dbapi.Connection
+from themis.common import sql
+
+# The connection surface the crosswalk drives, aliased so the fully-qualified name doesn't
+# repeat across every signature. The concrete object is an IAM-authed pg8000 connection
+# dialed through the Cloud SQL connector, whose driver-specific errors `mint` matches on.
+Connection = sql.Connection
 
 # A mint that loses every insert race still converges: on retry it sees the
 # incumbent and adopts (no further insert). The bound only guards against a

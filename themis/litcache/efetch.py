@@ -15,6 +15,7 @@ size (NCBI's GET path caps the inline `id=` list near 200 UIDs; POST has no such
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Sequence
 
@@ -28,6 +29,12 @@ from themis.litcache.models import litcache_pb2
 _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 # eutils etiquette: identify the tool + a contact for rate-limit/abuse follow-up.
 _TOOL = 'themis-litcache'
+
+# eutils returns transient 5xx/429 and drops connections under load; resolution runs the whole
+# corpus through one shard, so an unretried blip would abort the entire run. Retry with
+# exponential backoff (2s, 4s, 8s, 16s) before giving up.
+_MAX_FETCH_ATTEMPTS = 5
+_RETRY_BASE_DELAY_SECONDS = 2.0
 
 _ArticleId = pubmed_proto.pubmed_pb2.ArticleId
 
@@ -95,7 +102,9 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> byte
 
     Raises:
         ValueError: If `pmids` is empty.
-        httpx.HTTPStatusError: If efetch returns a non-2xx status.
+        httpx.HTTPStatusError: If efetch returns a non-retryable status (a 4xx
+            other than 429), or keeps returning a retryable one past the retry budget.
+        httpx.TransportError: If the connection keeps failing past the retry budget.
     """
     if not pmids:
         raise ValueError('efetch.fetch requires at least one PMID')
@@ -108,9 +117,23 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> byte
     }
     # POST the id list in the body: NCBI caps an inline `id=` list on a GET near 200
     # UIDs, but POST has no such ceiling, so one path serves any batch size.
-    response = await http_client.post(_EFETCH_URL, data=params)
-    response.raise_for_status()
-    return response.content
+    for attempt in range(_MAX_FETCH_ATTEMPTS):
+        try:
+            response = await http_client.post(_EFETCH_URL, data=params)
+            response.raise_for_status()
+            return response.content
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+            if not _is_retryable(exc) or attempt == _MAX_FETCH_ATTEMPTS - 1:
+                raise
+        await asyncio.sleep(_RETRY_BASE_DELAY_SECONDS * 2**attempt)
+    raise AssertionError('unreachable: the retry loop returns or raises on the final attempt')
+
+
+def _is_retryable(exc: httpx.TransportError | httpx.HTTPStatusError) -> bool:
+    """Whether an efetch failure is transient: a transport error, HTTP 429, or 5xx."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return True
 
 
 def parse_response(xml: bytes) -> dict[str, ResolvedMetadata]:

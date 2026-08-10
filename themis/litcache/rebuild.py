@@ -19,14 +19,15 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 
-import pg8000.dbapi
 from google.cloud import storage as gcs
 
+from themis.common import sql
 from themis.litcache.models import litcache_pb2
 
-# The Cloud SQL connection type litcache holds (connector + pg8000, IAM), aliased so the
-# fully-qualified name doesn't repeat across every signature.
-Connection = pg8000.dbapi.Connection
+# The connection surface the rebuild drives, aliased so the fully-qualified name doesn't
+# repeat across every signature. The concrete object is an IAM-authed pg8000 connection
+# dialed through the Cloud SQL connector.
+Connection = sql.Connection
 
 
 @dataclasses.dataclass(frozen=True)
