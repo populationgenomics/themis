@@ -19,6 +19,13 @@ _IMAGES_JSON = _REPO_ROOT / '.github' / 'images.json'
 _INFRA_MAIN = _REPO_ROOT / 'infra' / '__main__.py'
 _IMAGE_ENV = re.compile(r'THEMIS_[A-Z_]+_IMAGE')
 
+# `images.json` declares the *service* image set: every entry carries the Pulumi override
+# the program reads, which is what `test_declared_envs_are_the_overrides_the_program_reads`
+# pins. Images under `tools/` are operator tooling with no deployed service behind them —
+# the Dataflow worker reaches its job through `--sdk-image`, not an override — so they have
+# no env to declare and are built out of band.
+_UNDEPLOYED_PREFIX = 'tools/'
+
 
 def _declared() -> list[dict[str, str]]:
     return json.loads(_IMAGES_JSON.read_text('utf-8'))
@@ -32,7 +39,7 @@ def _tracked_dockerfiles() -> set[str]:
         text=True,
         check=True,
     )
-    return set(listed.stdout.split())
+    return {f for f in listed.stdout.split() if not f.startswith(_UNDEPLOYED_PREFIX)}
 
 
 def test_every_tracked_dockerfile_is_declared() -> None:
