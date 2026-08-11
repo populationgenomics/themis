@@ -20,6 +20,11 @@ Two run shapes:
 Dataflow ``staging``/``temp`` live in the scratch bucket either way. The crosswalk is
 always the real shared one, so every shape exercises the production mint path.
 
+``--project``/``--region`` pick the deployment. Every project-scoped resource the run
+touches — the Cloud SQL instance, the worker SA and its DB user, the subnet, and both
+bucket defaults — is derived from them, so naming one project cannot leave part of a run
+pointed at another.
+
 Auth is ambient ADC (``gcloud``) for staging + job submission; the submitting identity
 needs ``serviceAccountUser`` on ``themis-ingest`` and write on the scratch bucket.
 ``themis-ingest`` needs read on the worker image's Artifact Registry repo, and object
@@ -40,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import dataclasses
 import datetime
 import functools
 import logging
@@ -55,21 +61,65 @@ from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger('litcache.launch_dataflow')
 
-_PROJECT = 'cpg-themis-dev'
-_REGION = 'australia-southeast1'
-# The shared Cloud SQL instance holding the litcache crosswalk (infra/themis_infra/sql.py).
-_SQL_CONNECTION_NAME = f'{_PROJECT}:{_REGION}:themis-sql'
+_DEFAULT_PROJECT = 'cpg-themis-dev'
+_DEFAULT_REGION = 'australia-southeast1'
 _SQL_DATABASE = 'themis'
-# The ingestion worker SA and its Cloud SQL IAM DB-user login (the SA email minus the
-# `.gserviceaccount.com` suffix), matching infra/themis_infra/ingest.py.
-_INGEST_SA = f'themis-ingest@{_PROJECT}.iam.gserviceaccount.com'
-_INGEST_DB_USER = f'themis-ingest@{_PROJECT}.iam'
-# The dedicated ingestion subnet the workers run on. Workers take external IPs (NCBI/OpenAlex
-# egress goes out directly; GCS stays on the private path via the subnet's Private Google Access).
-_SUBNETWORK = f'https://www.googleapis.com/compute/v1/projects/{_PROJECT}/regions/{_REGION}/subnetworks/themis-ingest'
 # Parallel GCS rewrite calls when staging the seed; each is a metadata-only op, so oversubscribing
 # the launcher's cores is fine.
 _STAGE_CONCURRENCY = 16
+
+
+@dataclasses.dataclass(frozen=True)
+class _Target:
+    """Where a run lands: the project and region, plus every resource name derived from them.
+
+    The derivations mirror the infra that creates each resource, so a run against another
+    project reaches that project's instance, SA and subnet rather than silently crossing
+    back to the defaults.
+    """
+
+    project: str
+    region: str
+
+    @property
+    def sql_connection_name(self) -> str:
+        """The shared Cloud SQL instance holding the litcache crosswalk (infra/themis_infra/sql.py)."""
+        return f'{self.project}:{self.region}:themis-sql'
+
+    @property
+    def ingest_sa(self) -> str:
+        """The ingestion worker SA (infra/themis_infra/ingest.py)."""
+        return f'themis-ingest@{self.project}.iam.gserviceaccount.com'
+
+    @property
+    def ingest_db_user(self) -> str:
+        """The SA's Cloud SQL IAM DB-user login."""
+        return f'themis-ingest@{self.project}.iam'  # the SA email minus `.gserviceaccount.com`
+
+    @property
+    def subnetwork(self) -> str:
+        """The dedicated ingestion subnet the workers run on.
+
+        Workers take external IPs (NCBI/OpenAlex egress goes out directly; GCS stays on the
+        private path via the subnet's Private Google Access).
+        """
+        return (
+            f'https://www.googleapis.com/compute/v1/projects/{self.project}'
+            f'/regions/{self.region}/subnetworks/themis-ingest'
+        )
+
+    # Named `default_*` because `--scratch-bucket`/`--source-bucket` override them: the
+    # resolved values live on the parsed args, and reading these instead would silently
+    # ignore the flag. The other properties have no such override.
+    @property
+    def default_scratch_bucket(self) -> str:
+        """Staging/output bucket a bounded run uses unless `--scratch-bucket` says otherwise."""
+        return f'{self.project}-litcache-scratch'
+
+    @property
+    def default_source_bucket(self) -> str:
+        """Bucket holding the real `ingest/` seed unless `--source-bucket` says otherwise."""
+        return f'{self.project}-fulltext'
 
 
 def _open_bucket(name: str) -> gcs.Bucket:
@@ -110,14 +160,14 @@ def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, li
 
 
 def _dataflow_options(
-    *, scratch_bucket: str, sdk_image: str, job_name: str, max_workers: int
+    *, target: _Target, scratch_bucket: str, sdk_image: str, job_name: str, max_workers: int
 ) -> pipeline_options.PipelineOptions:
     """Dataflow Runner v2 options: workers run as the ingestion SA off the custom image."""
     return pipeline_options.PipelineOptions(
         [
             '--runner=DataflowRunner',
-            f'--project={_PROJECT}',
-            f'--region={_REGION}',
+            f'--project={target.project}',
+            f'--region={target.region}',
             f'--temp_location=gs://{scratch_bucket}/dataflow/tmp',
             f'--staging_location=gs://{scratch_bucket}/dataflow/staging',
             f'--sdk_container_image={sdk_image}',
@@ -125,8 +175,8 @@ def _dataflow_options(
             # Headroom for reading + parsing large seed pdfs whole in memory (the oversized ones
             # are dead-lettered, but legitimate large papers still load fully).
             '--worker_machine_type=n1-standard-2',
-            f'--subnetwork={_SUBNETWORK}',
-            f'--service_account_email={_INGEST_SA}',
+            f'--subnetwork={target.subnetwork}',
+            f'--service_account_email={target.ingest_sa}',
             f'--job_name={job_name}',
             # Scale the parallel write phase up to the cap by backlog; resolution stays on one
             # worker regardless (single-shard by design), so the pool idles back down for it.
@@ -140,13 +190,18 @@ def _dataflow_options(
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--sdk-image', required=True, help='the litcache worker image in Artifact Registry')
+    parser.add_argument('--project', default=_DEFAULT_PROJECT, help='GCP project to run in (default: %(default)s)')
+    parser.add_argument('--region', default=_DEFAULT_REGION, help='GCP region to run in (default: %(default)s)')
     parser.add_argument(
         '--scratch-bucket',
-        default='cpg-themis-dev-litcache-scratch',
-        help='GCS bucket for staged seed + output papers/ + Dataflow staging/temp (default: %(default)s)',
+        default=None,
+        help='GCS bucket for staged seed + output papers/ + Dataflow staging/temp '
+        '(default: <project>-litcache-scratch)',
     )
     parser.add_argument(
-        '--source-bucket', default='cpg-themis-dev-fulltext', help='bucket holding the real ingest/ seed'
+        '--source-bucket',
+        default=None,
+        help='bucket holding the real ingest/ seed (default: <project>-fulltext)',
     )
     parser.add_argument('--seed-prefix', default='ingest/', help='seed prefix in both buckets')
     parser.add_argument(
@@ -171,6 +226,13 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error('--max-dead-letters must not be negative')
     if not args.direct and args.limit is None:
         parser.error('--limit is required unless --direct (a staged sample must be bounded)')
+    args.target = _Target(project=args.project, region=args.region)
+    # Bucket defaults follow --project, so naming one project cannot leave a run reading or
+    # writing another's.
+    if args.scratch_bucket is None:
+        args.scratch_bucket = args.target.default_scratch_bucket
+    if args.source_bucket is None:
+        args.source_bucket = args.target.default_source_bucket
     return args
 
 
@@ -193,11 +255,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_bucket = args.scratch_bucket
 
     conn_factory = cloudsql.CrosswalkConnFactory(
-        connection_name=_SQL_CONNECTION_NAME, database=_SQL_DATABASE, iam_user=_INGEST_DB_USER
+        connection_name=args.target.sql_connection_name,
+        database=_SQL_DATABASE,
+        iam_user=args.target.ingest_db_user,
     )
     bucket_factory = functools.partial(_open_bucket, run_bucket)
     options = _dataflow_options(
-        scratch_bucket=args.scratch_bucket, sdk_image=args.sdk_image, job_name=job_name, max_workers=args.max_workers
+        target=args.target,
+        scratch_bucket=args.scratch_bucket,
+        sdk_image=args.sdk_image,
+        job_name=job_name,
+        max_workers=args.max_workers,
     )
 
     run = ingest_beam.run_ingestion(
@@ -209,14 +277,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed_prefix=args.seed_prefix,
         limit=args.limit,
     )
-    _LOG.info('submitted Dataflow job %s (region %s)', job_name, _REGION)
+    _LOG.info('submitted Dataflow job %s (project %s, region %s)', job_name, args.target.project, args.target.region)
     state = run.result.wait_until_finish()
     if state != runner.PipelineState.DONE:
         raise RuntimeError(f'Dataflow job did not complete cleanly (state: {state})')
 
     rep = ingest_beam.report_run(run, bucket_factory, seed_prefix=args.seed_prefix)
     print(report.render_report(rep))
-    print(f'\nOutput written to gs://{run_bucket}/papers/; crosswalk minted into {_SQL_CONNECTION_NAME}.')
+    print(f'\nOutput written to gs://{run_bucket}/papers/; crosswalk minted into {args.target.sql_connection_name}.')
     if rep.dead_lettered > args.max_dead_letters:
         # Per-paper isolation keeps the job in DONE however many papers failed, so the
         # dead-letter count is the only thing separating a clean pass from a total one.
