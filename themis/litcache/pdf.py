@@ -22,8 +22,17 @@ from __future__ import annotations
 
 import contextlib
 import re
+import threading
+from collections.abc import Generator
 
 import pypdfium2
+
+# pdfium keeps process-global state and is not thread-safe, so two threads inside a document at once
+# corrupt it and segfault the interpreter. Every entry into the library goes through `_document`,
+# which holds this for the document's whole lifetime — pages and text pages belong to the document
+# and outlive neither it nor the lock. Reentrant because one thread nested in two documents is still
+# one thread inside pdfium, and a plain lock would deadlock there rather than fail.
+_PDFIUM_LOCK = threading.RLock()
 
 # A pdf has a text layer if pypdfium2 recovers at least one positioned glyph
 # across its pages. Image-only pdfs (text drawn as pixels, no text operators)
@@ -94,9 +103,16 @@ def _doi_from_xmp(pdf_bytes: bytes) -> str | None:
     return None
 
 
+@contextlib.contextmanager
+def _document(pdf_bytes: bytes) -> Generator[pypdfium2.PdfDocument]:
+    """Open a pdf with exclusive access to pdfium, released when the document closes."""
+    with _PDFIUM_LOCK, pypdfium2.PdfDocument(pdf_bytes) as doc:
+        yield doc
+
+
 def _doi_from_info_dict(pdf_bytes: bytes) -> str | None:
     """Read a DOI from the pdf document-info fields (`_INFO_DOI_KEYS`), if present."""
-    with pypdfium2.PdfDocument(pdf_bytes) as doc:
+    with _document(pdf_bytes) as doc:
         for key in _INFO_DOI_KEYS:
             value = doc.get_metadata_value(key)
             match = _DOI_RE.search(value) if value else None
@@ -108,7 +124,7 @@ def _doi_from_info_dict(pdf_bytes: bytes) -> str | None:
 def _count_chars(pdf_bytes: bytes) -> int:
     """Total positioned characters across all pages of the pdf."""
     total = 0
-    with pypdfium2.PdfDocument(pdf_bytes) as doc:
+    with _document(pdf_bytes) as doc:
         for page in doc:
             with contextlib.closing(page):
                 textpage = page.get_textpage()

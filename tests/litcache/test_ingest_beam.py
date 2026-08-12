@@ -385,12 +385,7 @@ def test_build_pipeline_ingests_both_papers(
     token, bucket = seeded_bucket
     result = _run(token, conn_factory)
 
-    # Per-stage counters: both papers seen, both minted fresh, both written.
-    assert _counter(result, 'papers_seen') == 2
-    assert _counter(result, 'doc_id_minted') == 2
-    assert _counter(result, 'paper_written') == 2
-    assert _counter(result, 'paper_skipped') == 0
-
+    # Outcome before counters: the counters are diagnostics read back out of Beam's metrics.
     manifests = _manifests(bucket)
     assert len(manifests) == 2
     assert {m.external_ids.doi for m in manifests} == {'10.5555/synthetic.aaa', '10.5555/synthetic.bbb'}
@@ -400,6 +395,13 @@ def test_build_pipeline_ingests_both_papers(
         row = cur.fetchone()
     assert row is not None
     assert row[0] == 2
+
+    # Per-stage counters: both papers seen, both minted fresh, both written.
+    counters = {name: _counter(result, name) for name in ingest_beam._COUNTER_NAMES}
+    assert counters['papers_seen'] == 2, counters
+    assert counters['doc_id_minted'] == 2, counters
+    assert counters['paper_written'] == 2, counters
+    assert counters['paper_skipped'] == 0, counters
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection

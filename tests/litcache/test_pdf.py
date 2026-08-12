@@ -9,7 +9,9 @@ controlled (the committed fixtures carry none).
 
 from __future__ import annotations
 
+import concurrent.futures
 import pathlib
+from collections.abc import Callable
 
 import pypdfium2
 import pytest
@@ -128,3 +130,24 @@ def test_doi_from_metadata_none_for_the_text_fixture() -> None:
 def test_doi_from_metadata_malformed_pdf_fails_loud() -> None:
     with pytest.raises(pypdfium2.PdfiumError):
         pdf.doi_from_metadata(b'not a pdf')
+
+
+def test_concurrent_pdfium_use_agrees_with_serial_use() -> None:
+    # pdfium is not thread-safe, and the pipeline enters it from a Beam worker thread pool, so an
+    # answer must not depend on how many threads are inside the library. Both public entry points
+    # open a document and production reaches them from different stages, so the workload interleaves
+    # them. 16 threads over 32 rounds is the contention needed to fault reliably when unserialised.
+    rounds = 32
+    text_pdf, image_pdf = _TEXT_PDF.read_bytes(), _IMAGE_ONLY_PDF.read_bytes()
+    calls: list[tuple[Callable[[bytes], object], bytes]] = [
+        (pdf.probe_has_text_layer, text_pdf),
+        (pdf.probe_has_text_layer, image_pdf),
+        (pdf.doi_from_metadata, text_pdf),
+        (pdf.doi_from_metadata, image_pdf),
+    ]
+    expected = [call(data) for call, data in calls]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(lambda c: c[0](c[1]), calls * rounds))
+
+    assert results == expected * rounds
