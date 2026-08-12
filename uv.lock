@@ -1690,14 +1690,14 @@ wheels = [
 
 [[package]]
 name = "litdown"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/23/d932455209cf7f1743be22e0fe328f9e5d7adb7c8277e16bb124ad314100/litdown-0.4.0.tar.gz", hash = "sha256:e8c2aae5d44b1369727ebea217f348bfd408ff9339ca48eecc260e70449b9c10", size = 65109, upload-time = "2026-07-06T00:47:35.286Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/36/15107701b628c6193adacedfe338535c85b9c4aa1b5f389683a52a3bb65f/litdown-0.5.0.tar.gz", hash = "sha256:fd5f16344145353ae661fe77e262ec227b124d394a88c9c1f1cab69f00fc69e6", size = 67273, upload-time = "2026-08-12T00:50:34.095Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/13/3b/24703dea91e7c2e7d56bce6d792c1f8aa828d5629f0afec6fe24bc4b9736/litdown-0.4.0-py3-none-any.whl", hash = "sha256:b6258c0ddff9f9c2ee290a1c3529f098100582bdeba1d84f9ef068151f29eb02", size = 52560, upload-time = "2026-07-06T00:47:34.028Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/9c/21bb532312e0a708cfa363532757c6d18f9dcf33e4532d0915496fb702d6/litdown-0.5.0-py3-none-any.whl", hash = "sha256:ad26a33ff5fcefe78989d6fbed3848d0ee263afa6a0023c601ef0ddece9f71af", size = 53192, upload-time = "2026-08-12T00:50:32.923Z" },
 ]
 
 [[package]]
@@ -2227,10 +2227,10 @@ resolution-markers = [
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version >= '3.14'" },
-    { name = "python-dateutil", marker = "python_full_version >= '3.14'" },
-    { name = "pytz", marker = "python_full_version >= '3.14'" },
-    { name = "tzdata", marker = "python_full_version >= '3.14'" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "pytz" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -2272,9 +2272,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version < '3.14'" },
-    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
-    { name = "tzdata", marker = "(python_full_version < '3.14' and sys_platform == 'emscripten') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
 wheels = [
@@ -3310,8 +3310,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -3655,7 +3655,7 @@ dataflow = [
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "httpx" },
-    { name = "litdown", specifier = "==0.4.0" },
+    { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
     { name = "protovalidate" },
@@ -3716,7 +3716,7 @@ lint = [
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
     { name = "httpx" },
-    { name = "litdown", specifier = "==0.4.0" },
+    { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "lxml-stubs" },
     { name = "oauthlib" },
@@ -3744,7 +3744,7 @@ litcache = [
     { name = "docling-core" },
     { name = "google-cloud-storage" },
     { name = "httpx" },
-    { name = "litdown", specifier = "==0.4.0" },
+    { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
     { name = "protovalidate" },
@@ -3796,7 +3796,7 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "httpx" },
-    { name = "litdown", specifier = "==0.4.0" },
+    { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "oauthlib" },
     { name = "pg8000" },
