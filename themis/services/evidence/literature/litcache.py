@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import mimetypes
+from collections.abc import Sequence
 
 import anchorite
 from google.api_core import exceptions as api_exceptions
@@ -29,11 +30,20 @@ from google.cloud import storage
 from google.protobuf import message as _message
 from pubmed_proto import pubmed_pb2
 
+from themis.litcache import outcome, writer
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
 
-_MANIFEST = 'manifest.pb'
+# outcome.Readiness -> the wire state; None (no manifest) is an unknown paper.
+_READINESS_STATE: dict[outcome.Readiness | None, literature_pb2.FullTextState] = {
+    None: literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
+    outcome.Readiness.READY: literature_pb2.FULL_TEXT_STATE_READY,
+    outcome.Readiness.PENDING: literature_pb2.FULL_TEXT_STATE_PENDING,
+    outcome.Readiness.NO_FULL_TEXT: literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT,
+    outcome.Readiness.FAILED: literature_pb2.FULL_TEXT_STATE_FAILED,
+}
+
 _METADATA = 'metadata.pb'
 
 # Canonical-rendering preference: an xml-faithful litdown rendering over a pdf-derived one, and
@@ -63,9 +73,8 @@ class _Paper:
 class LitcacheBackend(literature_backend.LiteratureBackend):
     """Serve the evidence RPCs by reading the litcache directory for each ``doc_id``."""
 
-    def __init__(self, bucket: storage.Bucket, *, papers_prefix: str = 'papers') -> None:
+    def __init__(self, bucket: storage.Bucket) -> None:
         self._bucket = bucket
-        self._prefix = papers_prefix.strip('/')
 
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
         paper, metadata = await asyncio.to_thread(self._read_for_describe, doc_id)
@@ -150,11 +159,21 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in the markdown rendering')
         return literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
 
+    async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
+        # One to two GCS reads per distinct id: READY derives from the manifest alone, but anything
+        # else probes the sidecar too. Gathered so a batch runs concurrently, not serially.
+        distinct = list(dict.fromkeys(doc_ids))
+        states = await asyncio.gather(*(asyncio.to_thread(self._readiness, doc_id) for doc_id in distinct))
+        return dict(zip(distinct, states, strict=True))
+
     # --- GCS reads (synchronous; called via asyncio.to_thread) -----------------------------------
+
+    def _readiness(self, doc_id: str) -> literature_pb2.FullTextState:
+        return _READINESS_STATE[outcome.read_readiness(self._bucket, doc_id)]
 
     def _read_manifest(self, doc_id: str) -> _Paper:
         """The paper's manifest + canonical rendering, or ``UnknownPaperError`` if absent."""
-        manifest_bytes = self._download(f'{doc_id}/{_MANIFEST}')
+        manifest_bytes = self._download(writer.manifest_path(doc_id))
         if manifest_bytes is None:
             raise literature_backend.UnknownPaperError(doc_id)
         manifest = _parse(litcache_pb2.Manifest(), manifest_bytes)
@@ -162,27 +181,27 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
 
     def _read_for_describe(self, doc_id: str) -> tuple[_Paper, bytes | None]:
         """The manifest and the ``metadata.pb`` bytes (absent ⇒ the title falls back)."""
-        return self._read_manifest(doc_id), self._download(f'{doc_id}/{_METADATA}')
+        return self._read_manifest(doc_id), self._download(f'{writer.paper_dir(doc_id)}/{_METADATA}')
 
     def _locate_markdown(self, doc_id: str, quote: str) -> tuple[int, int] | None:
         paper = self._read_manifest(doc_id)
         if paper.rendering is None:
             raise literature_backend.RepresentationUnavailableError(f'{doc_id} has no markdown rendering')
         rendering_hash, _ = paper.rendering
-        markdown = self._download(f'{doc_id}/renderings/{rendering_hash}.md')
+        markdown = self._download(f'{writer.paper_dir(doc_id)}/renderings/{rendering_hash}.md')
         if markdown is None:
             raise literature_backend.MissingContentError(f'{doc_id} rendering {rendering_hash} is missing')
         return anchorite.locate_quote_span(markdown.decode('utf-8'), quote)
 
     def _download(self, name: str) -> bytes | None:
-        blob = self._bucket.blob(f'{self._prefix}/{name}')
+        blob = self._bucket.blob(name)
         try:
             return blob.download_as_bytes()
         except api_exceptions.NotFound:
             return None
 
     def _location(self, doc_id: str, rel_path: str, media_type: str) -> literature_pb2.ContentLocation:
-        uri = f'gs://{self._bucket.name}/{self._prefix}/{doc_id}/{rel_path}'
+        uri = f'gs://{self._bucket.name}/{writer.paper_dir(doc_id)}/{rel_path}'
         return literature_pb2.ContentLocation(gcs_uri=uri, media_type=media_type)
 
 

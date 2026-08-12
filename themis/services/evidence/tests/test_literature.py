@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import typing
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import grpc
 import grpc.aio
 import pytest
+from google.protobuf import duration_pb2
 
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence.literature import backend as literature_backend
@@ -51,11 +52,15 @@ SEED: Mapping[str, literature_backend.SeededPaper] = {
 }
 
 
-def _run[T](stub_call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[T]]) -> T:
+def _run[T](
+    stub_call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[T]],
+    *,
+    backend: literature_backend.LiteratureBackend | None = None,
+) -> T:
     """Drive one call against a real in-process server + stub over the SEED corpus."""
 
     async def run() -> T:
-        servicer = servicer_mod.Servicer(literature_backend.FixtureBackend(SEED))
+        servicer = servicer_mod.Servicer(backend or literature_backend.FixtureBackend(SEED))
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
         ) as channel:
@@ -215,3 +220,174 @@ def test_validate_absent_quote_is_not_ok_with_a_reason() -> None:
     result = _run(lambda s: s.Validate(literature_pb2.ValidateRequest(doc_id=DOC_XML, quote='never written')))
     assert not result.ok
     assert result.reason
+
+
+def _readiness(response: literature_pb2.EnsureFullTextResponse) -> dict[str, literature_pb2.FullTextState]:
+    return {r.doc_id: r.state for r in response.readiness}
+
+
+def test_ensure_full_text_reports_per_id_state() -> None:
+    # DOC_XML has a markdown rendering (READY); DOC_OCR has only a PDF, no rendering (PENDING);
+    # an unknown id is UNKNOWN_PAPER — all in one batch, no whole-call abort.
+    response = _run(
+        lambda s: s.EnsureFullText(literature_pb2.EnsureFullTextRequest(doc_ids=[DOC_XML, DOC_OCR, 'nope']))
+    )
+    assert _readiness(response) == {
+        DOC_XML: literature_pb2.FULL_TEXT_STATE_READY,
+        DOC_OCR: literature_pb2.FULL_TEXT_STATE_PENDING,
+        'nope': literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
+    }
+
+
+def test_ensure_full_text_of_an_empty_batch_is_empty() -> None:
+    response = _run(lambda s: s.EnsureFullText(literature_pb2.EnsureFullTextRequest(doc_ids=[])))
+    assert list(response.readiness) == []
+
+
+def _await_readiness(response: literature_pb2.AwaitFullTextResponse) -> dict[str, literature_pb2.FullTextState]:
+    return {r.doc_id: r.state for r in response.readiness}
+
+
+def test_await_full_text_returns_settled_states_over_grpc() -> None:
+    # The wire mapping: a batch of already-settled ids (DOC_XML READY, 'nope' UNKNOWN_PAPER) round-trips
+    # to the correct per-id readiness. Promptness of the settle short-circuit is guarded at the backend
+    # level (test_litcache.test_await_returns_immediately_when_nothing_is_pending); a small timeout here
+    # so a settle-predicate regression fails fast instead of running to the deadline.
+    response = _run(
+        lambda s: s.AwaitFullText(
+            literature_pb2.AwaitFullTextRequest(
+                doc_ids=[DOC_XML, 'nope'], timeout=duration_pb2.Duration(nanos=50_000_000)
+            )
+        )
+    )
+    assert _await_readiness(response) == {
+        DOC_XML: literature_pb2.FULL_TEXT_STATE_READY,
+        'nope': literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
+    }
+
+
+def test_await_full_text_times_out_returning_the_pending_state() -> None:
+    # DOC_OCR is PENDING and the fixture has no conversion queue to advance it, so the wait runs to the
+    # (short) deadline and reports the still-PENDING state rather than blocking forever.
+    response = _run(
+        lambda s: s.AwaitFullText(
+            literature_pb2.AwaitFullTextRequest(doc_ids=[DOC_OCR], timeout=duration_pb2.Duration(nanos=50_000_000))
+        )
+    )
+    assert _await_readiness(response) == {DOC_OCR: literature_pb2.FULL_TEXT_STATE_PENDING}
+
+
+def test_await_full_text_without_a_timeout_is_invalid_argument() -> None:
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(lambda s: s.AwaitFullText(literature_pb2.AwaitFullTextRequest(doc_ids=[DOC_XML])))
+    assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_await_full_text_with_a_negative_timeout_is_invalid_argument() -> None:
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(
+            lambda s: s.AwaitFullText(
+                literature_pb2.AwaitFullTextRequest(doc_ids=[DOC_XML], timeout=duration_pb2.Duration(seconds=-1))
+            )
+        )
+    assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.parametrize('rpc', ['EnsureFullText', 'AwaitFullText'])
+def test_an_oversized_batch_is_invalid_argument(rpc: str) -> None:
+    # The batch bound is server-side: one request must not be able to occupy the shared thread
+    # executor for an unbounded number of reads, whatever the caller asks for.
+    doc_ids = [f'doc-{i}' for i in range(servicer_mod._MAX_DOC_IDS + 1)]
+    requests = {
+        'EnsureFullText': literature_pb2.EnsureFullTextRequest(doc_ids=doc_ids),
+        'AwaitFullText': literature_pb2.AwaitFullTextRequest(doc_ids=doc_ids, timeout=duration_pb2.Duration(nanos=1)),
+    }
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(lambda s, rpc=rpc: getattr(s, rpc)(requests[rpc]))
+    assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+
+
+class _RecordingWaitBackend(literature_backend.FixtureBackend):
+    """Records the wait the servicer asked for, so the server-side clamp can be asserted."""
+
+    def __init__(self, papers: Mapping[str, literature_backend.SeededPaper]) -> None:
+        super().__init__(papers)
+        self.waits: list[float] = []
+
+    async def await_full_text_readiness(
+        self, doc_ids: Sequence[str], timeout_seconds: float, **kwargs: object
+    ) -> dict[str, literature_pb2.FullTextState]:
+        del kwargs
+        self.waits.append(timeout_seconds)
+        return await super().full_text_readiness(doc_ids)
+
+
+def test_an_out_of_range_timeout_is_clamped_not_an_internal_error() -> None:
+    # Duration.seconds is an unvalidated int64 on the wire, so a client can send a value that
+    # overflows timedelta. That must clamp like any other over-long wait, not surface as UNKNOWN.
+    backend = _RecordingWaitBackend(SEED)
+    response = _run(
+        lambda s: s.AwaitFullText(
+            literature_pb2.AwaitFullTextRequest(doc_ids=[DOC_XML], timeout=duration_pb2.Duration(seconds=2**62))
+        ),
+        backend=backend,
+    )
+    assert _await_readiness(response) == {DOC_XML: literature_pb2.FULL_TEXT_STATE_READY}
+    assert backend.waits == [servicer_mod._MAX_AWAIT_SECONDS]
+
+
+def test_a_wait_longer_than_the_ceiling_is_clamped() -> None:
+    # An over-long wait is served, not rejected — clamped to the ceiling, so the caller gets its
+    # readiness back and calls again rather than holding a serving slot for the duration it named.
+    backend = _RecordingWaitBackend(SEED)
+    response = _run(
+        lambda s: s.AwaitFullText(
+            literature_pb2.AwaitFullTextRequest(doc_ids=[DOC_XML], timeout=duration_pb2.Duration(seconds=86_400))
+        ),
+        backend=backend,
+    )
+    assert _await_readiness(response) == {DOC_XML: literature_pb2.FULL_TEXT_STATE_READY}
+    assert backend.waits == [servicer_mod._MAX_AWAIT_SECONDS]
+
+
+class _CountingBackend(literature_backend.FixtureBackend):
+    """Records the ids each readiness poll asks for, so the poll set can be asserted."""
+
+    def __init__(self, papers: Mapping[str, literature_backend.SeededPaper]) -> None:
+        super().__init__(papers)
+        self.polls: list[list[str]] = []
+
+    async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
+        self.polls.append(list(doc_ids))
+        return await super().full_text_readiness(doc_ids)
+
+
+def test_await_stops_polling_an_id_once_it_has_settled() -> None:
+    # A poll costs a read per id, so a settled id must drop out of the poll set; only DOC_OCR
+    # (PENDING, never advanced by the fixture) is asked for again.
+    backend = _CountingBackend(SEED)
+
+    states = asyncio.run(
+        backend.await_full_text_readiness([DOC_XML, DOC_OCR, 'nope'], timeout_seconds=0.05, poll_interval_seconds=0.01)
+    )
+
+    assert states == {
+        DOC_XML: literature_pb2.FULL_TEXT_STATE_READY,
+        'nope': literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
+        DOC_OCR: literature_pb2.FULL_TEXT_STATE_PENDING,
+    }
+    assert backend.polls[0] == [DOC_XML, DOC_OCR, 'nope']
+    assert len(backend.polls) > 1  # it did keep waiting on the pending id
+    assert all(poll == [DOC_OCR] for poll in backend.polls[1:])
+
+
+def test_await_collapses_duplicate_doc_ids() -> None:
+    # The response carries one readiness per distinct id, and a duplicate is not read twice.
+    backend = _CountingBackend(SEED)
+
+    states = asyncio.run(
+        backend.await_full_text_readiness([DOC_XML, DOC_XML], timeout_seconds=0.05, poll_interval_seconds=0.01)
+    )
+
+    assert states == {DOC_XML: literature_pb2.FULL_TEXT_STATE_READY}
+    assert backend.polls == [[DOC_XML]]

@@ -16,13 +16,15 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { Duration } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_duration } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/literature.proto.
  */
 export const file_themis_rpc_literature: GenFile = /*@__PURE__*/
-  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJKmUKDlJlcHJlc2VudGF0aW9uEh4KGlJFUFJFU0VOVEFUSU9OX1VOU1BFQ0lGSUVEEAASGwoXUkVQUkVTRU5UQVRJT05fTUFSS0RPV04QARIWChJSRVBSRVNFTlRBVElPTl9QREYQAipYCghGaWxlUm9sZRIZChVGSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIUChBGSUxFX1JPTEVfRklHVVJFEAESGwoXRklMRV9ST0xFX1NVUFBMRU1FTlRBUlkQAjKIAwoKTGl0ZXJhdHVyZRJeCg1EZXNjcmliZVBhcGVyEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLkRlc2NyaWJlUGFwZXJSZXF1ZXN0GiAudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVySW5mbxJmCg5SZXNvbHZlQ29udGVudBIsLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXNvbHZlQ29udGVudFJlcXVlc3QaJi50aGVtaXMucnBjLmxpdGVyYXR1cmUuQ29udGVudExvY2F0aW9uElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlElsKCFZhbGlkYXRlEiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlZhbGlkYXRlUmVxdWVzdBonLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlc3BvbnNlYgZwcm90bzM");
+  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiKAoVRW5zdXJlRnVsbFRleHRSZXF1ZXN0Eg8KB2RvY19pZHMYASADKAkiWAoRRnVsbFRleHRSZWFkaW5lc3MSDgoGZG9jX2lkGAEgASgJEjMKBXN0YXRlGAIgASgOMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0U3RhdGUiVQoWRW5zdXJlRnVsbFRleHRSZXNwb25zZRI7CglyZWFkaW5lc3MYASADKAsyKC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRSZWFkaW5lc3MiUwoUQXdhaXRGdWxsVGV4dFJlcXVlc3QSDwoHZG9jX2lkcxgBIAMoCRIqCgd0aW1lb3V0GAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIlQKFUF3YWl0RnVsbFRleHRSZXNwb25zZRI7CglyZWFkaW5lc3MYASADKAsyKC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRSZWFkaW5lc3MiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJKmUKDlJlcHJlc2VudGF0aW9uEh4KGlJFUFJFU0VOVEFUSU9OX1VOU1BFQ0lGSUVEEAASGwoXUkVQUkVTRU5UQVRJT05fTUFSS0RPV04QARIWChJSRVBSRVNFTlRBVElPTl9QREYQAipYCghGaWxlUm9sZRIZChVGSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIUChBGSUxFX1JPTEVfRklHVVJFEAESGwoXRklMRV9ST0xFX1NVUFBMRU1FTlRBUlkQAirJAQoNRnVsbFRleHRTdGF0ZRIfChtGVUxMX1RFWFRfU1RBVEVfVU5TUEVDSUZJRUQQABIZChVGVUxMX1RFWFRfU1RBVEVfUkVBRFkQARIbChdGVUxMX1RFWFRfU1RBVEVfUEVORElORxACEiAKHEZVTExfVEVYVF9TVEFURV9OT19GVUxMX1RFWFQQAxIaChZGVUxMX1RFWFRfU1RBVEVfRkFJTEVEEAQSIQodRlVMTF9URVhUX1NUQVRFX1VOS05PV05fUEFQRVIQBTLjBAoKTGl0ZXJhdHVyZRJeCg1EZXNjcmliZVBhcGVyEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLkRlc2NyaWJlUGFwZXJSZXF1ZXN0GiAudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVySW5mbxJmCg5SZXNvbHZlQ29udGVudBIsLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXNvbHZlQ29udGVudFJlcXVlc3QaJi50aGVtaXMucnBjLmxpdGVyYXR1cmUuQ29udGVudExvY2F0aW9uElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlElsKCFZhbGlkYXRlEiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlZhbGlkYXRlUmVxdWVzdBonLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlc3BvbnNlEm0KDkVuc3VyZUZ1bGxUZXh0EiwudGhlbWlzLnJwYy5saXRlcmF0dXJlLkVuc3VyZUZ1bGxUZXh0UmVxdWVzdBotLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5FbnN1cmVGdWxsVGV4dFJlc3BvbnNlEmoKDUF3YWl0RnVsbFRleHQSKy50aGVtaXMucnBjLmxpdGVyYXR1cmUuQXdhaXRGdWxsVGV4dFJlcXVlc3QaLC50aGVtaXMucnBjLmxpdGVyYXR1cmUuQXdhaXRGdWxsVGV4dFJlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_duration]);
 
 /**
  * @generated from message themis.rpc.literature.DescribePaperRequest
@@ -403,6 +405,115 @@ export const LocateResponseSchema: GenMessage<LocateResponse> = /*@__PURE__*/
   messageDesc(file_themis_rpc_literature, 13);
 
 /**
+ * @generated from message themis.rpc.literature.EnsureFullTextRequest
+ */
+export type EnsureFullTextRequest = Message<"themis.rpc.literature.EnsureFullTextRequest"> & {
+  /**
+   * litcache canonical doc_ids; duplicates collapse to one readiness. More than 100 is INVALID_ARGUMENT.
+   *
+   * @generated from field: repeated string doc_ids = 1;
+   */
+  docIds: string[];
+};
+
+/**
+ * Describes the message themis.rpc.literature.EnsureFullTextRequest.
+ * Use `create(EnsureFullTextRequestSchema)` to create a new message.
+ */
+export const EnsureFullTextRequestSchema: GenMessage<EnsureFullTextRequest> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 14);
+
+/**
+ * @generated from message themis.rpc.literature.FullTextReadiness
+ */
+export type FullTextReadiness = Message<"themis.rpc.literature.FullTextReadiness"> & {
+  /**
+   * @generated from field: string doc_id = 1;
+   */
+  docId: string;
+
+  /**
+   * @generated from field: themis.rpc.literature.FullTextState state = 2;
+   */
+  state: FullTextState;
+};
+
+/**
+ * Describes the message themis.rpc.literature.FullTextReadiness.
+ * Use `create(FullTextReadinessSchema)` to create a new message.
+ */
+export const FullTextReadinessSchema: GenMessage<FullTextReadiness> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 15);
+
+/**
+ * @generated from message themis.rpc.literature.EnsureFullTextResponse
+ */
+export type EnsureFullTextResponse = Message<"themis.rpc.literature.EnsureFullTextResponse"> & {
+  /**
+   * one per distinct requested doc_id, order not guaranteed
+   *
+   * @generated from field: repeated themis.rpc.literature.FullTextReadiness readiness = 1;
+   */
+  readiness: FullTextReadiness[];
+};
+
+/**
+ * Describes the message themis.rpc.literature.EnsureFullTextResponse.
+ * Use `create(EnsureFullTextResponseSchema)` to create a new message.
+ */
+export const EnsureFullTextResponseSchema: GenMessage<EnsureFullTextResponse> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 16);
+
+/**
+ * @generated from message themis.rpc.literature.AwaitFullTextRequest
+ */
+export type AwaitFullTextRequest = Message<"themis.rpc.literature.AwaitFullTextRequest"> & {
+  /**
+   * litcache canonical doc_ids; duplicates collapse to one readiness. More than 100 is INVALID_ARGUMENT.
+   *
+   * @generated from field: repeated string doc_ids = 1;
+   */
+  docIds: string[];
+
+  /**
+   * Requested server-side wait. The call blocks until no requested id is PENDING (all settled), or the
+   * wait elapses, then returns each id's current readiness. Unset or negative is INVALID_ARGUMENT; a
+   * wait longer than the server's ceiling is clamped to it, so a return with ids still PENDING is the
+   * expected result of a long wait, not an error. The client must set an RPC deadline no shorter
+   * than the wait it expects; transport cancellation abandons the wait.
+   *
+   * @generated from field: google.protobuf.Duration timeout = 2;
+   */
+  timeout?: Duration | undefined;
+};
+
+/**
+ * Describes the message themis.rpc.literature.AwaitFullTextRequest.
+ * Use `create(AwaitFullTextRequestSchema)` to create a new message.
+ */
+export const AwaitFullTextRequestSchema: GenMessage<AwaitFullTextRequest> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 17);
+
+/**
+ * @generated from message themis.rpc.literature.AwaitFullTextResponse
+ */
+export type AwaitFullTextResponse = Message<"themis.rpc.literature.AwaitFullTextResponse"> & {
+  /**
+   * one per distinct requested doc_id, order not guaranteed
+   *
+   * @generated from field: repeated themis.rpc.literature.FullTextReadiness readiness = 1;
+   */
+  readiness: FullTextReadiness[];
+};
+
+/**
+ * Describes the message themis.rpc.literature.AwaitFullTextResponse.
+ * Use `create(AwaitFullTextResponseSchema)` to create a new message.
+ */
+export const AwaitFullTextResponseSchema: GenMessage<AwaitFullTextResponse> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 18);
+
+/**
  * @generated from message themis.rpc.literature.ValidateRequest
  */
 export type ValidateRequest = Message<"themis.rpc.literature.ValidateRequest"> & {
@@ -422,7 +533,7 @@ export type ValidateRequest = Message<"themis.rpc.literature.ValidateRequest"> &
  * Use `create(ValidateRequestSchema)` to create a new message.
  */
 export const ValidateRequestSchema: GenMessage<ValidateRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 14);
+  messageDesc(file_themis_rpc_literature, 19);
 
 /**
  * Authoring-time answer for the agent: whether the quote locates in any representation, and which.
@@ -453,7 +564,7 @@ export type ValidateResponse = Message<"themis.rpc.literature.ValidateResponse">
  * Use `create(ValidateResponseSchema)` to create a new message.
  */
 export const ValidateResponseSchema: GenMessage<ValidateResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 15);
+  messageDesc(file_themis_rpc_literature, 20);
 
 /**
  * Which rendering of a paper a request concerns. Markdown is a converter's output; PDF is the
@@ -514,6 +625,60 @@ export const FileRoleSchema: GenEnum<FileRole> = /*@__PURE__*/
   enumDesc(file_themis_rpc_literature, 1);
 
 /**
+ * Whether a paper's full text (a markdown rendering) is available, being produced, or permanently
+ * unavailable — derived from the litcache layout, not a status store (docs/design/evidence-fulltext.md).
+ *
+ * @generated from enum themis.rpc.literature.FullTextState
+ */
+export enum FullTextState {
+  /**
+   * @generated from enum value: FULL_TEXT_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * a rendering is available; fetch it via ResolveContent
+   *
+   * @generated from enum value: FULL_TEXT_STATE_READY = 1;
+   */
+  READY = 1,
+
+  /**
+   * a fetch/conversion is possible or underway; poll again
+   *
+   * @generated from enum value: FULL_TEXT_STATE_PENDING = 2;
+   */
+  PENDING = 2,
+
+  /**
+   * terminal: no source served it, nothing to convert
+   *
+   * @generated from enum value: FULL_TEXT_STATE_NO_FULL_TEXT = 3;
+   */
+  NO_FULL_TEXT = 3,
+
+  /**
+   * terminal: a conversion attempt failed permanently (no producer yet)
+   *
+   * @generated from enum value: FULL_TEXT_STATE_FAILED = 4;
+   */
+  FAILED = 4,
+
+  /**
+   * no such doc_id — a per-id result, never a whole-batch abort
+   *
+   * @generated from enum value: FULL_TEXT_STATE_UNKNOWN_PAPER = 5;
+   */
+  UNKNOWN_PAPER = 5,
+}
+
+/**
+ * Describes the enum themis.rpc.literature.FullTextState.
+ */
+export const FullTextStateSchema: GenEnum<FullTextState> = /*@__PURE__*/
+  enumDesc(file_themis_rpc_literature, 2);
+
+/**
  * @generated from service themis.rpc.literature.Literature
  */
 export const Literature: GenService<{
@@ -560,6 +725,34 @@ export const Literature: GenService<{
     methodKind: "unary";
     input: typeof ValidateRequestSchema;
     output: typeof ValidateResponseSchema;
+  },
+  /**
+   * Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
+   * present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+   * sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
+   * an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
+   * with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
+   * PENDING id settles only once one is written.
+   *
+   * @generated from rpc themis.rpc.literature.Literature.EnsureFullText
+   */
+  ensureFullText: {
+    methodKind: "unary";
+    input: typeof EnsureFullTextRequestSchema;
+    output: typeof EnsureFullTextResponseSchema;
+  },
+  /**
+   * Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
+   * each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
+   * Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
+   * and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+   *
+   * @generated from rpc themis.rpc.literature.Literature.AwaitFullText
+   */
+  awaitFullText: {
+    methodKind: "unary";
+    input: typeof AwaitFullTextRequestSchema;
+    output: typeof AwaitFullTextResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_themis_rpc_literature, 0);

@@ -13,10 +13,15 @@ offloads its blocking I/O rather than stalling the single event loop.
 from __future__ import annotations
 
 import abc
+import asyncio
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from themis.rpc import literature_pb2
+
+# Default cadence for the AwaitFullText poll loop. Readiness derives from GCS with no push channel, so
+# the wait is a bounded poll; the total wait is capped by the caller's timeout regardless.
+_AWAIT_POLL_INTERVAL_SECONDS = 2.0
 
 
 class UnknownPaperError(Exception):
@@ -97,6 +102,50 @@ class LiteratureBackend(abc.ABC):
         the forgiving answer the agent tool wants.
         """
         ...
+
+    @abc.abstractmethod
+    async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
+        """Per-doc_id full-text readiness (READY / PENDING / terminal / unknown).
+
+        Never raises for an unknown doc_id — it is ``FULL_TEXT_STATE_UNKNOWN_PAPER`` in the result, so
+        one bad id never fails the batch.
+        """
+        ...
+
+    async def await_full_text_readiness(
+        self,
+        doc_ids: Sequence[str],
+        timeout_seconds: float,
+        *,
+        poll_interval_seconds: float = _AWAIT_POLL_INTERVAL_SECONDS,
+    ) -> dict[str, literature_pb2.FullTextState]:
+        """Block until no id is PENDING (all settled) or ``timeout_seconds`` elapses; return readiness.
+
+        Polls :meth:`full_text_readiness` — readiness derives from GCS, there is no push channel to
+        wake on — returning as soon as nothing is PENDING or the deadline passes (whichever first). The
+        total wait is bounded by ``timeout_seconds`` regardless of ``poll_interval_seconds``. Concrete
+        over the abstract probe so both backends share one loop; a backend with a real completion
+        signal can override.
+
+        Each cycle re-polls only the ids still PENDING, carrying settled states forward: a poll costs a
+        read per id, and only PENDING can still transition — the same monotonicity the settle
+        short-circuit already relies on. Duplicate ids collapse to one readiness.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        pending = list(dict.fromkeys(doc_ids))
+        settled: dict[str, literature_pb2.FullTextState] = {}
+        while True:
+            states = await self.full_text_readiness(pending)
+            settled.update(
+                (doc_id, state) for doc_id, state in states.items() if state != literature_pb2.FULL_TEXT_STATE_PENDING
+            )
+            pending = [doc_id for doc_id, state in states.items() if state == literature_pb2.FULL_TEXT_STATE_PENDING]
+            if not pending:
+                return settled
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return settled | dict.fromkeys(pending, literature_pb2.FULL_TEXT_STATE_PENDING)
+            await asyncio.sleep(min(poll_interval_seconds, remaining))
 
 
 # --- Fixture seed --------------------------------------------------------------------------------
@@ -205,6 +254,23 @@ class FixtureBackend(LiteratureBackend):
         if not located_in:
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in any representation')
         return literature_pb2.ValidateResponse(ok=True, located_in=located_in)
+
+    async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
+        # A seeded markdown rendering is READY; a PDF-only paper is PENDING (it could be converted); a
+        # paper with neither has no full text. The fixture has no conversion queue, so PENDING never
+        # advances here — it exercises the wire shape, not the async lane.
+        result: dict[str, literature_pb2.FullTextState] = {}
+        for doc_id in doc_ids:
+            paper = self._papers.get(doc_id)
+            if paper is None:
+                result[doc_id] = literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER
+            elif paper.markdown_gcs_uri is not None:
+                result[doc_id] = literature_pb2.FULL_TEXT_STATE_READY
+            elif paper.pdf_gcs_uri is not None:
+                result[doc_id] = literature_pb2.FULL_TEXT_STATE_PENDING
+            else:
+                result[doc_id] = literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT
+        return result
 
 
 def default_representation(has_markdown: bool, markdown_from_xml: bool, has_pdf: bool) -> literature_pb2.Representation:

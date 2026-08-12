@@ -19,6 +19,7 @@ from google.cloud import storage
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
+from themis.litcache import outcome
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence.literature import backend as literature_backend
@@ -27,6 +28,8 @@ from themis.services.evidence.literature import servicer as servicer_mod
 from themis.testing import in_process_grpc
 
 _DOC = '000006fa-e679-4f46-a052-8fb0e69f280c'
+_DOC_PENDING = '000006fa-e679-4f46-a052-8fb0e69f281d'  # a second paper: source, no rendering
+_DOC_TERMINAL = '000006fa-e679-4f46-a052-8fb0e69f282e'  # a third paper: settled without a rendering
 _MARKDOWN = '# A title\n\nThe channel showed markedly reduced ATP sensitivity in vitro.\n'
 _QUOTE = 'markedly reduced ATP sensitivity'
 _CAPTURED = datetime.datetime(2026, 6, 29, tzinfo=datetime.UTC)
@@ -385,3 +388,90 @@ def test_validate_reports_a_missing_rendering_blob_as_a_fault(gcs_bucket: storag
     result = asyncio.run(_backend(gcs_bucket).validate(_DOC, _QUOTE))
     assert result.ok is False
     assert 'missing' in result.reason
+
+
+def test_full_text_readiness_over_the_litcache_layout(gcs_bucket: storage.Bucket) -> None:
+    # A paper with a markdown rendering is READY; a PDF-source paper with no rendering is PENDING; an
+    # unknown doc_id is UNKNOWN_PAPER — the real GCS-derived readiness, in one batch.
+    _seed_paper(gcs_bucket, sources=[_xml_source()])  # _DOC: has a rendering
+    _seed_paper(gcs_bucket, doc_id=_DOC_PENDING, sources=[_pdf_source()], markdown=None)
+    states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC, _DOC_PENDING, 'no-such-doc']))
+    assert states == {
+        _DOC: literature_pb2.FULL_TEXT_STATE_READY,
+        _DOC_PENDING: literature_pb2.FULL_TEXT_STATE_PENDING,
+        'no-such-doc': literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
+    }
+
+
+@pytest.mark.parametrize(
+    ('kind', 'expected'),
+    [
+        (outcome.OutcomeKind.FAILED, literature_pb2.FULL_TEXT_STATE_FAILED),
+        (outcome.OutcomeKind.NO_FULL_TEXT, literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT),
+    ],
+)
+def test_a_terminal_sidecar_marker_reaches_the_wire(
+    gcs_bucket: storage.Bucket, kind: outcome.OutcomeKind, expected: literature_pb2.FullTextState
+) -> None:
+    # The sidecar is the one readiness input that the manifest cannot express, so nothing else would
+    # catch a dropped mapping entry — which raises KeyError rather than reporting a terminal state.
+    _seed_paper(gcs_bucket, doc_id=_DOC_TERMINAL, sources=[_pdf_source()], markdown=None)
+    outcome.write_outcome(gcs_bucket, _DOC_TERMINAL, outcome.FetchOutcome(kind=kind, at=_CAPTURED))
+    states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC_TERMINAL]))
+    assert states == {_DOC_TERMINAL: expected}
+
+
+def test_a_paper_no_source_served_is_no_full_text(gcs_bucket: storage.Bucket) -> None:
+    # No sources and no rendering: settled with nothing to convert, without needing a sidecar.
+    _seed_paper(gcs_bucket, doc_id=_DOC_TERMINAL, sources=[], markdown=None)
+    states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC_TERMINAL]))
+    assert states == {_DOC_TERMINAL: literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT}
+
+
+def test_readiness_collapses_duplicate_doc_ids(gcs_bucket: storage.Bucket) -> None:
+    # One readiness per distinct id, so a caller batching the same id twice pays one GCS read.
+    _seed_paper(gcs_bucket, sources=[_xml_source()])
+    states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC, _DOC]))
+    assert states == {_DOC: literature_pb2.FULL_TEXT_STATE_READY}
+
+
+def test_await_returns_immediately_when_nothing_is_pending(gcs_bucket: storage.Bucket) -> None:
+    # A settled id (READY) short-circuits the poll: with a poll interval far longer than the wrapping
+    # timeout, only a first-probe-then-return can finish inside 1s — a loop that always sleeps cannot.
+    _seed_paper(gcs_bucket, sources=[_xml_source()])
+    states = asyncio.run(
+        asyncio.wait_for(
+            _backend(gcs_bucket).await_full_text_readiness([_DOC], 3600.0, poll_interval_seconds=3600.0), timeout=1.0
+        )
+    )
+    assert states == {_DOC: literature_pb2.FULL_TEXT_STATE_READY}
+
+
+def test_await_times_out_while_a_paper_stays_pending(gcs_bucket: storage.Bucket) -> None:
+    _seed_paper(gcs_bucket, doc_id=_DOC_PENDING, sources=[_pdf_source()], markdown=None)
+    states = asyncio.run(
+        asyncio.wait_for(
+            _backend(gcs_bucket).await_full_text_readiness([_DOC_PENDING], 0.05, poll_interval_seconds=0.02),
+            timeout=1.0,
+        )
+    )
+    assert states == {_DOC_PENDING: literature_pb2.FULL_TEXT_STATE_PENDING}
+
+
+def test_await_observes_a_pending_to_ready_transition(gcs_bucket: storage.Bucket) -> None:
+    # The poll picks up a rendering written by another worker mid-wait: it starts PENDING, a concurrent
+    # task adds the rendering, and the await returns READY well inside its deadline.
+    _seed_paper(gcs_bucket, doc_id=_DOC_PENDING, sources=[_pdf_source()], markdown=None)
+    backend = _backend(gcs_bucket)
+
+    async def scenario() -> dict[str, literature_pb2.FullTextState]:
+        async def convert() -> None:
+            await asyncio.sleep(0.05)
+            await asyncio.to_thread(_seed_paper, gcs_bucket, doc_id=_DOC_PENDING, sources=[_pdf_source()])
+
+        states, _ = await asyncio.gather(
+            backend.await_full_text_readiness([_DOC_PENDING], 2.0, poll_interval_seconds=0.02), convert()
+        )
+        return states
+
+    assert asyncio.run(scenario()) == {_DOC_PENDING: literature_pb2.FULL_TEXT_STATE_READY}

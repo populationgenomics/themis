@@ -54,6 +54,16 @@ class LiteratureStub:
                 request_serializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_literature__pb2.ValidateResponse.FromString,
                 _registered_method=True)
+        self.EnsureFullText = channel.unary_unary(
+                '/themis.rpc.literature.Literature/EnsureFullText',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.FromString,
+                _registered_method=True)
+        self.AwaitFullText = channel.unary_unary(
+                '/themis.rpc.literature.Literature/AwaitFullText',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.FromString,
+                _registered_method=True)
 
 
 class LiteratureServicer:
@@ -91,6 +101,28 @@ class LiteratureServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EnsureFullText(self, request, context):
+        """Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
+        present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+        sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
+        an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
+        with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
+        PENDING id settles only once one is written.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AwaitFullText(self, request, context):
+        """Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
+        each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
+        Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
+        and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LiteratureServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -113,6 +145,16 @@ def add_LiteratureServicer_to_server(servicer, server):
                     servicer.Validate,
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_literature__pb2.ValidateResponse.SerializeToString,
+            ),
+            'EnsureFullText': grpc.unary_unary_rpc_method_handler(
+                    servicer.EnsureFullText,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.SerializeToString,
+            ),
+            'AwaitFullText': grpc.unary_unary_rpc_method_handler(
+                    servicer.AwaitFullText,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -223,6 +265,60 @@ class Literature:
             '/themis.rpc.literature.Literature/Validate',
             themis_dot_rpc_dot_literature__pb2.ValidateRequest.SerializeToString,
             themis_dot_rpc_dot_literature__pb2.ValidateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EnsureFullText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/EnsureFullText',
+            themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AwaitFullText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/AwaitFullText',
+            themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -71,13 +71,18 @@ _BLOB_DIRS: dict[litcache_pb2.AssociatedFileRole, str] = {
 }
 
 
+def paper_dir(doc_id: str) -> str:
+    """The layout root for `doc_id` — the prefix every one of its objects hangs off."""
+    return posixpath.join(_PAPERS_PREFIX, doc_id)
+
+
 def manifest_path(doc_id: str) -> str:
     """The manifest key for `doc_id` — the commit point and resumability checkpoint.
 
     A caller probes this to skip an already-committed paper before doing the
     expensive conversion work `write_paper` would redo.
     """
-    return posixpath.join(_PAPERS_PREFIX, doc_id, _MANIFEST_NAME)
+    return posixpath.join(paper_dir(doc_id), _MANIFEST_NAME)
 
 
 def source_revision_path(doc_id: str, handle: str, revision_hash: str, media_type: litcache_pb2.SourceFormat) -> str:
@@ -92,7 +97,7 @@ def source_revision_path(doc_id: str, handle: str, revision_hash: str, media_typ
     ext = _SOURCE_EXTENSIONS.get(media_type)
     if ext is None:
         raise ValueError(f'source {handle!r} has unknown media type {media_type!r}')
-    return posixpath.join(_PAPERS_PREFIX, doc_id, _SOURCES_DIR, handle, f'{revision_hash}.{ext}')
+    return posixpath.join(paper_dir(doc_id), _SOURCES_DIR, handle, f'{revision_hash}.{ext}')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -247,7 +252,7 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             an unknown media type, a blob with an unknown role or a name without an
             extension, or `metadata` that is not a valid `PubmedArticle` proto.
     """
-    paper_dir = posixpath.join(_PAPERS_PREFIX, paper.doc_id)
+    root = paper_dir(paper.doc_id)
     manifest_key = manifest_path(paper.doc_id)
     manifest_blob = bucket.blob(manifest_key)
     if manifest_blob.exists():
@@ -256,12 +261,12 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
 
     _validate_metadata(paper.metadata)
 
-    sources = [_write_source(bucket, paper_dir, s) for s in paper.sources]
+    sources = [_write_source(bucket, root, s) for s in paper.sources]
     revision_hashes = {src.handle: {rev.hash for rev in src.revisions} for src in sources}
-    renderings = _write_renderings(bucket, paper_dir, revision_hashes, paper.renderings)
-    files = _write_files(bucket, paper_dir, paper.files)
+    renderings = _write_renderings(bucket, root, revision_hashes, paper.renderings)
+    files = _write_files(bucket, root, paper.files)
 
-    bucket.blob(posixpath.join(paper_dir, _METADATA_NAME)).upload_from_string(paper.metadata)
+    bucket.blob(posixpath.join(root, _METADATA_NAME)).upload_from_string(paper.metadata)
 
     manifest = litcache_pb2.Manifest(
         doc_id=paper.doc_id,
@@ -323,12 +328,12 @@ def add_rendering(bucket: gcs.Bucket, doc_id: str, rendering: RenderingInput) ->
         ConcurrentWriteError: If the RMW lost its generation race the whole retry
             budget (contention — retryable).
     """
-    paper_dir = posixpath.join(_PAPERS_PREFIX, doc_id)
+    root = paper_dir(doc_id)
     markdown_bytes = rendering.markdown.encode('utf-8')
-    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
+    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(root, _RENDERINGS_DIR), 'md')
     key = posixpath.splitext(posixpath.basename(name))[0]
     if rendering.docling_json is not None:
-        docling_name = posixpath.join(paper_dir, _RENDERINGS_DIR, f'{key}.docling.json')
+        docling_name = posixpath.join(root, _RENDERINGS_DIR, f'{key}.docling.json')
         bucket.blob(docling_name).upload_from_string(rendering.docling_json)
 
     manifest_blob = bucket.blob(manifest_path(doc_id))
@@ -390,13 +395,13 @@ def add_source_and_rendering(
         ConcurrentWriteError: If the RMW lost its generation race the whole retry
             budget (contention — retryable).
     """
-    paper_dir = posixpath.join(_PAPERS_PREFIX, doc_id)
-    source_proto = _write_source(bucket, paper_dir, source)
+    root = paper_dir(doc_id)
+    source_proto = _write_source(bucket, root, source)
     markdown_bytes = rendering.markdown.encode('utf-8')
-    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
+    name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(root, _RENDERINGS_DIR), 'md')
     key = posixpath.splitext(posixpath.basename(name))[0]
     if rendering.docling_json is not None:
-        docling_name = posixpath.join(paper_dir, _RENDERINGS_DIR, f'{key}.docling.json')
+        docling_name = posixpath.join(root, _RENDERINGS_DIR, f'{key}.docling.json')
         bucket.blob(docling_name).upload_from_string(rendering.docling_json)
 
     manifest_blob = bucket.blob(manifest_path(doc_id))
@@ -462,11 +467,11 @@ def _validate_rendering(r: litcache_pb2.Rendering, revision_hashes: dict[str, se
         raise ValueError(f'rendering converter {r.converter!r} and model presence are inconsistent')
 
 
-def _write_source(bucket: gcs.Bucket, paper_dir: str, src: SourceInput) -> litcache_pb2.Source:
+def _write_source(bucket: gcs.Bucket, root: str, src: SourceInput) -> litcache_pb2.Source:
     ext = _SOURCE_EXTENSIONS.get(src.media_type)
     if ext is None:
         raise ValueError(f'source {src.handle!r} has unknown media type {src.media_type!r}')
-    name = storage.put_content_addressed(bucket, src.data, posixpath.join(paper_dir, _SOURCES_DIR, src.handle), ext)
+    name = storage.put_content_addressed(bucket, src.data, posixpath.join(root, _SOURCES_DIR, src.handle), ext)
     rev_hash = posixpath.splitext(posixpath.basename(name))[0]
 
     captured_at = timestamp_pb2.Timestamp()
@@ -488,7 +493,7 @@ def _write_source(bucket: gcs.Bucket, paper_dir: str, src: SourceInput) -> litca
 
 def _write_renderings(
     bucket: gcs.Bucket,
-    paper_dir: str,
+    root: str,
     revision_hashes: dict[str, set[str]],
     rins: Sequence[RenderingInput],
 ) -> dict[str, litcache_pb2.Rendering]:
@@ -497,18 +502,18 @@ def _write_renderings(
         r = rin.rendering
         _validate_rendering(r, revision_hashes)
         markdown_bytes = rin.markdown.encode('utf-8')
-        name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(paper_dir, _RENDERINGS_DIR), 'md')
+        name = storage.put_content_addressed(bucket, markdown_bytes, posixpath.join(root, _RENDERINGS_DIR), 'md')
         key = posixpath.splitext(posixpath.basename(name))[0]
         if key in renderings:
             raise ValueError(f'two renderings share the markdown hash {key}')
         if rin.docling_json is not None:
-            docling_name = posixpath.join(paper_dir, _RENDERINGS_DIR, f'{key}.docling.json')
+            docling_name = posixpath.join(root, _RENDERINGS_DIR, f'{key}.docling.json')
             bucket.blob(docling_name).upload_from_string(rin.docling_json)
         renderings[key] = r
     return renderings
 
 
-def _write_files(bucket: gcs.Bucket, paper_dir: str, files: Sequence[FileInput]) -> list[litcache_pb2.AssociatedFile]:
+def _write_files(bucket: gcs.Bucket, root: str, files: Sequence[FileInput]) -> list[litcache_pb2.AssociatedFile]:
     written: list[litcache_pb2.AssociatedFile] = []
     for f in files:
         entry = litcache_pb2.AssociatedFile(role=f.role, name=f.name)
@@ -520,12 +525,10 @@ def _write_files(bucket: gcs.Bucket, paper_dir: str, files: Sequence[FileInput])
             ext = posixpath.splitext(f.name)[1].lstrip('.')
             if not ext:
                 raise ValueError(f'associated file {f.name!r} has no extension to content-address against')
-            blob_name = storage.put_content_addressed(
-                bucket, f.data, posixpath.join(paper_dir, _BLOB_DIRS[f.role]), ext
-            )
+            blob_name = storage.put_content_addressed(bucket, f.data, posixpath.join(root, _BLOB_DIRS[f.role]), ext)
             # Store the paper-relative path (the sha256 is its filename), not the
             # bare hash — consumers read the location directly, as for sources.
-            entry.path = posixpath.relpath(blob_name, paper_dir)
+            entry.path = posixpath.relpath(blob_name, root)
         written.append(entry)
     return written
 

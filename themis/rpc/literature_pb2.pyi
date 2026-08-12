@@ -1,3 +1,6 @@
+import datetime
+
+from google.protobuf import duration_pb2 as _duration_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -18,12 +21,27 @@ class FileRole(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FILE_ROLE_UNSPECIFIED: _ClassVar[FileRole]
     FILE_ROLE_FIGURE: _ClassVar[FileRole]
     FILE_ROLE_SUPPLEMENTARY: _ClassVar[FileRole]
+
+class FullTextState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    FULL_TEXT_STATE_UNSPECIFIED: _ClassVar[FullTextState]
+    FULL_TEXT_STATE_READY: _ClassVar[FullTextState]
+    FULL_TEXT_STATE_PENDING: _ClassVar[FullTextState]
+    FULL_TEXT_STATE_NO_FULL_TEXT: _ClassVar[FullTextState]
+    FULL_TEXT_STATE_FAILED: _ClassVar[FullTextState]
+    FULL_TEXT_STATE_UNKNOWN_PAPER: _ClassVar[FullTextState]
 REPRESENTATION_UNSPECIFIED: Representation
 REPRESENTATION_MARKDOWN: Representation
 REPRESENTATION_PDF: Representation
 FILE_ROLE_UNSPECIFIED: FileRole
 FILE_ROLE_FIGURE: FileRole
 FILE_ROLE_SUPPLEMENTARY: FileRole
+FULL_TEXT_STATE_UNSPECIFIED: FullTextState
+FULL_TEXT_STATE_READY: FullTextState
+FULL_TEXT_STATE_PENDING: FullTextState
+FULL_TEXT_STATE_NO_FULL_TEXT: FullTextState
+FULL_TEXT_STATE_FAILED: FullTextState
+FULL_TEXT_STATE_UNKNOWN_PAPER: FullTextState
 
 class DescribePaperRequest(_message.Message):
     __slots__ = ("doc_id",)
@@ -144,6 +162,40 @@ class LocateResponse(_message.Message):
     region: PdfRegion
     not_located: QuoteNotLocated
     def __init__(self, offsets: _Optional[_Union[TextOffsets, _Mapping]] = ..., region: _Optional[_Union[PdfRegion, _Mapping]] = ..., not_located: _Optional[_Union[QuoteNotLocated, _Mapping]] = ...) -> None: ...
+
+class EnsureFullTextRequest(_message.Message):
+    __slots__ = ("doc_ids",)
+    DOC_IDS_FIELD_NUMBER: _ClassVar[int]
+    doc_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, doc_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class FullTextReadiness(_message.Message):
+    __slots__ = ("doc_id", "state")
+    DOC_ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    doc_id: str
+    state: FullTextState
+    def __init__(self, doc_id: _Optional[str] = ..., state: _Optional[_Union[FullTextState, str]] = ...) -> None: ...
+
+class EnsureFullTextResponse(_message.Message):
+    __slots__ = ("readiness",)
+    READINESS_FIELD_NUMBER: _ClassVar[int]
+    readiness: _containers.RepeatedCompositeFieldContainer[FullTextReadiness]
+    def __init__(self, readiness: _Optional[_Iterable[_Union[FullTextReadiness, _Mapping]]] = ...) -> None: ...
+
+class AwaitFullTextRequest(_message.Message):
+    __slots__ = ("doc_ids", "timeout")
+    DOC_IDS_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_FIELD_NUMBER: _ClassVar[int]
+    doc_ids: _containers.RepeatedScalarFieldContainer[str]
+    timeout: _duration_pb2.Duration
+    def __init__(self, doc_ids: _Optional[_Iterable[str]] = ..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
+
+class AwaitFullTextResponse(_message.Message):
+    __slots__ = ("readiness",)
+    READINESS_FIELD_NUMBER: _ClassVar[int]
+    readiness: _containers.RepeatedCompositeFieldContainer[FullTextReadiness]
+    def __init__(self, readiness: _Optional[_Iterable[_Union[FullTextReadiness, _Mapping]]] = ...) -> None: ...
 
 class ValidateRequest(_message.Message):
     __slots__ = ("doc_id", "quote")

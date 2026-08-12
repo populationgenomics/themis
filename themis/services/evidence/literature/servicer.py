@@ -14,6 +14,20 @@ import grpc
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence.literature import backend as literature_backend
 
+# A readiness batch costs one to two GCS reads per distinct id — two while PENDING, since the sidecar
+# probe only short-circuits on a rendering — and a wait re-reads every still-PENDING id each poll
+# cycle, so one request runs up to `2 * ids * timeout/interval` of them on the shared default thread
+# executor that every other RPC on the instance draws from. The batch cap bounds both how many run at
+# once and how many run in total; the wait bounds how long they keep coming. Both are server-side
+# because the caller is not the party that bears the cost.
+_MAX_DOC_IDS = 100
+# Cloud Run's default request timeout; the evidence service declares none of its own.
+_REQUEST_TIMEOUT_SECONDS = 300.0
+# Derived, not chosen: a wait allowed to run the whole request window would be killed by the platform
+# while returning, so the caller would get DEADLINE_EXCEEDED instead of the PENDING readiness a long
+# wait promises. The margin is the response's budget.
+_MAX_AWAIT_SECONDS = _REQUEST_TIMEOUT_SECONDS - 60.0
+
 
 class Servicer(literature_pb2_grpc.LiteratureServicer):
     def __init__(self, backend: literature_backend.LiteratureBackend) -> None:
@@ -61,6 +75,36 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
     ) -> literature_pb2.ValidateResponse:
         del context  # required by the servicer interface; Validate never aborts
         return await self._backend.validate(request.doc_id, request.quote)
+
+    async def EnsureFullText(
+        self, request: literature_pb2.EnsureFullTextRequest, context: grpc.aio.ServicerContext
+    ) -> literature_pb2.EnsureFullTextResponse:
+        # An oversized batch aborts; an unknown doc_id does not — it is a per-id UNKNOWN_PAPER state.
+        if len(request.doc_ids) > _MAX_DOC_IDS:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f'at most {_MAX_DOC_IDS} doc_ids per request')
+        states = await self._backend.full_text_readiness(list(request.doc_ids))
+        return literature_pb2.EnsureFullTextResponse(
+            readiness=[literature_pb2.FullTextReadiness(doc_id=doc_id, state=state) for doc_id, state in states.items()]
+        )
+
+    async def AwaitFullText(
+        self, request: literature_pb2.AwaitFullTextRequest, context: grpc.aio.ServicerContext
+    ) -> literature_pb2.AwaitFullTextResponse:
+        if not request.HasField('timeout'):
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, 'AwaitFullText requires a timeout')
+        # Summed from the fields rather than via ToTimedelta: Duration.seconds is an unvalidated
+        # int64 on the wire, and timedelta raises OverflowError past ~8.6e13 s — before any guard here.
+        timeout_seconds = request.timeout.seconds + request.timeout.nanos / 1e9
+        if timeout_seconds < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, 'AwaitFullText timeout must be non-negative')
+        if len(request.doc_ids) > _MAX_DOC_IDS:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f'at most {_MAX_DOC_IDS} doc_ids per request')
+        states = await self._backend.await_full_text_readiness(
+            list(request.doc_ids), min(timeout_seconds, _MAX_AWAIT_SECONDS)
+        )
+        return literature_pb2.AwaitFullTextResponse(
+            readiness=[literature_pb2.FullTextReadiness(doc_id=doc_id, state=state) for doc_id, state in states.items()]
+        )
 
 
 def _decode_selector(
