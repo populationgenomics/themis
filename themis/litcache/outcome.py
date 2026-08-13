@@ -9,9 +9,12 @@ separate status store (`docs/design/evidence-fulltext.md`):
   no extra blob probe);
 - a `.fetch_outcome` sidecar is present ⇒ its **terminal** reason (NO_FULL_TEXT / FAILED) — the stop
   condition, written once when the fetch/convert path gives up;
-- a source is present with neither ⇒ **PENDING** — a fetch or conversion can still produce the
-  rendering (an OA fetch inline, or a PDF conversion off the queue);
-- no rendering, no source, no marker ⇒ **NO_FULL_TEXT** — nothing to serve and nothing to try.
+- neither ⇒ **PENDING** — production has not been attempted, or has not settled.
+
+Both terminal states are marker-only. The manifest records what a paper *has*, not what has been tried
+on it, and `produce.produce_full_text` is the one place that knows: it walks the ladder and writes
+NO_FULL_TEXT when no rung served — including when the manifest gives it no rung to attempt at all. The
+reader waits for that marker rather than re-deriving the ladder's entry conditions.
 
 GATED (a rendering exists but its source is access-gated under an enforced licence) is a property of
 `Source.access`, not this sidecar; it folds in when licence enforcement is wired.
@@ -120,6 +123,4 @@ def read_readiness(bucket: gcs.Bucket, doc_id: str) -> Readiness | None:
     outcome = read_outcome(bucket, doc_id)
     if outcome is not None:
         return terminal_readiness(outcome)
-    if len(manifest.sources) > 0:
-        return Readiness.PENDING
-    return Readiness.NO_FULL_TEXT
+    return Readiness.PENDING

@@ -49,16 +49,27 @@ conversion burns a turn's tokens per poll.
 - the manifest lists a rendering ⇒ **READY** (a rendering is committed into the manifest only after its blob is written,
   so `manifest.renderings` non-empty *is* the rendering-present signal);
 - a `.fetch_outcome` sidecar is present ⇒ its **terminal** reason (`NO_FULL_TEXT` / `FAILED`);
-- a source is present with neither ⇒ **PENDING** (a fetch or conversion can still produce the rendering);
-- no rendering, no source, no marker ⇒ **NO_FULL_TEXT** (nothing to serve and nothing to try).
+- neither ⇒ **PENDING** — production has not been attempted, or has not settled.
+
+Both terminal states are **marker-only**: only the producer knows whether the ladder ran and served nothing, and the
+manifest records what a paper *has*, not what has been tried on it. Deriving `NO_FULL_TEXT` from an empty `sources`
+wrote off every freshly-minted paper — the state ingestion-on-demand starts from — and is the same transient-as-terminal
+conflation as the PDF branch settling papers `FAILED`.
+
+The ladder's entry conditions *are* manifest-derived (`produce._produce_from_oa` needs a doi/pmid/pmcid;
+`_produce_from_pdf` needs a PDF source with revisions), so a manifest failing both is recognisably unproducible without
+running anything. The reader still does not derive it. Both rungs return false rather than raising, so
+`produce_full_text` falls through to `_record_no_full_text` and writes the marker — the producer already settles this
+class, in the one place that knows what the ladder can attempt. Deriving it on the read path would put those entry
+conditions in two places, where adding a rung mislabels papers the new rung could serve.
 
 `GATED` (a rendering exists but its source is access-gated under an enforced licence) is a property of `Source.access`,
 not this sidecar; it folds in when licence enforcement is wired.
 
 A single-`doc_id` check is a couple of GCS existence probes. No queryable job table exists or is needed: callers ask
 about specific ids, never enumerate. The states conflate — enqueued, converting, and (before its marker lands) failed
-all read as PENDING — which is exactly what a waiting caller needs ("not ready, keep waiting"); the terminal marker,
-written once, is the stop condition.
+all read as PENDING, as do never-attempted and not-currently-attemptable — which is what a waiting caller needs ("not
+ready, keep waiting"); the terminal marker, written once, is the stop condition.
 
 ### The terminal-outcome sidecar
 
@@ -182,8 +193,8 @@ same either way, and only the agent's waiting idiom would change.
 ## Alternatives considered
 
 - **A Postgres work table + a drainer Job + a cron reconcile.** Seriously weighed. Rejected once GCS was shown to hold
-  the state (PENDING = PDF-without-rendering; terminal = sidecar marker): a queryable table is then not needed, and
-  Cloud Tasks owns the retry / backoff / dedup / concurrency the table would hand-roll (lease-and-reclaim, a
+  the state (PENDING = no-rendering-without-marker; terminal = sidecar marker): a queryable table is then not needed,
+  and Cloud Tasks owns the retry / backoff / dedup / concurrency the table would hand-roll (lease-and-reclaim, a
   drain-until-empty worker, a keep-warm-or-cold-start cron). The table would be *additive* to GCS state — two sources of
   truth. It remains the right pattern for long, stateful, checkpointed runs that do not fit a pushed request; that lane
   is a different shape and need not share this substrate.
@@ -214,8 +225,8 @@ pipeline. Resolution by external id is absent too: the backend takes a `doc_id` 
 - **Where `/convert` runs** — a handler on the evidence service (co-located, simplest) vs. a separate convert service
   (isolates the Anthropic-heavy path). Request concurrency and per-instance memory (N in-flight PDFs) argue both ways.
 - **Orphan on enqueue failure** — a PDF written to GCS but whose Cloud Task was never created is a PENDING nobody
-  retries. Make the enqueue fail loud (so the caller retries), or accept a rare backstop scan for PDF-without-rendering-
-  without-marker-without-task.
+  retries. Make the enqueue fail loud (so the caller retries), or accept a rare backstop scan. The scan's predicate is
+  no-rendering-without-marker-without-task — not PDF-specific, since a paper with no source at all is PENDING too.
 - **Conversions beyond the 60-min request ceiling** — a pathological PDF exceeds the in-request timeout and would need a
   Job after all; handle now or defer until it occurs.
 - **The upload entry door** — the submit-side path for `SOURCE_KIND_UPLOAD`, the escape hatch for a paper the OA ladder

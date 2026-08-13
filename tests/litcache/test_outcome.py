@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 
+import pytest
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
@@ -55,11 +56,17 @@ def _metadata() -> bytes:
     return article.SerializeToString()
 
 
-def _paper(*, sources: list[writer.SourceInput], renderings: list[writer.RenderingInput]) -> writer.PaperInput:
+def _paper(
+    *,
+    sources: list[writer.SourceInput],
+    renderings: list[writer.RenderingInput],
+    external_ids: litcache_pb2.ExternalIds | None = None,
+    claim_key: str = 'doi:10.1/x',
+) -> writer.PaperInput:
     return writer.PaperInput(
         doc_id=_DOC_ID,
-        external_ids=litcache_pb2.ExternalIds(doi='10.1/x'),
-        claim_key='doi:10.1/x',
+        external_ids=external_ids if external_ids is not None else litcache_pb2.ExternalIds(doi='10.1/x'),
+        claim_key=claim_key,
         equivalence=litcache_pb2.Equivalence(canonical_doc_id=_DOC_ID),
         retraction=litcache_pb2.Retraction(),
         sources=sources,
@@ -113,8 +120,22 @@ def test_a_rendering_is_ready(gcs_bucket: gcs.Bucket) -> None:
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
 
 
-def test_source_without_rendering_is_pending(gcs_bucket: gcs.Bucket) -> None:
-    _write_pending(gcs_bucket)
+@pytest.mark.parametrize(
+    'paper',
+    [
+        pytest.param(_paper(sources=[_source()], renderings=[]), id='pdf-source-not-yet-converted'),
+        pytest.param(_paper(sources=[], renderings=[]), id='freshly-minted-nothing-fetched'),
+        pytest.param(
+            _paper(sources=[], renderings=[], external_ids=litcache_pb2.ExternalIds(), claim_key='binhash:abc'),
+            # No fetchable id and no PDF source: recognisably unproducible from the manifest alone, and
+            # still PENDING — the producer settles this class with a marker (`_record_no_full_text`).
+            id='no-fetchable-id-no-pdf',
+        ),
+    ],
+)
+def test_no_rendering_and_no_marker_is_pending(gcs_bucket: gcs.Bucket, paper: writer.PaperInput) -> None:
+    # Only a marker settles a paper, whatever the manifest holds.
+    writer.write_paper(gcs_bucket, paper)
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.PENDING
 
 
@@ -128,12 +149,6 @@ def test_a_terminal_marker_wins_over_pending(gcs_bucket: gcs.Bucket) -> None:
 def test_no_full_text_marker_reads_as_no_full_text(gcs_bucket: gcs.Bucket) -> None:
     _write_pending(gcs_bucket)
     outcome.write_outcome(gcs_bucket, _DOC_ID, outcome.FetchOutcome(outcome.OutcomeKind.NO_FULL_TEXT, _AT))
-    assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.NO_FULL_TEXT
-
-
-def test_no_source_no_rendering_no_marker_is_no_full_text(gcs_bucket: gcs.Bucket) -> None:
-    # A claimed paper with nothing to serve and nothing to try.
-    writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.NO_FULL_TEXT
 
 

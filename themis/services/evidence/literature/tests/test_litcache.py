@@ -421,11 +421,12 @@ def test_a_terminal_sidecar_marker_reaches_the_wire(
     assert states == {_DOC_TERMINAL: expected}
 
 
-def test_a_paper_no_source_served_is_no_full_text(gcs_bucket: storage.Bucket) -> None:
-    # No sources and no rendering: settled with nothing to convert, without needing a sidecar.
+def test_a_paper_with_no_sources_is_pending_not_terminal(gcs_bucket: storage.Bucket) -> None:
+    # Only a marker settles a paper: with no sources, no rendering and no sidecar, nothing has been
+    # tried yet, so the wire must not report a terminal state.
     _seed_paper(gcs_bucket, doc_id=_DOC_TERMINAL, sources=[], markdown=None)
     states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC_TERMINAL]))
-    assert states == {_DOC_TERMINAL: literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT}
+    assert states == {_DOC_TERMINAL: literature_pb2.FULL_TEXT_STATE_PENDING}
 
 
 def test_readiness_collapses_duplicate_doc_ids(gcs_bucket: storage.Bucket) -> None:

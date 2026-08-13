@@ -18,6 +18,7 @@ from themis.testing import in_process_grpc
 
 DOC_XML = 'doc-xml'  # a source-XML-derived markdown rendering + a PDF
 DOC_OCR = 'doc-ocr'  # a PDF whose only rendering is a lossy OCR (no markdown)
+DOC_BARE = 'doc-bare'  # claimed, nothing fetched yet — neither representation
 QUOTE_MD = 'a quote locatable in the markdown'
 QUOTE_PDF = 'a quote locatable in the pdf'
 
@@ -44,6 +45,7 @@ SEED: Mapping[str, literature_backend.SeededPaper] = {
         markdown_locations={QUOTE_MD: (10, 42)},
         pdf_locations={QUOTE_PDF: literature_backend.SeededPdfLocation(page=1, rects=((0.1, 0.2, 0.3, 0.02),))},
     ),
+    DOC_BARE: literature_backend.SeededPaper(title='A freshly-minted paper'),
     DOC_OCR: literature_backend.SeededPaper(
         title='A scan-only paper',
         pdf_gcs_uri='gs://corpus/doc-ocr/doc.pdf',
@@ -227,14 +229,16 @@ def _readiness(response: literature_pb2.EnsureFullTextResponse) -> dict[str, lit
 
 
 def test_ensure_full_text_reports_per_id_state() -> None:
-    # DOC_XML has a markdown rendering (READY); DOC_OCR has only a PDF, no rendering (PENDING);
-    # an unknown id is UNKNOWN_PAPER — all in one batch, no whole-call abort.
+    # DOC_XML has a markdown rendering (READY); DOC_OCR has only a PDF and DOC_BARE has nothing at all,
+    # and both are PENDING — the seed models no terminal marker, and only a marker settles a paper. An
+    # unknown id is UNKNOWN_PAPER. All in one batch, no whole-call abort.
     response = _run(
-        lambda s: s.EnsureFullText(literature_pb2.EnsureFullTextRequest(doc_ids=[DOC_XML, DOC_OCR, 'nope']))
+        lambda s: s.EnsureFullText(literature_pb2.EnsureFullTextRequest(doc_ids=[DOC_XML, DOC_OCR, DOC_BARE, 'nope']))
     )
     assert _readiness(response) == {
         DOC_XML: literature_pb2.FULL_TEXT_STATE_READY,
         DOC_OCR: literature_pb2.FULL_TEXT_STATE_PENDING,
+        DOC_BARE: literature_pb2.FULL_TEXT_STATE_PENDING,
         'nope': literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER,
     }
 

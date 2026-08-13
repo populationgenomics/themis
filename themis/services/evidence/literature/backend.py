@@ -259,9 +259,8 @@ class FixtureBackend(LiteratureBackend):
         return literature_pb2.ValidateResponse(ok=True, located_in=located_in)
 
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
-        # A seeded markdown rendering is READY; a PDF-only paper is PENDING (it could be converted); a
-        # paper with neither has no full text. The fixture has no conversion queue, so PENDING never
-        # advances here — it exercises the wire shape, not the async lane.
+        # The seed models no terminal marker and no conversion queue, so only READY and PENDING are
+        # expressible here and a PENDING paper never advances.
         result: dict[str, literature_pb2.FullTextState] = {}
         for doc_id in doc_ids:
             paper = self._papers.get(doc_id)
@@ -269,10 +268,8 @@ class FixtureBackend(LiteratureBackend):
                 result[doc_id] = literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER
             elif paper.markdown_gcs_uri is not None:
                 result[doc_id] = literature_pb2.FULL_TEXT_STATE_READY
-            elif paper.pdf_gcs_uri is not None:
-                result[doc_id] = literature_pb2.FULL_TEXT_STATE_PENDING
             else:
-                result[doc_id] = literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT
+                result[doc_id] = literature_pb2.FULL_TEXT_STATE_PENDING
         return result
 
 
