@@ -80,13 +80,13 @@ store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage",
 # consumer. grpc.aio server + generated stubs; includes the session client — every request is
 # authorized through auth. No storage backend of its own.
 hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "session" }]
-# evidence service (themis/services/evidence): the workbench's literature read surface — litcache
-# resolution + quote location. grpc.aio server + generated stubs. No session client: the corpus is
-# shared, not session-scoped (B1). The live backend (B2) reads the litcache GCS layout:
-# google-cloud-storage for the bucket, pubmed_proto for the metadata.pb title. The litcache_pb2 stubs
-# pull the vendored buf/validate stubs (shipped in the image), which need only protobuf at runtime;
+# evidence service (themis/services/evidence): one image serving the data-plane evidence interfaces;
+# literature is litcache resolution + quote location. grpc.aio server + generated stubs. No session
+# client: the corpus is shared, not session-scoped. The literature live backend reads the litcache GCS
+# layout: google-cloud-storage for the bucket, pubmed_proto for the metadata.pb title. The litcache_pb2
+# stubs pull the vendored buf/validate stubs (shipped in the image), which need only protobuf at runtime;
 # no protovalidate, no conversion/fetch deps — the read path never validates or converts. anchorite
-# locates a verbatim quote to markdown offsets (and PDF page regions when B4 lands), exact-pinned like the others.
+# locates a verbatim quote to markdown offsets, exact-pinned like the others.
 evidence = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", "pubmed_proto==0.1.0", "anchorite==0.5.1"]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
@@ -119,7 +119,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/document_linter/tests"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -221,6 +221,10 @@ ignore = [
     "S106",   # fixture credentials passed as kwargs are not secrets
 ]
 "themis/services/evidence/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+]
+"themis/services/evidence/literature/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]

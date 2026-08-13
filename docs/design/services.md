@@ -4,9 +4,9 @@
 from `apps/` (the user-facing web surface). See [`../repo-structure.md`](../repo-structure.md) for where it sits.
 
 Load-bearing invariant: **the server subclasses the servicer base class generated from a committed, hand-authored
-`.proto`.** The interface is forced by the type system — an unimplemented rpc or a wrong message type is a static error,
-not a runtime drift — so there is no contract test. The committed `.proto` is the contract; `buf breaking` gates its
-evolution. `themis/services/auth/` is the worked example throughout — read it alongside this doc.
+`.proto`.** The rpc surface is forced by the type system — an unimplemented rpc or a wrong message type is a static
+error, not a runtime drift — so there is no contract test. The committed `.proto` is the contract; `buf breaking` gates
+its evolution. `themis/services/auth/` is the worked example throughout — read it alongside this doc.
 
 This is a playbook: follow the sections top-to-bottom (they are the build order), or jump to the
 [checklist](#checklist).
@@ -25,7 +25,9 @@ entry.
 - `themis.migrate` — the SQL migration runner (see [`migrations.md`](migrations.md)).
 - `themis.testing` — helpers shared by tests across packages. No production module imports it and no image copies it.
 
-A service, its client helpers, and its generated `rpc` package share a domain name; nothing else is shared implicitly.
+A gRPC service, its client helpers, and its generated `rpc` package share a domain name — the deployment's name where it
+serves one service, the interface's where it serves several ([below](#one-deployment-several-interfaces)). Nothing else
+is shared implicitly.
 
 ## Anatomy
 
@@ -42,11 +44,53 @@ A service is `themis/services/<name>/`, the package `themis.services.<name>`:
 - **`tests/`** — behaviour tests against an in-process `grpc.aio` server (or the servicer methods directly), plus
   `test_main.py` for the entrypoint wiring. `themis.testing.in_process_grpc.serving` is that server: it takes a callable
   that registers the servicer, and yields a channel to wrap in the generated stub — don't hand-roll one. No contract
-  test — the servicer base is the interface.
+  test — the servicer base is the contract.
 - **`Dockerfile`** — multi-stage; build context is the repo root.
 
 The messages, stub, and servicer base are **not** under the service — they live in the shared `themis/rpc/` (below),
 because a caller imports the identical modules.
+
+### One deployment, several interfaces
+
+A deployment and a gRPC service are not one-to-one. `evidence` is one image and one Cloud Run service hosting several
+independent gRPC services — its **interfaces** — so a caller pays one cold start and one deploy for the whole read
+surface instead of one per fact source. Modularity is in the tree, not the deployment shape: nothing is shared between
+interfaces beyond the server they attach to.
+
+An interface is a **subpackage**, `themis/services/<name>/<domain>/`, holding the anatomy above — `servicer.py`,
+`<port>.py`, `tests/` — with its `.proto` and generated stubs in the shared trees, exactly as a single-service
+deployment has them. Plus:
+
+- **`config.py`** — that interface's environment contract, and nothing else: which adapter each selector value builds,
+  and the vars that configure it. Every var the interface reads carries its name as a prefix
+  (`THEMIS_LITERATURE_FIXTURE`), so no image-wide var decides an interface's behaviour; within that prefix the selector
+  follows the per-port rule below — `THEMIS_LITERATURE_BACKEND` for a one-port interface,
+  `THEMIS_<INTERFACE>_<PORT>_BACKEND` where it has several. Each interface also names its own adapters — literature's
+  are `fixture`/`live` — since no image-wide vocabulary can fit all of them.
+- **`interface.py`** — `async register(server, stack)`: build the env-selected backend, install the servicer. The whole
+  seam. `register` is `async` so an adapter that needs `await` to build is possible at all, and the `stack` (a
+  `contextlib.AsyncExitStack`) owns the clients an interface holds for the server's lifetime. Nothing in the data plane
+  handles SIGTERM, so that stack unwinds on a startup failure, not on a Cloud Run stop — do not register work there that
+  has to run before the process dies until graceful drain exists.
+
+`__main__.py` then holds no interface-specific code — a tuple of the `register` callables the image serves, the health
+servicer, and `$PORT`. Health reports for the server as a whole, with no per-interface entry: an interface that cannot
+build its backend exits the process, so a partial set never serves.
+
+Adding one is that subpackage, an `INTERFACES` entry, its `testpaths` + `per-file-ignores` entries for the nested
+`tests/` dir, and a `Dockerfile` COPY for any tree it reads. Two of those would otherwise fail green, so tests hold
+them: `themis/services/evidence/tests/test_main.py` (every `interface.py` in the tree is registered, and every
+registration is an `interface.py`) and `tests/test_testpaths.py` (every tests directory is collected).
+
+**Scaling is per-instance, so interfaces share it.** Cloud Run replicates the whole image: load on one interface adds
+instances that serve all of them, they contend for one instance's concurrency, and they scale to zero together
+(`min_instance_count=0`). Statelessness is therefore a requirement, not a preference — any instance may serve any
+request, and instances come and go, so an interface keeps no cross-request state in memory. A read-only handle held for
+the server's lifetime is the exception, and belongs on the `stack` above; the fixture corpora are the shape to copy —
+in-memory, but read-only and seeded identically from the environment, so every instance answers alike.
+
+Reach for this only when the interfaces genuinely share a deploy boundary (one audience, one IAM posture, one scaling
+profile). A service whose callers, credentials, or scaling differ stays its own deployment.
 
 ## The wire contract: proto → stubs
 
@@ -72,12 +116,12 @@ client-streams, `getWorkspace` server-streams `WorkspaceChunk`), and a read whos
 takes `google.protobuf.Empty` as its request message. The wire evolves additively (add a field, never renumber or remove
 — retire with a `reserved` statement), so a generated caller never breaks; `buf breaking` enforces it.
 
-## The forced interface: the generated servicer base
+## The forced contract: the generated servicer base
 
 The server subclasses `<domain>_pb2_grpc.<Service>Servicer` and implements each rpc. An unimplemented method or a wrong
 message type is a static (pyright) error, and server and caller exchange the *same* generated message classes — so the
 runtime API cannot drift from the contract, and there is no separate contract test — a generated servicer is the real
-forced interface, not a stand-in for one. Backward-compatibility is the separate `buf breaking` gate:
+forced contract, not a stand-in for one. Backward-compatibility is the separate `buf breaking` gate:
 [`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) diffs each committed `.proto` against its base-branch
 baseline through a pinned `buf` Docker image — advisory (a sign, not a merge cop). It is the sole authored-data compat
 gate (the at-rest `chuckd` gate was retired). See [`proto.md`](proto.md), "Schema evolution".
@@ -88,8 +132,13 @@ The servicer depends on the abstract port, not a concrete backend, so the same s
 deployed (real). The port's methods are `async` — a blocking adapter (Cloud SQL, GCS) offloads its I/O to a thread
 rather than stalling the `grpc.aio` event loop:
 
-- **Selection** — `__main__` reads the backend from a required env var (`THEMIS_BACKEND`); an unset or unknown value is
-  a `SystemExit`, never a silent fallback.
+- **Selection** — a required env var per port, named after the port (`THEMIS_<PORT>_BACKEND`: store's
+  `THEMIS_STORAGE_BACKEND` and `THEMIS_AUTHORIZER_BACKEND`, `hello`'s `THEMIS_AUTHORIZER_BACKEND`, the evidence image's
+  `THEMIS_LITERATURE_BACKEND`); an unset or unknown value is a `SystemExit`, never a silent fallback. Having one port is
+  no exception — `hello` has one and still names it. `auth` predates the rule and reads a bare `THEMIS_BACKEND`: an
+  outlier to rename when something else takes you into that file, not a second convention. Each port names the adapters
+  it actually has (`gcs`/`fixture`, `http`/`fixture`, `live`/`fixture`), so no service-wide switch forces one vocabulary
+  on all of them.
 - **Fixture backend** — in-memory, for tests and a first deploy. Seed it *explicitly* from the environment (auth:
   `THEMIS_FIXTURE_BINDINGS`, JSON). The code never defaults to an empty or placeholder store; the caller (image, deploy,
   test) supplies the value, `{}` for a deliberate empty store. This is the fail-loud rule
@@ -180,16 +229,17 @@ Root `pyproject.toml`:
   generated stubs hard-check the runtime `grpcio` version.
 - `[tool.pytest.ini_options]` — append `themis/services/<name>/tests` to `testpaths`. `pythonpath` stays `["."]`; the
   namespace resolves from the repo root (`consider_namespace_packages = true`).
-- `[tool.ruff]` — the generated `themis/rpc` tree is `extend-exclude`d once (protoc's output is not lint-clean); a new
-  domain needs no ruff change.
+- `[tool.ruff]` — the generated `themis/rpc` tree is `extend-exclude`d once (protoc's output is not lint-clean), so a
+  new domain needs no `extend-exclude` change. A new `tests/` directory does need its own `per-file-ignores` entry: the
+  patterns are root-anchored, so the `"tests/**"` entry does not reach it and every `assert` trips `S101`.
 
 `Dockerfile` (copy `themis/services/auth/Dockerfile`) — multi-stage; **build context is the repo root** so the committed
 stubs ship; deps from the committed `uv.lock` via `uv sync --locked --group <name>` (the age-gated lock the whole repo
 uses); `COPY` the `themis/rpc/<domain>_pb2*` stubs plus the `themis/…` subtrees the service needs; `PYTHONPATH=/app`;
-Cloud Run injects `$PORT`. Do **not** bake a working backend default into the image: the runtime requires its
-`THEMIS_BACKEND` (and the fixture's seed) and exits at startup without them, and the deploy supplies them. A baked
-fixture default would let a deploy that dropped the real override come up *serving* — an empty store answering every
-lookup "not found", which reads as "genuinely absent" rather than a fault — so the fail-loud check must reach the
+Cloud Run injects `$PORT`. Do **not** bake a working backend default into the image: the runtime requires each port's
+`THEMIS_<PORT>_BACKEND` (and the fixture's seed) and exits at startup without them, and the deploy supplies them. A
+baked fixture default would let a deploy that dropped the real override come up *serving* — an empty store answering
+every lookup "not found", which reads as "genuinely absent" rather than a fault — so the fail-loud check must reach the
 deployed revision (auth, store, hello, and evidence all follow this).
 
 ## Deploy (a separate, stacked PR)

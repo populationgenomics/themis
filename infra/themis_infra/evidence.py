@@ -1,9 +1,13 @@
-"""The evidence service: the literature read surface as an internal Cloud Run gRPC service.
+"""The evidence service: one Cloud Run gRPC deployment for the data plane's evidence interfaces.
 
-The workbench document pane's backend (docs/design/document-pane.md, docs/design/services.md): a
-runtime SA and an HTTP/2 gRPC service that reads the litcache fulltext bucket (object-viewer,
-read-only) to resolve a paper's rendering / PDF / associated-file object and locate a quote. The
-`THEMIS_BACKEND=live` litcache backend; no auth service, no Cloud SQL — a `doc_id` is the litcache
+A runtime SA and an HTTP/2 gRPC service hosting every interface of the evidence image
+(docs/design/services.md), literature being the one it serves today. Each interface is configured by its
+own `THEMIS_<INTERFACE>_*` env vars, so a further one adds an env block and whatever IAM it reads, not a
+service.
+
+Literature (docs/design/document-pane.md) reads the litcache fulltext bucket (object-viewer,
+read-only) to resolve a paper's rendering / PDF / associated-file object and locate a quote:
+`THEMIS_LITERATURE_BACKEND=live`, no auth service and no Cloud SQL — a `doc_id` is the litcache
 canonical id and the corpus is not session-scoped (entitlement is a deferred non-goal).
 
 Its callers are the web BFF — quote location for the document pane, plus some paper management — and,
@@ -23,7 +27,7 @@ import pulumi_gcp as gcp
 
 
 class EvidenceService(pulumi.ComponentResource):
-    """Cloud Run evidence service (IAM-gated ingress): litcache content resolution + quote location.
+    """Cloud Run evidence service (IAM-gated ingress) hosting the evidence image's interfaces.
 
     Attributes:
         service_account_email: The runtime SA's email — the object-viewer on the fulltext bucket.
@@ -52,8 +56,8 @@ class EvidenceService(pulumi.ComponentResource):
         )
         self.service_account_email = service_account.email
 
-        # Read-only on the litcache fulltext bucket: the backend reads manifests + renderings to
-        # resolve objects and locate quotes; it never writes (the cache warms via ingestion).
+        # Read-only on the litcache fulltext bucket: the literature backend reads manifests +
+        # renderings to resolve objects and locate quotes; it never writes (the cache warms via ingestion).
         gcp.storage.BucketIAMMember(
             'themis-evidence-fulltext-object-viewer',
             bucket=fulltext_bucket,
@@ -79,9 +83,11 @@ class EvidenceService(pulumi.ComponentResource):
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,
                         envs=[
-                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_BACKEND', value='live'),
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
-                                name='THEMIS_FULLTEXT_BUCKET', value=fulltext_bucket
+                                name='THEMIS_LITERATURE_BACKEND', value='live'
+                            ),
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+                                name='THEMIS_LITERATURE_FULLTEXT_BUCKET', value=fulltext_bucket
                             ),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),

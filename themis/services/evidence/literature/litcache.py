@@ -11,7 +11,7 @@ paper is reported unknown-not-checked, never a false "not located".
 Read-only: the backend never writes to the bucket (the cache warms via the ingestion pipeline). An
 associated file the manifest lists without a ``path`` is not yet fetched; resolving it raises
 ``MissingContentError`` rather than fetching-and-writing (deferred — the seed corpus has every file
-fetched). PDF quote location (anchorite page regions) is deferred to B4; ``locate`` for a PDF raises
+fetched). PDF quote location (anchorite page regions) is not implemented; ``locate`` for a PDF raises
 ``PdfLocationUnavailableError`` rather than reporting a false ``not_located``.
 
 Blocking GCS I/O is offloaded with ``asyncio.to_thread`` so it never stalls the ``grpc.aio`` loop.
@@ -71,7 +71,7 @@ class _Paper:
 
 
 class LitcacheBackend(literature_backend.LiteratureBackend):
-    """Serve the evidence RPCs by reading the litcache directory for each ``doc_id``."""
+    """Serve the literature rpcs by reading the litcache directory for each ``doc_id``."""
 
     def __init__(self, bucket: storage.Bucket) -> None:
         self._bucket = bucket
@@ -141,7 +141,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
         raise ValueError(f'unsupported representation {representation!r}')
 
     async def validate(self, doc_id: str, quote: str) -> literature_pb2.ValidateResponse:
-        # Markdown-only: PDF quote validation is deferred (B4), so a PDF-only paper is "unknown",
+        # Markdown-only: PDF quote validation is not implemented, so a PDF-only paper is "unknown",
         # not "absent" — the reason says what was and wasn't checked, never a false "not located".
         try:
             offsets = await asyncio.to_thread(self._locate_markdown, doc_id, quote)

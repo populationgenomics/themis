@@ -3,11 +3,13 @@
 The backend owns everything litcache-specific: naming the GCS object for a paper's rendering, PDF, or
 associated file, and locating a citation's quote within a representation. The servicer depends on the
 abstract ``LiteratureBackend`` port, so the same server runs offline (``FixtureBackend``, in-memory) and
-deployed (the litcache-reading adapter, B2). Real quote location via anchorite (markdown offsets now;
-PDF page regions, B4) lands behind ``locate``/``validate`` without a servicer change.
+deployed (``litcache.LitcacheBackend``, which locates quotes with anchorite).
 
 Port methods are ``async``: the servicer runs on ``grpc.aio``, so a real adapter (GCS, anchorite)
 offloads its blocking I/O rather than stalling the single event loop.
+
+The fixture's seed format and its parser live here too, with the dataclasses they build: the seed is the
+``FixtureBackend``'s input schema, and a caller names the env var it read the JSON from.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import dataclasses
+import json
 from collections.abc import Mapping, Sequence
 
 from themis.rpc import literature_pb2
@@ -37,7 +40,7 @@ class RepresentationUnavailableError(Exception):
 
 
 class PdfLocationUnavailableError(Exception):
-    """No PDF quote matcher yet (B4, anchorite) — the servicer maps this to UNIMPLEMENTED.
+    """No PDF quote matcher yet — the servicer maps this to UNIMPLEMENTED.
 
     Distinct from a ``not_located`` result: the quote is not absent, the location cannot be
     computed. A false ``not_located`` would mislabel every PDF quote as unlocatable.
@@ -289,3 +292,147 @@ def _pdf_region(location: SeededPdfLocation) -> literature_pb2.PdfRegion:
         page=location.page,
         rects=[literature_pb2.Rect(x=x, y=y, width=w, height=h) for (x, y, w, h) in location.rects],
     )
+
+
+# --- Seed parsing: JSON to the corpus above -------------------------------------------------------
+
+_FILE_ROLES = {
+    'FIGURE': literature_pb2.FILE_ROLE_FIGURE,
+    'SUPPLEMENTARY': literature_pb2.FILE_ROLE_SUPPLEMENTARY,
+}
+
+
+def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBackend:
+    """Build a ``FixtureBackend`` from a JSON corpus, or ``SystemExit`` naming ``var_name``.
+
+    The seed is a JSON object mapping each canonical doc_id to a paper:
+
+        {"<doc_id>": {
+            "title": "...",
+            "markdown": {"gcs_uri": "gs://...", "from_xml": true},   // optional
+            "pdf": {"gcs_uri": "gs://..."},                          // optional
+            "files": [{"name": "f1.png", "role": "FIGURE", "media_type": "image/png",
+                       "gcs_uri": "gs://..."}],
+            "markdown_locations": {"<quote>": [start, end]},
+            "pdf_locations": {"<quote>": {"page": 0, "rects": [[x, y, w, h]]}}
+        }}
+
+    An unknown field is rejected rather than dropped: a typo'd key would otherwise seed a paper
+    missing exactly the data the test or deploy meant to give it.
+
+    Args:
+        raw: The JSON string. ``None`` (an unset env var) is an operator error; pass ``"{}"`` for an
+            explicit empty corpus.
+        var_name: The source env var, named in the fail-loud error messages.
+
+    Returns:
+        A backend over the seeded corpus.
+
+    Raises:
+        SystemExit: ``raw`` is absent, is not JSON, or does not match the schema above.
+    """
+    if raw is None:
+        raise SystemExit(
+            f'{var_name} is required for the fixture backend: a JSON object of doc_id -> paper, '
+            'or "{}" for an explicit empty corpus'
+        )
+    try:
+        seeds = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f'{var_name} is not valid JSON: {e}') from e
+    if not isinstance(seeds, dict):
+        raise SystemExit(f'{var_name} must be a JSON object of doc_id -> paper, got {type(seeds).__name__}')
+    return FixtureBackend({doc_id: _parse_paper(var_name, doc_id, paper) for doc_id, paper in seeds.items()})
+
+
+def _parse_paper(var_name: str, doc_id: str, paper: object) -> SeededPaper:
+    if not isinstance(paper, dict):
+        raise SystemExit(f'{var_name} paper {doc_id!r} must be a JSON object')
+    unknown = set(paper) - {'title', 'files', 'markdown', 'markdown_locations', 'pdf', 'pdf_locations'}
+    if unknown:
+        raise SystemExit(f'{var_name} paper {doc_id!r} has unknown field(s) {sorted(unknown)}')
+    title = paper.get('title')
+    if not isinstance(title, str) or not title:
+        raise SystemExit(f'{var_name} paper {doc_id!r} must set a non-empty "title"')
+    return SeededPaper(
+        title=title,
+        files=tuple(
+            _parse_file(var_name, doc_id, f) for f in _as_list(var_name, doc_id, 'files', paper.get('files', []))
+        ),
+        markdown_gcs_uri=_rendering_uri(var_name, doc_id, 'markdown', paper.get('markdown')),
+        markdown_from_xml=_markdown_from_xml(var_name, doc_id, paper.get('markdown')),
+        pdf_gcs_uri=_rendering_uri(var_name, doc_id, 'pdf', paper.get('pdf')),
+        markdown_locations=_parse_offsets(var_name, doc_id, paper.get('markdown_locations', {})),
+        pdf_locations=_parse_pdf_locations(var_name, doc_id, paper.get('pdf_locations', {})),
+    )
+
+
+def _as_list(var_name: str, doc_id: str, key: str, value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise SystemExit(f'{var_name} paper {doc_id!r} field {key!r} must be a JSON array')
+    return value
+
+
+def _parse_file(var_name: str, doc_id: str, f: object) -> SeededFile:
+    if not isinstance(f, dict):
+        raise SystemExit(f'{var_name} paper {doc_id!r} file must be a JSON object')
+    role_name = f.get('role')
+    if role_name not in _FILE_ROLES:
+        raise SystemExit(f'{var_name} paper {doc_id!r} file "role" must be one of {sorted(_FILE_ROLES)}')
+    for field in ('name', 'media_type', 'gcs_uri'):
+        if not isinstance(f.get(field), str) or not f[field]:
+            raise SystemExit(f'{var_name} paper {doc_id!r} file must set a non-empty {field!r}')
+    return SeededFile(name=f['name'], role=_FILE_ROLES[role_name], media_type=f['media_type'], gcs_uri=f['gcs_uri'])
+
+
+def _rendering_uri(var_name: str, doc_id: str, key: str, rendering: object) -> str | None:
+    if rendering is None:
+        return None
+    if not isinstance(rendering, dict) or not isinstance(rendering.get('gcs_uri'), str):
+        raise SystemExit(f'{var_name} paper {doc_id!r} {key!r} must be an object with a "gcs_uri"')
+    allowed = {'gcs_uri', 'from_xml'} if key == 'markdown' else {'gcs_uri'}
+    unknown = set(rendering) - allowed
+    if unknown:
+        raise SystemExit(f'{var_name} paper {doc_id!r} {key!r} has unknown field(s) {sorted(unknown)}')
+    return rendering['gcs_uri']
+
+
+def _markdown_from_xml(var_name: str, doc_id: str, markdown: object) -> bool:
+    if markdown is None:
+        return False
+    if not isinstance(markdown, dict):
+        raise SystemExit(f'{var_name} paper {doc_id!r} "markdown" must be a JSON object')
+    from_xml = markdown.get('from_xml', False)
+    if not isinstance(from_xml, bool):
+        raise SystemExit(f'{var_name} paper {doc_id!r} markdown "from_xml" must be a boolean')
+    return from_xml
+
+
+def _parse_offsets(var_name: str, doc_id: str, locations: object) -> dict[str, tuple[int, int]]:
+    if not isinstance(locations, dict):
+        raise SystemExit(f'{var_name} paper {doc_id!r} "markdown_locations" must be a JSON object')
+    parsed: dict[str, tuple[int, int]] = {}
+    for quote, offsets in locations.items():
+        if not isinstance(offsets, list) or len(offsets) != 2 or not all(isinstance(n, int) for n in offsets):
+            raise SystemExit(f'{var_name} paper {doc_id!r} markdown_locations[{quote!r}] must be [start, end]')
+        parsed[quote] = (offsets[0], offsets[1])
+    return parsed
+
+
+def _parse_pdf_locations(var_name: str, doc_id: str, locations: object) -> dict[str, SeededPdfLocation]:
+    if not isinstance(locations, dict):
+        raise SystemExit(f'{var_name} paper {doc_id!r} "pdf_locations" must be a JSON object')
+    parsed: dict[str, SeededPdfLocation] = {}
+    for quote, location in locations.items():
+        if not isinstance(location, dict) or not isinstance(location.get('page'), int):
+            raise SystemExit(f'{var_name} paper {doc_id!r} pdf_locations[{quote!r}] must set an integer "page"')
+        rects_raw = location.get('rects', [])
+        if not isinstance(rects_raw, list):
+            raise SystemExit(f'{var_name} paper {doc_id!r} pdf_locations[{quote!r}] "rects" must be an array')
+        rects: list[tuple[float, float, float, float]] = []
+        for rect in rects_raw:
+            if not isinstance(rect, list) or len(rect) != 4 or not all(isinstance(n, (int, float)) for n in rect):
+                raise SystemExit(f'{var_name} paper {doc_id!r} pdf_locations[{quote!r}] rect must be [x, y, w, h]')
+            rects.append((float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])))
+        parsed[quote] = SeededPdfLocation(page=location['page'], rects=tuple(rects))
+    return parsed

@@ -279,7 +279,7 @@ def test_describe_without_metadata_falls_back_to_an_external_id(gcs_bucket: stor
 
 
 def test_validate_pdf_only_paper_is_honest_not_a_false_negative(gcs_bucket: storage.Bucket) -> None:
-    # No markdown rendering; PDF validation is deferred (B4). The reason must not claim the quote is
+    # No markdown rendering, and PDF validation is not implemented. The reason must not claim the quote is
     # absent "in any representation" — only markdown was (not) checkable.
     _seed_paper(gcs_bucket, sources=[_pdf_source()], markdown=None)
     result = asyncio.run(_backend(gcs_bucket).validate(_DOC, _QUOTE))

@@ -22,14 +22,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# No backend is baked in: the runtime requires THEMIS_BACKEND (and, for the fixture, a non-empty
-# THEMIS_EVIDENCE_FIXTURE) and exits at startup without them. A baked fixture default would let a deploy
-# that dropped the live override come up SERVING an empty corpus — every paper "not found", which reads
-# as "genuinely absent" rather than a fault — so the fail-loud check must reach the deployed revision.
+# No backend is baked in: each interface requires its own backend selector (and, for a
+# fixture, its non-empty seed) and exits at startup without them. A baked fixture default would let a
+# deploy that dropped the live override come up SERVING an empty corpus — every paper "not found", which
+# reads as "genuinely absent" rather than a fault — so the fail-loud check must reach the deployed revision.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
-# The litcache manifest stubs the live backend (B2) reads (+ the vendored buf/validate stubs
+# The litcache manifest stubs the literature live backend reads (+ the vendored buf/validate stubs
 # litcache_pb2 imports); the litcache package init is docstring-only and the other litcache modules
 # (conversion, fetch) are not imported by the read path.
 COPY buf ./buf

@@ -295,8 +295,8 @@ export const TextOffsetsSchema: GenMessage<TextOffsets> = /*@__PURE__*/
 
 /**
  * A rectangle on a PDF page. PROVISIONAL coordinate space: page fractions in [0,1], origin
- * top-left. The real space is anchorite's and is reconciled in B4 (the anchorite coordinate
- * contract is an open question in document-pane.md); the fixture uses this placeholder.
+ * top-left. The real space is anchorite's, whose coordinate contract is an open question in
+ * document-pane.md; only the fixture emits these, and no producer resolves a PDF quote yet.
  *
  * @generated from message themis.rpc.literature.Rect
  */

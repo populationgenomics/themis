@@ -48,11 +48,18 @@ or TypeScript — fails CI.
 Fail-loud seeding: the fixture is seeded explicitly from the environment (JSON env var), never a code default — `{}` is
 a deliberate empty store ([`general.md`](../style/general.md)).
 
+Adding an **interface to an existing deployment** instead of a new service — a fact source under `evidence` — scaffolds
+`themis/services/<name>/<domain>/` with a `config.py` + `interface.py`, its own nested `tests/`, and one entry in the
+entrypoint's `INTERFACES`. It writes no `__main__.py`, and adds no `Dockerfile` or `.github/images.json` entry (step 4),
+but it does edit the existing image's: a `COPY` for any tree it reads, and its deps into that image's dependency group.
+Step 4's `testpaths` and `per-file-ignores` edits apply to the nested `tests/` path. See
+[`../design/services.md`](../design/services.md) §"One deployment, several interfaces".
+
 ## 3. Tests
 
 `themis/services/<name>/tests/` — behaviour tests over `themis.testing.in_process_grpc.serving`, authorized with
 `themis.clients.auth.tests.fixture_session` (its `GOOD_METADATA` / `PROJECT_ID` / `ANALYSIS_ID`), plus `test_main.py`
-for the entrypoint wiring. No contract test — the generated servicer base is the interface.
+for the entrypoint wiring. No contract test — the generated servicer base is the contract.
 
 ## 4. Wire the repo
 
@@ -68,7 +75,9 @@ Root `pyproject.toml`:
 
 `Dockerfile` (copy `themis/services/auth/Dockerfile`): multi-stage, build context the repo root;
 `uv sync --locked --group <name>`; `COPY` the `themis/rpc/<domain>_pb2*` stubs plus the `themis/…` subtrees the service
-needs; `PYTHONPATH=/app`; explicit `ENV` defaults for every required var so the image boots.
+needs; `PYTHONPATH=/app`. Bake **no** default for a backend selector or its seed — the runtime must exit without them,
+so a deploy that drops the real override fails loud instead of serving an empty store
+([`services.md`](../design/services.md), "Wiring into the repo").
 
 `.github/images.json` — add a `{ "name", "context", "file", "env" }` entry for the image. This one list is what the
 `images` build-check (every Dockerfile still builds) and `deploy` both read; a service with no entry is never built. Add

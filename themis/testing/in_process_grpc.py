@@ -10,23 +10,30 @@ knows a service's protocol.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator, Callable
+import inspect
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import grpc.aio
 
 
 @contextlib.asynccontextmanager
-async def serving(register: Callable[[grpc.aio.Server], None]) -> AsyncIterator[grpc.aio.Channel]:
+async def serving(
+    register: Callable[[grpc.aio.Server], None] | Callable[[grpc.aio.Server], Awaitable[None]],
+) -> AsyncIterator[grpc.aio.Channel]:
     """Serve whatever ``register`` installs on a loopback port; yield a channel to it.
 
     Args:
-        register: Installs the servicer or handlers under test on the server it is given.
+        register: Installs the servicer or handlers under test on the server it is given. An async
+            ``register`` — one that builds a backend needing ``await`` — is awaited before the server
+            starts.
 
     Yields:
         A channel to the running server; it and the server are torn down on exit.
     """
     server = grpc.aio.server()
-    register(server)
+    registration = register(server)
+    if inspect.isawaitable(registration):
+        await registration
     port = server.add_insecure_port('127.0.0.1:0')
     await server.start()
     try:
