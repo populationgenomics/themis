@@ -113,6 +113,14 @@ image before the migrations run, so a new revision is live against the previous 
 — or, if that step fails, until the next successful deploy. Every migration must therefore be additive, and code reading
 a new table or column must tolerate its absence for at least one deploy window.
 
+A destructive migration is allowed only where that window costs nothing real: the environments it will run in hold no
+data worth keeping and no users to fail, and the migration's own doc names which reads and writes break and until when.
+The expand/contract shape the rule otherwise forces — write both columns, tolerate the absent one, drop it a deploy
+later — is a compatibility mode in every reader and writer of the column, so it is worth declining while an environment
+is still disposable and worth paying once it is not. `analysis-scenarios.md` §Implementation state is the worked
+instance: `0008_analysis_inputs` drops a `NOT NULL` column and deletes every row, and records the failing window it
+accepts.
+
 ### Identity and the ownership bootstrap
 
 The migrator is the deploy service account's own Cloud SQL IAM DB user, distinct from every runtime SA. A table's owner

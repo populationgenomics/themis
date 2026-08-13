@@ -190,8 +190,12 @@ rather than lingering as one that must never be set; nothing new may claim what 
 *transition window* is a separate precondition — a field may only be retired once nothing in flight still sets it. The
 binary legs tolerate the skew, but the browser seam rejects a JSON key the schema no longer declares
 (`ignoreUnknownFields: false`), so a browser-facing field is retired in two changes: stop sending it and deploy, then
-delete it. So there is no schema version, no migration, no version dispatch: a reader parses every artifact ever
-written, and binary proto's unknown-field retention means an older reader round-trips a newer writer's fields untouched.
+delete it. One change suffices only where that skew costs nothing real — the condition [`migrations.md`](migrations.md)
+puts on a destructive migration: no users to fail, and the consuming doc naming what breaks and until when.
+`analysis-scenarios.md` §Implementation state is the worked instance, retiring `CreateAnalysisRequest.prompt` in one
+change: a tab still running the previous bundle fails its create until it reloads, which no migration clears. So there
+is no schema version, no migration, no version dispatch: a reader parses every artifact ever written, and binary proto's
+unknown-field retention means an older reader round-trips a newer writer's fields untouched.
 
 - **CI compat gate** (`buf breaking`, `schema-compat.yml`). Each committed `.proto` is diffed against its base-branch
   baseline under the `FILE` category — minus `FIELD_NO_DELETE`, plus the two rules that admit a deletion only when the
@@ -219,8 +223,9 @@ stubs for the internal protos the browser never calls), and it is preferred to t
 
 ## Protos in Cloud SQL columns
 
-*Forward-looking* — no at-rest proto sits in Cloud SQL yet (durable artifacts are GCS blobs). When authored proto data
-does land in a column, three shapes, in order of preference:
+One at-rest proto is designed: `analyses.inputs`, an `AnalysisInputs` an Analysis is created from
+([`analysis-scenarios.md`](analysis-scenarios.md) — the column lands with migration `0008`, unmerged). Other durable
+artifacts are GCS blobs. Three shapes, in order of preference:
 
 1. **GCS pointer, metadata in SQL (default for anything large).** The row stores a pointer (path/generation) to a binary
    `.pb` in GCS plus the few columns needed to query/join; the proto itself stays out of the database. Keeps rows small,
@@ -228,16 +233,17 @@ does land in a column, three shapes, in order of preference:
 1. **Inline binary proto (`bytea`) for small records.** The message serialized into a `bytea` column, with any field
    that must be **indexed or queried** pulled out into its own standalone column. Preserves the unknown-field round-trip
    property (it is still binary), so RMW-safe. Cost: the pulled-out columns must be kept in sync with the embedded proto
-   on every write — a real burden, since Postgres has no native proto awareness. Use only when a record is genuinely
-   small and RMW'd.
+   on every write — a real burden, since Postgres has no native proto awareness. Use when a record is genuinely small:
+   RMW-safety is what it buys over (3), so a record written once and never modified — `analyses.inputs` — takes it for
+   the schema, not for the round-trip.
 1. **Proto→JSON (`jsonb`) — read-mostly only.** Enables native Postgres JSON lookups and indexing without pulling fields
    out. But proto3-JSON is name-keyed and **cannot round-trip an unknown field** (same limitation as any text
    projection), so a read-modify-write through the `jsonb` silently drops fields a newer writer added — the exact
    corruption binary proto exists to prevent. Acceptable **only** for data that is written whole and never RMW'd through
    the JSON, or where losing unknown fields on write is genuinely fine.
 
-Default to (1) for large blobs and (2) for small authored records that need RMW-safety; reach for (3) only for
-query-heavy, read-mostly data where the unknown-field caveat is understood and accepted.
+Default to (1) for large blobs and (2) for small authored records; reach for (3) only for query-heavy, read-mostly data
+where the unknown-field caveat is understood and accepted.
 
 ## Documentation flow
 

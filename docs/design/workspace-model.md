@@ -69,9 +69,14 @@ Enforcement is a single default-on chokepoint ([`security.md`](security.md)), on
 
 - **`AuthorizedBackend`** wraps the raw `AnalysisDataPlane`, bound to the verified user. `userContext` is its only
   constructor, so a route can never hold an unscoped backend. `createAnalysis` and `listAnalyses` name a Project and
-  verify membership before touching data; a point access (`getDocument`, `pollEvents`) resolves the Analysis's Project
-  and checks membership — and the working document is addressable only through that resolved Analysis, so the check
-  cannot be skipped. `listProjects` returns the Projects the user belongs to — the create/list selector.
+  verify membership before touching data; a listing across Projects (`listAllAnalyses`, what the Projects page counts
+  from) names none and checks nothing, because its scope *is* `projectsOf(userEmail)` — authorized by construction, and
+  the one access here whose safety rests on that rather than on a check, so a parameter that narrowed or widened its
+  scope would be the thing to catch in review; a point access (`getAnalysis`, `getDocument`, `pollEvents`) reads the
+  Analysis row and checks membership against the `project_id` it carries — and the working document is addressable only
+  through that resolved Analysis, so the check cannot be skipped. The check hands the row on rather than discarding it,
+  so a method needing the Analysis itself does not read it a second time. `listProjects` returns the Projects the user
+  belongs to — the create/list selector.
 - **`ProjectMembership`** is the mapping the check reads — a `project_members(project_id, user_email)` table in the real
   adapter, a seeded map offline. Membership is binary: no role column, because no access decision consults one. Empty ⇒
   the user reaches nothing (default-deny); a real deploy is closed until memberships are seeded.

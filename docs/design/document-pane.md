@@ -5,7 +5,7 @@ anchored-comment offset convention); [`literature-evidence-layer.md`](literature
 evidence service that gains `Locate`/`Validate`); [`litcache-manifest.md`](litcache-manifest.md)
 (`Manifest`/`Rendering`/`AssociatedFile` this resolves against); [`services.md`](services.md) (the
 proto+`grpc.aio`+fixture pattern the evidence-service additions follow); [`proto.md`](proto.md) (schema +
-serialization).
+serialization); [`workbench-navigation.md`](workbench-navigation.md) (the pages this one lives on, and its chrome).
 
 ## Overview
 
@@ -49,14 +49,15 @@ it is a persistent companion, not a document.
   cannot be placed alone on a second monitor; the whole main window goes there instead — an accepted limitation.
 - **Drag-to-desktop tear-off to spawn a window.** HTML5 DnD delivers no `drop` outside a document, and `dragend` screen
   coordinates are zeroed in Firefox/Safari; tab tear-off is privileged browser chrome. Window creation is a menu item.
-- **Restoring a multi-window arrangement on reload.** A reload or crash **consolidates every tab into a single main
-  window**; the **open-paper set is preserved** (papers reconstituted as tabs), but window distribution and geometry are
-  not restored (see §Windows).
+- **Restoring open tabs or a multi-window arrangement on reload.** A load opens one main window holding the working
+  document; neither the open papers nor the window distribution is restored. What persists is how a curator works, not
+  what they were working on (see §Windows, and [`workbench-navigation.md`](workbench-navigation.md) §"The arrangement
+  persists").
 - **Rich supplementary-file rendering.** Supplementary files (arbitrary MIME) open as a download / open-externally tab
   only. Figures (images) do render inline.
 - **Directives outside the conversation and working document.** Paper content is a pure display target; it carries no
   `:paper`/`:quote`, so papers never cite papers here.
-- **Cross-device layout sync.** Layout memory is per-browser (`localStorage`), not a server-side per-user setting.
+- **Cross-device layout sync.** Layout memory is per-browser, not a server-side per-user setting.
 - **Client-side quote matching.** All quote→location resolution is server-side (see §Highlight resolution); the client
   only applies a returned location.
 
@@ -70,16 +71,16 @@ it is a persistent companion, not a document.
   collapsing returns a two-pane area to one. When the tab area is **empty** (its sole pane holds no tabs — e.g. the
   working document popped to a child), the **conversation fills the window**; a reveal or reparent brings the split back
   (the reducer keeps a zero-tab pane as the reveal/reparent target). A pane's **header collapses its actions** — strip
-  label mode (icons ↔ titles), split, swap, move, and (in a child window) move-back — into a single **overflow menu**
-  (`⋯`), one affordance rather than a row of glyphs.
+  label mode (icons ↔ titles), split, swap, move, reopen-last-closed (main only), and (in a child window) move-back —
+  into a single **overflow menu** (`⋯`), one affordance rather than a row of glyphs.
 - The **conversation** is a **special region** (no tab strip, no icon) docked to **any of the four edges** of a
-  resizable split with the tab area, chosen from an `AppBar` four-edge selector (the analogue of the earlier
-  `[ ]`/`[|]`/`[-]` control), persisted. Present only in the **main** window.
+  resizable split with the tab area, chosen from a four-edge selector in the Analysis page's chrome (the analogue of the
+  earlier `[ ]`/`[|]`/`[-]` control), persisted. Present only in the **main** window.
 - **Structure.** A window is a bounded **depth-2 panel arrangement**: an outer split `[conversation | tab area]` whose
   direction flips for a left/right vs top/bottom dock edge, and an inner split `[pane | pane]` for the tab area. Nested
   `react-resizable-panels` `PaneGroup`s; the outer ratio is **orientation-specific** (a width % when docked left/right,
-  a height % when top/bottom), so a flip does not carry a width ratio into a height. The "New analysis" prompt bar stays
-  as workbench chrome above the split.
+  a height % when top/bottom), so a flip does not carry a width ratio into a height. Nothing else shares the window:
+  creating an Analysis belongs to the Project page ([`workbench-navigation.md`](workbench-navigation.md)).
 - **Default:** conversation on the left, the working document the sole tab of a single pane.
 
 ### Tabs: kinds, pinning, movement
@@ -218,14 +219,17 @@ mirror** with a tab area only. A **group** never pops; a **window** does, holdin
   content, so a pinned tab can transiently vanish but is never lost. Bookkeeping is **O(N)**: per-child window handles
   (runtime refs, outside the snapshot/persistence), per-child close routing, disambiguating which child sent a close,
   and re-registering a child the user manually reloads.
-- **Persistence and restore.** Only the **main-window layout** persists (`localStorage`) — per-pane tab order, active
-  tab, active pane, split state, conversation edge + orientation-specific outer ratio, strip label mode — plus the
-  **open-paper id set** and the **reopen-last-closed** stack. Window distribution and geometry are **not** persisted. On
-  reload/crash everything **consolidates into a single main window**: main's own panes restore from the persisted
-  layout, and papers that were open in child windows **append into main's active pane** (re-fetched by id) after the
-  restored tabs. `highlights` are transient (not persisted). `window.open` needs a user gesture (no silent respawn), and
-  restoring saved positions misfires exactly when the environment changed — a monitor unplugged, a laptop undocked — so
-  consolidating to one window is predictable and the open-paper set is preserved.
+- **Persistence and restore.** The workbench persists **how a curator works, never what they were working on**
+  ([`workbench-navigation.md`](workbench-navigation.md) §"The arrangement persists"). So the arrangement persists
+  (IndexedDB, `lib/browser-store.ts`): the conversation edge, the orientation-specific outer ratio, the strip label
+  mode, and the inner two-pane ratio — each a preference set once and wanted everywhere. **No tab content persists**:
+  which papers are open is a property of one Analysis, restoring it saves a click on a citation, and one route per
+  Analysis remounts this workbench across a switch, so a restored set would arrive under the wrong Analysis. The
+  reopen-last-closed stack is runtime state on the same terms: closing a tab is undoable for as long as the page lives,
+  and a load starts it empty. A load therefore opens a single main window holding the working document alone, in the
+  curator's arrangement; papers return as citations are revealed. Window distribution and geometry are not persisted
+  either — `window.open` needs a user gesture (no silent respawn), and restoring saved positions misfires exactly when
+  the environment changed, a monitor unplugged or a laptop undocked. `highlights` are transient.
 
 ### Accessibility
 
@@ -323,8 +327,8 @@ non-goal (`literature-evidence-layer.md`) — so both seams require only a verif
 - **Drag-to-desktop tear-off** — rejected: no drop fires outside a document; `dragend` screen coords are zeroed in
   Firefox/Safari; tear-off is privileged chrome. Window creation is a menu item.
 - **Restore saved window positions on reload** — rejected. Needs a user gesture (no silent respawn) and misfires on
-  monitor/config changes (off-screen windows, popup pile-up); consolidating to one window is predictable and the
-  open-paper set is preserved.
+  monitor/config changes (off-screen windows, popup pile-up); one window is predictable, and a paper is a click from the
+  citation that opened it.
 - **Client-side naive substring matching for markdown** (instant, no round-trip) — rejected. A `:quote` carries the
   quote text but not the representation it was drawn from; against a different rendering, exact substring **fails on a
   valid citation**. Server-side matching costs a round-trip per markdown highlight but is robust and shares one matcher
@@ -372,6 +376,13 @@ end to end there.
   is the remaining piece.
 - **Highlight-API fallback** — a browser without the CSS Custom Highlight API renders a *located* quote as the
   "unlocatable" warning chip; a standalone fix, independent of the workspace model.
+- **Arrangement-only persistence** — the contract above lands with the routing split, on the branch that keys the
+  workbench per Analysis ([`workbench-navigation.md`](workbench-navigation.md)): both the payload (until then the store
+  still holds the main-window layout, the open-paper set, and the reopen stack) and the medium (`localStorage` until
+  then, `lib/browser-store.ts` after). The medium does not follow from the payload — four scalars fit either store.
+  `localStorage` is synchronous on the main thread, unreachable from a worker, string-valued, and capped per origin
+  across every key at once; none of that binds four scalars, but the store the arrangement lands in is the one whatever
+  persists next inherits.
 
 ## Open questions
 

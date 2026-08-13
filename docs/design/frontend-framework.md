@@ -105,7 +105,9 @@ error body, so the generated client reads it as one rather than as an error with
 
 - **Stored state** (projects, analyses, working-document versions, reports, projected trace, comments) — the **Workbench
   Connect service** over the BFF, generated from the protos by protobuf-es ([`proto.md`](proto.md)), with TanStack Query
-  on the client. Not GraphQL: a single first-party client does not earn it.
+  on the client. Not GraphQL: a single first-party client does not earn it. State that is **fixed for the life of a
+  page** is the exception: the page's server component reads it from the authorized backend directly, so an id the
+  caller cannot reach is a 404 before anything renders ([`workbench-navigation.md`](workbench-navigation.md)).
 - **Liveness** — polling, as above. `Poll` is deliberately *not* `NO_SIDE_EFFECTS`, though a tick reads and nothing
   more: the option binds every future implementation of the method and the compat gate freezes it, and what it buys — a
   `GET` form, and the retry-freely licence an intermediary reads from it — has no caller here. The cache property it
@@ -122,7 +124,9 @@ error body, so the generated client reads it as one rather than as an error with
 - **Caching** — route handlers are uncached unless a `GET` opts in, and none does. Every RPC reply additionally carries
   `Cache-Control: private, no-store`, so no shared cache — CDN or forward proxy — may store one: replies are per-caller,
   and the IAP cookie that authenticates them is invisible to RFC 9111's `Authorization` rule, so a cache keyed on the
-  URL alone would cross curators.
+  URL alone would cross curators. A page whose server component reads stored state is per-caller for the same reason, so
+  every such route is `force-dynamic`: the identity seam has no request to answer from at build time, and a prerendered
+  route would serve one caller's render from the Full Route Cache.
 
 ### Component library
 
