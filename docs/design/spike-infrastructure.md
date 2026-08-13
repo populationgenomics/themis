@@ -62,8 +62,10 @@ enabled, SQL-queryable in place ("who accessed which secret/object"), **90-day r
 high-volume `DATA_READ` is scoped/excluded rather than shortening retention.
 
 Reports are append-only: GCS object versioning on, 30-day soft-delete, **no auto-delete** (kept for the Spike's life);
-Cloud SQL daily automated backups retained 30 days, PITR 7 days. A finite erasure/retention policy is a prod/real-data
-follow-up — the Spike is synthetic-only.
+Cloud SQL daily automated backups retained 30 days, PITR 7 days, both stored in `australia-southeast2` — onshore, and a
+separate failure domain from the instance's `australia-southeast1`. Left unset, Cloud SQL defaults the backup location
+to the enclosing `asia` multi-region. A finite erasure/retention policy is a prod/real-data follow-up — the Spike is
+synthetic-only.
 
 ### 4. Secret inventory + rotation
 

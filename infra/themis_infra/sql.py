@@ -21,6 +21,7 @@ _DATABASE_VERSION = 'POSTGRES_16'
 _DISK_SIZE_GB = 10
 _RETAINED_DAILY_BACKUPS = 30
 _PITR_LOG_RETENTION_DAYS = 7
+_BACKUP_LOCATION = 'australia-southeast2'
 _DATABASE_NAME = 'themis'
 # Cloud SQL IAM SA login names are the SA email without this domain suffix
 # (Postgres truncates the `.gserviceaccount.com` tail).
@@ -92,6 +93,9 @@ class CloudSqlDatabase(pulumi.ComponentResource):
                     point_in_time_recovery_enabled=True,
                     transaction_log_retention_days=_PITR_LOG_RETENTION_DAYS,
                     start_time='03:00',
+                    # Unset ⇒ Cloud SQL picks the enclosing `asia` multi-region,
+                    # putting backups offshore.
+                    location=_BACKUP_LOCATION,
                     backup_retention_settings=gcp.sql.DatabaseInstanceSettingsBackupConfigurationBackupRetentionSettingsArgs(
                         retained_backups=_RETAINED_DAILY_BACKUPS,
                         retention_unit='COUNT',
