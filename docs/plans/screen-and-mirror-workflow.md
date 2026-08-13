@@ -164,7 +164,8 @@ errors (API down, runner timeout) — review findings post as comments and the w
 - **Regex hit**: author either fixes the offending content or adds an inline `# screen-ignore: <reason>` marker on the
   line. The marker change is itself part of the PR diff and visible to the reviewer.
 - **Action finding (review comment)**: reviewer reads the comment, decides, resolves the conversation. With
-  `required_conversation_resolution: true` already on, unresolved comments block merge.
+  `required_conversation_resolution: true` already on, unresolved comments block merge. To agree with a finding without
+  fixing it here, reply `FOLLOWUP` on its own line before resolving — the merge-time pass files it as an issue.
 - **Action errored out** (workflow run failed): re-run the workflow once the underlying issue (API outage, etc.) is
   resolved. No "override the action error" path — the gate is fail-closed by design.
 
@@ -178,6 +179,55 @@ No `screen-override` label. No separate override workflow.
 - Action posts review comments → conversations need resolution before merge.
 - Reviewer approves + resolves conversations → merge button unlocks.
 - Author pushes again → dismiss-stale invalidates the approval; both workflows re-run; cycle repeats.
+- PR merges → the merge-time pass files issues for the `FOLLOWUP` threads and for what it finds in the landed tree.
+
+## Merge-time follow-ups
+
+The PR-time review reports only findings that are wrong now (T1) or that get more expensive once they land (T2);
+everything else (T3) is held silently and swept after merge. `.github/review/tiers.md` defines the tiers and the
+routing, and is loaded by both workflows so the bar cannot drift between them.
+
+Measured over the 20 merged PRs before this split, the bot's 357 inline findings were 30% T1, 7% T2, 63% T3, with a 4%
+rejection rate across the 168 that drew a reply. The findings were not wrong; there were too many of them to review, and
+the ones that compound were not distinguishable at a glance from the ones that don't.
+
+`internal-merge-followups.yml` runs on `pull_request: [closed]`, gated on `merged == true` **and `base.ref == 'main'`**
+— the repo runs deep PR stacks, and a PR merged into another PR's branch has not landed, while the branch below it
+re-derives the same findings when it merges in turn. It does two things:
+
+1. **Files the deferred threads.** A shell step collects every review thread where a reply opens with `FOLLOWUP` alone
+   on its first line, with full text; one issue each, labelled `followup`. The work to do comes from the `FOLLOWUP`
+   reply rather than the original finding — the reply is the decision.
+1. **Sweeps what landed.** A fresh review of the merged diff against the same four concern files, collecting T3 findings
+   into **one `untriaged` digest issue for the PR**. A T1 or T2 the sweep turns up reached `main` despite the review, so
+   those are filed separately, one each, `untriaged` + `bug`.
+
+The digest is the shape the volume forces: ~96 PRs merged in the 30 days to 2026-08-13, at ~11 T3 per PR, is ~1,000
+findings a month sharing a tracker with a ~94-issue human backlog. One issue per finding would bury it; one per PR is
+~3/day, which is a feed a person can skim and the doc-garden bot can filter on the label.
+
+The sweep's do-not-file inputs are three lists: threads **resolved** without a `FOLLOWUP` (dealt with or declined — an
+*unresolved* thread is not suppressed, since nothing closed it out); issues already cross-referencing this PR; and every
+open `untriaged` / `followup` issue, because the first two are PR-scoped and without the third a finding nobody has
+fixed is re-filed by every later PR touching the same file.
+
+Issue bodies open with `From #<PR>`, which is also the dedup key: that reference registers as a cross-reference event on
+the PR timeline, readable immediately and without the index lag that would make issue *search* double-file on a re-run.
+A per-PR `concurrency` group keeps a re-run from racing the original past that read.
+
+The thread payloads are written to `.followups/*.md` in the workspace and read by the agent as files, never interpolated
+into the prompt: review-comment bodies are the least controlled input in the system, and text arriving as a file is data
+rather than something that can close a prompt delimiter.
+
+The sweep judges the merged diff (`gh pr diff`), not the checked-out tree; with squash-only merging plus `strict: true`
+the two agree, and the checkout is there so the agent can read surrounding code for context. It skips generated files
+and lockfiles, which no human would read a comment on.
+
+The workflow has no `workflow_dispatch`: a manual run is on the `main` ref, whose OIDC subject Path A's federation rule
+rejects. Re-run the run from the Actions UI instead, which replays the original `pull_request` event.
+
+Known gaps, accepted for now: nothing closes an `untriaged` issue or expires it, and a PR that is later reverted leaves
+its digest behind. The label is the input to triage and to doc-garden filtering rather than a queue with an owner.
 
 ## Mirror
 

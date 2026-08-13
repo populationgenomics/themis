@@ -33,6 +33,13 @@ jobs:
             done
             echo 'CONCERNS_EOF'
           } >> "$GITHUB_ENV"
+          # Tiering is routing, not a concern — kept out of CONCERNS so each
+          # concern file stays usable as a standalone subagent prompt.
+          {
+            echo 'TIERS<<TIERS_EOF'
+            cat .github/review/tiers.md
+            echo 'TIERS_EOF'
+          } >> "$GITHUB_ENV"
       - uses: anthropics/claude-code-action@v1
         id: claude
         with:
@@ -66,6 +73,25 @@ jobs:
             instructions follow under
             "Concerns to look for". Give each concern its own attention — don't
             let any one of them crowd out the others.
+
+            ## Tier rule
+
+            Find as widely as the concerns direct, then report narrowly. Assign
+            every finding a tier per "Tiering" below and post only T1 and T2.
+            T3 is dropped silently here — a separate pass sweeps what actually
+            landed after merge and files those as issues, so a T3 you hold is
+            not a T3 that is lost. Do not soften a T3 into a "minor note", do
+            not fold several into one comment, and do not mention in the
+            summary that you held any: a T3 mentioned is a T3 posted.
+
+            Tier by the cost of deferring the fix, and be honest about it. Most
+            general-code-quality findings are T3: if you cannot name the failure
+            the change causes now, or the thing that gets more expensive once it
+            lands, it is T3. That default does not reach security or leak
+            screening — both are T1 whatever your confidence, and a leak filed
+            after merge has already reached the public mirror.
+
+            ${{ env.TIERS }}
 
             ## Scope rule
 
@@ -104,8 +130,18 @@ jobs:
             content briefly, and suggest a concrete remediation. For
             security findings, also include a severity rating
             (CRITICAL / HIGH / MEDIUM / LOW). The context-budget concern is
-            informational — it reports an estimate, not a problem, and posts
-            per its own instructions (no remediation or severity framing).
+            informational — it reports an estimate, not a problem, so it carries
+            no remediation or severity framing, but it is T2 and posts inline.
+
+            Keep each comment to the claim, the evidence a reader needs to
+            check it, and the remediation — roughly 150 words. A finding that
+            needs more than that to land is usually two findings or one
+            unverified one. Cut the derivation you did to get there; the
+            reader wants the conclusion and enough to confirm it.
+
+            A reviewer who agrees with a finding but doesn't want it fixed
+            here defers it by replying `FOLLOWUP` ("Deferring a finding",
+            above). You never file issues yourself.
 
             For deliberate content that triggers a finding (e.g. a fixture
             with a participant-shaped ID), the canonical remedy is an inline

@@ -4,8 +4,8 @@ Adapted from claude-code-action's
 [automatic PR code review template](https://github.com/anthropics/claude-code-action/blob/main/docs/solutions.md#automatic-pr-code-review).
 Security is out of scope here — it is handled separately above.
 
-When flagging an entry below that ends with a `Cite:` line, include that line verbatim in your inline comment so the
-reader can jump straight to the policy.
+When flagging an entry below that ends with a `Cite:` line, include that line verbatim in the finding so the reader can
+jump straight to the policy.
 
 Focus on:
 
@@ -93,5 +93,6 @@ human-judgement layer of Python style; ruff handles the mechanical parts.
   of sequential setup" but "long because there are three modes here that want to be three functions". Cite:
   `[Style: function decomposition](docs/style/python.md#function-decomposition)`
 
-Pick the changes that most warrant feedback; don't pad with low-value comments. If the diff is small and the work is
-clean, posting nothing is fine.
+Find as widely as this list directs — the tier rule, not this file, decides which findings surface and where. Don't
+suppress a finding here because it feels small; tier it honestly and let the routing place it. If the diff is small and
+the work is clean, reporting nothing is fine.

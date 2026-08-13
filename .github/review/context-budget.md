@@ -19,7 +19,7 @@ Report when: always-on moves ≳300 tokens, or any file enters/leaves the always
 at any size; or a conditional trigger moves ≳1000 tokens, or a rule / sizable prose reach is added or removed. Otherwise
 silent.
 
-Post one inline note on the line driving the change (the `@`-import / "read this" line, else the grown file), naming the
+Report one note against the line driving the change (the `@`-import / "read this" line, else the grown file), naming the
 tier, new total, and delta — e.g. "Context budget: this `@`-import adds ~2,600 tokens to always-on context (now ~3,700,
 was ~1,100), paid every session. If it's task-specific, a path-scoped `.claude/rules/` entry would load it on demand
 instead."

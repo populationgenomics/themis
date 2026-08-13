@@ -30,3 +30,6 @@ venv/
 
 # Node toolchain for apps/web (deps installed from the committed lockfile)
 node_modules/
+
+# Scratch payloads written by the merge-follow-ups workflow.
+.followups/
