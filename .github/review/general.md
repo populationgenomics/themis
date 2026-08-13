@@ -34,13 +34,17 @@ whole serialized payload — where an invariant is what matters. Suggest the inv
 **Documentation.** Public APIs or behaviour changed without a docstring update; comments that describe what code did
 before, not what it does now; misleading or stale comments in the surrounding context that the PR touches.
 
-**Schema evolution.** Stored-artifact (JSON) schemas evolve **additively only** — breaking changes are ruled out (see
+**Schema evolution.** The authored proto contracts evolve in place — breaking changes are ruled out (see
 `docs/design/proto.md`). Look for:
 
-- Non-additive changes to a stored-artifact schema: a removed, renamed, or repurposed field; a narrowed value set
-  (dropped enum member, tightened pattern or range); or a field newly made required. These break existing data or older
-  readers and are not allowed — deprecate in place (keep the field optional and ignored) instead. A PR that trips the CI
-  compat gate is not "add an override", it's "model the change additively".
+- Breaking changes to an authored schema: a field deleted without reserving **both** its number and its name; a renamed
+  or repurposed field; a narrowed value set (dropped enum member, tightened pattern or range); or a field newly made
+  required. These break existing data or older readers and are not allowed. Retiring a field *is* allowed — delete it
+  and reserve both its number and its name, rather than leaving it in place as one that must never be set. A PR that
+  trips the CI compat gate is not "add an override", it's "model the change compatibly".
+- A browser-facing field retired in a single change. Reserving governs reuse, not the transition window: the browser
+  seam rejects a JSON key the schema no longer declares, so a field the browser *sends* is retired in two changes — stop
+  sending it and deploy, then delete it.
 - Database schema changes (column adds / drops / renames, type changes, new tables) without a migration file
   (Alembic-style or whatever the project uses). Relational schemas should never drift between environments.
 

@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package themis.rpc.sample;
+
+message Foo {
+  string a = 1;
+
+  reserved 2;
+  reserved "b";
+}

@@ -23,5 +23,11 @@ lint:
     - PACKAGE_DIRECTORY_MATCH
     - DIRECTORY_SAME_PACKAGE
 breaking:
+  # FILE minus FIELD_NO_DELETE: a field may be deleted only with both its number and its name
+  # reserved. The two UNLESS_* rules are not in FILE, hence listed. See proto.md, "Schema evolution".
   use:
     - FILE
+    - FIELD_NO_DELETE_UNLESS_NAME_RESERVED
+    - FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED
+  except:
+    - FIELD_NO_DELETE

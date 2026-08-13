@@ -1,17 +1,18 @@
 """Backward-compatibility gate for the committed gRPC proto contracts (S0.6).
 
 The **sole** authored-data compat gate (proto.md): diffs the committed proto module
-under ``schema/proto`` against its baseline with ``buf breaking`` (FILE category —
-field renumber/removal, type/label changes, renames), failing on any incompatible
-delta — additive-only evolution, no override (``docs/design/proto.md`` "Schema
-evolution"). Gates every committed proto — RPC and at-rest alike; a pre-release
+under ``schema/proto`` against its baseline with ``buf breaking`` (FILE category minus
+``FIELD_NO_DELETE``, plus ``FIELD_NO_DELETE_UNLESS_{NAME,NUMBER}_RESERVED`` — renumbers,
+unreserved removals, type/label changes, renames), failing on any incompatible delta,
+with no override. Evolution is additive, plus retiring a field whose number *and* name
+are reserved (``docs/design/proto.md`` "Schema evolution").
+Gates every committed proto — RPC and at-rest alike; a pre-release
 contract (no persisted data, no deployed consumer) is left out of the compared module
 until it stabilizes (see ``_PRE_RELEASE``), so it has no baseline to be incompatible
 with.
 
-**Baseline.** The released line, stood in by the PR base branch (``main`` under
-additive-only evolution). Pass it explicitly as ``--baseline-ref`` (CI supplies
-``origin/<base>``; locally e.g. ``main``).
+**Baseline.** The released line, stood in by the PR base branch. Pass it explicitly as
+``--baseline-ref`` (CI supplies ``origin/<base>``; locally e.g. ``main``).
 
 Each side is materialised as the repo's *own* module — ``buf.yaml`` + ``buf.lock``
 alongside the ``schema/proto`` tree — because a proto's imports only resolve against
@@ -185,7 +186,9 @@ def _outcome(stdout: str, stderr: str, returncode: int, baseline_ref: str) -> _O
         lines.append(f'::error::compat {proto_rel}: breaking change(s) vs {baseline_ref}:')
         lines += [f'  {change}' for change in changes]
     return _Outcome(
-        lines, f'compat gate: {len(findings)} incompatible proto contract(s) — additive-only evolution, no override'
+        lines,
+        f'compat gate: {len(findings)} incompatible proto contract(s) — additive evolution; a '
+        'retired field must reserve its number and name; no override',
     )
 
 

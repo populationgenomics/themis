@@ -146,7 +146,7 @@ package/directory rules are excepted — see `buf.yaml`):
 - **Document with leading `//` comments** on messages, fields, enums, and rpcs; the `.proto` is the source of truth and
   carries the domain documentation. (`protoc` carries a comment into an rpc's generated stub docstring but not into a
   message/field stub — see Documentation flow.)
-- **Explicit field numbers**, additive-only evolution (see Schema evolution).
+- **Explicit field numbers**; evolution adds fields and retires them against a reservation (see Schema evolution).
 
 ## Read-modify-write and integrity
 
@@ -182,25 +182,32 @@ the raw bytes, tolerant subset read).
 
 ## Schema evolution
 
-**Breaking changes are ruled out.** A proto evolves in place, **additively only** — add a field with a fresh number, add
-enum members. Removing, renaming, renumbering, or repurposing a field is not allowed; a retired number goes in a
-`reserved` statement. So there is no schema version, no migration, no version dispatch: a reader parses every artifact
-ever written, and binary proto's unknown-field retention means an older reader round-trips a newer writer's fields
-untouched.
+**Breaking changes are ruled out.** A proto evolves in place: add a field with a fresh number, add enum members.
+Renaming, renumbering, or repurposing a field is not allowed. **Retiring one is** — delete it and reserve **both its
+number and its name**, which is what keeps every reader correct: the number for binary readers, the name for the browser
+seam, which is proto3-JSON and keys on it (Serialization posture, bucket 2). A retired field is gone from the contract
+rather than lingering as one that must never be set; nothing new may claim what it held. Reserving governs *reuse*; the
+*transition window* is a separate precondition — a field may only be retired once nothing in flight still sets it. The
+binary legs tolerate the skew, but the browser seam rejects a JSON key the schema no longer declares
+(`ignoreUnknownFields: false`), so a browser-facing field is retired in two changes: stop sending it and deploy, then
+delete it. So there is no schema version, no migration, no version dispatch: a reader parses every artifact ever
+written, and binary proto's unknown-field retention means an older reader round-trips a newer writer's fields untouched.
 
 - **CI compat gate** (`buf breaking`, `schema-compat.yml`). Each committed `.proto` is diffed against its base-branch
-  baseline under the `FILE` category and **fails on any incompatible delta — no in-tool override**. Pre-release
+  baseline under the `FILE` category — minus `FIELD_NO_DELETE`, plus the two rules that admit a deletion only when the
+  number and the name are reserved — and **fails on any incompatible delta, with no in-tool override**. Pre-release
   contracts (no persisted data, no deployed consumer) are excluded until they stabilize (`tools/schema/buf_compat.py`).
 - **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
-  additive-only held.
+  evolution stayed compatible.
 
 ## Wire and RPC
 
 The internal wire transport is gRPC (HTTP/2, binary protobuf). RPC shapes are authored in the same
 `schema/proto/themis/rpc/` protos and gated by the same `buf breaking`; [`services.md`](services.md) is the service
 pattern (the servicer base, the `themis.rpc.<domain>` stubs, the deploy). Rolling deploys keep several message
-generations in flight; additive-only evolution plus proto's tolerant readers keeps that skew safe. The BFF↔services leg
-is this same gRPC/proto; the browser↔BFF leg is the Connect protocol as JSON (Serialization posture, bucket 2).
+generations in flight; adding a field plus proto's tolerant readers keeps that skew safe on this leg, and a retirement
+is sequenced to stay safe on the browser one (Schema evolution). The BFF↔services leg is this same gRPC/proto; the
+browser↔BFF leg is the Connect protocol as JSON (Serialization posture, bucket 2).
 
 The two legs differ because a browser cannot speak gRPC: it has no access to HTTP/2 trailers, which gRPC uses to carry
 final status. That is why the browser-facing service lives outside `themis/rpc/` — under
