@@ -9,8 +9,8 @@ fix-up PR. The pattern follows OpenAI's "harness engineering" note — a recurri
 no longer reflects real code behaviour and opens fix-up pull requests.
 
 It is a sibling of the PR-time screen ([`screen-and-mirror-workflow.md`](screen-and-mirror-workflow.md)) and is built on
-the same machinery: its PR is screened (regex + LLM), reviewed by CODEOWNERS, and mirrored 1:1 like any other. The agent
-has no merge authority and cannot push to `main`, so a wrong edit is bounded to a PR a human rejects — and the
+the same machinery: its PR is screened (regex + LLM), approved by a maintainer, and mirrored 1:1 like any other. The
+agent has no merge authority and cannot push to `main`, so a wrong edit is bounded to a PR a human rejects — and the
 leak/regex screens still stand between its edits and the public mirror.
 
 ## Schedule
@@ -31,10 +31,10 @@ the seasonal hour-slip is accepted rather than worked around.
   resolves the open questions, and merges.
 - **One rolling PR.** A single branch `doc-garden/rolling` is reset from `main` and force-pushed each run; a PR is
   opened when none is open, otherwise the force-push updates its diff and the run's notes are written back over its
-  body. The PR always reflects today's tree and never conflicts with `main`; branch protection dismisses the stale
-  approval on each update, correctly re-gating the changed diff. A run that fixes nothing opens no PR — including a run
-  whose only drift was report-only (unfixable): with no diff there is nothing to open a PR against, so the agent's notes
-  are echoed to the job log instead.
+  body. The PR always reflects today's tree and never conflicts with `main`; an approval given to an earlier state
+  survives the force-push, so the merging maintainer reviews the current diff. A run that fixes nothing opens no PR —
+  including a run whose only drift was report-only (unfixable): with no diff there is nothing to open a PR against, so
+  the agent's notes are echoed to the job log instead.
 - **Scope** is all tracked Markdown — it is all documentation (`docs/`, every `README.md`, `GLOSSARY.md`, `CLAUDE.md`,
   `.claude/rules/`, `.github/**/*.md`). The drift classes and fix discipline live in the agent's instructions,
   [`.github/doc-garden/instructions.md`](../../.github/doc-garden/instructions.md).

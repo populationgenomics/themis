@@ -105,8 +105,8 @@ scale-to-zero; smallest dev tier).
 
 Deploy auth, gating, and trigger per [`deployment.md`](deployment.md): GitHub OIDC → WIF; **write** deploys only from a
 deployable ref (`main`, or the admin-only `deployed/<env>`), never on merge. PRs get a **read-only** preview identity
-that runs `pulumi preview` and posts it as a comment (informing the single PR-approval gate), plus cloud-free
-validation. No PR job can mutate cloud state — preview only, never apply.
+that runs `pulumi preview` and posts it as a comment (informing PR review before merge), plus cloud-free validation. No
+PR job can mutate cloud state — preview only, never apply.
 
 - PR: lint, type-check, unit tests (no cloud), and a read-only `pulumi preview` posted as a comment.
 - On merge to `main`: the same cloud-free validation, plus a no-push build of every service image (`images.yml`) so a
@@ -214,7 +214,7 @@ our boundary** — egress for the agent's own bash/generated code is then govern
   ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) §6, §7). The services need no public endpoint
   and no tunnel.
 - **Sandbox container:** under self-hosted we build and harden it — minimal base, curated **binary allowlist** (no
-  egress/network tools, no runtime package manager), tracked manifest under CODEOWNERS + security review. Under the
+  egress/network tools, no runtime package manager), tracked manifest under maintainer + security review. Under the
   interim cloud sandbox this is Anthropic's.
 - **Isolation:** the sandbox holds no GCP credentials and no metadata-server access; egress is deny-by-default at our
   boundary. **Our services hold the GCP identity** and mediate the agent's access to private data (Cloud SQL/GCS) — the

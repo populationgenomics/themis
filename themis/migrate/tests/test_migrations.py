@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
+
+import yaml
 
 from themis.migrate import migrate
 
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
+_DEPLOY_WORKFLOW = pathlib.Path(__file__).resolve().parents[3] / '.github' / 'workflows' / 'deploy.yml'
 
 
 def test_committed_migrations_are_discoverable() -> None:
@@ -64,3 +68,20 @@ def test_projects_migration_renders_and_splits_cleanly() -> None:
     assert 'GRANT SELECT ON projects TO "themis-web@cpg-themis-dev.iam"' in rendered
     # CREATE TABLE projects + three ALTER (foreign keys) + the single GRANT.
     assert len(migrate.split_statements(rendered)) == 5
+
+
+def test_deploy_provides_every_migration_substitution() -> None:
+    """A `${VAR}` in a committed migration has an entry in every `THEMIS_MIGRATE_SUBSTITUTIONS` deploy passes."""
+    workflow = yaml.safe_load(_DEPLOY_WORKFLOW.read_text('utf-8'))
+    # Keys are literal in the workflow; only the values are `${{ … }}` expressions.
+    substitution_maps = [
+        step['env']['THEMIS_MIGRATE_SUBSTITUTIONS']
+        for job in workflow['jobs'].values()
+        for step in job.get('steps', [])
+        if 'THEMIS_MIGRATE_SUBSTITUTIONS' in step.get('env', {})
+    ]
+    assert substitution_maps  # the migrate step passes the map; an empty scan means the pairing is unverified
+    for raw in substitution_maps:
+        provided = dict.fromkeys(json.loads(raw), 'login')
+        for migration in migrate.discover(_MIGRATIONS_DIR):
+            migrate.render(migration.sql, provided)  # raises on a ${VAR} the deploy does not provide

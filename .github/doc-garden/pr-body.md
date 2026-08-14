@@ -4,4 +4,4 @@ The diff may mix two kinds of edit: confident fixes, and **best-guess** fixes wh
 
 To resolve: point an agent at this PR, answer the open questions, let it update the branch, and merge. The branch `doc-garden/rolling` is reset from `main` and force-updated each run, so review the **current** diff — earlier states are not preserved.
 
-Screened and reviewed like any other PR: the regex and LLM screens plus CODEOWNERS approval gate it before it can merge and mirror to public.
+Screened and reviewed like any other PR: the regex and LLM screens plus a maintainer's approving review gate it before it can merge and mirror to public.

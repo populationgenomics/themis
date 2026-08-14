@@ -8,9 +8,9 @@
 **Threat model:** honest oversight. Contributors are competent and acting in good faith; the screen's job is to remind a
 careful person of something they didn't notice (e.g. a participant ID copy-pasted into a test fixture), not to defend
 against an adversarial merger. This framing drives the design toward soft, model-judgement-based tooling rather than
-structural enforcement, and it also lowers the bar for accepting contributions from people who aren't already
-CODEOWNERS: their PRs go through the same screen, and the reviewer sees both their changes and the screen's findings
-before approving.
+structural enforcement, and it also lowers the bar for accepting contributions from people beyond the maintainers: their
+PRs go through the same screen, and the reviewing maintainer sees both their changes and the screen's findings before
+approving.
 
 Two pieces:
 
@@ -30,29 +30,20 @@ A future iteration may insert Copybara to rewrite content before mirroring (path
 
 ## Branch protection (applied)
 
-`main` is branch-protected with:
+`main` is protected by a branch ruleset; the review policy it encodes — the maintainer/contributor tiers, the admin
+bypass, why there is no CODEOWNERS file — is [`../design/review-policy.md`](../design/review-policy.md). The rules:
 
-- PRs required, ≥1 approving review, CODEOWNERS review required
-- Stale reviews dismissed on new pushes
+- PRs required; the review requirement is the `review gate` required check (maintainer-authored passes, everyone else
+  needs an approving review); repository admins bypass, pull requests only
 - Conversation resolution required
-- Linear history required
+- Linear history required; squash-merge the only merge method, so every commit on `main` has exactly one parent and
+  corresponds to one merged PR
 - No force-pushes, no deletions
-- Admin bypass disabled (`enforce_admins: true`)
-
-Repo settings restrict merge methods so squash-merge is the only way to land a PR. Combined with linear history, every
-commit on `main` has exactly one parent and corresponds to one merged PR.
-
-Required status checks:
-
-- `regex screen` — from the regex script.
-- `review + LLM screen` — the claude-code-action workflow run (required so an API outage or runner failure can't
-  fail-open).
-- `strict: true` ("Require branches to be up to date before merging") so the merge base equals the latest main when
-  squash happens.
+- Required status checks, non-strict: `review gate`, `regex screen`, `review + LLM screen` (required so an API outage or
+  runner failure can't fail-open), `pre-commit`, `pytest`, `web`, `backward-compatible`, `regen-is-fresh`
 
 A PR that modifies `internal-review.yml` itself fails `review + LLM screen` by design: claude-code-action refuses to run
-a workflow file that differs from the default branch (anti-tamper). To land such a PR, an admin temporarily removes that
-check from the required list, merges, and restores it.
+a workflow file that differs from the default branch (anti-tamper). To land such a PR, an admin bypass-merges.
 
 ## PR-time screen
 
@@ -78,8 +69,10 @@ The script recognises the marker on the added line itself; no block form. Files 
 text) have no suppression mechanism — restructure or accept the hit. The reason is required (non-empty after the colon)
 to keep the override audit trail self-documenting.
 
-Suppression markers are effective in the same PR they're introduced. Under honest-oversight, adding a marker is a
-deliberate act by a CODEOWNER-reviewed contributor.
+Suppression markers are effective in the same PR they're introduced. A marker records the author's judgement that the
+matched content is not the real thing — e.g. a synthetic fixture shaped like a participant ID — with the required reason
+documenting why. Under honest oversight that judgement is itself a valid override: it needs no other reviewer, and the
+LLM screen still reads every diff.
 
 Workflow:
 
@@ -177,8 +170,8 @@ No `screen-override` label. No separate override workflow.
 - Author marks ready / pushes a commit → both regex and action run on the head SHA. Status checks update on the PR.
 - Regex hits → `regex screen` fails, merge blocked. Author fixes or adds a suppression marker.
 - Action posts review comments → conversations need resolution before merge.
-- Reviewer approves + resolves conversations → merge button unlocks.
-- Author pushes again → dismiss-stale invalidates the approval; both workflows re-run; cycle repeats.
+- Conversations resolved + checks green (`review gate` among them carries the review requirement) → merge.
+- Author pushes again → both workflows re-run; cycle repeats.
 - PR merges → the merge-time pass files issues for the `FOLLOWUP` threads and for what it finds in the landed tree.
 
 ## Merge-time follow-ups
@@ -219,9 +212,10 @@ The thread payloads are written to `.followups/*.md` in the workspace and read b
 into the prompt: review-comment bodies are the least controlled input in the system, and text arriving as a file is data
 rather than something that can close a prompt delimiter.
 
-The sweep judges the merged diff (`gh pr diff`), not the checked-out tree; with squash-only merging plus `strict: true`
-the two agree, and the checkout is there so the agent can read surrounding code for context. It skips generated files
-and lockfiles, which no human would read a comment on.
+The sweep judges the merged diff (`gh pr diff`), not the checked-out tree; with squash-only merging the two agree up to
+any drift between the PR's merge base and the `main` tip (required checks are non-strict), and the checkout is there so
+the agent can read surrounding code for context. It skips generated files and lockfiles, which no human would read a
+comment on.
 
 The workflow has no `workflow_dispatch`: a manual run is on the `main` ref, whose OIDC subject Path A's federation rule
 rejects. Re-run the run from the Actions UI instead, which replays the original `pull_request` event.
@@ -348,8 +342,6 @@ unprefixed-shared convention at that point — no need to pre-define naming buck
 
 ## Follow-up settings (after workflows land)
 
-- Add `screen / regex` and `Claude Code` to `required_status_checks.contexts` on `main`'s protection rule, with
-  `strict: true`.
 - Disable Actions on `populationgenomics/themis`.
 - Create a GitHub App in the `populationgenomics` org (e.g. "themis-mirror"), install it on `themis` with
   `contents: write`, store the Client ID as `MIRROR_APP_CLIENT_ID` (repo variable) and private key as

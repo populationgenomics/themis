@@ -1,7 +1,7 @@
 name: preview
 
-# Read-only `pulumi preview` on PRs, posted as a comment to inform the single
-# PR-approval gate. Authenticates as the read-only preview SA via WIF (scoped to
+# Read-only `pulumi preview` on PRs, posted as a comment to inform PR review
+# before merge. Authenticates as the read-only preview SA via WIF (scoped to
 # pull_request tokens); write access needs a deployable ref (deploy.yml). PRs never deploy.
 # See docs/design/deployment.md.
 on:

@@ -41,8 +41,8 @@ On the App's *General* settings page:
 
 App settings → *Install App* → `populationgenomics` → *Install* → **Only select repositories** → select
 **`themis-internal`** only → *Install*. Unlike the mirror App, no branch-ruleset lock-down is needed: this App is one of
-several writers to `themis-internal`, and its PRs pass through the same screen + CODEOWNERS gate as any other before
-they can land.
+several writers to `themis-internal`, and its PRs pass through the same screen + review gate as any other before they
+can land.
 
 ## 4. Store credentials on `themis-internal`
 

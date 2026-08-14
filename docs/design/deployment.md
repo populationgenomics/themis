@@ -104,9 +104,9 @@ no secrets.
 - **Write** access (deploy) runs only from a deployable ref, as the deploy SA — its WIF binding is scoped to
   `refs/heads/main` and `refs/heads/deployed/<env>` tokens (above). A PR's ref is `refs/pull/N/merge`, which matches
   neither. PRs get a **read-only** identity (the preview SA, WIF binding scoped to `pull_request` tokens) used only to
-  run `pulumi preview` and post it as a comment, informing the single PR-approval gate. No PR job can mutate cloud
-  state. The read-only token is dev-scoped (synthetic data); the residual malicious-PR risk is bounded by the private
-  repo and trusted membership. Cloud-free validation (lint, type-check, unit tests) also runs on PRs.
+  run `pulumi preview` and post it as a comment, informing PR review before merge. No PR job can mutate cloud state. The
+  read-only token is dev-scoped (synthetic data); the residual malicious-PR risk is bounded by the private repo and
+  trusted membership. Cloud-free validation (lint, type-check, unit tests) also runs on PRs.
 - "Read-only" ≠ "cannot read secrets": `pulumi preview` runs the PR's own copy of the program and the preview SA can
   **decrypt** the stack's gcpkms secrets (the secrets manager loads on every op), so a malicious PR could run arbitrary
   code as that SA and exfiltrate any secret in the previewed stack's state/config plus project-wide `viewer` reads.

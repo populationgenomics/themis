@@ -27,7 +27,7 @@ jobs:
         run: |
           {
             echo 'CONCERNS<<CONCERNS_EOF'
-            for f in .github/review/leak-screen.md .github/review/security.md .github/review/general.md .github/review/context-budget.md; do
+            for f in .github/review/leak-screen.md .github/review/security.md .github/review/general.md .github/review/context-budget.md .github/review/second-review.md; do
               cat "$f"
               echo
             done
@@ -68,9 +68,9 @@ jobs:
             merger. Bias toward signalling clearly when something is worth a
             look; do not invent problems where there are none.
 
-            This review covers four concerns: leak screening, security,
-            general code quality, and context budget. Each concern's full
-            instructions follow under
+            This review covers five concerns: leak screening, security,
+            general code quality, context budget, and second review. Each
+            concern's full instructions follow under
             "Concerns to look for". Give each concern its own attention — don't
             let any one of them crowd out the others.
 
@@ -126,8 +126,8 @@ jobs:
 
             Post line-anchored review comments via the inline-comment MCP
             tool. Each comment should name the concern (leak screening,
-            security, general, or context budget), quote the offending
-            content briefly, and suggest a concrete remediation. For
+            security, general, context budget, or second review), quote the
+            offending content briefly, and suggest a concrete remediation. For
             security findings, also include a severity rating
             (CRITICAL / HIGH / MEDIUM / LOW). The context-budget concern is
             informational — it reports an estimate, not a problem, so it carries

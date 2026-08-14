@@ -1,0 +1,122 @@
+name: review gate
+
+# Encodes the review requirement of docs/design/review-policy.md as a commit status.
+on:
+  # pull_request_target, not pull_request: the workflow runs from the default
+  # branch, so a PR cannot edit the gate that judges it. No step checks out or
+  # executes PR content.
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+      - synchronize
+      - review_requested
+      - review_request_removed
+  pull_request_review:
+    types: [submitted, dismissed]
+
+# Runs race: each queries live PR state, so a stale run finishing last would
+# overwrite a fresher status on the same context.
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    # The job must not share a name with the posted context: a required check
+    # matches check runs and statuses by name alike, and this job succeeds even
+    # when the status it posts is a failure.
+    name: evaluate
+    if: github.repository == 'populationgenomics/themis-internal'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Evaluate and post status
+        run: |-
+          set -euo pipefail
+
+          pr="$(gh api graphql \
+            -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" \
+            -f query='
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    isDraft
+                    headRefOid
+                    author { login }
+                    reviewRequests(first: 10) {
+                      nodes {
+                        requestedReviewer {
+                          ... on User { login }
+                          ... on Team { slug }
+                          ... on Bot { login }
+                          ... on Mannequin { login }
+                        }
+                      }
+                    }
+                    latestOpinionatedReviews(last: 100) {
+                      nodes { state author { login } }
+                    }
+                  }
+                }
+              }' \
+            -q '.data.repository.pullRequest')"
+
+          head_sha="$(jq -r '.headRefOid' <<<"$pr")"
+          is_draft="$(jq -r '.isDraft' <<<"$pr")"
+          author="$(jq -r '.author.login' <<<"$pr")"
+          # The "unknown" fallback keeps a reviewer type outside the fragments
+          # non-empty, so an unrecognised request still fails the gate.
+          requested="$(jq -r '[.reviewRequests.nodes[].requestedReviewer | .login // .slug // "unknown"] | join(", ")' \
+            <<<"$pr")"
+          # latestOpinionatedReviews: one review per reviewer, APPROVED or
+          # CHANGES_REQUESTED only — a dismissed review drops out on its own.
+          changes_requested_by="$(jq -r \
+            '[.latestOpinionatedReviews.nodes[] | select(.state == "CHANGES_REQUESTED") | .author.login] | join(", ")' \
+            <<<"$pr")"
+          approved_by="$(jq -r \
+            '[.latestOpinionatedReviews.nodes[] | select(.state == "APPROVED") | .author.login] | join(", ")' \
+            <<<"$pr")"
+
+          # Maintainers = direct admin collaborators; org owners inherit admin
+          # but are not direct, so they don't self-merge through this gate.
+          maintainers="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/collaborators?affiliation=direct&permission=admin" \
+            --paginate -q '.[].login')"
+
+          # An unfulfilled request outranks an existing approval: re-requesting
+          # a review after one was given means "look again".
+          if [[ "$is_draft" == 'true' ]]; then
+            state='pending'
+            description='draft — evaluated when the PR goes ready for review'
+          elif [[ -n "$changes_requested_by" ]]; then
+            state='failure'
+            description="changes requested by ${changes_requested_by}"
+          elif [[ -n "$requested" ]]; then
+            state='failure'
+            description="waiting on requested review: ${requested}"
+          elif grep -Fxq "$author" <<<"$maintainers"; then
+            state='success'
+            description="maintainer-authored (${author}); no review pending"
+          elif [[ -n "$approved_by" ]]; then
+            state='success'
+            description="approved by ${approved_by}"
+          else
+            state='failure'
+            description="approval required: ${author} is not a maintainer"
+          fi
+
+          echo "review gate → ${state}: ${description}"
+          # The statuses API rejects a description over 140 characters.
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+            -f state="$state" \
+            -f context='review gate' \
+            -f description="${description:0:140}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
