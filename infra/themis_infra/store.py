@@ -125,7 +125,10 @@ class StoreService(pulumi.ComponentResource):
                         # PutWorkspace buffers the archive whole and copies it once to upload; hold two
                         # copies of the cap (servicer.py) plus the GCS client and runtime.
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
-                            limits={'cpu': '1', 'memory': '2Gi'}
+                            # Setting `resources` at all deploys cpuIdle false unless it is stated;
+                            # a container with no resources block gets true.
+                            cpu_idle=True,
+                            limits={'cpu': '1', 'memory': '2Gi'},
                         ),
                         envs=[
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_STORAGE_BACKEND', value='gcs'),
