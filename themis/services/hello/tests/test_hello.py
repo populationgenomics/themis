@@ -17,7 +17,7 @@ from themis.testing import in_process_grpc
 
 
 @contextlib.asynccontextmanager
-async def _serving() -> AsyncIterator[hello_pb2_grpc.HelloStub]:
+async def _serving() -> AsyncIterator[hello_pb2_grpc.HelloAsyncStub]:
     servicer = servicer_mod.Servicer(fixture_session.resolve_fixture_session)
     async with in_process_grpc.serving(
         lambda server: hello_pb2_grpc.add_HelloServicer_to_server(servicer, server)

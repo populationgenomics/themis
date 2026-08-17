@@ -11,7 +11,11 @@ Fully local — no BSR remote plugins:
    the descriptor set — a proto that declares no service, data or options, gets none). Its bundled ``protoc``
    pins the generated-code version to the protobuf 6.x runtime. Well-known types
    (``google.protobuf.*``) resolve from ``grpcio-tools``' bundled includes and stay
-   runtime-provided.
+   runtime-provided. ``mypy-protobuf``'s ``protoc-gen-mypy_grpc`` adds the ``_pb2_grpc.pyi`` protoc
+   itself does not emit (``--pyi_out`` covers messages only): without it a stub's methods are the
+   dynamic ``channel.unary_unary(...)`` assignments in the ``.py``, which a type-checker cannot see,
+   so a call to an rpc the proto no longer declares goes unnoticed (``docs/design/proto.md``,
+   "Schema evolution").
 3. ``apps/web/buf.gen.yaml`` — protobuf-es (TypeScript) via the app's local
    ``@bufbuild/protoc-gen-es`` plugin, written to ``apps/web/src/gen/``.
 
@@ -45,7 +49,7 @@ _WELL_KNOWN = importlib.resources.files('grpc_tools') / '_proto'
 def _protoc(include: pathlib.Path, protos: list[str], *, grpc: bool) -> None:
     """Run ``grpcio-tools`` protoc over ``protos`` (relative to ``include``), writing to the repo root.
 
-    Emits ``_pb2.py`` + ``.pyi`` always; ``_pb2_grpc.py`` too when ``grpc`` is set.
+    Emits ``_pb2.py`` + ``.pyi`` always; ``_pb2_grpc.py`` and its ``.pyi`` too when ``grpc`` is set.
     """
     args = [
         'protoc',
@@ -55,10 +59,26 @@ def _protoc(include: pathlib.Path, protos: list[str], *, grpc: bool) -> None:
         f'--pyi_out={_REPO_ROOT}',
     ]
     if grpc:
-        args.append(f'--grpc_python_out={_REPO_ROOT}')
+        args += [
+            f'--grpc_python_out={_REPO_ROOT}',
+            f'--plugin=protoc-gen-mypy_grpc={_mypy_grpc_plugin()}',
+            f'--mypy_grpc_out={_REPO_ROOT}',
+        ]
     args += protos
     if protoc.main(args) != 0:
         raise SystemExit(f'protoc failed for {protos}')
+
+
+def _mypy_grpc_plugin() -> str:
+    """Absolute path to mypy-protobuf's gRPC stub generator.
+
+    protoc resolves a bare `protoc-gen-<name>` off PATH, and `protoc.main` runs in-process without a
+    shell, so the plugin is passed explicitly rather than assumed to be found.
+    """
+    plugin = shutil.which('protoc-gen-mypy_grpc')
+    if plugin is None:
+        raise SystemExit('protoc-gen-mypy_grpc not found; run under `uv run --group codegen`')
+    return plugin
 
 
 def main() -> int:

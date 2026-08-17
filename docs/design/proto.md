@@ -201,6 +201,14 @@ unknown-field retention means an older reader round-trips a newer writer's field
   baseline under the `FILE` category — minus `FIELD_NO_DELETE`, plus the two rules that admit a deletion only when the
   number and the name are reserved — and **fails on any incompatible delta, with no in-tool override**. Pre-release
   contracts (no persisted data, no deployed consumer) are excluded until they stabilize (`tools/schema/buf_compat.py`).
+- **Statically-typed stubs.** `--pyi_out` types the generated *messages* only; a `_pb2_grpc.py` leaves a stub's methods
+  as dynamic `channel.unary_unary(...)` assignments, invisible to a type-checker — so a Python caller of an rpc the
+  proto no longer declares reads as fine. `mypy-protobuf`'s `protoc-gen-mypy_grpc` emits the missing `_pb2_grpc.pyi`
+  (`tools/schema/regen.py`), which makes that call `Cannot access attribute "X" for class "YStub"`. `themis/rpc` is
+  excluded from pyright, so the `.pyi` buys nothing for the stubs themselves — it is there for the *importers*, which
+  are checked. `schema/tests/test_grpc_stub_pyi.py` derives the expectation from the descriptor set and checks it both
+  ways, since dropping the plugin would leave the committed stubs in place and pass the freshness gate — and a frozen
+  stub that kept a retired rpc's attribute is the case this exists to catch.
 - **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
   evolution stayed compatible.
 

@@ -40,7 +40,7 @@ class _Stub:
 def _grpc_store(stub: _Stub) -> store_client.GrpcStore:
     # Bypass __init__ so no real channel is dialled; inject the fake stub in place of the real one.
     store = store_client.GrpcStore.__new__(store_client.GrpcStore)
-    store._stub = cast('store_pb2_grpc.StoreStub', stub)
+    store._stub = cast('store_pb2_grpc.StoreAsyncStub', stub)
     store._metadata = ((store_client._SESSION_TOKEN_METADATA, 'TOK'),)
     return store
 

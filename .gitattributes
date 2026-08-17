@@ -5,3 +5,4 @@ apps/web/src/gen/** linguist-generated=true
 **/*_pb2.py linguist-generated=true
 **/*_pb2.pyi linguist-generated=true
 **/*_pb2_grpc.py linguist-generated=true
+**/*_pb2_grpc.pyi linguist-generated=true

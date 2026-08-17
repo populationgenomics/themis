@@ -55,7 +55,7 @@ SEED: Mapping[str, literature_backend.SeededPaper] = {
 
 
 def _run[T](
-    stub_call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[T]],
+    stub_call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[T]],
     *,
     backend: literature_backend.LiteratureBackend | None = None,
 ) -> T:

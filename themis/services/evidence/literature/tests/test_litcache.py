@@ -308,7 +308,9 @@ def test_select_rendering_breaks_a_converter_tie_toward_the_newer() -> None:
     assert selected[0] == 'newer-hash'
 
 
-def _run_over_grpc[T](bucket: storage.Bucket, call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[T]]) -> T:
+def _run_over_grpc[T](
+    bucket: storage.Bucket, call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[T]]
+) -> T:
     async def run() -> T:
         servicer = servicer_mod.Servicer(_backend(bucket))
         async with in_process_grpc.serving(

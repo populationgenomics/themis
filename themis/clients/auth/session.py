@@ -126,7 +126,7 @@ async def require_session(
         await context.abort(grpc.StatusCode.PERMISSION_DENIED, 'session token could not be resolved')
 
 
-def _session_resolver_over_stub(stub: auth_pb2_grpc.AuthStub) -> SessionResolver:
+def _session_resolver_over_stub(stub: auth_pb2_grpc.AuthAsyncStub) -> SessionResolver:
     async def session_resolver(session_token: str) -> auth_pb2.SessionContext:
         try:
             return await stub.ResolveSession(auth_pb2.ResolveTokenRequest(session_token=session_token))

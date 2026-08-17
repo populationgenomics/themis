@@ -48,7 +48,11 @@ litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "proto
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
-codegen = ["grpcio-tools"]
+protoc = ["grpcio-tools"]
+# mypy-protobuf supplies protoc-gen-mypy_grpc for the _pb2_grpc.pyi protoc does not emit; it is
+# resolved off PATH, never imported. Its types-protobuf dep installs as `google-stubs`, which pyright
+# resolves ahead of the pinned protobuf wheel's own .pyi — so `lint` takes `protoc` alone.
+codegen = ["mypy-protobuf", { include-group = "protoc" }]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
@@ -115,7 +119,7 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "codegen" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).

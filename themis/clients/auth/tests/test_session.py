@@ -52,7 +52,7 @@ class _GuardServicer(auth_pb2_grpc.AuthServicer):
 
 
 @contextlib.asynccontextmanager
-async def _serving(servicer: auth_pb2_grpc.AuthServicer) -> AsyncIterator[auth_pb2_grpc.AuthStub]:
+async def _serving(servicer: auth_pb2_grpc.AuthServicer) -> AsyncIterator[auth_pb2_grpc.AuthAsyncStub]:
     async with in_process_grpc.serving(
         lambda server: auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
     ) as channel:

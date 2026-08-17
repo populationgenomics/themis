@@ -17,6 +17,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      # The schema tests compile the proto module to a descriptor set; without buf they skip,
+      # which reads as a pass. Pinned to the version schema-freshness.yml resolves against.
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.66.1"
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
