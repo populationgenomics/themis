@@ -91,10 +91,10 @@ flowchart TD
   succeeds even when the verdict it posts is a failure, so the two must not share a name. Its required-check entry
   carries no `integration_id`, so a hand-posted status satisfies it too.
 - Required status checks, non-strict: `review gate`, `regex screen`, `review + LLM screen`, `pre-commit`, `pytest`,
-  `web`, `backward-compatible`, `regen-is-fresh`. Non-strict: an up-to-date-branch requirement would have every merge to
-  `main` invalidate every other open PR — a rebase plus a full check re-run (LLM review included) per landing — while
-  binding only contributors without the bypass. A cross-PR semantic conflict instead surfaces minutes after landing, via
-  the same checks running on the push to `main`.
+  `pytest-sandbox`, `web`, `backward-compatible`, `regen-is-fresh`. Non-strict: an up-to-date-branch requirement would
+  have every merge to `main` invalidate every other open PR — a rebase plus a full check re-run (LLM review included)
+  per landing — while binding only contributors without the bypass. A cross-PR semantic conflict instead surfaces
+  minutes after landing, via the same checks running on the push to `main`.
 - Linear history; no force-pushes; no deletion.
 - Bypass: the *Repository admin* role, mode **pull requests only**.
 

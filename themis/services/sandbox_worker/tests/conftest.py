@@ -12,9 +12,9 @@ import pytest
 def bubblewrap() -> None:
     """Gate a bwrap-backed test on a launchable sandbox: skipped off-platform, an error under CI.
 
-    Every developer machine here is macOS, so CI is the only place these tests ever run and a skip
-    there is indistinguishable from a pass. GitHub Actions sets ``CI``, so the one fixture both skips
-    off-platform and fails the job that is meant to have installed bubblewrap.
+    A skip in CI is indistinguishable from a pass, and the job that installs bubblewrap is the only
+    place these run. GitHub Actions sets ``CI``, so one fixture serves both: skip where bwrap cannot
+    exist, fail where it was meant to.
 
     Raises:
         RuntimeError: If bubblewrap is absent under CI.

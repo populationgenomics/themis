@@ -159,9 +159,10 @@ The suite runs offline (no bubblewrap); on-platform isolation tests gate on `pos
   `_serve`'s ordering (verify → restore → ack → serve → checkpoint → teardown), the store-restore-error path (ack +
   stop, no serve), and its fail-loud env checks.
 
-- `test_session_integration.py` is `skipif(not postern.available())` — it runs on a Linux + bwrap host and asserts the
-  on-platform isolation (boot gate passes, guest has no network, hatch UDS bound in). CI installs bubblewrap; locally on
-  macOS, in Docker:
+- `test_session_integration.py` carries `pytest.mark.sandbox` and the `bubblewrap` fixture — it runs on a Linux + bwrap
+  host and asserts the on-platform isolation (boot gate passes, guest has no network, hatch UDS bound in). The fixture
+  skips where bwrap cannot exist and raises under `CI`, where a skip would read as a pass; only the `pytest-sandbox` job
+  installs bubblewrap, and `pytest` runs `-m 'not sandbox'`. Locally on macOS, in Docker:
 
   ```bash
   docker run --rm -it --privileged -v "$PWD":/w -w /w python:3.13-slim bash -c '

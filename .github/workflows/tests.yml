@@ -43,20 +43,16 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-      # ubuntu-latest (24.04) restricts unprivileged user namespaces via AppArmor — lift it so bwrap
-      # can launch (Cloud Run gen2, the deploy target, has no such restriction); the key is absent on
-      # kernels without that patch, hence `|| true`. The timeout bounds an apt hang to this job, in
-      # minutes rather than the six-hour default.
-      # The runner image ships populated apt lists, so the install alone resolves; `update` is the
-      # step that reaches the network, and its default mirror (azure.archive.ubuntu.com) is retried
-      # for minutes when it is down. Refreshing only after a miss keeps that off the happy path.
+      # `update` is the call that reaches the network; the runner image ships lists the install
+      # resolves against, so it runs only after a miss. The AppArmor key gates unprivileged user
+      # namespaces and is absent on kernels without that patch, hence `|| true`.
       - timeout-minutes: 6
         run: |
           sudo apt-get install -y bubblewrap \
             || { sudo apt-get update && sudo apt-get install -y bubblewrap; }
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      # The guest world is stdlib-only (the hatch runs in the test process), so it needs nothing installed.
       - run: uv sync --locked --group test --python 3.13
-      # `CI` is set, so the bubblewrap fixture errors rather than skips if the step above left no bwrap
-      # on PATH; a selection that matches nothing exits 5. Either way this job goes red.
+      # `-m sandbox` is the complement of the `pytest` job's expression: a test outside both is
+      # collected by neither and reports green. `CI` is set, so the bubblewrap fixture errors rather
+      # than skips when the step above left no bwrap on PATH.
       - run: uv run pytest -m sandbox
