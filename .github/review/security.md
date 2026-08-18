@@ -42,7 +42,11 @@ offending content briefly, and suggest a concrete remediation.
 **LLM-specific risks**
 
 - **Prompt injection vectors.** User input flowing unsanitised into a system prompt, tool descriptions, or anywhere the
-  model treats the content as instructions.
+  model treats the content as instructions. Evidence text from the curated upstreams reaching the analysis agent's
+  context is not a finding by itself — the agent is curator-steered and its output is a report the curator reads, so
+  injected text holds no more power than the curator's own steering. Flag an injection path only where it crosses a
+  capability boundary: an egress or exfiltration channel, a tool call outside the sandbox allowlist, or output that
+  takes effect without the curator reading it.
 - **Token consumption.** Patterns that let an external caller consume LLM tokens for tasks unrelated to the intended
   product surface: open-ended chat endpoints, missing rate limits, missing auth on LLM-backed routes.
 - **Tool-use scope.** Tools given to a model that have broader permissions than the model needs (e.g. a read-only
