@@ -223,6 +223,35 @@ unknown-field retention means an older reader round-trips a newer writer's field
 - **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
   evolution stayed compatible.
 
+### Retiring an RPC or a message
+
+The gate above has nothing to check an rpc retirement against. A field retirement turns on a fact written in the schema
+— the reserved number and name — and proto reserves neither an rpc name nor a message name, so the rules forbidding
+those deletions refuse every one of them rather than the unsafe ones. They are ignored under the service trees in
+`buf.yaml`, where a message is an rpc's request or reply and dies with it. The models trees keep the message rule.
+
+What covers the service side instead is the type-checkers, which see the condition that makes a deletion unsafe rather
+than the deletion itself: an implementation or a caller that outlived the declaration.
+
+- **Servicers.** Every servicer method carries `typing.override`, and `reportImplicitOverride` makes writing it
+  non-optional rather than a habit, so an implementation whose rpc is gone fails pyright.
+- **Python callers.** Statically-typed stubs, above — an unknown attribute on `HelloAsyncStub` and its siblings.
+- **Browser callers and the browser server.** Both ends are generated from the descriptor, so a call to a retired method
+  fails `tsc`, and so does the BFF's `ServiceImpl<T>` handler map — the only leg covering `themis/workbench/rpc`, the
+  one service with no Python implementation at all.
+
+Deleting a **message** stays gated outside the service trees, because nothing above would notice. The risk there is
+bytes already written rather than code still calling, and the type-checkers fall silent exactly when the last reader is
+deleted. `litcache.proto` is the obvious at-rest contract, and pre-release today, so it is out of the compared module
+anyway; it rejoins a gate that still holds. The less obvious one is `themis/workbench/models`, which is bucket 2 on the
+wire but holds `AnalysisInputs` — the message `analyses.inputs` stores as bytes. It also declares the Workbench
+service's request and reply types, which by their nature belong under `themis/workbench/rpc`; while they sit alongside a
+persisted message, retiring a browser rpc leaves them behind rather than deleting them. An unused message costs a
+generated type; a deleted one costs the rows.
+
+None of this settles the *transition window*, which stays a reviewer's judgement: rolling deploys keep several
+generations live, so an rpc with no surviving caller in this repo may still have one in flight.
+
 ## Wire and RPC
 
 The internal wire transport is gRPC (HTTP/2, binary protobuf). RPC shapes are authored in the same

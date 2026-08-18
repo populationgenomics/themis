@@ -5,7 +5,10 @@ under ``schema/proto`` against its baseline with ``buf breaking``, under the rul
 ``buf.yaml`` declares (renumbers, unreserved removals, type/label changes, renames),
 failing on any incompatible delta, with no override. Evolution is additive, plus
 retiring a field whose number *and* name are reserved (``docs/design/proto.md``
-"Schema evolution").
+"Schema evolution"). Retiring an RPC, or a message in a service tree, is outside
+the gate — proto reserves neither name, so there is nothing in the schema to check
+it against, and the type-checkers carry it instead. At-rest contracts keep
+``MESSAGE_NO_DELETE``: no type-checker sees their last reader go.
 Gates every committed proto — RPC and at-rest alike; a pre-release
 contract (no persisted data, no deployed consumer) is left out of the compared module
 until it stabilizes (see ``_PRE_RELEASE``), so it has no baseline to be incompatible
