@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import string
 import uuid
 from collections.abc import Iterable
 
@@ -54,6 +55,32 @@ _MAX_MINT_RETRIES = 16
 # Postgres SQLSTATE for unique_violation. pg8000 carries it in the error's payload
 # dict under key 'C'; it does not map SQLSTATEs to DBAPI exception subclasses.
 _UNIQUE_VIOLATION = '23505'
+
+# ASCII, not `str.lower`/`str.upper`: Postgres maps U+0130 where these do not, and the crosswalk's
+# stored rows are folded by SQL (`litcache_crosswalk_case_fold`) that has to agree exactly.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+_ASCII_UPPER = str.maketrans(string.ascii_lowercase, string.ascii_uppercase)
+_CASE_FOLDS = {'doi': _ASCII_LOWER, 'pmcid': _ASCII_UPPER}
+
+
+def normalise_key(external_id: str) -> str:
+    """Canonicalise a `{scheme}:{value}` key's case, so equal identifiers compare equal.
+
+    `external_id = ANY(...)` is byte-exact, and DOI names are case-insensitive by specification — so
+    without this a paper held as `doi:10.1016/S0140-6736(20)30183-5` is unreachable by the lowercase
+    spelling of the same DOI, and the miss is indistinguishable from the corpus not holding it.
+
+    Args:
+        external_id: A `{scheme}:{value}` key, its scheme already lower-case — `identity` emits the
+            scheme, never a caller. Anything else is returned unchanged; validating the shape belongs
+            to the caller that accepts it.
+
+    Returns:
+        The key with its value folded, when that scheme's ids are case-insensitive. Idempotent.
+    """
+    scheme, sep, value = external_id.partition(':')
+    fold = _CASE_FOLDS.get(scheme)
+    return f'{scheme}{sep}{value.translate(fold)}' if fold is not None else external_id
 
 
 def _is_unique_violation(error: pg8000.exceptions.DatabaseError) -> bool:
@@ -102,7 +129,7 @@ def mint(conn: Connection, external_ids: Iterable[str]) -> MintResult:
         RuntimeError: If the insert race fails to converge within the retry
             bound (a bug, not an expected outcome).
     """
-    ids = sorted(set(external_ids))
+    ids = sorted({normalise_key(i) for i in external_ids})
     if not ids:
         raise ValueError('mint requires at least one external id')
 

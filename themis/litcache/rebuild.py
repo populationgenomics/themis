@@ -22,6 +22,7 @@ import dataclasses
 from google.cloud import storage as gcs
 
 from themis.common import sql
+from themis.litcache import crosswalk
 from themis.litcache.models import litcache_pb2
 
 # The connection surface the rebuild drives, aliased so the fully-qualified name doesn't
@@ -93,7 +94,11 @@ def _external_id_keys(external_ids: litcache_pb2.ExternalIds) -> list[str]:
     `optional string` distinguishes an unset id from an empty one.
     """
     schemes = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
-    return [f'{scheme}:{getattr(external_ids, scheme)}' for scheme in schemes if external_ids.HasField(scheme)]
+    return [
+        crosswalk.normalise_key(f'{scheme}:{getattr(external_ids, scheme)}')
+        for scheme in schemes
+        if external_ids.HasField(scheme)
+    ]
 
 
 def _invert(manifests: list[litcache_pb2.Manifest]) -> dict[str, str]:

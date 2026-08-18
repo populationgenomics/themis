@@ -75,6 +75,28 @@ def test_rebuild_matches_a_freshly_minted_table(conn: pg8000.dbapi.Connection, g
     assert result.canonical_doc_ids == {first.doc_id: canonical, second.doc_id: canonical}
 
 
+def test_rebuild_folds_a_manifests_case_variant_key(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
+    # A manifest holds its DOI as harvested, so rebuild must fold on the way in — otherwise the
+    # rebuilt table keys a row the mint path could never have written, and the two disagree.
+    _write_manifest(gcs_bucket, 'doc-a', {'doi': '10.1016/S0140-6736(20)30183-5', 'pmcid': 'pmc12345'})
+
+    rebuild.rebuild(conn, gcs_bucket)
+
+    assert _doc_ids(conn) == {'doi:10.1016/s0140-6736(20)30183-5': 'doc-a', 'pmcid:PMC12345': 'doc-a'}
+
+
+def test_rebuild_rejects_two_manifests_whose_dois_differ_only_in_case(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    # Folding makes these one identifier on two doc_ids, which is the duplicate-paper fault rebuild
+    # already refuses to invert. Before the fold it produced two rows and succeeded.
+    _write_manifest(gcs_bucket, 'doc-a', {'doi': '10.1/A'})
+    _write_manifest(gcs_bucket, 'doc-b', {'doi': '10.1/a'})
+
+    with pytest.raises(ValueError, match='claimed by two doc_ids'):
+        rebuild.rebuild(conn, gcs_bucket)
+
+
 def test_rebuild_is_idempotent(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
     _write_manifest(gcs_bucket, 'doc-a', {'doi': '10.1/a', 'pmid': '1'})
 

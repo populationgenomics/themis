@@ -9,20 +9,106 @@ or asleep daemon skips them rather than hanging the suite.
 from __future__ import annotations
 
 import contextlib
+import pathlib
 import threading
 import time
 import uuid
 from collections.abc import Callable
 
 import pg8000.dbapi
+import pytest
 
 from themis.litcache import crosswalk
+from themis.migrate import migrate
+
+_MIGRATIONS = pathlib.Path(__file__).resolve().parents[2] / 'themis' / 'migrate' / 'migrations'
 
 
 def _doc_ids(conn: pg8000.dbapi.Connection) -> dict[str, str]:
     with contextlib.closing(conn.cursor()) as cur:
         cur.execute('SELECT external_id, doc_id FROM litcache.crosswalk')
         return dict(cur.fetchall())
+
+
+def _apply_case_fold_migration(conn: pg8000.dbapi.Connection) -> None:
+    sql = next(m.sql for m in migrate.discover(_MIGRATIONS) if m.name == 'litcache_crosswalk_case_fold')
+    with contextlib.closing(conn.cursor()) as cur:
+        for statement in migrate.split_statements(migrate.render(sql, {})):
+            cur.execute(statement)
+    conn.commit()
+
+
+def _insert_raw(conn: pg8000.dbapi.Connection, external_id: str, doc_id: str) -> None:
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.execute('INSERT INTO litcache.crosswalk (external_id, doc_id) VALUES (%s, %s)', (external_id, doc_id))
+    conn.commit()
+
+
+def test_mint_treats_case_variants_as_one_claim(conn: pg8000.dbapi.Connection) -> None:
+    # Two spellings must not take two doc_ids, or the same paper exists twice in the corpus.
+    first = crosswalk.mint(conn, ['doi:10.1/AbC'])
+    second = crosswalk.mint(conn, ['doi:10.1/abc'])
+    assert second.doc_id == first.doc_id
+    assert second.minted is False
+    assert _doc_ids(conn) == {'doi:10.1/abc': first.doc_id}  # one row, folded
+
+
+def test_normalise_key_folds_the_case_insensitive_schemes() -> None:
+    assert crosswalk.normalise_key('doi:10.1/AbC') == 'doi:10.1/abc'
+    assert crosswalk.normalise_key('pmcid:pmc99') == 'pmcid:PMC99'
+
+
+def test_normalise_key_leaves_the_other_schemes_alone() -> None:
+    # pmid/binhash carry no case; pii and the preprint schemes have no specified rule.
+    assert crosswalk.normalise_key('pmid:12345') == 'pmid:12345'
+    assert crosswalk.normalise_key('pii:S0140AbC') == 'pii:S0140AbC'
+    assert crosswalk.normalise_key('not-a-key') == 'not-a-key'
+
+
+@pytest.mark.parametrize(
+    'external_id',
+    ['doi:10.1/AbC', 'doi:10.1/İstanbul', 'pmcid:pmc99'],
+)
+def test_the_migration_folds_exactly_as_normalise_key_does(conn: pg8000.dbapi.Connection, external_id: str) -> None:
+    # A spelling the two folds disagree on is a row nothing can reach; U+0130 is where they would.
+    doc_id = str(uuid.uuid4())
+    _insert_raw(conn, external_id, doc_id)
+
+    _apply_case_fold_migration(conn)
+
+    assert _doc_ids(conn) == {crosswalk.normalise_key(external_id): doc_id}
+
+
+@pytest.mark.parametrize(
+    'spellings',
+    [
+        ('doi:10.1/AbC', 'doi:10.1/abc'),  # one already canonical
+        ('doi:10.1/AbC', 'doi:10.1/ABC'),  # neither is
+        ('pmcid:pmc9', 'pmcid:Pmc9'),
+    ],
+)
+def test_the_migration_collapses_spellings_of_one_paper(
+    conn: pg8000.dbapi.Connection, spellings: tuple[str, str]
+) -> None:
+    # Two spellings of one paper share a doc_id, so folding one onto the other hits the primary key.
+    doc_id = str(uuid.uuid4())
+    for spelling in spellings:
+        _insert_raw(conn, spelling, doc_id)
+
+    _apply_case_fold_migration(conn)
+
+    assert _doc_ids(conn) == {crosswalk.normalise_key(spellings[0]): doc_id}
+
+
+def test_the_migration_aborts_when_two_spellings_name_different_papers(
+    conn: pg8000.dbapi.Connection,
+) -> None:
+    # One identifier claimed by two doc_ids: dropping either mapping loses a paper, so this aborts.
+    _insert_raw(conn, 'doi:10.1/AbC', str(uuid.uuid4()))
+    _insert_raw(conn, 'doi:10.1/abc', str(uuid.uuid4()))
+
+    with pytest.raises(pg8000.dbapi.DatabaseError):
+        _apply_case_fold_migration(conn)
 
 
 def test_fresh_mint_assigns_a_new_uuid(conn: pg8000.dbapi.Connection) -> None:
