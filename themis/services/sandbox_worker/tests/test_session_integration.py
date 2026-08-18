@@ -1,4 +1,4 @@
-"""On-platform sandbox integration (Linux + bubblewrap only; skipped elsewhere).
+"""On-platform sandbox integration (Linux + bubblewrap only; the `bubblewrap` fixture gates it).
 
 Exercises the isolation properties that only a real bwrap launch can prove: the boot gate passes here, the guest has
 no network, and the hatch UDS is the one channel bound in. The typed hatch round-trip and its ``PERMISSION_DENIED`` on
@@ -12,7 +12,7 @@ import postern
 import pytest
 from postern import grpc as postern_grpc
 
-pytestmark = pytest.mark.skipif(not postern.available(), reason='requires Linux + bubblewrap')
+pytestmark = [pytest.mark.sandbox, pytest.mark.usefixtures('bubblewrap')]
 
 
 def test_verify_passes_on_this_platform() -> None:

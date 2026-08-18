@@ -40,7 +40,8 @@ bypass, why there is no CODEOWNERS file — is [`../design/review-policy.md`](..
   corresponds to one merged PR
 - No force-pushes, no deletions
 - Required status checks, non-strict: `review gate`, `regex screen`, `review + LLM screen` (required so an API outage or
-  runner failure can't fail-open), `pre-commit`, `pytest`, `web`, `backward-compatible`, `regen-is-fresh`
+  runner failure can't fail-open), `pre-commit`, `pytest`, `pytest-sandbox`, `web`, `backward-compatible`,
+  `regen-is-fresh`
 
 A PR that modifies `internal-review.yml` itself fails `review + LLM screen` by design: claude-code-action refuses to run
 a workflow file that differs from the default branch (anti-tamper). To land such a PR, an admin bypass-merges.

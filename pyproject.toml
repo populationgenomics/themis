@@ -124,6 +124,10 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
 testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/document_linter/tests"]
+# The bwrap-backed tests, which the `pytest-sandbox` CI job selects with `-m sandbox` after
+# installing bubblewrap; the `pytest` job runs `-m 'not sandbox'`. The two expressions are
+# complements, so between them the jobs run every collected test (tests/test_pytest_jobs.py).
+markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true

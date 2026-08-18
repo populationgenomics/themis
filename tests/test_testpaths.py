@@ -1,6 +1,6 @@
 """`testpaths` is an allowlist, so a tests directory it omits is never collected.
 
-CI runs a bare `uv run pytest` (`.github/workflows/tests.yml`), which honours `testpaths`. A tests
+CI runs `uv run pytest` with no path argument (`.github/workflows/tests.yml`), which honours `testpaths`. A tests
 directory nobody adds to it is not an error and not a skip — the suite reports green having never
 imported the file. A `testpaths` entry naming a path that no longer exists is the same fault from the
 other side: pytest ignores it silently. These tests are what fails on either.
