@@ -13,12 +13,16 @@ import {
   SupplementaryView,
   WorkingDocumentView,
 } from "./tab-views";
+import { VersionDropdown } from "./version-dropdown";
 import {
+  type DocumentPin,
   type OpenTabOpts,
+  pinnedDocumentVersion,
   type Source,
   type Tab,
   WORKING_DOC_TAB_ID,
 } from "./workspace-model";
+import type { WorkingDocumentSignal } from "./workspace-sync";
 
 // The content-kind registry: one entry per tab kind (working document, paper, supplementary), each
 // owning that kind's traits and wiring — whether it is pinned, how its id is derived from open args,
@@ -33,6 +37,10 @@ import {
 export interface RenderContext {
   events: ConversationEvent[];
   workingDocument: WorkingDocument | null;
+  /** The poll's latest working-document version — never the pinned one; null until produced. */
+  documentSignal: WorkingDocumentSignal | null;
+  /** True when the working-document body fetch failed (e.g. a pinned version the BFF cannot serve). */
+  documentError: boolean;
   /** The active paper's highlight quote, or undefined. */
   highlight: string | undefined;
   /** Reveal a citation beside its source pane (the pane binds its own ids into the `Source`). */
@@ -93,9 +101,12 @@ function FetchFailed({ onRetry }: { onRetry: () => void }): ReactNode {
   );
 }
 
-type EmptyPayload = Record<string, never>;
+interface WorkingDocPayload {
+  /** A view-only pin to a historical version; absent or null follows the latest. */
+  pin?: DocumentPin | null;
+}
 
-const workingDoc: ContentKind<EmptyPayload> = {
+const workingDoc: ContentKind<WorkingDocPayload> = {
   pinned: true,
   id: () => WORKING_DOC_TAB_ID,
   icon: <FileText className={ICON_CLASS} aria-hidden />,
@@ -103,15 +114,31 @@ const workingDoc: ContentKind<EmptyPayload> = {
   render: (_payload, ctx) => (
     <WorkingDocumentView
       document={ctx.workingDocument}
+      error={ctx.documentError}
       onCitation={ctx.onCitation}
     />
   ),
-  headerAccessory: (_payload, ctx) =>
-    ctx.workingDocument === null ? null : (
-      <span className="text-[11.5px] text-ink-faintest">
-        Saved · v{ctx.workingDocument.version}
-      </span>
-    ),
+  headerAccessory: (payload, ctx) => {
+    if (ctx.documentSignal === null) return null;
+    const { analysisId, version: latest } = ctx.documentSignal;
+    const pinned = pinnedDocumentVersion(payload, analysisId);
+    return (
+      <>
+        <span className="text-[11.5px] text-ink-faintest">
+          {pinned === null ? "Saved" : "Earlier version"}
+        </span>
+        <VersionDropdown
+          latest={latest}
+          selected={pinned ?? latest}
+          onSelect={(version) =>
+            ctx.patch({
+              pin: version === null ? null : { analysisId, version },
+            })
+          }
+        />
+      </>
+    );
+  },
 };
 
 interface PaperPayload {

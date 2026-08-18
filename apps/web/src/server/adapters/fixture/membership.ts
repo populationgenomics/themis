@@ -6,9 +6,12 @@ import { DEV_USER_EMAIL } from "./identity";
 // Two, so the offline path exercises a caller who has to choose between Projects
 // rather than one who lands on their only one. Ordered by name, as the SQL
 // membership returns them.
+export const FIXTURE_PROJECT = "proj_fixture";
+export const SECOND_FIXTURE_PROJECT = "proj_fixture_second";
+
 const FIXTURE_PROJECTS = [
-  { id: "proj_fixture", name: "Fixture Project" },
-  { id: "proj_fixture_second", name: "Second Fixture Project" },
+  { id: FIXTURE_PROJECT, name: "Fixture Project" },
+  { id: SECOND_FIXTURE_PROJECT, name: "Second Fixture Project" },
 ];
 
 // Seeded user↔Project membership for the offline path: the dev user belongs to the

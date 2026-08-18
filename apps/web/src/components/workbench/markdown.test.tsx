@@ -141,3 +141,15 @@ describe("citation parsing leaves ordinary colon prose intact", () => {
     expect(html).toContain("<button");
   });
 });
+
+describe("single newlines", () => {
+  test("fold into the paragraph by default", () => {
+    expect(render("line one\nline two")).not.toContain("<br");
+  });
+
+  test("`breaks` honours them as line breaks (a curator's typed turn)", () => {
+    expect(
+      renderToStaticMarkup(<Markdown text={"line one\nline two"} breaks />),
+    ).toContain("<br");
+  });
+});

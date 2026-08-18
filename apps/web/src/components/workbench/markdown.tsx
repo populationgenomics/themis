@@ -2,6 +2,7 @@ import type { Root } from "mdast";
 import { type ReactNode, useMemo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkDirective from "remark-directive";
 import remarkGfm from "remark-gfm";
 
@@ -290,6 +291,7 @@ export function Markdown({
   text,
   resolveImage,
   onCitation,
+  breaks,
 }: {
   text: string;
   /** Opt in to rendering figures; see the module comment. Absent ⇒ images stay inert. */
@@ -297,6 +299,9 @@ export function Markdown({
   /** Opt in to `:paper`/`:quote` citation directives (conversation + working document). Absent ⇒
    *  directives render as plain text. */
   onCitation?: (citation: Citation) => void;
+  /** Opt in to honouring single newlines as line breaks (chat-style prose: the curator's typed
+   *  turns). Absent ⇒ standard markdown, which folds them into the paragraph. */
+  breaks?: boolean;
 }) {
   // Memoized on the two opt-in callbacks: the `img` / `cite-*` overrides are fresh closures each call,
   // and React reconciles components by identity — a changed identity unmounts and remounts the whole
@@ -326,11 +331,12 @@ export function Markdown({
     }
     return m;
   }, [resolveImage, onCitation]);
-  const remarkPlugins = useMemo(
-    () =>
-      onCitation ? [remarkGfm, remarkDirective, remarkCitations] : [remarkGfm],
-    [onCitation],
-  );
+  const remarkPlugins = useMemo(() => {
+    const plugins = onCitation
+      ? [remarkGfm, remarkDirective, remarkCitations]
+      : [remarkGfm];
+    return breaks ? [...plugins, remarkBreaks] : plugins;
+  }, [onCitation, breaks]);
   return (
     <div>
       <ReactMarkdown remarkPlugins={remarkPlugins} components={merged}>

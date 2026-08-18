@@ -147,30 +147,26 @@ class AnalysisInputs(_message.Message):
     def __init__(self, variant_classification: _Optional[_Union[VariantClassificationInputs, _Mapping]] = ..., free_form: _Optional[_Union[FreeFormInputs, _Mapping]] = ...) -> None: ...
 
 class Analysis(_message.Message):
-    __slots__ = ("id", "session_id", "project_id", "prompt", "created_at", "inputs")
+    __slots__ = ("id", "session_id", "project_id", "created_at", "inputs")
     ID_FIELD_NUMBER: _ClassVar[int]
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
-    PROMPT_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     INPUTS_FIELD_NUMBER: _ClassVar[int]
     id: str
     session_id: str
     project_id: str
-    prompt: str
     created_at: _timestamp_pb2.Timestamp
     inputs: AnalysisInputs
-    def __init__(self, id: _Optional[str] = ..., session_id: _Optional[str] = ..., project_id: _Optional[str] = ..., prompt: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., inputs: _Optional[_Union[AnalysisInputs, _Mapping]] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., session_id: _Optional[str] = ..., project_id: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., inputs: _Optional[_Union[AnalysisInputs, _Mapping]] = ...) -> None: ...
 
 class CreateAnalysisRequest(_message.Message):
-    __slots__ = ("prompt", "project_id", "inputs")
-    PROMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("project_id", "inputs")
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
     INPUTS_FIELD_NUMBER: _ClassVar[int]
-    prompt: str
     project_id: str
     inputs: AnalysisInputs
-    def __init__(self, prompt: _Optional[str] = ..., project_id: _Optional[str] = ..., inputs: _Optional[_Union[AnalysisInputs, _Mapping]] = ...) -> None: ...
+    def __init__(self, project_id: _Optional[str] = ..., inputs: _Optional[_Union[AnalysisInputs, _Mapping]] = ...) -> None: ...
 
 class CreateAnalysisResponse(_message.Message):
     __slots__ = ("id",)

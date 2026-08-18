@@ -185,31 +185,22 @@ message Analysis {
   string id = 1;
   string session_id = 2;
   string project_id = 3;
-  // Superseded by `inputs`, which types what `prompt` carried as free text. Retired — deleted, with
-  // its number and name reserved — once nothing sets it (proto.md §Schema evolution).
-  string prompt = 4 [deprecated = true];
   google.protobuf.Timestamp created_at = 5;
-  AnalysisInputs inputs = 6;
+  AnalysisInputs inputs = 6 [(buf.validate.field).required = true];
+
+  reserved 4;
+  reserved "prompt";
 }
 
-// The create request: the scenario inputs to run, and the Project the analysis lands in. A blank
-// project id is rejected at the boundary, as is a scenario missing a field.
+// The create request: the scenario inputs to run, and the Project the analysis lands in. Inputs
+// missing a scenario, or a scenario missing a field, are rejected at the boundary, as is a blank
+// project id.
 message CreateAnalysisRequest {
-  // Superseded by `inputs`, which types what `prompt` carried as free text. Until the retirement
-  // every create carries `prompt` — its non-blank rule admits no exemption — and `inputs` is
-  // optional and set by no caller. The retirement deletes `prompt`, reserving its number and its
-  // name (proto.md §Schema evolution), and makes `inputs` required; it lands with the change that
-  // stops setting `prompt`.
-  string prompt = 1 [
-    deprecated = true,
-    (buf.validate.field).cel = {
-      id: "prompt.non_blank"
-      message: "prompt must contain a non-whitespace character"
-      expression: "this.matches('\\\\S')"
-    }
-  ];
   string project_id = 2 [(buf.validate.field).string.min_len = 1];
-  AnalysisInputs inputs = 3;
+  AnalysisInputs inputs = 3 [(buf.validate.field).required = true];
+
+  reserved 1;
+  reserved "prompt";
 }
 
 // The create reply: the minted analysis id, which the client puts in the URL.

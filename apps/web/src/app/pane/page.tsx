@@ -136,7 +136,14 @@ function MirrorWindow(): React.ReactElement {
 
   return (
     <PaneShell>
-      <WorkspaceDataProvider value={{ events: [], workingDocument }}>
+      <WorkspaceDataProvider
+        value={{
+          events: [],
+          workingDocument,
+          documentSignal: snapshot.workingDocument,
+          documentError: doc.isError,
+        }}
+      >
         <TabArea
           win={win}
           controller={workspace}

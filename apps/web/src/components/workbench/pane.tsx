@@ -84,6 +84,8 @@ export function Pane({
     ? {
         events: data.events,
         workingDocument: data.workingDocument,
+        documentSignal: data.documentSignal,
+        documentError: data.documentError,
         highlight: controller.state.highlights[activeTab.id],
         onCitation: (citation) => onCitation(win.id, pane.id, citation),
         patch: (payload) => controller.patchTab(activeTab.id, payload),

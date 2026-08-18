@@ -15,11 +15,15 @@ import { requireUserContext } from "./context";
 // here (a blank doc_id, an unspecified representation) so a client slip surfaces as InvalidArgument
 // rather than a masked Internal. The methods do no reshaping — the backend and the port already
 // return view-model messages, and Connect serializes them.
+//
+// `listProjects` and `listAnalyses` stay routed with no browser caller: the pages read them through
+// `AuthorizedBackend` server-side, but this seam is deliberately consumable by code we do not control
+// (proto.md §"Bucket 2"), and a read is what such a caller reaches for first. `handler.test.ts` is
+// therefore the only thing exercising their authorization — treat it as load-bearing rather than
+// incidental. `Analysis.session_id` rides along on `listAnalyses`; it is not a credential, since a
+// session's bearer is a KMS MAC over it and the key material never leaves KMS.
 
-// `Partial` while a declared method has no handler: Connect answers those Unimplemented, which is
-// what a contract carries before its implementation. The total `ServiceImpl` is what makes a missing
-// handler a compile error, so narrow back to it as soon as the set is whole.
-export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
+export const workbenchService: ServiceImpl<typeof Workbench> = {
   async listProjects(_request, ctx) {
     const { backend } = requireUserContext(ctx);
     return { projects: await backend.listProjects() };
@@ -27,8 +31,11 @@ export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
 
   async createAnalysis(request, ctx) {
     const { backend } = requireUserContext(ctx);
+    // `inputs` is validated present by the boundary interceptor; the backend renders the agent's
+    // kickoff text from it.
+    if (!request.inputs) throw new Error("create request carries no inputs");
     const analysis = await backend.createAnalysis({
-      prompt: request.prompt,
+      inputs: request.inputs,
       projectId: request.projectId,
     });
     return { id: analysis.id };
@@ -42,6 +49,24 @@ export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
   async poll(request, ctx) {
     const { backend } = requireUserContext(ctx);
     return backend.pollEvents(request.analysisId);
+  },
+
+  async getThread(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    return backend.getThread(request.analysisId, request.threadId);
+  },
+
+  async steer(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    // `text` is non-blank and bounded by the boundary interceptor, `analysis_id` non-empty.
+    await backend.steerAnalysis(request.analysisId, request.text);
+    return {};
+  },
+
+  async interrupt(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    await backend.interruptAnalysis(request.analysisId);
+    return {};
   },
 
   async getDocument(request, ctx) {

@@ -4,6 +4,8 @@ import {
   computeTarget,
   INITIAL_WORKSPACE_STATE,
   labelKey,
+  pinnedDocumentVersion,
+  readDocumentPin,
   workspaceModelReducer as reduce,
   type Source,
   type Tab,
@@ -614,13 +616,15 @@ describe("setSplitRatio", () => {
     );
   });
 
-  test("a single-pane window is a no-op (no inner divider to size)", () => {
+  test("a single-pane window records the ratio its next split will open at", () => {
+    // Both the persisted restore and a drag whose pane later closed land here while main holds one
+    // pane; dropping it on the floor is how a stored divider position silently never applies.
     const next = reduce(INITIAL_WORKSPACE_STATE, {
       type: "setSplitRatio",
       winId: INITIAL_WORKSPACE_STATE.mainId,
       ratio: 0.7,
     });
-    expect(next).toBe(INITIAL_WORKSPACE_STATE);
+    expect(mainWin(next).splitRatio).toBe(0.7);
   });
 
   test("an out-of-range ratio falls back to 0.5", () => {
@@ -643,173 +647,50 @@ describe("setSplitRatio", () => {
   });
 });
 
-describe("hydrate — reconstruct a single main window", () => {
-  test("installs the panes, active pane by side, and split ratio; derives openPapers", () => {
-    const next = reduce(INITIAL_WORKSPACE_STATE, {
-      type: "hydrate",
-      hydration: {
-        panes: [
-          {
-            tabs: [
-              {
-                id: WORKING_DOC_TAB_ID,
-                kind: "working-doc",
-                pinned: true,
-                payload: {},
-              },
-            ],
-            activeTabId: WORKING_DOC_TAB_ID,
-          },
-          {
-            tabs: [paperTab("x"), paperTab("z")],
-            activeTabId: "paper:x",
-          },
-        ],
-        activePaneSide: "b",
-        splitRatio: 0.4,
-        closedStack: [],
-      },
+describe("splitRatio survives the split it sizes", () => {
+  test("the ratio a window carries is what its next split opens at", () => {
+    // A curator drags the divider, closes the paper (collapsing to one pane), then reveals another.
+    // Re-splitting at a hard-coded half would discard the position they set, and the persisted
+    // ratio — restored while main is single-pane — could never apply at all.
+    const sized = reduce(INITIAL_WORKSPACE_STATE, {
+      type: "setSplitRatio",
+      winId: INITIAL_WORKSPACE_STATE.mainId,
+      ratio: 0.7,
     });
-    expect(next.windows).toHaveLength(1);
-    expect(next.windows[0].id).toBe(next.mainId);
-    expect(paneIds(next, next.mainId)).toEqual([
-      [WORKING_DOC_TAB_ID],
-      ["paper:x", "paper:z"],
-    ]);
-    // Active pane is side 'b' (the second pane); its restored active tab is kept.
-    const second = mainWin(next).panes[1];
-    if (!second) throw new Error("expected two panes");
-    expect(mainWin(next).activePaneId).toBe(second.id);
-    expect(second.activeTabId).toBe("paper:x");
-    expect(mainWin(next).splitRatio).toBe(0.4);
-    // The open-paper set is the placed closable tabs (child-origin papers merged in by the hook).
-    expect(next.openPapers.sort()).toEqual(["paper:x", "paper:z"]);
+    const src: Source = {
+      kind: "document",
+      winId: sized.mainId,
+      paneId: sized.windows[0].panes[0].id,
+    };
+    const split = reduce(sized, { type: "openTab", src, tab: paperTab("x") });
+    const main = split.windows.find((w) => w.id === split.mainId);
+    expect(main?.panes.length).toBe(2);
+    expect(main?.splitRatio).toBe(0.7);
   });
 
-  test("an empty second pane collapses to one (a failed re-fetch left it bare)", () => {
-    const next = reduce(INITIAL_WORKSPACE_STATE, {
-      type: "hydrate",
-      hydration: {
-        panes: [
-          {
-            tabs: [
-              {
-                id: WORKING_DOC_TAB_ID,
-                kind: "working-doc",
-                pinned: true,
-                payload: {},
-              },
-            ],
-            activeTabId: WORKING_DOC_TAB_ID,
-          },
-          { tabs: [], activeTabId: null },
-        ],
-        activePaneSide: "a",
-        splitRatio: 0.5,
-        closedStack: [],
-      },
+  test("consolidating does not discard it", () => {
+    // Consolidate rebuilds main as a single pane. Resetting the ratio there loses the drag for the
+    // next reveal, and the store still holds the old value, so the two disagree until a reload.
+    const sized = reduce(INITIAL_WORKSPACE_STATE, {
+      type: "setSplitRatio",
+      winId: INITIAL_WORKSPACE_STATE.mainId,
+      ratio: 0.7,
     });
-    expect(mainWin(next).panes).toHaveLength(1);
-    expect(paneIds(next, next.mainId)).toEqual([[WORKING_DOC_TAB_ID]]);
-  });
-
-  test("drops any prior child windows and resets highlights", () => {
-    const withX = openInMain(INITIAL_WORKSPACE_STATE, paperTab("x"));
-    const xInChild = reduce(withX, {
-      type: "moveTabToWindow",
-      tabId: "paper:x",
-      toWinId: null,
+    const single = reduce(sized, { type: "consolidate" });
+    expect(single.windows[0].splitRatio).toBe(0.7);
+    const src: Source = {
+      kind: "document",
+      winId: single.mainId,
+      paneId: single.windows[0].panes[0].id,
+    };
+    const resplit = reduce(single, {
+      type: "openTab",
+      src,
+      tab: paperTab("x"),
     });
-    const highlighted = reduce(xInChild, {
-      type: "setHighlight",
-      tabId: "paper:x",
-      quote: "a passage",
-    });
-    const next = reduce(highlighted, {
-      type: "hydrate",
-      hydration: {
-        panes: [
-          {
-            tabs: [
-              {
-                id: WORKING_DOC_TAB_ID,
-                kind: "working-doc",
-                pinned: true,
-                payload: {},
-              },
-              paperTab("x"),
-            ],
-            activeTabId: WORKING_DOC_TAB_ID,
-          },
-        ],
-        activePaneSide: "a",
-        splitRatio: 0.5,
-        closedStack: [],
-      },
-    });
-    expect(next.windows).toHaveLength(1);
-    expect(next.highlights).toEqual({});
-  });
-
-  test("raises when a tab id appears in more than one pane", () => {
-    // The one entry point taking externally-reconstructed structure must enforce the central
-    // invariant — a tab lives in exactly one pane — rather than install a corrupt state.
-    expect(() =>
-      reduce(INITIAL_WORKSPACE_STATE, {
-        type: "hydrate",
-        hydration: {
-          panes: [
-            { tabs: [paperTab("x")], activeTabId: "paper:x" },
-            { tabs: [paperTab("x")], activeTabId: "paper:x" },
-          ],
-          activePaneSide: "a",
-          splitRatio: 0.5,
-          closedStack: [],
-        },
-      }),
-    ).toThrow("more than one pane");
-  });
-
-  test("drops a closed descriptor for a paper the rehydration re-places", () => {
-    const next = reduce(INITIAL_WORKSPACE_STATE, {
-      type: "hydrate",
-      hydration: {
-        panes: [
-          {
-            tabs: [
-              {
-                id: WORKING_DOC_TAB_ID,
-                kind: "working-doc",
-                pinned: true,
-                payload: {},
-              },
-              paperTab("x"),
-            ],
-            activeTabId: "paper:x",
-          },
-        ],
-        activePaneSide: "a",
-        splitRatio: 0.5,
-        closedStack: [{ id: "paper:x", kind: "paper", payload: {} }],
-      },
-    });
-    expect(next.closedStack).toHaveLength(0);
-  });
-
-  test("raises when the working document is in no pane", () => {
-    // The working-doc singleton is as load-bearing as the one-tab-one-pane rule: placementTarget
-    // throws without it, so hydrate must reject a layout that dropped it rather than fault in render.
-    expect(() =>
-      reduce(INITIAL_WORKSPACE_STATE, {
-        type: "hydrate",
-        hydration: {
-          panes: [{ tabs: [paperTab("x")], activeTabId: "paper:x" }],
-          activePaneSide: "a",
-          splitRatio: 0.5,
-          closedStack: [],
-        },
-      }),
-    ).toThrow("working document is not in any pane");
+    expect(
+      resplit.windows.find((w) => w.id === resplit.mainId)?.splitRatio,
+    ).toBe(0.7);
   });
 });
 
@@ -1060,5 +941,48 @@ describe("patchTab safety (failed-reveal rollback)", () => {
       .find((t) => t.id === "paper:x");
     expect((tab?.payload as { error?: boolean }).error).toBe(true);
     expect(errored.closedStack).toHaveLength(0);
+  });
+});
+
+describe("readDocumentPin", () => {
+  test("a valid pin round-trips", () => {
+    expect(
+      readDocumentPin({ pin: { analysisId: "an-1", version: 3 } }),
+    ).toEqual({ analysisId: "an-1", version: 3 });
+  });
+
+  test.each([
+    ["an absent payload", undefined],
+    ["a null payload", null],
+    ["a non-object payload", "pin"],
+    ["a payload without a pin", {}],
+    ["a null pin (follow latest)", { pin: null }],
+    ["a non-object pin", { pin: 3 }],
+    ["a pin missing its analysisId", { pin: { version: 3 } }],
+    ["a pin with an empty analysisId", { pin: { analysisId: "", version: 3 } }],
+    ["a pin missing its version", { pin: { analysisId: "an-1" } }],
+    [
+      "a pin with a non-integer version",
+      { pin: { analysisId: "an-1", version: 1.5 } },
+    ],
+    ["a pin with a zero version", { pin: { analysisId: "an-1", version: 0 } }],
+  ])("%s reads as null", (_name, payload) => {
+    expect(readDocumentPin(payload)).toBeNull();
+  });
+});
+
+describe("pinnedDocumentVersion", () => {
+  const payload = { pin: { analysisId: "an-1", version: 2 } };
+
+  test("a pin for the given analysis selects its version", () => {
+    expect(pinnedDocumentVersion(payload, "an-1")).toBe(2);
+  });
+
+  test.each([
+    ["a pin naming another analysis", payload, "an-2"],
+    ["no analysis open", payload, null],
+    ["an unpinned payload", {}, "an-1"],
+  ])("%s follows the latest (null)", (_name, p, analysisId) => {
+    expect(pinnedDocumentVersion(p, analysisId)).toBeNull();
   });
 });

@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import {
   createDataPlane,
   createLiterature,
@@ -92,11 +91,4 @@ export async function literatureContext(
 ): Promise<LiteratureContext> {
   const userEmail = await getUserIdentity().assertedEmail(request.headers);
   return { userEmail, literature: literature() };
-}
-
-/** The verified caller of the request being rendered. For server components, which
- *  reach the headers ambiently; an RPC handler is handed the request headers and uses
- *  `userContext`. */
-export async function currentUserEmail(): Promise<string> {
-  return getUserIdentity().assertedEmail(await headers());
 }

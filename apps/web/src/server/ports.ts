@@ -5,9 +5,11 @@ import type {
 } from "@/models/literature";
 import type {
   Analysis,
+  AnalysisInputs,
   DocumentResponse,
   PollResponse,
   Project,
+  ThreadResponse,
 } from "@/models/workbench";
 
 // The server's ports — what an adapter implements. `AnalysisDataPlane` is the raw,
@@ -21,7 +23,9 @@ import type {
 // Connect serializes as they are.
 
 export interface CreateAnalysisInput {
-  prompt: string;
+  // What the Analysis was asked to do: the scenario and its inputs. The agent's kickoff text is
+  // rendered from these (server/kickoff.ts), never supplied by the caller.
+  inputs: AnalysisInputs;
   // The Project the analysis lands in — named by the caller and membership-verified
   // by `AuthorizedBackend`, not chosen by the data plane.
   projectId: string;
@@ -42,17 +46,37 @@ export interface AnalysisDataPlane {
   listAnalysesIn(projectIds: readonly string[]): Promise<Analysis[]>;
 
   /** One liveness tick: the FULL projected event list and the working-document
-   *  version signal. */
-  pollEvents(analysisId: string): Promise<PollResponse>;
+   *  version signal. Takes the analysis row rather than its id — the caller has
+   *  already read it to authorize the access, and the run's session lives on it. */
+  pollEvents(analysis: Analysis): Promise<PollResponse>;
+
+  /** One spawned thread's own projected stream — the body an expanded sub-agent card
+   *  reveals. Takes the analysis row as `pollEvents` does; the thread is looked up in
+   *  the row's session (the `ThreadRequest` proto comment has the why). Raises
+   *  `ResourceNotFoundError` for a thread that session does not hold. */
+  getThread(analysis: Analysis, threadId: string): Promise<ThreadResponse>;
+
+  /** Append a curator turn to the run's session — the same `user.message` send that
+   *  seeded it. Takes the analysis row for the reason `pollEvents` does, and because
+   *  the row having been resolved is the precondition behind the send's failure
+   *  handling (see the live adapter). */
+  steerAnalysis(analysis: Analysis, text: string): Promise<void>;
+
+  /** Halt the run's current step — the session goes idle, any in-flight tool call
+   *  closed with an error result. A no-op against a run that is already idle, so a
+   *  caller may race a step completing. Takes the analysis row for the reason
+   *  `steerAnalysis` does. */
+  interruptAnalysis(analysis: Analysis): Promise<void>;
 
   /** The current working document as a produced|not-produced result, or a named
    *  historical `version`. */
   getDocument(analysisId: string, version?: number): Promise<DocumentResponse>;
 
-  /** The Project owning an analysis. Raises `ResourceNotFoundError` when the
-   *  analysis is unknown — the same not-found a non-member gets, so a caller can
-   *  never distinguish "outside my Projects" from "does not exist". */
-  projectOfAnalysis(analysisId: string): Promise<string>;
+  /** One analysis by id — the row every point access authorizes against, since it
+   *  carries the owning Project. Raises `ResourceNotFoundError` when the analysis is
+   *  unknown: the same not-found a non-member gets, so a caller can never
+   *  distinguish "outside my Projects" from "does not exist". */
+  getAnalysis(analysisId: string): Promise<Analysis>;
 }
 
 /** The user↔Project membership mapping — the access boundary. Seeded offline by

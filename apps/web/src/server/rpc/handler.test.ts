@@ -104,7 +104,13 @@ describe("the served surface", () => {
 
   test("an analysis round-trips create → poll → document", async () => {
     const created = await call("CreateAnalysis", {
-      prompt: "why is this variant pathogenic?",
+      inputs: {
+        variantClassification: {
+          transcript: "NM_001382309.1",
+          hgvsC: "c.332del",
+          clinicalContext: "de novo, developmental delay",
+        },
+      },
       projectId: "proj_fixture",
     });
     expect(created.status).toBe(200);
@@ -117,6 +123,74 @@ describe("the served surface", () => {
     expect(document.status).toBe(200);
     // Not-produced is a represented absence: the field is unset, not an empty document.
     expect(document.body?.document).toBeUndefined();
+  });
+
+  test("a curator's turn joins the run it was sent to", async () => {
+    const created = await call("CreateAnalysis", {
+      inputs: { freeForm: { prompt: "classify the variant" } },
+      projectId: "proj_fixture",
+    });
+    const id = created.body?.id as string;
+    await call("Poll", { analysisId: id });
+
+    const steer = await call("Steer", {
+      analysisId: id,
+      text: "Treat the exon as clinically relevant.",
+    });
+    expect(steer.status).toBe(200);
+
+    const { body } = await call("Poll", { analysisId: id });
+    const events = body?.events as { user?: { text: string } }[];
+    expect(
+      events.some(
+        (event) =>
+          event.user?.text === "Treat the exon as clinically relevant.",
+      ),
+    ).toBe(true);
+  });
+
+  test("a turn sent mid-step is refused typed; the interrupt clears the way", async () => {
+    const created = await call("CreateAnalysis", {
+      inputs: { freeForm: { prompt: "classify the variant" } },
+      projectId: "proj_fixture",
+    });
+    const id = created.body?.id as string;
+    // Seven ticks: the seventh reveals the edit call still awaiting its result.
+    for (let i = 0; i < 7; i += 1) {
+      await call("Poll", { analysisId: id });
+    }
+
+    // Refused as the state it is — actionable, never the masked internal error. The
+    // Connect code is the discriminator the composer keys on; the protocol carries
+    // failed_precondition over a plain 400.
+    const refused = await call("Steer", { analysisId: id, text: "Most" });
+    expect(refused.status).toBe(400);
+    expect(refused.body?.code).toBe("failed_precondition");
+
+    expect((await call("Interrupt", { analysisId: id })).status).toBe(200);
+    const steer = await call("Steer", { analysisId: id, text: "Most" });
+    expect(steer.status).toBe(200);
+
+    const { body } = await call("Poll", { analysisId: id });
+    const events = body?.events as {
+      tool?: { result?: { isError?: boolean } };
+      user?: { text?: string };
+    }[];
+    // The halted call closed with an error result, and the turn joined the run.
+    expect(events.some((e) => e.tool?.result?.isError === true)).toBe(true);
+    expect(events.some((e) => e.user?.text === "Most")).toBe(true);
+  });
+
+  test.each([
+    ["a blank turn", { analysisId: "an_1", text: "   \n " }],
+    ["a turn past its bound", { analysisId: "an_1", text: "x".repeat(10_001) }],
+    ["a turn naming no analysis", { analysisId: "", text: "Most" }],
+  ])("%s is invalid_argument, not a masked 500", async (_name, message) => {
+    // Validation sits outside the error mask, so a caller's own malformed message comes
+    // back describing itself rather than as a generic internal error.
+    const { status, body } = await call("Steer", message);
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
   });
 
   test("no cache may store a reply", async () => {
@@ -212,9 +286,15 @@ describe("the paper read surface", () => {
 });
 
 describe("the request boundary", () => {
-  test("a blank prompt is rejected by its protovalidate rule", async () => {
+  test("a scenario missing a field is rejected by its protovalidate rule", async () => {
     const { status, body } = await call("CreateAnalysis", {
-      prompt: "   ",
+      inputs: {
+        variantClassification: {
+          transcript: "NM_001382309.1",
+          hgvsC: "c.332del",
+          clinicalContext: "   ",
+        },
+      },
       projectId: "proj_fixture",
     });
     expect(status).toBe(400);
@@ -222,6 +302,43 @@ describe("the request boundary", () => {
     // Validation is the one layer outside the mask, so the rejection reaches the caller as
     // raised — the violations name which field of their own message failed which rule.
     expect((body?.details as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  test("inputs naming no scenario are rejected, not stored as an unreadable Analysis", async () => {
+    // The oneof's `required` rule is what stops an Analysis existing that no surface can name.
+    const { status, body } = await call("CreateAnalysis", {
+      projectId: "proj_fixture",
+      inputs: {},
+    });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
+  });
+
+  test("a create with no inputs at all is rejected", async () => {
+    // `service.ts` guards this too; the guard is a fault path, and this is the rule that makes it
+    // unreachable. Without the field rule the guard would surface as a masked 500, not a 400.
+    const { status, body } = await call("CreateAnalysis", {
+      projectId: "proj_fixture",
+    });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
+  });
+
+  test("a prose field past its bound is rejected", async () => {
+    // The inputs are stored inline in the analyses row and rendered into the agent's opening
+    // instruction, so the bound is what keeps both finite.
+    const { status, body } = await call("CreateAnalysis", {
+      projectId: "proj_fixture",
+      inputs: {
+        variantClassification: {
+          transcript: "NM_001382309.1",
+          hgvsC: "c.332del",
+          clinicalContext: "x".repeat(10_001),
+        },
+      },
+    });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("invalid_argument");
   });
 
   test("a field the schema does not declare is rejected", async () => {
@@ -268,6 +385,34 @@ describe("failures reaching the client", () => {
     // Byte-identical to a foreign one: a caller must not be able to tell "outside my
     // Projects" from "does not exist" by any part of the reply.
     const foreign = await call("Poll", { analysisId: "an_someone_elses" });
+    expect(foreign.status).toBe(absent.status);
+    expect(foreign.body).toEqual(absent.body);
+  });
+
+  test("a turn sent to an analysis the caller cannot reach is not-found, and never says which", async () => {
+    // A write into someone else's session must refuse on the same terms a read does:
+    // learning that an analysis exists is the thing the refusal hides.
+    const absent = await call("Steer", {
+      analysisId: "an_never_existed",
+      text: "Most",
+    });
+    expect(absent.status).toBe(404);
+    expect(absent.body?.code).toBe("not_found");
+    const foreign = await call("Steer", {
+      analysisId: "an_someone_elses",
+      text: "Most",
+    });
+    expect(foreign.status).toBe(absent.status);
+    expect(foreign.body).toEqual(absent.body);
+  });
+
+  test("an interrupt on an analysis the caller cannot reach is not-found, and never says which", async () => {
+    const absent = await call("Interrupt", { analysisId: "an_never_existed" });
+    expect(absent.status).toBe(404);
+    expect(absent.body?.code).toBe("not_found");
+    const foreign = await call("Interrupt", {
+      analysisId: "an_someone_elses",
+    });
     expect(foreign.status).toBe(absent.status);
     expect(foreign.body).toEqual(absent.body);
   });
@@ -355,6 +500,27 @@ describe("failures reaching the client", () => {
     expect(body?.code).toBe("unauthenticated");
     expect(JSON.stringify(body)).not.toContain("IAP assertion");
   });
+
+  test.each([
+    ["ResourceNotFoundError", 404, "not_found"],
+    ["UnauthenticatedError", 401, "unauthenticated"],
+    ["SessionBusyError", 400, "failed_precondition"],
+    ["ClientInputError", 400, "invalid_argument"],
+  ] as const)(
+    "a %s minted by another module graph still maps by name",
+    async (name, wantStatus, wantCode) => {
+      // The backend is memoized on `globalThis` and its instances cross Next's
+      // page/route module graphs, so a thrown error can reach the interceptor
+      // carrying the right name on a foreign class object — `instanceof` is false
+      // there, and the mapping must not fall back to the internal mask.
+      const foreign = Object.assign(new Error("thrown across the graph seam"), {
+        name,
+      });
+      const { status, body } = await send(raising(foreign), "ListProjects", {});
+      expect(status).toBe(wantStatus);
+      expect(body?.code).toBe(wantCode);
+    },
+  );
 
   test("a router without the identity layer serves nothing", async () => {
     // The chokepoint is wiring, so assert the failure mode when it is absent: handlers

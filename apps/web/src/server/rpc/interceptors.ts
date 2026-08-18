@@ -2,9 +2,10 @@ import type { Interceptor } from "@connectrpc/connect";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { userContext } from "@/server/context";
 import {
-  ClientInputError,
-  ResourceNotFoundError,
-  UnauthenticatedError,
+  isClientInputError,
+  isResourceNotFoundError,
+  isSessionBusyError,
+  isUnauthenticatedError,
 } from "@/server/errors";
 import { setUserContext } from "./context";
 
@@ -42,13 +43,21 @@ export function errors(): Interceptor {
 }
 
 function toConnectError(error: unknown): ConnectError {
-  if (error instanceof ResourceNotFoundError) {
+  if (isResourceNotFoundError(error)) {
     return new ConnectError("resource not found", Code.NotFound);
   }
-  if (error instanceof UnauthenticatedError) {
+  if (isUnauthenticatedError(error)) {
     return new ConnectError("unauthenticated", Code.Unauthenticated);
   }
-  if (error instanceof ClientInputError) {
+  if (isSessionBusyError(error)) {
+    // A fixed phrase, not the thrown message: the upstream refusal names internal
+    // event ids, and the composer shows this text to the curator.
+    return new ConnectError(
+      "the agent is still working on its current step",
+      Code.FailedPrecondition,
+    );
+  }
+  if (isClientInputError(error)) {
     // The caller's own malformed request. Its message names the offending field and is theirs to
     // read — this is not internal state, so it is not masked.
     return new ConnectError(error.message, Code.InvalidArgument);

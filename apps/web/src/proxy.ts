@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { UnauthenticatedError } from "@/server/errors";
+import { isUnauthenticatedError } from "@/server/errors";
 import type { UserIdentity } from "@/server/identity";
 import { getUserIdentity } from "@/server/identity";
 
@@ -28,7 +28,7 @@ export async function enforceRequestAuth(
     try {
       await identity.assertedEmail(request.headers);
     } catch (error) {
-      if (!(error instanceof UnauthenticatedError)) throw error;
+      if (!isUnauthenticatedError(error)) throw error;
       return NextResponse.json(
         { code: "unauthenticated", message: "unauthenticated" },
         { status: 401 },

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { ResourceNotFoundError, UnauthenticatedError } from "@/server/errors";
+import {
+  isResourceNotFoundError,
+  isUnauthenticatedError,
+} from "@/server/errors";
 
 // The error boundary shared by the paper-content routes. `run` wraps a route body; `toErrorResponse`
 // maps a thrown value to a compact `{error:{code,message}}` with the right status — internal detail
@@ -8,15 +11,15 @@ import { ResourceNotFoundError, UnauthenticatedError } from "@/server/errors";
 // so this only shapes what a route body *throws*.
 
 /** Map a thrown value to a compact JSON error response. `ResourceNotFoundError` → 404,
- *  `UnauthenticatedError` → 401 by type, then a generic 500 that never leaks internals. */
+ *  `UnauthenticatedError` → 401, then a generic 500 that never leaks internals. */
 export function toErrorResponse(error: unknown): NextResponse {
-  if (error instanceof ResourceNotFoundError) {
+  if (isResourceNotFoundError(error)) {
     return NextResponse.json(
       { error: { code: "not_found", message: "resource not found" } },
       { status: 404 },
     );
   }
-  if (error instanceof UnauthenticatedError) {
+  if (isUnauthenticatedError(error)) {
     return NextResponse.json(
       { error: { code: "unauthenticated", message: "unauthenticated" } },
       { status: 401 },

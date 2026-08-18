@@ -8,8 +8,11 @@ import {
   DocumentResponseSchema,
   type PollResponse,
   PollResponseSchema,
+  type ThreadResponse,
+  ThreadResponseSchema,
 } from "@/models/workbench";
 import { ResourceNotFoundError } from "../../errors";
+import { kickoffText } from "../../kickoff";
 import type {
   AnalysisDataPlane,
   CreateAnalysisInput,
@@ -42,13 +45,15 @@ class DataPlane implements AnalysisDataPlane {
 
   async createAnalysis(input: CreateAnalysisInput): Promise<Analysis> {
     const analysisId = `an_${randomUUID()}`;
-    const sessionId = await this.anthropic.createSession(input.prompt);
+    const sessionId = await this.anthropic.createSession(
+      kickoffText(input.inputs),
+    );
     const bearer = await this.deriver.deriveBearer(sessionId);
     const createdAt = await this.sql.insertAnalysis({
       id: analysisId,
       sessionId,
       projectId: input.projectId,
-      prompt: input.prompt,
+      inputs: input.inputs,
       createdBy: input.userEmail,
       tokenHash: hashBearer(bearer),
     });
@@ -56,7 +61,7 @@ class DataPlane implements AnalysisDataPlane {
       id: analysisId,
       sessionId,
       projectId: input.projectId,
-      prompt: input.prompt,
+      inputs: input.inputs,
       createdAt: timestampFromDate(createdAt),
     });
   }
@@ -65,14 +70,13 @@ class DataPlane implements AnalysisDataPlane {
     return this.sql.listAnalysesIn(projectIds);
   }
 
-  async projectOfAnalysis(analysisId: string): Promise<string> {
-    return this.sql.projectOfAnalysis(analysisId);
+  async getAnalysis(analysisId: string): Promise<Analysis> {
+    return this.sql.getAnalysis(analysisId);
   }
 
-  async pollEvents(analysisId: string): Promise<PollResponse> {
-    const row = await this.sql.getAnalysis(analysisId);
-    const { events } = await this.anthropic.listEvents(row.sessionId);
-    const document = await this.gcs.latestWorkingDocument(analysisId);
+  async pollEvents(analysis: Analysis): Promise<PollResponse> {
+    const { events } = await this.anthropic.listEvents(analysis.sessionId);
+    const document = await this.gcs.latestWorkingDocument(analysis.id);
     // The full event list replaces the client's set by id each tick; the event log
     // has no since-cursor, so the whole log is re-projected each poll.
     return create(PollResponseSchema, {
@@ -80,6 +84,26 @@ class DataPlane implements AnalysisDataPlane {
       // Absent when no document exists yet — proto3-JSON omits an unset optional.
       workingDocumentVersion: document?.version,
     });
+  }
+
+  async getThread(
+    analysis: Analysis,
+    threadId: string,
+  ): Promise<ThreadResponse> {
+    return create(ThreadResponseSchema, {
+      events: await this.anthropic.listThreadEvents(
+        analysis.sessionId,
+        threadId,
+      ),
+    });
+  }
+
+  async steerAnalysis(analysis: Analysis, text: string): Promise<void> {
+    await this.anthropic.sendUserMessage(analysis.sessionId, text);
+  }
+
+  async interruptAnalysis(analysis: Analysis): Promise<void> {
+    await this.anthropic.sendInterrupt(analysis.sessionId);
   }
 
   async getDocument(

@@ -42,6 +42,10 @@ const WORKING_TAB: Tab = {
   payload: {},
 };
 
+function pinnedWorkingTab(analysisId: string, version: number): Tab {
+  return { ...WORKING_TAB, payload: { pin: { analysisId, version } } };
+}
+
 function win(id: string, tabs: Tab[], activeTabId: string | null): Win {
   return {
     id,
@@ -126,6 +130,37 @@ describe("documentFetchKey", () => {
     expect(documentFetchKey(bumped)).toEqual({
       analysisId: "analysis-1",
       version: 5,
+    });
+  });
+
+  test("a pin for the signal's analysis selects that version", () => {
+    const snapshot = snapshotWith([
+      win("main", [pinnedWorkingTab("analysis-1", 2)], WORKING_DOC_TAB_ID),
+    ]);
+    expect(documentFetchKey(snapshot)).toEqual({
+      analysisId: "analysis-1",
+      version: 2,
+    });
+  });
+
+  test("a pin naming another analysis is ignored — the latest wins", () => {
+    const snapshot = snapshotWith([
+      win("main", [pinnedWorkingTab("analysis-9", 2)], WORKING_DOC_TAB_ID),
+    ]);
+    expect(documentFetchKey(snapshot)).toEqual({
+      analysisId: "analysis-1",
+      version: 4,
+    });
+  });
+
+  test("the pin follows the working-doc tab into a child window", () => {
+    const snapshot = snapshotWith([
+      win("main", [], null),
+      win("child", [pinnedWorkingTab("analysis-1", 1)], WORKING_DOC_TAB_ID),
+    ]);
+    expect(documentFetchKey(snapshot)).toEqual({
+      analysisId: "analysis-1",
+      version: 1,
     });
   });
 });

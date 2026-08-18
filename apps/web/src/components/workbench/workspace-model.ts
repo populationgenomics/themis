@@ -21,6 +21,41 @@ export type Tab<P = unknown> = {
 
 export const WORKING_DOC_TAB_ID = "doc:working";
 
+/** A view-only pin to a historical working-document version, held in the working-doc tab's payload.
+ *  `analysisId` scopes the pin: readers ignore a pin naming another analysis, so a stale pin can never
+ *  select a version of the wrong document. Absent/null follows the latest version. */
+export interface DocumentPin {
+  analysisId: string;
+  version: number;
+}
+
+/** The pin in a working-doc tab payload, or null when absent or malformed. Structural, not a cast:
+ *  payloads cross the BroadcastChannel between windows that may run different bundle versions. */
+export function readDocumentPin(payload: unknown): DocumentPin | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const pin = (payload as { pin?: unknown }).pin;
+  if (typeof pin !== "object" || pin === null) return null;
+  const { analysisId, version } = pin as {
+    analysisId?: unknown;
+    version?: unknown;
+  };
+  if (typeof analysisId !== "string" || analysisId === "") return null;
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1)
+    return null;
+  return { analysisId, version };
+}
+
+/** The version a working-doc payload pins for `analysisId`, or null to follow the latest. Every
+ *  reader must scope through here: versions overlap across analyses, so an unscoped read of a stale
+ *  pin would select a version of the wrong document. */
+export function pinnedDocumentVersion(
+  payload: unknown,
+  analysisId: string | null,
+): number | null {
+  const pin = readDocumentPin(payload);
+  return pin !== null && pin.analysisId === analysisId ? pin.version : null;
+}
+
 export type Edge = "left" | "right" | "top" | "bottom";
 export type PaneSide = "a" | "b";
 
@@ -52,22 +87,6 @@ export interface TabDescriptor {
   id: string;
   kind: string;
   payload: unknown;
-}
-
-/** One pane of a consolidate-on-reload rehydration: tabs already re-fetched by the hook (the reducer
- *  stays pure), plus which is active. */
-export interface HydrationPane {
-  tabs: Tab[];
-  activeTabId: string | null;
-}
-
-/** A reconstructed single main window handed to the `hydrate` action. The hook re-fetches every tab
- *  and merges child-origin papers before dispatch; the reducer only mints pane ids and installs it. */
-export interface Hydration {
-  panes: HydrationPane[];
-  activePaneSide: PaneSide;
-  splitRatio: number;
-  closedStack: TabDescriptor[];
 }
 
 export interface WorkspaceState {
@@ -175,7 +194,6 @@ export type WorkspaceAction =
   // computed target instead — the reveal fallback when the browser blocks raising the other window.
   | { type: "openTab"; src: Source; tab: Tab; forceLocal?: boolean }
   | { type: "setConversationEdge"; edge: Edge }
-  | { type: "hydrate"; hydration: Hydration }
   | { type: "consolidate" }
   // Pop the last closed descriptor. Placement is the controller's job — it re-fetches through the
   // content-kind registry rather than restoring the (possibly loading/failed) payload verbatim.
@@ -321,7 +339,6 @@ function placeTabAt(
       return {
         ...w,
         panes: toPanes([w.panes[0], newPane]),
-        splitRatio: 0.5,
         activePaneId: newPane.id,
       };
     }
@@ -347,7 +364,7 @@ function activateExisting(
 ): WorkspaceState {
   const loc = locateTab(state, tabId);
   // Activation is a UI focus convenience, not an invariant (see "activatePane"): a click can bubble to
-  // the tab strip after an action already removed that tab, or after a consolidate / hydrate /
+  // the tab strip after an action already removed that tab, or after a consolidate /
   // cross-window move retargeted it. A no-op, not a fault.
   if (!loc) return state;
   // Already the active tab of the active pane ⇒ nothing to do; rebuilding would mint a new Win/Pane and
@@ -427,52 +444,6 @@ function clampSplit(ratio: number): number {
   return Number.isFinite(ratio) && ratio > 0 && ratio < 1 ? ratio : 0.5;
 }
 
-/** Replace `windows` with a single main window rebuilt from an already-fetched rehydration: mint fresh
- *  (ephemeral) pane ids, restore the active pane by side and the split ratio, and derive `openPapers`
- *  from the placed closable tabs. `highlights` are transient, so they reset. */
-function hydrate(state: WorkspaceState, h: Hydration): WorkspaceState {
-  const placed = new Set<string>();
-  for (const p of h.panes)
-    for (const t of p.tabs) {
-      if (placed.has(t.id))
-        throw new Error(`hydrate: tab ${t.id} appears in more than one pane`);
-      placed.add(t.id);
-    }
-  // The working document is a pinned singleton every placement rule assumes exists (placementTarget
-  // throws without it); a hydration that dropped it would fault later, in render, far from here.
-  if (!placed.has(WORKING_DOC_TAB_ID))
-    throw new Error("hydrate: the working document is not in any pane");
-  let seq = state.seq;
-  const panes: Pane[] = h.panes.map((p) => ({
-    id: `pane-${seq++}`,
-    tabs: p.tabs,
-    activeTabId:
-      p.activeTabId !== null && p.tabs.some((t) => t.id === p.activeTabId)
-        ? p.activeTabId
-        : (p.tabs[p.tabs.length - 1]?.id ?? null),
-  }));
-  const activeIndex = h.activePaneSide === "b" && panes.length === 2 ? 1 : 0;
-  const win: Win = {
-    id: state.mainId,
-    panes: toPanes(panes),
-    splitRatio: clampSplit(h.splitRatio),
-    activePaneId: panes[activeIndex].id,
-  };
-  const openPapers = panes
-    .flatMap((p) => p.tabs)
-    .filter((t) => !t.pinned)
-    .map((t) => t.id);
-  return prune({
-    ...state,
-    windows: [win],
-    openPapers,
-    // A paper re-fetched into a pane can't also be pending reopen — drop any descriptor for it.
-    closedStack: h.closedStack.filter((d) => !placed.has(d.id)),
-    highlights: {},
-    seq,
-  });
-}
-
 function consolidate(state: WorkspaceState): WorkspaceState {
   const main = getWindow(state, state.mainId);
   const ordered = [main, ...state.windows.filter((w) => w.id !== state.mainId)];
@@ -492,7 +463,9 @@ function consolidate(state: WorkspaceState): WorkspaceState {
   const win: Win = {
     id: state.mainId,
     panes: [{ id: paneId, tabs: all, activeTabId }],
-    splitRatio: 0.5,
+    // Carried, not reset: the ratio sizes this window's next split, so collapsing to one pane must
+    // not discard what the curator dragged.
+    splitRatio: main.splitRatio,
     activePaneId: paneId,
   };
   return { ...state, windows: [win] };
@@ -524,9 +497,9 @@ export function workspaceModelReducer(
       };
     }
     case "setSplitRatio": {
-      const win = getWindow(state, action.winId);
-      // Nothing to size on a single-pane window; the ratio applies only to the inner divider.
-      if (win.panes.length !== 2) return state;
+      // Held on a single-pane window too: it is the ratio that window's NEXT split opens at, which is
+      // how a restored or dragged divider survives the pane closing and reopening.
+      getWindow(state, action.winId); // raises on an unknown window id
       const ratio = clampSplit(action.ratio);
       return {
         ...state,
@@ -713,8 +686,6 @@ export function workspaceModelReducer(
         ...state,
         conversation: { ...state.conversation, edge: action.edge },
       };
-    case "hydrate":
-      return hydrate(state, action.hydration);
     case "consolidate":
       return consolidate(state);
     case "dropClosed": {

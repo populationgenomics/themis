@@ -50,7 +50,7 @@ function controllerFor(state: WorkspaceState): WorkspaceModelController {
     patchTab: noop,
     reopenClosed: noop,
     consolidate: noop,
-    readOuterRatio: () => null,
+    readOuterRatio: async () => null,
     writeOuterRatio: noop,
   };
 }
@@ -71,7 +71,14 @@ const crossWindowDrag: CrossWindowDrag = {
 
 function renderArea(win: Win): string {
   return renderToStaticMarkup(
-    <WorkspaceDataProvider value={{ events: [], workingDocument: null }}>
+    <WorkspaceDataProvider
+      value={{
+        events: [],
+        workingDocument: null,
+        documentSignal: null,
+        documentError: false,
+      }}
+    >
       <TabArea
         win={win}
         controller={controllerFor(stateWith(win))}

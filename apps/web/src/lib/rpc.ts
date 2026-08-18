@@ -1,4 +1,4 @@
-import { ConnectError, createClient } from "@connectrpc/connect";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { Workbench } from "@/models/workbench";
 
@@ -15,6 +15,15 @@ const transport = createConnectTransport({
 });
 
 export const workbench = createClient(Workbench, transport);
+
+/** True when the run refused a turn because the agent is mid-step (Connect
+ *  `FailedPrecondition` — the one refusal the BFF types that way): the composer
+ *  words this itself, pointing at the stop control beside it. */
+export function isAgentBusy(error: unknown): boolean {
+  return (
+    error instanceof ConnectError && error.code === Code.FailedPrecondition
+  );
+}
 
 /** The message to show a curator for a failed call. `ConnectError.message` is prefixed
  *  with its code (`[invalid_argument] …`), which is for logs, not for a person. */

@@ -56,13 +56,13 @@ def test_a_request_bears_the_minted_token_as_a_bearer_credential() -> None:
 def test_a_post_carries_its_body_as_json() -> None:
     client, adapter = _client(201)
 
-    client.post(_CREATE_ANALYSIS, {'projectId': 'p1', 'prompt': 'hello'})
+    client.post(_CREATE_ANALYSIS, {'projectId': 'p1', 'inputs': {'freeForm': {'prompt': 'hello'}}})
 
     (sent,) = adapter.calls
     assert sent.headers['Content-Type'] == 'application/json'
     body = sent.body
     assert isinstance(body, bytes)
-    assert json.loads(body) == {'projectId': 'p1', 'prompt': 'hello'}
+    assert json.loads(body) == {'projectId': 'p1', 'inputs': {'freeForm': {'prompt': 'hello'}}}
 
 
 def test_a_request_carries_a_timeout() -> None:

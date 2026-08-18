@@ -1,4 +1,4 @@
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
   AuthTypes,
@@ -6,8 +6,17 @@ import {
   IpAddressTypes,
 } from "@google-cloud/cloud-sql-connector";
 import { Pool } from "pg";
-import { type Analysis, AnalysisSchema } from "@/models/workbench";
-import { ResourceNotFoundError } from "../../errors";
+import {
+  type Analysis,
+  type AnalysisInputs,
+  AnalysisInputsSchema,
+  AnalysisSchema,
+} from "@/models/workbench";
+import {
+  isUndecodableAnalysisError,
+  ResourceNotFoundError,
+  UndecodableAnalysisError,
+} from "../../errors";
 import type { SqlConfig } from "./config";
 
 // Cloud SQL (Postgres) persistence for the analysis-session lifecycle. Connects
@@ -19,13 +28,14 @@ import type { SqlConfig } from "./config";
 // a session bearer against. No working-document SQL — the document lives in GCS and
 // is read directly (see gcs.ts).
 
-const ANALYSIS_COLUMNS = "id, session_id, project_id, prompt, created_at";
+const ANALYSIS_COLUMNS = "id, session_id, project_id, inputs, created_at";
 
-interface AnalysisRow {
+export interface AnalysisRow {
   id: string;
   session_id: string;
   project_id: string;
-  prompt: string;
+  // The serialized AnalysisInputs; pg hands a bytea back as a Buffer.
+  inputs: Buffer;
   created_at: Date;
 }
 
@@ -34,7 +44,7 @@ export interface InsertAnalysisInput {
   id: string;
   sessionId: string;
   projectId: string;
-  prompt: string;
+  inputs: AnalysisInputs;
   createdBy: string;
   tokenHash: string;
 }
@@ -93,14 +103,14 @@ export class Sql {
     try {
       await client.query("BEGIN");
       const inserted = await client.query<{ created_at: Date }>(
-        `INSERT INTO analyses (id, session_id, project_id, prompt, created_by)
+        `INSERT INTO analyses (id, session_id, project_id, inputs, created_by)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING created_at`,
         [
           input.id,
           input.sessionId,
           input.projectId,
-          input.prompt,
+          Buffer.from(toBinary(AnalysisInputsSchema, input.inputs)),
           input.createdBy,
         ],
       );
@@ -150,20 +160,11 @@ export class Sql {
        WHERE project_id = ANY($1::text[]) ORDER BY created_at DESC`,
       [projectIds],
     );
-    return rows.map(parseAnalysis);
-  }
-
-  /** The Project owning an analysis. Unknown id → a typed not-found (→ 404). */
-  async projectOfAnalysis(id: string): Promise<string> {
-    const rows = await this.query<{ project_id: string }>(
-      `SELECT project_id FROM analyses WHERE id = $1`,
-      [id],
-    );
-    const row = rows[0];
-    if (row === undefined) {
-      throw new ResourceNotFoundError(`analysis not found: ${id}`);
-    }
-    return row.project_id;
+    // A row whose payload will not decode costs its own card, not the listing it sits in — `/` is the
+    // entry route, and one corrupt row must not be the whole surface. It degrades to the same unset
+    // oneof a scenario this build predates produces, so `lib/scenario.ts` renders it as unrecognised
+    // by the case it already has. Opening that Analysis still raises: see `getAnalysis`.
+    return rows.map(analysisForListing);
   }
 
   /** Whether the user is a member of the Project. */
@@ -189,12 +190,44 @@ export class Sql {
   }
 }
 
-function parseAnalysis(row: AnalysisRow): Analysis {
+/** An Analysis whose stored inputs did not decode, shaped so a listing can render it: the oneof is
+ *  unset, which is the state `lib/scenario.ts` already names as a scenario it cannot read. */
+export function analysisForListing(row: AnalysisRow): Analysis {
+  try {
+    return parseAnalysis(row);
+  } catch (e) {
+    if (isUndecodableAnalysisError(e)) return unreadableAnalysis(row);
+    throw e;
+  }
+}
+
+function unreadableAnalysis(row: AnalysisRow): Analysis {
   return create(AnalysisSchema, {
     id: row.id,
     sessionId: row.session_id,
     projectId: row.project_id,
-    prompt: row.prompt,
+    inputs: create(AnalysisInputsSchema, {}),
+    createdAt: timestampFromDate(row.created_at),
+  });
+}
+
+function parseAnalysis(row: AnalysisRow): Analysis {
+  // A scenario this build predates parses into an unset oneof — proto keeps the member it does not
+  // know as an unknown field. The row is returned as it is; naming it is `lib/scenario.ts`'s job, so
+  // one such Analysis costs its own card rather than the listing it appears in.
+  // A decode failure carries its Project: the point-access check authorizes against it, so an
+  // unreadable row answers a non-member exactly as an unknown id does.
+  let inputs: AnalysisInputs;
+  try {
+    inputs = fromBinary(AnalysisInputsSchema, row.inputs);
+  } catch (cause) {
+    throw new UndecodableAnalysisError(row.id, row.project_id, { cause });
+  }
+  return create(AnalysisSchema, {
+    id: row.id,
+    sessionId: row.session_id,
+    projectId: row.project_id,
+    inputs,
     // pg hands back timestamptz as a Date; the wire carries a Timestamp.
     createdAt: timestampFromDate(row.created_at),
   });

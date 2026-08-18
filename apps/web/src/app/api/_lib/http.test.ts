@@ -28,6 +28,22 @@ describe("toErrorResponse", () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("secret");
   });
+
+  test.each([
+    ["ResourceNotFoundError", 404, "not_found"],
+    ["UnauthenticatedError", 401, "unauthenticated"],
+  ] as const)(
+    "a foreign-graph %s still maps to its envelope",
+    async (name, status, code) => {
+      // The ports are memoized on `globalThis` and cross Next's module graphs, so a
+      // route can catch an instance whose class object is another graph's —
+      // `instanceof` is false there; the name is the discriminant.
+      const res = toErrorResponse(Object.assign(new Error("detail"), { name }));
+      expect(res.status).toBe(status);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe(code);
+    },
+  );
 });
 
 describe("run", () => {

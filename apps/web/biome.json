@@ -36,6 +36,26 @@
   },
   "overrides": [
     {
+      "includes": ["src/components/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/server/**"],
+                    "message": "Components render what the BFF projected; the projection modules are server-side and carry server-only dependencies (a differ, a SQL pool) that must not reach the browser bundle."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["src/app/**"],
       "linter": {
         "rules": {

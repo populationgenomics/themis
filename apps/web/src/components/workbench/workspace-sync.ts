@@ -1,12 +1,15 @@
 import { openViaRegistry, REGISTRY } from "./content-kinds";
 import { type DragSession, type LiveSessions, resolveSession } from "./tab-dnd";
 import type { WorkspaceModelController } from "./use-workspace-model";
-import type {
-  ConversationState,
-  PaneSide,
-  Source,
-  Win,
-  WorkspaceState,
+import {
+  type ConversationState,
+  findTab,
+  type PaneSide,
+  pinnedDocumentVersion,
+  type Source,
+  type Win,
+  WORKING_DOC_TAB_ID,
+  type WorkspaceState,
 } from "./workspace-model";
 
 // The N-window mirror protocol. Exactly one window is main and owns the authoritative reducer; every
@@ -117,13 +120,20 @@ export function buildSnapshot(
 }
 
 /** The `{analysisId, version}` a window fetches the working-document body with (both null when no
- *  document has been produced). A version bump re-keys the query, so a mirror re-fetches on republish. */
+ *  document has been produced). Follows the signal's latest version, unless the working-doc tab's
+ *  payload pins an earlier one for the same analysis. A version bump (or pin change) re-keys the
+ *  query, so a mirror re-fetches on republish and on switching versions. */
 export function documentFetchKey(snapshot: WorkspaceSnapshot): {
   analysisId: string | null;
   version: number | null;
 } {
   const wd = snapshot.workingDocument;
-  return { analysisId: wd?.analysisId ?? null, version: wd?.version ?? null };
+  if (!wd) return { analysisId: null, version: null };
+  const pinned = pinnedDocumentVersion(
+    findTab(snapshotState(snapshot), WORKING_DOC_TAB_ID)?.payload,
+    wd.analysisId,
+  );
+  return { analysisId: wd.analysisId, version: pinned ?? wd.version };
 }
 
 /** Apply a command from a mirror to the authoritative controller (main). The new-window case

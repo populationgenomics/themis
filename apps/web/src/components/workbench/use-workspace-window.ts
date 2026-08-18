@@ -206,11 +206,19 @@ export function useWorkspaceWindow(
     [moveToNewWindow, moveTabsToNewWindow, focusWindow],
   );
 
-  // Install the channel, the close-poll backstop, and the unload signal once. A child re-mounting posts
-  // `request-state`; the same handler replies. Main unloading posts `main-closing` so children self-close.
+  // Latest command handler for the channel, which is installed once at mount: this effect must not
+  // re-run, or its cleanup would tear the curator's windows down mid-session.
+  const handleCommandRef = useRef(handleCommand);
+  handleCommandRef.current = handleCommand;
+
+  // Install the channel and the close-poll backstop once. A child re-mounting posts `request-state`;
+  // the same handler replies. Main going away — the tab unloading, or this workbench unmounting as the
+  // route changes — posts `main-closing` so children self-close rather than mirroring a channel nobody
+  // publishes to, and closes the handles it holds.
   useEffect(() => {
     const channel = new BroadcastChannel(channelId);
     channelRef.current = channel;
+    const handles = handlesRef.current;
     channel.onmessage = (event: MessageEvent<WorkspaceMessage>) => {
       const message = event.data;
       if (message.kind === "request-state")
@@ -221,7 +229,8 @@ export function useWorkspaceWindow(
             workingDocRef.current,
           ),
         } satisfies WorkspaceMessage);
-      else if (message.kind === "command") handleCommand(message.command);
+      else if (message.kind === "command")
+        handleCommandRef.current(message.command);
       else if (message.kind === "drag-session")
         sessionsRef.current = addDragSession(
           sessionsRef.current,
@@ -239,16 +248,21 @@ export function useWorkspaceWindow(
       for (const [winId, handle] of handlesRef.current)
         if (handle.closed) handleChildClosing(winId);
     }, CLOSED_POLL_MS);
-    const onUnload = () =>
+    const closeChildren = () =>
       channel.postMessage({ kind: "main-closing" } satisfies WorkspaceMessage);
-    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("beforeunload", closeChildren);
     return () => {
       window.clearInterval(poll);
-      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("beforeunload", closeChildren);
+      closeChildren();
+      // Belt and braces for a blocked or already-detached child: `main-closing` asks a child to close
+      // itself, and the handle closes the ones that do not answer.
+      for (const handle of handles.values()) handle.close();
+      handles.clear();
       channel.close();
       channelRef.current = null;
     };
-  }, [channelId, handleCommand, handleChildClosing]);
+  }, [channelId, handleChildClosing]);
 
   // Broadcast the snapshot on every workspace or working-doc-version change.
   useEffect(() => {

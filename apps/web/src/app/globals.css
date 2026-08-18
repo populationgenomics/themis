@@ -155,6 +155,15 @@
   --color-error-bg: #fbf6f0;
   --color-error-border: #ede0d2;
 
+  /* Line-level diff of an `edit`. added-bg/gutter equal the done-green family and
+     removed-fg/gutter the path red by value; added-fg and removed-bg are the diff's own. */
+  --color-diff-added-bg: #e7f1e9;
+  --color-diff-added-fg: #2f6b41;
+  --color-diff-added-gutter: #4f8a5b;
+  --color-diff-removed-bg: #faefee;
+  --color-diff-removed-fg: #b23a2e;
+  --color-diff-removed-gutter: #c0392b;
+
   /* ACMG strength codes. PM equals path-pill-fg, PP equals teal-fg by value. */
   --color-acmg-pm: #c2641f;
   --color-acmg-pp: #527c7a;

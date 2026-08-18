@@ -85,6 +85,24 @@ describe("the request-auth perimeter", () => {
     expect(response.status).toBe(401);
   });
 
+  test("a refusal minted by another module graph is still the perimeter's 401", async () => {
+    // The identity can be memoized across Next's module graphs, so its refusal may
+    // carry the right name on a foreign class object — the perimeter must not treat
+    // it as an outage to rethrow.
+    const foreignRefusing: UserIdentity = {
+      async assertedEmail(): Promise<string> {
+        throw Object.assign(new Error("missing assertion"), {
+          name: "UnauthenticatedError",
+        });
+      },
+    };
+    const response = await enforceRequestAuth(
+      request("/api/rpc/x"),
+      foreignRefusing,
+    );
+    expect(response.status).toBe(401);
+  });
+
   test("a failure that is not an unverifiable caller is not answered as one", async () => {
     // An outage reaching IAP's keys must not read as a refusal — the caller would be
     // told to re-authenticate over a fault that has nothing to do with their credential.

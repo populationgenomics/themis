@@ -65,11 +65,17 @@ export function RepresentationToggle({
 
 export function WorkingDocumentView({
   document,
+  error,
   onCitation,
 }: {
   document: WorkingDocument | null;
+  /** True when the body fetch failed. */
+  error: boolean;
   onCitation: (citation: Citation) => void;
 }): React.ReactElement {
+  if (error) {
+    return <Notice text="Couldn't load this document version." />;
+  }
   if (document === null) {
     return (
       <Notice text="The agent has not written the working document yet." />
