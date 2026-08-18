@@ -42,6 +42,9 @@ class WorkbenchStub:
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     @_typing.overload
@@ -59,10 +62,7 @@ class WorkbenchStub:
     ListAnalyses: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]
-    """One liveness tick: the whole projected event stream plus the working-document version signal.
-    Not NO_SIDE_EFFECTS: the option binds every future implementation of this method and the compat
-    gate freezes it, and the GET form it buys has no caller.
-    """
+    """One liveness tick: the whole projected event stream plus the working-document version signal."""
     GetDocument: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]
     """The current working document as a produced|not-produced result, or a named historical version."""
     DescribePaper: _grpc.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]
@@ -80,6 +80,9 @@ class WorkbenchAsyncStub(WorkbenchStub):
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     def __init__(self, channel: _aio.Channel) -> None: ...
@@ -94,10 +97,7 @@ class WorkbenchAsyncStub(WorkbenchStub):
     ListAnalyses: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]  # type: ignore[assignment]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _aio.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]  # type: ignore[assignment]
-    """One liveness tick: the whole projected event stream plus the working-document version signal.
-    Not NO_SIDE_EFFECTS: the option binds every future implementation of this method and the compat
-    gate freezes it, and the GET form it buys has no caller.
-    """
+    """One liveness tick: the whole projected event stream plus the working-document version signal."""
     GetDocument: _aio.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]  # type: ignore[assignment]
     """The current working document as a produced|not-produced result, or a named historical version."""
     DescribePaper: _aio.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]  # type: ignore[assignment]
@@ -114,6 +114,9 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     @_abc_1.abstractmethod
@@ -150,10 +153,7 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         request: _workbench_pb2.PollRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_workbench_pb2.PollResponse, _abc.Awaitable[_workbench_pb2.PollResponse]]:
-        """One liveness tick: the whole projected event stream plus the working-document version signal.
-        Not NO_SIDE_EFFECTS: the option binds every future implementation of this method and the compat
-        gate freezes it, and the GET form it buys has no caller.
-        """
+        """One liveness tick: the whole projected event stream plus the working-document version signal."""
 
     @_abc_1.abstractmethod
     def GetDocument(

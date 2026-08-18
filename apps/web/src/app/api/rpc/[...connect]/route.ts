@@ -3,8 +3,8 @@ import { serveRpc } from "@/server/rpc/handler";
 // The BFF's data API: every Workbench method, served under /api/rpc by one catch-all. The
 // matched segments are the method path, so the mount point is never spelled twice.
 //
-// Nothing here opts a GET into caching, which route handlers otherwise never do
-// (docs/design/frontend-framework.md, Data fetching).
+// POST is the only verb exported, which is what holds the surface POST-only: an unexported verb is
+// Next's own 405, whatever a method declares (docs/design/proto.md, bucket 2).
 
 async function handle(
   request: Request,
@@ -14,4 +14,4 @@ async function handle(
   return serveRpc(request, `/${connect.join("/")}`);
 }
 
-export { handle as GET, handle as POST };
+export { handle as POST };

@@ -23,6 +23,7 @@ interface RpcResult {
   status: number;
   /** Empty for a response the protocol rejects before producing an error message. */
   body: Record<string, unknown> | null;
+  headers: Headers;
 }
 
 async function send(
@@ -43,14 +44,14 @@ async function send(
   return {
     status: response.status,
     body: text === "" ? null : (JSON.parse(text) as Record<string, unknown>),
+    headers: response.headers,
   };
 }
 
 const call = (method: string, message: unknown, init: RequestInit = {}) =>
   send(serveRpc, method, message, init);
 
-/** The Connect `GET` form a `NO_SIDE_EFFECTS` method answers: the message rides in the
- *  query, which is what `docs/runbooks/iap-access.md` hands a developer to paste. */
+/** The Connect `GET` form: the message rides in the query. */
 function get(method: string, message: unknown): Promise<Response> {
   const path = `${SERVICE}/${method}`;
   const query = new URLSearchParams({
@@ -118,30 +119,26 @@ describe("the served surface", () => {
     expect(document.body?.document).toBeUndefined();
   });
 
-  test("a read answers a Connect GET, and no cache may store it", async () => {
-    // The `GET` is the request an intermediary would consider storable, and replies are
-    // scoped to the verified caller: one stored under its URL alone would reach a
-    // different curator.
-    const response = await get("ListProjects", {});
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
-    const body = (await response.json()) as { projects: { id: string }[] };
-    expect(body.projects.length).toBeGreaterThan(0);
+  test("no cache may store a reply", async () => {
+    // `serveRpc` marks every reply unstorable whatever the verb: replies are per-caller, and
+    // the IAP cookie that authenticates them is invisible to RFC 9111's `Authorization` rule,
+    // so a cache keyed on the URL alone would cross curators.
+    const { status, headers } = await call("ListProjects", {});
+    expect(status).toBe(200);
+    expect(headers.get("cache-control")).toBe("private, no-store");
   });
 
-  // No preflight stands between a cross-site `GET` and the IAP cookie a curator's browser
-  // carries, so a method that is not declared side-effect-free must not be reachable by
-  // one. The descriptor carries the declaration, so the property is read off it: a method
-  // added later is covered on both sides without touching this file.
+  // What puts the surface out of a browser's reach by `GET` is the route's export list
+  // (`app/api/rpc/[...connect]/route.ts`), which this bypasses by calling `serveRpc` directly; the
+  // level is read off the descriptor, so a method added later is covered without touching this
+  // file. A method wanting the `GET` form changes both, and the runbook's `curl` with them.
   test.each(Workbench.methods.map((method) => [method.name, method] as const))(
-    "%s admits a Connect GET only if it is declared side-effect-free",
+    "%s declares no side-effect-free level, and admits no Connect GET",
     async (_name, method) => {
-      const response = await get(method.name, {});
-      // An empty message may still be refused by a field rule; what must not vary is
-      // whether the `GET` reached the method at all.
-      expect(response.status !== 405).toBe(
-        method.idempotency === MethodOptions_IdempotencyLevel.NO_SIDE_EFFECTS,
+      expect(method.idempotency).not.toBe(
+        MethodOptions_IdempotencyLevel.NO_SIDE_EFFECTS,
       );
+      expect((await get(method.name, {})).status).toBe(405);
     },
   );
 

@@ -1,11 +1,11 @@
 """Backward-compatibility gate for the committed gRPC proto contracts (S0.6).
 
 The **sole** authored-data compat gate (proto.md): diffs the committed proto module
-under ``schema/proto`` against its baseline with ``buf breaking`` (FILE category minus
-``FIELD_NO_DELETE``, plus ``FIELD_NO_DELETE_UNLESS_{NAME,NUMBER}_RESERVED`` — renumbers,
-unreserved removals, type/label changes, renames), failing on any incompatible delta,
-with no override. Evolution is additive, plus retiring a field whose number *and* name
-are reserved (``docs/design/proto.md`` "Schema evolution").
+under ``schema/proto`` against its baseline with ``buf breaking``, under the rule set
+``buf.yaml`` declares (renumbers, unreserved removals, type/label changes, renames),
+failing on any incompatible delta, with no override. Evolution is additive, plus
+retiring a field whose number *and* name are reserved (``docs/design/proto.md``
+"Schema evolution").
 Gates every committed proto — RPC and at-rest alike; a pre-release
 contract (no persisted data, no deployed consumer) is left out of the compared module
 until it stabilizes (see ``_PRE_RELEASE``), so it has no baseline to be incompatible

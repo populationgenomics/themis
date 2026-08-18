@@ -76,10 +76,6 @@ class Client:
         """The email the environment sees. Mints a token if none is live, so it may raise."""
         return self._id_token().email
 
-    def get(self, path: str) -> requests.Response:
-        """GET ``path`` on the environment."""
-        return self.send('GET', path)
-
     def post(self, path: str, json_body: JsonBody) -> requests.Response:
         """POST ``json_body`` to ``path`` on the environment."""
         return self.send('POST', path, json_body)

@@ -1,6 +1,6 @@
 name: web
 
-# Production build of the Next.js web app on PRs and pushes to main. The image
+# Production build and test suite of the Next.js web app on PRs and pushes to main. The image
 # build + deploy is owned by deploy.yml; images.yml build-checks it on merge. Bun toolchain; see
 # apps/web/README.md.
 on:
@@ -29,3 +29,4 @@ jobs:
       # --frozen-lockfile fails if package.json and bun.lock have drifted.
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - run: bun test

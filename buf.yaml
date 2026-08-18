@@ -25,9 +25,16 @@ lint:
 breaking:
   # FILE minus FIELD_NO_DELETE: a field may be deleted only with both its number and its name
   # reserved. The two UNLESS_* rules are not in FILE, hence listed. See proto.md, "Schema evolution".
+  # RPC_SAME_IDEMPOTENCY_LEVEL is ignored for the browser service alone: its only consumer is the
+  # BFF's own generated client, shipped in the same deploy, so a level change reaches no caller that
+  # predates it. The gRPC contracts keep the rule, where a level carries retry semantics a deployed
+  # client reads.
   use:
     - FILE
     - FIELD_NO_DELETE_UNLESS_NAME_RESERVED
     - FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED
   except:
     - FIELD_NO_DELETE
+  ignore_only:
+    RPC_SAME_IDEMPOTENCY_LEVEL:
+      - schema/proto/themis/workbench/rpc/workbench.proto

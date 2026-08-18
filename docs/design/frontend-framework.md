@@ -108,10 +108,8 @@ error body, so the generated client reads it as one rather than as an error with
   on the client. Not GraphQL: a single first-party client does not earn it. State that is **fixed for the life of a
   page** is the exception: the page's server component reads it from the authorized backend directly, so an id the
   caller cannot reach is a 404 before anything renders ([`workbench-navigation.md`](workbench-navigation.md)).
-- **Liveness** — polling, as above. `Poll` is deliberately *not* `NO_SIDE_EFFECTS`, though a tick reads and nothing
-  more: the option binds every future implementation of the method and the compat gate freezes it, and what it buys — a
-  `GET` form, and the retry-freely licence an intermediary reads from it — has no caller here. The cache property it
-  used to guard is now unconditional (Caching, below).
+- **Liveness** — polling, as above. A tick reads and nothing more, but `Poll` is a `POST` like every method on this
+  surface ([`proto.md`](proto.md), bucket 2).
 - **Where it is served** — one App Router catch-all (`app/api/rpc/[...connect]/`) over a small adapter around
   `createFetchHandler` ([`proto.md`](proto.md), bucket 2). Hooks call the generated client; nothing calls `fetch`.
 - **Failures** — Connect codes, mapped from thrown errors by a router interceptor: an unrecognized one is logged

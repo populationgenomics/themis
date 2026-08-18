@@ -31,6 +31,9 @@ class WorkbenchStub:
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     def __init__(self, channel):
@@ -81,6 +84,9 @@ class WorkbenchServicer:
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     def ListProjects(self, request, context):
@@ -108,8 +114,6 @@ class WorkbenchServicer:
 
     def Poll(self, request, context):
         """One liveness tick: the whole projected event stream plus the working-document version signal.
-        Not NO_SIDE_EFFECTS: the option binds every future implementation of this method and the compat
-        gate freezes it, and the GET form it buys has no caller.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -189,6 +193,9 @@ class Workbench:
     from the request's IAP assertion, so no method takes a user identity: it is never the client's to
     name. A Project or Analysis outside the caller's membership answers NOT_FOUND, never a
     distinguishable PERMISSION_DENIED — a caller must not learn it exists.
+
+    Every method is a POST carrying the request message as its body: no method declares an
+    idempotency level, so none answers a GET.
     """
 
     @staticmethod
