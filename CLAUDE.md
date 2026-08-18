@@ -44,17 +44,20 @@ backend; deploy stacked separately). Reuse it; don't reinvent per service.
 
 ## Docs
 
-The primary audience for docs is a model reading them as context; humans second. Be terse: state each decision,
-mechanism, and rationale once — no rhetorical emphasis, no persuasion, no recaps. Every token written is re-paid on
-every future read.
+Two audiences, two registers:
 
-Design docs are the durable design record — one living doc per area under `docs/design/`, rewritten in place. There are
-no ADRs: rationale lives in the doc's `Alternatives considered`, chronology in git. See
-[`docs/style/design-docs.md`](docs/style/design-docs.md) for the policy and template.
-
-`CLAUDE.md` and `.claude/rules/` go further: model-only context, not human docs. Include only what changes behavior — no
-maintainer notes, no describing harness mechanics (which rules load when, where files live). Such content costs tokens
-every session and changes nothing; human-facing explanation belongs in `docs/` or code.
+- **Instruction files** are prompts and rules — `CLAUDE.md`, `.claude/rules/`, `.github/review/`, `.github/doc-garden/`:
+  model-only, only what changes behavior, no maintainer notes, no harness mechanics (which rules load when, where files
+  live). A token there is paid on every run that loads it; human-facing explanation belongs in `docs/` or code.
+- **Everything under `docs/`** is written for a human first — a maintainer who has read
+  [`docs/PRODUCT.md`](docs/PRODUCT.md) and [`GLOSSARY.md`](GLOSSARY.md) but not this area, and has to get the take-aways
+  from one read on GitHub; under the review policy a design-doc PR is normally reviewed by a second maintainer. Explain
+  with the clarity and style of Martin Kleppmann — motivation before mechanism, specifics out of the argument's way.
+  Detail that restates code — field lists, paths, env vars, test names — stays in the code and is linked, never
+  transcribed. A model reads what a human reads. Design docs are the durable design record: one living doc per area
+  under `docs/design/`, rewritten in place; no ADRs — rationale lives in the doc, chronology in git. The guide is
+  [`docs/style/design-docs.md`](docs/style/design-docs.md); to write or rewrite one, load the `writing-design-docs`
+  skill.
 
 ## Committing
 
@@ -91,6 +94,9 @@ design.
   passes in subagents with fresh context — the reviewer sees only the diff, not the authoring conversation — and fix the
   findings autonomously; repeat until a pass surfaces only diminishing findings, then open the PR. Exempt: trivial
   changes, doc-only changes, resource/asset changes.
+- **A PR description is written for the human reviewer**: what the change is and why, the take-aways, and where to look
+  — the altitude of a design doc's Overview, shorter. The diff carries the detail; don't narrate it. Same style:
+  [`docs/style/design-docs.md` § Style](docs/style/design-docs.md#style).
 - **Pin third-party GitHub Actions to the latest stable release**: the moving major tag (`@v3`) where the action
   publishes one, else the exact latest version (`@v8.2.0`). Verify against the action's releases when adding or bumping
   one.

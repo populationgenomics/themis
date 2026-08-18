@@ -29,6 +29,10 @@ prose in design docs, naming on surfaces nothing has bound to yet, decomposition
 shape and coverage gaps, style-guide citations, design taste, dead code, duplication. These are real findings; they are
 simply not worth interrupting a review for, because nothing compounds while they sit.
 
+One carve-out: a readability finding under the design-docs concern is T2 by construction — that doc is what the second
+maintainer reviews and what every later reader of the area starts from, and once landed it stays until a rewrite; the
+doc-gardener does not touch style. Stale prose and taste in the same doc stay T3.
+
 T3 is the default for the concerns that permit one — general code quality and context budget. A finding under those is
 T1 or T2 only if you can name the failure it causes now, or the thing that gets harder later. "This could confuse a
 future reader" is T3. "This is inconsistent with the surrounding code" is T3.

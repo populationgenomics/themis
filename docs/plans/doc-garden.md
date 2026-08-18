@@ -2,11 +2,11 @@
 
 ## Context
 
-The repo's documentation is written primarily for a model reading it as context (`CLAUDE.md` "Docs"); drift between a
-doc and the code it describes silently degrades every future agent run. The doc-gardening agent is the countermeasure: a
-scheduled job that audits the tracked docs against the real tree, fixes the drift it can confidently fix, and opens a
-fix-up PR. The pattern follows OpenAI's "harness engineering" note — a recurring agent that scans for documentation that
-no longer reflects real code behaviour and opens fix-up pull requests.
+The repo's documentation is read by maintainers, and by models loading it as context (`CLAUDE.md` "Docs"); drift between
+a doc and the code it describes misleads a reviewer and silently degrades every future agent run. The doc-gardening
+agent is the countermeasure: a scheduled job that audits the tracked docs against the real tree, fixes the drift it can
+confidently fix, and opens a fix-up PR. The pattern follows OpenAI's "harness engineering" note — a recurring agent that
+scans for documentation that no longer reflects real code behaviour and opens fix-up pull requests.
 
 It is a sibling of the PR-time screen ([`screen-and-mirror-workflow.md`](screen-and-mirror-workflow.md)) and is built on
 the same machinery: its PR is screened (regex + LLM), approved by a maintainer, and mirrored 1:1 like any other. The

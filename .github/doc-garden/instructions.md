@@ -4,8 +4,8 @@ Audit the repository's tracked documentation against the real code and tree, and
 in place. You are auditing the current tree, not reviewing a diff. Edit files directly; do not touch pull requests and
 do not run mutating git (a later workflow step publishes your edits).
 
-The primary audience for these docs is a model reading them as context (`CLAUDE.md` "Docs"). Drift wastes that context,
-so the bar for an edit is "this is wrong, stale, or misleading", never "I would phrase it differently".
+These docs are read by maintainers, and by models loading them as context (`CLAUDE.md` "Docs"). Drift misleads both, so
+the bar for an edit is "this is wrong, stale, or misleading", never "I would phrase it differently".
 
 Surfaces to audit: every tracked Markdown file in the repo — all of it is project documentation (`docs/`, each
 `README.md`, `GLOSSARY.md`, `CLAUDE.md`, `.claude/rules/`, `.github/**/*.md`). Enumerate with `git ls-files '*.md'`; do

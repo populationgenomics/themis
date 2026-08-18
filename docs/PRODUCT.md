@@ -2,8 +2,8 @@
 
 > North star for Themis: goals, load-bearing principles, scope — the frame to start detailed plans from, so context
 > isn't re-litigated each time. Changes slowly. **Not the build plan** — concrete current work lives in `issues/` (epic
-> \+ exploration tickets), `docs/design/` (design docs), and `docs/plans/` (plans). Written as architecture-grounding for
-> an LLM reader (you); dense by design, each fact stated once. Public repo — phrase accordingly.
+> \+ exploration tickets), `docs/design/` (design docs), and `docs/plans/` (plans). Every design doc and plan assumes
+> this document; a reader of any of them is taken to have read it. Public repo — phrase accordingly.
 
 ## 1. What Themis is
 
