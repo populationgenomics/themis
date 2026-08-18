@@ -16,6 +16,7 @@ import pulumi_gcp as gcp
 from themis_infra import (
     auth,
     baseline,
+    convert,
     deploy_iam,
     evidence,
     hello,
@@ -31,6 +32,7 @@ from themis_infra import (
     web,
 )
 
+_CONVERT_WORKER_IMAGE_ENV = 'THEMIS_CONVERT_WORKER_IMAGE'
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
@@ -205,6 +207,26 @@ evidence_service = evidence.EvidenceService(
     image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
     fulltext_bucket=fulltext.name,
     opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+)
+# The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
+# request path. Nothing enqueues onto the queue yet — the reconcile sweep is its first producer.
+convert_queue = convert.conversion_queue(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+convert_worker = convert.ConvertWorker(
+    project=project,
+    region=region,
+    image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
+    fulltext_bucket=fulltext.name,
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+)
+convert_invoker = convert.ConversionInvoker(
+    project=project,
+    region=region,
+    worker_service_name=convert_worker.service_name,
+    opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
 )
 site = web.WebService(
     project=project,
@@ -406,3 +428,6 @@ pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
+pulumi.export('convert_queue', convert_queue.name)
+pulumi.export('convert_worker_url', convert_worker.url)
+pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)

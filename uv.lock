@@ -3479,6 +3479,15 @@ codegen = [
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
 ]
+convert-worker = [
+    { name = "aiohttp" },
+    { name = "anthropic" },
+    { name = "google-cloud-storage" },
+    { name = "litdown" },
+    { name = "litfetch" },
+    { name = "protobuf" },
+    { name = "pubmed-proto" },
+]
 dataflow = [
     { name = "anthropic" },
     { name = "apache-beam", extra = ["gcp"] },
@@ -3667,6 +3676,15 @@ cloudsql = [
 codegen = [
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
+]
+convert-worker = [
+    { name = "aiohttp" },
+    { name = "anthropic" },
+    { name = "google-cloud-storage" },
+    { name = "litdown", specifier = "==0.5.0" },
+    { name = "litfetch", specifier = "==0.2.0" },
+    { name = "protobuf" },
+    { name = "pubmed-proto", specifier = "==0.1.0" },
 ]
 dataflow = [
     { name = "anthropic" },

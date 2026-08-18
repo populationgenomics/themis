@@ -25,6 +25,7 @@ import pulumi_gcp as gcp
 _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/artifactregistry.admin',
     'roles/cloudsql.admin',
+    'roles/cloudtasks.queueAdmin',
     'roles/compute.admin',
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',

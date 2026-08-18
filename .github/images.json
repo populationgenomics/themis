@@ -5,5 +5,6 @@
   { "name": "hello", "context": ".", "file": "themis/services/hello/Dockerfile", "env": "THEMIS_HELLO_IMAGE" },
   { "name": "dispatcher", "context": ".", "file": "themis/services/dispatcher/Dockerfile", "env": "THEMIS_DISPATCHER_IMAGE" },
   { "name": "worker", "context": ".", "file": "themis/services/sandbox_worker/Dockerfile", "env": "THEMIS_SANDBOX_WORKER_IMAGE" },
-  { "name": "evidence", "context": ".", "file": "themis/services/evidence/Dockerfile", "env": "THEMIS_EVIDENCE_IMAGE" }
+  { "name": "evidence", "context": ".", "file": "themis/services/evidence/Dockerfile", "env": "THEMIS_EVIDENCE_IMAGE" },
+  { "name": "convert-worker", "context": ".", "file": "themis/services/convert_worker/Dockerfile", "env": "THEMIS_CONVERT_WORKER_IMAGE" }
 ]

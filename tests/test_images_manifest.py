@@ -13,11 +13,14 @@ import json
 import pathlib
 import re
 import subprocess
+import tomllib
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _IMAGES_JSON = _REPO_ROOT / '.github' / 'images.json'
 _INFRA_MAIN = _REPO_ROOT / 'infra' / '__main__.py'
 _IMAGE_ENV = re.compile(r'THEMIS_[A-Z_]+_IMAGE')
+_PYPROJECT = _REPO_ROOT / 'pyproject.toml'
+_SYNC_GROUP = re.compile(r'--group\s+([\w-]+)')
 
 # `images.json` declares the *service* image set: every entry carries the Pulumi override
 # the program reads, which is what `test_declared_envs_are_the_overrides_the_program_reads`
@@ -58,6 +61,18 @@ def test_declared_build_inputs_exist() -> None:
     for entry in _declared():
         assert (_REPO_ROOT / entry['file']).is_file(), entry['file']
         assert (_REPO_ROOT / entry['context']).is_dir(), entry['context']
+
+
+def test_declared_dependency_groups_exist() -> None:
+    # A Dockerfile's `uv sync --group` names a dependency group; an undeclared one fails the build,
+    # and nothing before the merge builds an image — `images.yml` runs on main, `deploy.yml` after
+    # that. A renamed group is exactly the miss this catches.
+    groups = set(tomllib.loads(_PYPROJECT.read_text('utf-8'))['dependency-groups'])
+    assert groups, 'pyproject declares no dependency groups'
+    for entry in _declared():
+        named = _SYNC_GROUP.findall((_REPO_ROOT / entry['file']).read_text('utf-8'))
+        unknown = sorted(set(named) - groups)
+        assert not unknown, f'{entry["file"]} syncs undeclared group(s) {unknown}'
 
 
 def test_image_names_are_unique() -> None:

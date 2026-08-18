@@ -104,6 +104,44 @@ Never copy either value from another environment's `Pulumi.<stack>.yaml`. A stal
 at another environment's backend, so it refuses the traffic its own IAP admits — a failure that reads as a broken deploy
 rather than a wrong constant.
 
+### Retiring a first-deploy image placeholder
+
+`preview` reads each Cloud Run service's live image so a plan shows no spurious image change, which needs the service to
+exist. A service added in the same change has none, so `preview.yml` passes a placeholder for it. Once the first deploy
+creates the service, delete that line: the override keeps winning otherwise, and every later preview plans the real
+image back to the placeholder.
+
+### Adopting a service account created ahead of the program
+
+The reverse of the placeholders above: a service account whose identity a third party has to pin *before* the program
+runs. Registering an Anthropic federation rule needs the GCP SA's `email` and never-reissued `unique_id`, and that
+registration is an admin roundtrip outside this repo — so the SA is created by hand first and the roundtrip starts while
+the Pulumi change is still in review.
+
+Pulumi does not adopt an existing resource. Left alone, the first `up` tries to create the account, gets
+`409 AlreadyExists`, and aborts the whole stack update. Import it in the same step, matching the declaration's component
+parent so the URN agrees — a top-level import creates a *different* URN, which Pulumi later reads as delete-plus-create,
+issuing a fresh `unique_id` and stranding the rule that pinned the old one:
+
+```sh
+gcloud iam service-accounts create themis-convert-worker --project=<project> \
+  --display-name='Themis full-text convert worker runtime'
+gcloud iam service-accounts describe themis-convert-worker@<project>.iam.gserviceaccount.com \
+  --format='value[separator="\n"](email,uniqueId)'   # the two claims the rule pins
+
+# …register the Anthropic svac + rule against those two values, then, once the program declares the SA:
+pulumi import gcp:serviceaccount/account:Account themis-convert-worker-runtime \
+  projects/<project>/serviceAccounts/themis-convert-worker@<project>.iam.gserviceaccount.com \
+  --parent 'convert_worker=urn:pulumi:<stack>::themis::themis:infra:ConvertWorker::themis'
+```
+
+Import only once the declaration exists. Importing earlier leaves state holding a resource the program does not declare,
+and the next `up` — including a PR preview — tries to delete it; `pulumi import` protects by default, so that update
+fails instead, blocking every deploy on the stack until the declaration lands.
+
+The SA carries `protect` and `retain_on_delete` for the same reason the import has to be parent-matched: a replacement
+reissues the `unique_id` and silently breaks token exchange.
+
 ### DNS handoff (external — IT team)
 
 ```sh

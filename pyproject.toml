@@ -92,6 +92,21 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # no protovalidate, no conversion/fetch deps — the read path never validates or converts. anchorite
 # locates a verbatim quote to markdown offsets, exact-pinned like the others.
 evidence = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", "pubmed_proto==0.1.0", "anchorite==0.5.1"]
+# full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
+# calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
+# the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
+# XML, anthropic transcribes a PDF, and the storage/protobuf pair reads and commits the manifest.
+# Deliberately not the `litcache` group: docling-core and the cloudsql connector belong to paths this
+# worker never takes, and carry pandas/numpy/pillow behind them.
+convert_worker = [
+    "aiohttp",
+    "google-cloud-storage",
+    "protobuf",
+    "litfetch==0.2.0",
+    "litdown==0.5.0",
+    "pubmed_proto==0.1.0",
+    "anthropic",
+]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
 # is the SDK the work queue is driven through; google-cloud-kms derives the per-session token
@@ -111,7 +126,7 @@ guest = ["grpcio", "protobuf"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -119,11 +134,11 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "iap" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/iap/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # --strict-markers: an unregistered marker is a collection error, not a warning. A misspelled
 # `sandbox` would otherwise deselect the test from both CI jobs, which reports as a pass.
@@ -227,6 +242,10 @@ ignore = [
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture env keys / session tokens are not secrets
     "S106",   # fixture credentials passed as kwargs are not secrets
+]
+"themis/services/convert_worker/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
 ]
 "themis/services/evidence/tests/**" = [
     "S101",   # asserts are the standard pytest idiom

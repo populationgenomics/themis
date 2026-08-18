@@ -45,3 +45,7 @@ jobs:
           comment-on-pr: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A service with no live deployment has no image to read, so the fallback fails until the
+          # first deploy. Removed once the service exists, or every later preview plans the real image
+          # back to this one (docs/runbooks/fresh-environment.md).
+          THEMIS_CONVERT_WORKER_IMAGE: gcr.io/cloudrun/hello

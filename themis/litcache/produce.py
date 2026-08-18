@@ -36,6 +36,7 @@ import importlib.metadata
 from collections.abc import Awaitable, Callable
 
 import litdown
+from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import resolvers
@@ -53,6 +54,15 @@ _ID_FIELDS = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
 PdfConverter = Callable[[bytes], Awaitable[ocr.OcrRendering]]
+
+
+class UnknownPaperError(Exception):
+    """The corpus holds no manifest for the doc_id.
+
+    Distinguishes the one `NotFound` a retry cannot clear from every other missing object — a seed
+    revision blob, a manifest that vanished mid-write — which are operational faults, not unknown
+    papers, and must stay retryable.
+    """
 
 
 class _PermanentSourceError(Exception):
@@ -251,14 +261,19 @@ async def produce_full_text(
         truncation.
 
     Raises:
-        google.api_core.exceptions.NotFound: If the paper's manifest is absent.
+        UnknownPaperError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
+        google.api_core.exceptions.NotFound: If an object the manifest names is absent (a seed
+            revision blob, say). Operational, so it propagates and stays retryable.
         anthropic.APIError: A transient Claude API error during OCR (rate limit, overload, connection),
             or another transient fetch error, propagates so the worker returns 5xx and Cloud Tasks
             retries; permanent OA and OCR failures are caught and recorded FAILED, not raised.
         writer.ConcurrentWriteError: The manifest write lost its generation race the whole retry budget
             (contention — retryable).
     """
-    manifest_bytes = bucket.blob(writer.manifest_path(doc_id)).download_as_bytes()
+    try:
+        manifest_bytes = bucket.blob(writer.manifest_path(doc_id)).download_as_bytes()
+    except api_exceptions.NotFound as e:
+        raise UnknownPaperError(doc_id) from e
     manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
     if manifest.renderings:
         return outcome.Readiness.READY

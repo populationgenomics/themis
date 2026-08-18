@@ -477,6 +477,21 @@ def test_pdf_source_picks_the_lineage_with_the_newest_revision() -> None:
     assert produce._pdf_source(litcache_pb2.Manifest(sources=[empty])) is None
 
 
-def test_produce_raises_on_a_missing_manifest(gcs_bucket: gcs.Bucket) -> None:
-    with pytest.raises(api_exceptions.NotFound):
+def test_produce_raises_unknown_paper_on_a_missing_manifest(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(produce.UnknownPaperError):
         asyncio.run(produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom))
+
+
+def test_produce_raises_not_found_when_the_manifest_names_an_absent_seed(gcs_bucket: gcs.Bucket) -> None:
+    """A seed blob the manifest names but the bucket lacks is operational — retryable, not settled."""
+    data = b'%PDF-1.7 seed'
+    _write_multi_revision_pdf_paper(gcs_bucket, [(data, _CAPTURED_AT)])
+    gcs_bucket.blob(
+        writer.source_revision_path(
+            _DOC_ID, 'pdf', hashlib.sha256(data).hexdigest(), litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF
+        )
+    ).delete()
+    with pytest.raises(api_exceptions.NotFound):
+        asyncio.run(
+            produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
+        )

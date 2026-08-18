@@ -17,6 +17,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/store.py`       | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                          |
 | `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                |
 | `themis_infra/storage.py`     | The literature full-text store bucket (durable GCS).                                                                                                                 |
+| `themis_infra/convert.py`     | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                |
 | `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                             |
 | `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
 | `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                                                                         |
@@ -67,8 +68,9 @@ operators use their own IAM-gated `gcloud` ADC.
 ## Deletion guards
 
 Guarded only where loss is unrecoverable or externally bound: the reserved load-balancer IP (DNS points at it), the
-Cloud SQL instance and its database, and the web runtime SA whose never-reissued `unique_id` the Anthropic WIF rule pins
-(`protect`, plus `retain_on_delete` on the SA). Buckets rely on the non-empty refusal above.
+Cloud SQL instance and its database, and the web runtime SA whose never-reissued `unique_id` the Anthropic WIF rule
+pins, and the convert-worker SA a rule will pin (`protect`, plus `retain_on_delete` on the SA). Buckets rely on the
+non-empty refusal above.
 
 Cloud Run services and jobs set `deletion_protection=False` explicitly: the provider defaults it to true, and it is a
 state-side flag rather than a GCP setting, so only a program that still declares the resource can clear it. A service
