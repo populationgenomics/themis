@@ -5,7 +5,8 @@ anchored-comment offset convention); [`literature-evidence-layer.md`](literature
 evidence service that gains `Locate`/`Validate`); [`litcache-manifest.md`](litcache-manifest.md)
 (`Manifest`/`Rendering`/`AssociatedFile` this resolves against); [`services.md`](services.md) (the
 proto+`grpc.aio`+fixture pattern the evidence-service additions follow); [`proto.md`](proto.md) (schema +
-serialization); [`workbench-navigation.md`](workbench-navigation.md) (the pages this one lives on, and its chrome).
+serialization); [`workbench-navigation.md`](workbench-navigation.md) (the pages this one lives on, and its chrome);
+[`conversation-view.md`](conversation-view.md) (what the conversation region renders).
 
 ## Overview
 
@@ -75,7 +76,9 @@ it is a persistent companion, not a document.
   into a single **overflow menu** (`⋯`), one affordance rather than a row of glyphs.
 - The **conversation** is a **special region** (no tab strip, no icon) docked to **any of the four edges** of a
   resizable split with the tab area, chosen from a four-edge selector in the Analysis page's chrome (the analogue of the
-  earlier `[ ]`/`[|]`/`[-]` control), persisted. Present only in the **main** window.
+  earlier `[ ]`/`[|]`/`[-]` control), persisted. Present only in the **main** window. The steer composer is inside the
+  region, below the stream ([`conversation-view.md`](conversation-view.md)), so it travels with it across dock edges
+  rather than being pinned to the window.
 - **Structure.** A window is a bounded **depth-2 panel arrangement**: an outer split `[conversation | tab area]` whose
   direction flips for a left/right vs top/bottom dock edge, and an inner split `[pane | pane]` for the tab area. Nested
   `react-resizable-panels` `PaneGroup`s; the outer ratio is **orientation-specific** (a width % when docked left/right,
@@ -200,6 +203,13 @@ mirror** with a tab area only. A **group** never pops; a **window** does, holdin
   **body is fetched by each window from the BFF**, keyed on the broadcast version, so a child re-fetches when the agent
   republishes. (Unlike an immutable paper, the working document is versioned; the version is what a mirror needs, the
   body is what it must not carry.)
+- **Version pin.** The working-doc tab's payload may carry a **view-only pin** `{analysisId, version}` selecting a
+  historical version (the header dropdown writes it via `patchTab`; the list is `1..latest` — the store is append-only,
+  so no enumeration RPC is needed). A window holding the tab fetches the pinned body instead of the latest; a null or
+  absent pin follows the current document, and readers ignore a pin naming another analysis (stale after a switch).
+  Riding the tab payload means the pin crosses the channel with the snapshot and survives moving the tab between
+  windows, with no protocol addition; it is transient by construction — a load starts the working-doc tab with an empty
+  payload.
 - **Process model: one process, one main thread.** Children open via `window.open` with the opener retained, so
   (same-origin) they share main's renderer **process and event loop** — not N parallel processes. Main holds the child
   handles for a direct `child.close()`, and a crash takes all windows together (no orphaned mirror outlives its source
@@ -359,7 +369,8 @@ whole frontend builds and tests offline): the evidence-service proto + a fail-lo
 port + IAP-only paper routes; the conversation region + two-pane tab area with the four-edge dock selector; reveal
 beside the source with surface-if-already-open and the loading placeholder; split / move / close / swap and within- and
 cross-window tab drag; the N-window main-authoritative mirror with move-to-window and per-window working-document fetch;
-and consolidate-on-reload persistence (main-window layout + open-paper set + reopen stack).
+the working-document version picker (a view-only pin in the tab payload; any historical version fetchable per window);
+and arrangement-only persistence (conversation edge, outer ratios, label mode, inner ratio), in IndexedDB.
 
 **Deployed to dev** behind the unchanged proto contract: the live evidence adapter (the BFF's first gRPC client — a
 Connect gRPC transport over the `protobuf-es` messages, ID-token interceptor) and the evidence Cloud Run service reading
@@ -376,13 +387,6 @@ end to end there.
   is the remaining piece.
 - **Highlight-API fallback** — a browser without the CSS Custom Highlight API renders a *located* quote as the
   "unlocatable" warning chip; a standalone fix, independent of the workspace model.
-- **Arrangement-only persistence** — the contract above lands with the routing split, on the branch that keys the
-  workbench per Analysis ([`workbench-navigation.md`](workbench-navigation.md)): both the payload (until then the store
-  still holds the main-window layout, the open-paper set, and the reopen stack) and the medium (`localStorage` until
-  then, `lib/browser-store.ts` after). The medium does not follow from the payload — four scalars fit either store.
-  `localStorage` is synchronous on the main thread, unreachable from a worker, string-valued, and capped per origin
-  across every key at once; none of that binds four scalars, but the store the arrangement lands in is the one whatever
-  persists next inherits.
 
 ## Open questions
 

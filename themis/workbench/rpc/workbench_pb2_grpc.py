@@ -62,6 +62,21 @@ class WorkbenchStub:
                 request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.PollRequest.SerializeToString,
                 response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.PollResponse.FromString,
                 _registered_method=True)
+        self.GetThread = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/GetThread',
+                request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadRequest.SerializeToString,
+                response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadResponse.FromString,
+                _registered_method=True)
+        self.Steer = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/Steer',
+                request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.SteerRequest.SerializeToString,
+                response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.SteerResponse.FromString,
+                _registered_method=True)
+        self.Interrupt = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/Interrupt',
+                request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.SerializeToString,
+                response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.FromString,
+                _registered_method=True)
         self.GetDocument = channel.unary_unary(
                 '/themis.workbench.rpc.Workbench/GetDocument',
                 request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
@@ -119,6 +134,30 @@ class WorkbenchServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetThread(self, request, context):
+        """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+        projection the coordinator's stream is in. A read: it advances nothing.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Steer(self, request, context):
+        """Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+        a new one.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Interrupt(self, request, context):
+        """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+        and the session goes idle, ready for the curator's next turn.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetDocument(self, request, context):
         """The current working document as a produced|not-produced result, or a named historical version.
         """
@@ -164,6 +203,21 @@ def add_WorkbenchServicer_to_server(servicer, server):
                     servicer.Poll,
                     request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.PollRequest.FromString,
                     response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.PollResponse.SerializeToString,
+            ),
+            'GetThread': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetThread,
+                    request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadRequest.FromString,
+                    response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadResponse.SerializeToString,
+            ),
+            'Steer': grpc.unary_unary_rpc_method_handler(
+                    servicer.Steer,
+                    request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.SteerRequest.FromString,
+                    response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.SteerResponse.SerializeToString,
+            ),
+            'Interrupt': grpc.unary_unary_rpc_method_handler(
+                    servicer.Interrupt,
+                    request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.FromString,
+                    response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.SerializeToString,
             ),
             'GetDocument': grpc.unary_unary_rpc_method_handler(
                     servicer.GetDocument,
@@ -296,6 +350,87 @@ class Workbench:
             '/themis.workbench.rpc.Workbench/Poll',
             themis_dot_workbench_dot_models_dot_workbench__pb2.PollRequest.SerializeToString,
             themis_dot_workbench_dot_models_dot_workbench__pb2.PollResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetThread(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/GetThread',
+            themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadRequest.SerializeToString,
+            themis_dot_workbench_dot_models_dot_workbench__pb2.ThreadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Steer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/Steer',
+            themis_dot_workbench_dot_models_dot_workbench__pb2.SteerRequest.SerializeToString,
+            themis_dot_workbench_dot_models_dot_workbench__pb2.SteerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Interrupt(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/Interrupt',
+            themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.SerializeToString,
+            themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.FromString,
             options,
             channel_credentials,
             insecure,

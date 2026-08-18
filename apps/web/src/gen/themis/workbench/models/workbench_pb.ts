@@ -10,8 +10,8 @@
 // @generated from file themis/workbench/models/workbench.proto (package themis.workbench.models.workbench, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../buf/validate/validate_pb";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
@@ -21,7 +21,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/workbench/models/workbench.proto.
  */
 export const file_themis_workbench_models_workbench: GenFile = /*@__PURE__*/
-  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJ4CghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0Ip0CChFDb252ZXJzYXRpb25FdmVudBIKCgJpZBgBIAEoCRIvCgtvY2N1cnJlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQQoJYXNzaXN0YW50GAIgASgLMiwudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLk5hcnJhdGlvbkgAEjwKBHVzZXIYAyABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASOwoEdG9vbBgEIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sQ2FsbEgAQg0KBGtpbmQSBbpIAggBIiMKB1Byb2plY3QSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSJ+CghBbmFseXNpcxIKCgJpZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEhIKCnByb2plY3RfaWQYAyABKAkSDgoGcHJvbXB0GAQgASgJEi4KCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIqMBChVDcmVhdGVBbmFseXNpc1JlcXVlc3QSbQoGcHJvbXB0GAEgASgJQl26SFq6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJykSGwoKcHJvamVjdF9pZBgCIAEoCUIHukgEcgIQASIkChZDcmVhdGVBbmFseXNpc1Jlc3BvbnNlEgoKAmlkGAEgASgJIjIKE0xpc3RBbmFseXNlc1JlcXVlc3QSGwoKcHJvamVjdF9pZBgBIAEoCUIHukgEcgIQASJVChRMaXN0QW5hbHlzZXNSZXNwb25zZRI9CghhbmFseXNlcxgBIAMoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5BbmFseXNpcyIVChNMaXN0UHJvamVjdHNSZXF1ZXN0IlQKFExpc3RQcm9qZWN0c1Jlc3BvbnNlEjwKCHByb2plY3RzGAEgAygLMioudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlByb2plY3QiKwoLUG9sbFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAEioQEKDFBvbGxSZXNwb25zZRJECgZldmVudHMYASADKAsyNC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQ29udmVyc2F0aW9uRXZlbnQSLgoYd29ya2luZ19kb2N1bWVudF92ZXJzaW9uGAIgASgFQge6SAQaAigBSACIAQFCGwoZX3dvcmtpbmdfZG9jdW1lbnRfdmVyc2lvbiI9Cg9Xb3JraW5nRG9jdW1lbnQSGAoHdmVyc2lvbhgBIAEoBUIHukgEGgIoARIQCghtYXJrZG93bhgCIAEoCSJaCg9Eb2N1bWVudFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESHQoHdmVyc2lvbhgCIAEoBUIHukgEGgIoAUgAiAEBQgoKCF92ZXJzaW9uIlgKEERvY3VtZW50UmVzcG9uc2USRAoIZG9jdW1lbnQYASABKAsyMi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guV29ya2luZ0RvY3VtZW50YgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp]);
+  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJXCghEaWZmTGluZRI9CgRraW5kGAEgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lS2luZBIMCgR0ZXh0GAIgASgJIvYBCghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0EkEKCGxhbmd1YWdlGAUgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xMYW5ndWFnZRI5CgRkaWZmGAYgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lIqIBCghTdWJBZ2VudBIRCgl0aHJlYWRfaWQYASABKAkSQQoGc3RhdHVzGAIgASgOMjEudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN1YkFnZW50U3RhdHVzEhMKBnByb21wdBgDIAEoCUgAiAEBEhQKB3N1bW1hcnkYBCABKAlIAYgBAUIJCgdfcHJvbXB0QgoKCF9zdW1tYXJ5It8CChFDb252ZXJzYXRpb25FdmVudBIKCgJpZBgBIAEoCRIvCgtvY2N1cnJlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQQoJYXNzaXN0YW50GAIgASgLMiwudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLk5hcnJhdGlvbkgAEjwKBHVzZXIYAyABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASOwoEdG9vbBgEIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sQ2FsbEgAEkAKCXN1Yl9hZ2VudBgGIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5TdWJBZ2VudEgAQg0KBGtpbmQSBbpIAggBIiMKB1Byb2plY3QSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSKkAwobVmFyaWFudENsYXNzaWZpY2F0aW9uSW5wdXRzEn4KCnRyYW5zY3JpcHQYASABKAlCarpIZ7oBXwoUdHJhbnNjcmlwdC5ub25fYmxhbmsSMnRyYW5zY3JpcHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMY/wEScgoGaGd2c19jGAIgASgJQmK6SF+6AVcKEGhndnNfYy5ub25fYmxhbmsSLmhndnNfYyBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxj/ARKQAQoQY2xpbmljYWxfY29udGV4dBgDIAEoCUJ2ukhzugFrChpjbGluaWNhbF9jb250ZXh0Lm5vbl9ibGFuaxI4Y2xpbmljYWxfY29udGV4dCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiKEAQoORnJlZUZvcm1JbnB1dHMScgoGcHJvbXB0GAEgASgJQmK6SF+6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiLNAQoOQW5hbHlzaXNJbnB1dHMSYAoWdmFyaWFudF9jbGFzc2lmaWNhdGlvbhgBIAEoCzI+LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5WYXJpYW50Q2xhc3NpZmljYXRpb25JbnB1dHNIABJGCglmcmVlX2Zvcm0YAiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guRnJlZUZvcm1JbnB1dHNIAEIRCghzY2VuYXJpbxIFukgCCAEixQEKCEFuYWx5c2lzEgoKAmlkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRISCgZwcm9tcHQYBCABKAlCAhgBEi4KCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEkEKBmlucHV0cxgGIAEoCzIxLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5BbmFseXNpc0lucHV0cyLoAQoVQ3JlYXRlQW5hbHlzaXNSZXF1ZXN0Em8KBnByb21wdBgBIAEoCUJfGAG6SFq6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJykSGwoKcHJvamVjdF9pZBgCIAEoCUIHukgEcgIQARJBCgZpbnB1dHMYAyABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHMiJAoWQ3JlYXRlQW5hbHlzaXNSZXNwb25zZRIKCgJpZBgBIAEoCSIyChNMaXN0QW5hbHlzZXNSZXF1ZXN0EhsKCnByb2plY3RfaWQYASABKAlCB7pIBHICEAEiVQoUTGlzdEFuYWx5c2VzUmVzcG9uc2USPQoIYW5hbHlzZXMYASADKAsyKy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXMiFQoTTGlzdFByb2plY3RzUmVxdWVzdCJUChRMaXN0UHJvamVjdHNSZXNwb25zZRI8Cghwcm9qZWN0cxgBIAMoCzIqLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Qcm9qZWN0IisKC1BvbGxSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABIqEBCgxQb2xsUmVzcG9uc2USRAoGZXZlbnRzGAEgAygLMjQudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkNvbnZlcnNhdGlvbkV2ZW50Ei4KGHdvcmtpbmdfZG9jdW1lbnRfdmVyc2lvbhgCIAEoBUIHukgEGgIoAUgAiAEBQhsKGV93b3JraW5nX2RvY3VtZW50X3ZlcnNpb24iSQoNVGhyZWFkUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQARIaCgl0aHJlYWRfaWQYAiABKAlCB7pIBHICEAEiVgoOVGhyZWFkUmVzcG9uc2USRAoGZXZlbnRzGAEgAygLMjQudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkNvbnZlcnNhdGlvbkV2ZW50IpoBCgxTdGVlclJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESbAoEdGV4dBgCIAEoCUJeukhbugFTCg50ZXh0Lm5vbl9ibGFuaxIsdGV4dCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiIPCg1TdGVlclJlc3BvbnNlIjAKEEludGVycnVwdFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAEiEwoRSW50ZXJydXB0UmVzcG9uc2UiPQoPV29ya2luZ0RvY3VtZW50EhgKB3ZlcnNpb24YASABKAVCB7pIBBoCKAESEAoIbWFya2Rvd24YAiABKAkiWgoPRG9jdW1lbnRSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABEh0KB3ZlcnNpb24YAiABKAVCB7pIBBoCKAFIAIgBAUIKCghfdmVyc2lvbiJYChBEb2N1bWVudFJlc3BvbnNlEkQKCGRvY3VtZW50GAEgASgLMjIudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLldvcmtpbmdEb2N1bWVudCqyAQoMVG9vbExhbmd1YWdlEh0KGVRPT0xfTEFOR1VBR0VfVU5TUEVDSUZJRUQQABIYChRUT09MX0xBTkdVQUdFX1BZVEhPThABEhcKE1RPT0xfTEFOR1VBR0VfU0hFTEwQAhIaChZUT09MX0xBTkdVQUdFX01BUktET1dOEAMSFgoSVE9PTF9MQU5HVUFHRV9KU09OEAQSHAoYVE9PTF9MQU5HVUFHRV9UWVBFU0NSSVBUEAUqgAEKDERpZmZMaW5lS2luZBIeChpESUZGX0xJTkVfS0lORF9VTlNQRUNJRklFRBAAEhoKFkRJRkZfTElORV9LSU5EX0NPTlRFWFQQARIaChZESUZGX0xJTkVfS0lORF9SRU1PVkVEEAISGAoURElGRl9MSU5FX0tJTkRfQURERUQQAyqGAQoOU3ViQWdlbnRTdGF0dXMSIAocU1VCX0FHRU5UX1NUQVRVU19VTlNQRUNJRklFRBAAEhwKGFNVQl9BR0VOVF9TVEFUVVNfUlVOTklORxABEhkKFVNVQl9BR0VOVF9TVEFUVVNfSURMRRACEhkKFVNVQl9BR0VOVF9TVEFUVVNfRE9ORRADYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp]);
 
 /**
  * An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a markdown body
@@ -73,10 +73,38 @@ export const ToolResultSchema: GenMessage<ToolResult> = /*@__PURE__*/
   messageDesc(file_themis_workbench_models_workbench, 1);
 
 /**
- * A tool call, projected for display. `name` tags the tool; `intent` is the one-line label (the
- * shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the
- * name); `command` is the full untruncated invocation the row reveals on expand. `result` is
- * absent until the call returns.
+ * One line of a projected replacement, in reading order. `text` carries no sign prefix: the sign is
+ * `kind`, and a caller draws it. The lines diff the replacement the tool was given, never the file
+ * it targets (agent-output-rendering.md, "A replacement crosses as kinded lines").
+ *
+ * @generated from message themis.workbench.models.workbench.DiffLine
+ */
+export type DiffLine = Message<"themis.workbench.models.workbench.DiffLine"> & {
+  /**
+   * @generated from field: themis.workbench.models.workbench.DiffLineKind kind = 1;
+   */
+  kind: DiffLineKind;
+
+  /**
+   * @generated from field: string text = 2;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.DiffLine.
+ * Use `create(DiffLineSchema)` to create a new message.
+ */
+export const DiffLineSchema: GenMessage<DiffLine> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 2);
+
+/**
+ * A tool call, projected for display. `name` tags the tool; `intent` is the one-line label — the
+ * shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the name —
+ * and is never empty. The body a row reveals on expand is EITHER `command`, the body text in
+ * `language`, OR `diff`, a replacement line by line: never both, and neither where the body is
+ * empty text. `result` is absent until the call returns. (agent-output-rendering.md, "A tool call
+ * is a label and a body".)
  *
  * @generated from message themis.workbench.models.workbench.ToolCall
  */
@@ -100,6 +128,16 @@ export type ToolCall = Message<"themis.workbench.models.workbench.ToolCall"> & {
    * @generated from field: themis.workbench.models.workbench.ToolResult result = 4;
    */
   result?: ToolResult | undefined;
+
+  /**
+   * @generated from field: themis.workbench.models.workbench.ToolLanguage language = 5;
+   */
+  language: ToolLanguage;
+
+  /**
+   * @generated from field: repeated themis.workbench.models.workbench.DiffLine diff = 6;
+   */
+  diff: DiffLine[];
 };
 
 /**
@@ -107,16 +145,56 @@ export type ToolCall = Message<"themis.workbench.models.workbench.ToolCall"> & {
  * Use `create(ToolCallSchema)` to create a new message.
  */
 export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 2);
+  messageDesc(file_themis_workbench_models_workbench, 3);
 
 /**
- * One line of the projected conversation stream. A oneof over the three variants, so the
- * kind-iff-payload invariant is structural; the client surfaces it as a tagged union. `id` is stable
- * across polls (the client replaces by id, never appends); `occurred_at` orders the stream — array
- * position stops being load-bearing once interleaved sub-agent threads fold into one list. The
- * projection is flat: it carries neither per-turn agent/thread attribution (coordinator vs a named
- * sub-agent) nor a thinking variant — both are additive fields, deferred until the workbench renders
- * them.
+ * A thread the coordinator spawned, folded to one line of the stream: `prompt`, the coordinator's
+ * first message to it; `summary`, the last message it returned; and where it stands. Each text is
+ * absent until it lands, never empty — an empty string means a message that carried no text block,
+ * a distinct state. The card's event id IS the thread id: `sthr_`-prefixed, disjoint from the
+ * `sevt_` event-id space. The thread's own narration and tool calls are not here; `GetThread`
+ * fetches them. (conversation-view.md, "A spawned thread folds to one card".)
+ *
+ * @generated from message themis.workbench.models.workbench.SubAgent
+ */
+export type SubAgent = Message<"themis.workbench.models.workbench.SubAgent"> & {
+  /**
+   * @generated from field: string thread_id = 1;
+   */
+  threadId: string;
+
+  /**
+   * @generated from field: themis.workbench.models.workbench.SubAgentStatus status = 2;
+   */
+  status: SubAgentStatus;
+
+  /**
+   * @generated from field: optional string prompt = 3;
+   */
+  prompt?: string | undefined;
+
+  /**
+   * @generated from field: optional string summary = 4;
+   */
+  summary?: string | undefined;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.SubAgent.
+ * Use `create(SubAgentSchema)` to create a new message.
+ */
+export const SubAgentSchema: GenMessage<SubAgent> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 4);
+
+/**
+ * One line of the projected conversation stream. A oneof over its variants, so kind-iff-payload is
+ * structural and a caller can surface it as a tagged union. `id` is stable across polls: replace by
+ * id, never append. `occurred_at` orders the stream, total and stable — sorted by stamp, with the
+ * listing's relative order kept between equal stamps; an event upstream left unstamped inherits the
+ * stamp before it, or the first stamp after it where the unstamped run leads the stream. There is
+ * no per-turn agent attribution; the `sub_agent` card is the attribution. A thinking variant is
+ * deferred. (conversation-view.md, "The stream carries four kinds of line, ordered by their
+ * stamps".)
  *
  * @generated from message themis.workbench.models.workbench.ConversationEvent
  */
@@ -152,6 +230,12 @@ export type ConversationEvent = Message<"themis.workbench.models.workbench.Conve
      */
     value: ToolCall;
     case: "tool";
+  } | {
+    /**
+     * @generated from field: themis.workbench.models.workbench.SubAgent sub_agent = 6;
+     */
+    value: SubAgent;
+    case: "subAgent";
   } | { case: undefined; value?: undefined };
 };
 
@@ -160,7 +244,7 @@ export type ConversationEvent = Message<"themis.workbench.models.workbench.Conve
  * Use `create(ConversationEventSchema)` to create a new message.
  */
 export const ConversationEventSchema: GenMessage<ConversationEvent> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 3);
+  messageDesc(file_themis_workbench_models_workbench, 5);
 
 /**
  * A Project the user belongs to — the access/data boundary an Analysis is bound to (GLOSSARY).
@@ -184,11 +268,100 @@ export type Project = Message<"themis.workbench.models.workbench.Project"> & {
  * Use `create(ProjectSchema)` to create a new message.
  */
 export const ProjectSchema: GenMessage<Project> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 4);
+  messageDesc(file_themis_workbench_models_workbench, 6);
+
+/**
+ * The inputs of a variant-classification Analysis: which variant, on which transcript, in what
+ * clinical picture. `transcript` is a RefSeq accession with its version (NM_001382309.1) and
+ * `hgvs_c` the coding change against it (c.332del) — two fields, not one string. Neither carries a
+ * format rule; only presence and length are checked.
+ *
+ * @generated from message themis.workbench.models.workbench.VariantClassificationInputs
+ */
+export type VariantClassificationInputs = Message<"themis.workbench.models.workbench.VariantClassificationInputs"> & {
+  /**
+   * Non-blank and bounded, like every field here: 255 characters for an identifier, 10 000 for a
+   * prose field. A cap is not a format rule.
+   *
+   * @generated from field: string transcript = 1;
+   */
+  transcript: string;
+
+  /**
+   * @generated from field: string hgvs_c = 2;
+   */
+  hgvsC: string;
+
+  /**
+   * @generated from field: string clinical_context = 3;
+   */
+  clinicalContext: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.VariantClassificationInputs.
+ * Use `create(VariantClassificationInputsSchema)` to create a new message.
+ */
+export const VariantClassificationInputsSchema: GenMessage<VariantClassificationInputs> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 7);
+
+/**
+ * The inputs of an Analysis a curator states in their own words — the scenario for work no structured
+ * scenario covers yet.
+ *
+ * @generated from message themis.workbench.models.workbench.FreeFormInputs
+ */
+export type FreeFormInputs = Message<"themis.workbench.models.workbench.FreeFormInputs"> & {
+  /**
+   * @generated from field: string prompt = 1;
+   */
+  prompt: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.FreeFormInputs.
+ * Use `create(FreeFormInputsSchema)` to create a new message.
+ */
+export const FreeFormInputsSchema: GenMessage<FreeFormInputs> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 8);
+
+/**
+ * What an Analysis was asked to do: the scenario, and the inputs that scenario takes. Exactly one
+ * member is set, and which one IS the scenario — read the scenario off the oneof case, never off a
+ * field beside it. Every surface that names or previews an Analysis renders from here, per scenario.
+ *
+ * @generated from message themis.workbench.models.workbench.AnalysisInputs
+ */
+export type AnalysisInputs = Message<"themis.workbench.models.workbench.AnalysisInputs"> & {
+  /**
+   * @generated from oneof themis.workbench.models.workbench.AnalysisInputs.scenario
+   */
+  scenario: {
+    /**
+     * @generated from field: themis.workbench.models.workbench.VariantClassificationInputs variant_classification = 1;
+     */
+    value: VariantClassificationInputs;
+    case: "variantClassification";
+  } | {
+    /**
+     * @generated from field: themis.workbench.models.workbench.FreeFormInputs free_form = 2;
+     */
+    value: FreeFormInputs;
+    case: "freeForm";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.AnalysisInputs.
+ * Use `create(AnalysisInputsSchema)` to create a new message.
+ */
+export const AnalysisInputsSchema: GenMessage<AnalysisInputs> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 9);
 
 /**
  * An Analysis: a collaborative working session bound to a Project (GLOSSARY). `session_id` is the
- * backend session the agent runs in, minted at create.
+ * backend session the agent runs in, minted at create. The kickoff text the agent receives is
+ * rendered from `inputs` and is not carried here: the conversation is where what was sent is read.
  *
  * @generated from message themis.workbench.models.workbench.Analysis
  */
@@ -209,7 +382,11 @@ export type Analysis = Message<"themis.workbench.models.workbench.Analysis"> & {
   projectId: string;
 
   /**
-   * @generated from field: string prompt = 4;
+   * Superseded by `inputs`, which types what `prompt` carried as free text. Retired — deleted, with
+   * its number and name reserved — once nothing sets it (proto.md §Schema evolution).
+   *
+   * @generated from field: string prompt = 4 [deprecated = true];
+   * @deprecated
    */
   prompt: string;
 
@@ -217,6 +394,11 @@ export type Analysis = Message<"themis.workbench.models.workbench.Analysis"> & {
    * @generated from field: google.protobuf.Timestamp created_at = 5;
    */
   createdAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: themis.workbench.models.workbench.AnalysisInputs inputs = 6;
+   */
+  inputs?: AnalysisInputs | undefined;
 };
 
 /**
@@ -224,17 +406,24 @@ export type Analysis = Message<"themis.workbench.models.workbench.Analysis"> & {
  * Use `create(AnalysisSchema)` to create a new message.
  */
 export const AnalysisSchema: GenMessage<Analysis> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 5);
+  messageDesc(file_themis_workbench_models_workbench, 10);
 
 /**
- * The create request: the kickoff prompt and the Project the analysis lands in. A whitespace-only
- * prompt or a blank project id is rejected at the boundary.
+ * The create request: the scenario inputs to run, and the Project the analysis lands in. A blank
+ * project id is rejected at the boundary, as is a scenario missing a field.
  *
  * @generated from message themis.workbench.models.workbench.CreateAnalysisRequest
  */
 export type CreateAnalysisRequest = Message<"themis.workbench.models.workbench.CreateAnalysisRequest"> & {
   /**
-   * @generated from field: string prompt = 1;
+   * Superseded by `inputs`, which types what `prompt` carried as free text. Until the retirement
+   * every create carries `prompt` — its non-blank rule admits no exemption — and `inputs` is
+   * optional and set by no caller. The retirement deletes `prompt`, reserving its number and its
+   * name (proto.md §Schema evolution), and makes `inputs` required; it lands with the change that
+   * stops setting `prompt`.
+   *
+   * @generated from field: string prompt = 1 [deprecated = true];
+   * @deprecated
    */
   prompt: string;
 
@@ -242,6 +431,11 @@ export type CreateAnalysisRequest = Message<"themis.workbench.models.workbench.C
    * @generated from field: string project_id = 2;
    */
   projectId: string;
+
+  /**
+   * @generated from field: themis.workbench.models.workbench.AnalysisInputs inputs = 3;
+   */
+  inputs?: AnalysisInputs | undefined;
 };
 
 /**
@@ -249,7 +443,7 @@ export type CreateAnalysisRequest = Message<"themis.workbench.models.workbench.C
  * Use `create(CreateAnalysisRequestSchema)` to create a new message.
  */
 export const CreateAnalysisRequestSchema: GenMessage<CreateAnalysisRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 6);
+  messageDesc(file_themis_workbench_models_workbench, 11);
 
 /**
  * The create reply: the minted analysis id, which the client puts in the URL.
@@ -268,7 +462,7 @@ export type CreateAnalysisResponse = Message<"themis.workbench.models.workbench.
  * Use `create(CreateAnalysisResponseSchema)` to create a new message.
  */
 export const CreateAnalysisResponseSchema: GenMessage<CreateAnalysisResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 7);
+  messageDesc(file_themis_workbench_models_workbench, 12);
 
 /**
  * The Project whose Analyses to list.
@@ -287,7 +481,7 @@ export type ListAnalysesRequest = Message<"themis.workbench.models.workbench.Lis
  * Use `create(ListAnalysesRequestSchema)` to create a new message.
  */
 export const ListAnalysesRequestSchema: GenMessage<ListAnalysesRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 8);
+  messageDesc(file_themis_workbench_models_workbench, 13);
 
 /**
  * The prior Analyses the session browser lists, newest first.
@@ -306,7 +500,7 @@ export type ListAnalysesResponse = Message<"themis.workbench.models.workbench.Li
  * Use `create(ListAnalysesResponseSchema)` to create a new message.
  */
 export const ListAnalysesResponseSchema: GenMessage<ListAnalysesResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 9);
+  messageDesc(file_themis_workbench_models_workbench, 14);
 
 /**
  * The request for the caller's Projects. Empty: the caller is the verified identity on the request,
@@ -322,7 +516,7 @@ export type ListProjectsRequest = Message<"themis.workbench.models.workbench.Lis
  * Use `create(ListProjectsRequestSchema)` to create a new message.
  */
 export const ListProjectsRequestSchema: GenMessage<ListProjectsRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 10);
+  messageDesc(file_themis_workbench_models_workbench, 15);
 
 /**
  * The Projects the user belongs to — the app-bar's Project selector.
@@ -341,7 +535,7 @@ export type ListProjectsResponse = Message<"themis.workbench.models.workbench.Li
  * Use `create(ListProjectsResponseSchema)` to create a new message.
  */
 export const ListProjectsResponseSchema: GenMessage<ListProjectsResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 11);
+  messageDesc(file_themis_workbench_models_workbench, 16);
 
 /**
  * The Analysis to poll.
@@ -360,12 +554,11 @@ export type PollRequest = Message<"themis.workbench.models.workbench.PollRequest
  * Use `create(PollRequestSchema)` to create a new message.
  */
 export const PollRequestSchema: GenMessage<PollRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 12);
+  messageDesc(file_themis_workbench_models_workbench, 17);
 
 /**
- * One poll tick. `events` is the whole projected stream every tick (the client replaces by id,
- * never appends): the upstream event log has no since-cursor, so the adapter re-projects the lot
- * each poll. The progressive reveal is server-side state, not a client-threaded cursor.
+ * One poll tick. `events` is the whole projected stream every tick: replace by id, never append.
+ * There is no since-cursor to pass — the upstream event log offers none.
  *
  * @generated from message themis.workbench.models.workbench.PollResponse
  */
@@ -388,7 +581,134 @@ export type PollResponse = Message<"themis.workbench.models.workbench.PollRespon
  * Use `create(PollResponseSchema)` to create a new message.
  */
 export const PollResponseSchema: GenMessage<PollResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 13);
+  messageDesc(file_themis_workbench_models_workbench, 18);
+
+/**
+ * The spawned thread whose own conversation to fetch. No field names a session: it is read off the
+ * authorized analysis row, so a thread id the caller's own session does not hold answers NOT_FOUND,
+ * exactly as an unknown analysis does.
+ *
+ * @generated from message themis.workbench.models.workbench.ThreadRequest
+ */
+export type ThreadRequest = Message<"themis.workbench.models.workbench.ThreadRequest"> & {
+  /**
+   * @generated from field: string analysis_id = 1;
+   */
+  analysisId: string;
+
+  /**
+   * @generated from field: string thread_id = 2;
+   */
+  threadId: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.ThreadRequest.
+ * Use `create(ThreadRequestSchema)` to create a new message.
+ */
+export const ThreadRequestSchema: GenMessage<ThreadRequest> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 19);
+
+/**
+ * A spawned thread's own stream, in the same projection the coordinator's is in: the coordinator's
+ * instruction is the thread's `user` turn, and its tool calls carry the same derived label, body and
+ * language. `events` never carries a `sub_agent` card — delegation is one level deep — so a caller
+ * may treat one as an error. (conversation-view.md, "GetThread".)
+ *
+ * @generated from message themis.workbench.models.workbench.ThreadResponse
+ */
+export type ThreadResponse = Message<"themis.workbench.models.workbench.ThreadResponse"> & {
+  /**
+   * @generated from field: repeated themis.workbench.models.workbench.ConversationEvent events = 1;
+   */
+  events: ConversationEvent[];
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.ThreadResponse.
+ * Use `create(ThreadResponseSchema)` to create a new message.
+ */
+export const ThreadResponseSchema: GenMessage<ThreadResponse> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 20);
+
+/**
+ * A curator turn appended to a running Analysis — an answer, a correction, a constraint the run must
+ * respect. Prose and nothing else: what the turn settles is the agent's to record in the working
+ * document, never a field here. `text` is non-blank and bounded, like every prose field.
+ * (conversation-view.md, "Steer".)
+ *
+ * @generated from message themis.workbench.models.workbench.SteerRequest
+ */
+export type SteerRequest = Message<"themis.workbench.models.workbench.SteerRequest"> & {
+  /**
+   * @generated from field: string analysis_id = 1;
+   */
+  analysisId: string;
+
+  /**
+   * @generated from field: string text = 2;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.SteerRequest.
+ * Use `create(SteerRequestSchema)` to create a new message.
+ */
+export const SteerRequestSchema: GenMessage<SteerRequest> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 21);
+
+/**
+ * The steer reply. Empty: the turn is accepted, and the poll is what surfaces it and whatever the
+ * agent does with it.
+ *
+ * @generated from message themis.workbench.models.workbench.SteerResponse
+ */
+export type SteerResponse = Message<"themis.workbench.models.workbench.SteerResponse"> & {
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.SteerResponse.
+ * Use `create(SteerResponseSchema)` to create a new message.
+ */
+export const SteerResponseSchema: GenMessage<SteerResponse> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 22);
+
+/**
+ * Halt the Analysis's current step: the run stops what it is doing and goes idle, ready for the
+ * curator's next turn. Against a run that is already idle it is a no-op, so it is safe to send
+ * while a step is completing.
+ *
+ * @generated from message themis.workbench.models.workbench.InterruptRequest
+ */
+export type InterruptRequest = Message<"themis.workbench.models.workbench.InterruptRequest"> & {
+  /**
+   * @generated from field: string analysis_id = 1;
+   */
+  analysisId: string;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.InterruptRequest.
+ * Use `create(InterruptRequestSchema)` to create a new message.
+ */
+export const InterruptRequestSchema: GenMessage<InterruptRequest> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 23);
+
+/**
+ * The interrupt reply. Empty: the poll is what surfaces the halted step.
+ *
+ * @generated from message themis.workbench.models.workbench.InterruptResponse
+ */
+export type InterruptResponse = Message<"themis.workbench.models.workbench.InterruptResponse"> & {
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.InterruptResponse.
+ * Use `create(InterruptResponseSchema)` to create a new message.
+ */
+export const InterruptResponseSchema: GenMessage<InterruptResponse> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 24);
 
 /**
  * A produced working document: its version and markdown body.
@@ -412,7 +732,7 @@ export type WorkingDocument = Message<"themis.workbench.models.workbench.Working
  * Use `create(WorkingDocumentSchema)` to create a new message.
  */
 export const WorkingDocumentSchema: GenMessage<WorkingDocument> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 14);
+  messageDesc(file_themis_workbench_models_workbench, 25);
 
 /**
  * The working document to fetch. `version` absent asks for the current document; naming a version
@@ -437,7 +757,7 @@ export type DocumentRequest = Message<"themis.workbench.models.workbench.Documen
  * Use `create(DocumentRequestSchema)` to create a new message.
  */
 export const DocumentRequestSchema: GenMessage<DocumentRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 15);
+  messageDesc(file_themis_workbench_models_workbench, 26);
 
 /**
  * The working document as a produced/not-produced result. `document` unset is the not-produced
@@ -457,5 +777,119 @@ export type DocumentResponse = Message<"themis.workbench.models.workbench.Docume
  * Use `create(DocumentResponseSchema)` to create a new message.
  */
 export const DocumentResponseSchema: GenMessage<DocumentResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 16);
+  messageDesc(file_themis_workbench_models_workbench, 27);
+
+/**
+ * The syntax a tool call's `command` is written in. UNSPECIFIED where that text is not one lexable
+ * unit in a named language; a caller renders such a body unhighlighted
+ * (agent-output-rendering.md, "The language belongs to the text, not the tool").
+ *
+ * @generated from enum themis.workbench.models.workbench.ToolLanguage
+ */
+export enum ToolLanguage {
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_PYTHON = 1;
+   */
+  PYTHON = 1,
+
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_SHELL = 2;
+   */
+  SHELL = 2,
+
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_MARKDOWN = 3;
+   */
+  MARKDOWN = 3,
+
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_JSON = 4;
+   */
+  JSON = 4,
+
+  /**
+   * @generated from enum value: TOOL_LANGUAGE_TYPESCRIPT = 5;
+   */
+  TYPESCRIPT = 5,
+}
+
+/**
+ * Describes the enum themis.workbench.models.workbench.ToolLanguage.
+ */
+export const ToolLanguageSchema: GenEnum<ToolLanguage> = /*@__PURE__*/
+  enumDesc(file_themis_workbench_models_workbench, 0);
+
+/**
+ * Which side of a replacement a diff line falls on.
+ *
+ * @generated from enum themis.workbench.models.workbench.DiffLineKind
+ */
+export enum DiffLineKind {
+  /**
+   * @generated from enum value: DIFF_LINE_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: DIFF_LINE_KIND_CONTEXT = 1;
+   */
+  CONTEXT = 1,
+
+  /**
+   * @generated from enum value: DIFF_LINE_KIND_REMOVED = 2;
+   */
+  REMOVED = 2,
+
+  /**
+   * @generated from enum value: DIFF_LINE_KIND_ADDED = 3;
+   */
+  ADDED = 3,
+}
+
+/**
+ * Describes the enum themis.workbench.models.workbench.DiffLineKind.
+ */
+export const DiffLineKindSchema: GenEnum<DiffLineKind> = /*@__PURE__*/
+  enumDesc(file_themis_workbench_models_workbench, 1);
+
+/**
+ * The display state of a spawned thread. RUNNING: working, and what a thread that has reported no
+ * status yet reads as. IDLE: returned to the coordinator, awaiting its next instruction. DONE:
+ * finished. The projection never emits 0, but a caller can still receive it — an unknown status
+ * *name* decodes to 0 under a proto3-JSON parse — and renders it as its neutral unknown state.
+ *
+ * @generated from enum themis.workbench.models.workbench.SubAgentStatus
+ */
+export enum SubAgentStatus {
+  /**
+   * @generated from enum value: SUB_AGENT_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: SUB_AGENT_STATUS_RUNNING = 1;
+   */
+  RUNNING = 1,
+
+  /**
+   * @generated from enum value: SUB_AGENT_STATUS_IDLE = 2;
+   */
+  IDLE = 2,
+
+  /**
+   * @generated from enum value: SUB_AGENT_STATUS_DONE = 3;
+   */
+  DONE = 3,
+}
+
+/**
+ * Describes the enum themis.workbench.models.workbench.SubAgentStatus.
+ */
+export const SubAgentStatusSchema: GenEnum<SubAgentStatus> = /*@__PURE__*/
+  enumDesc(file_themis_workbench_models_workbench, 2);
 

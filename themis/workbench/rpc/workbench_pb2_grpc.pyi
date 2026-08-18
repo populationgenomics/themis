@@ -63,6 +63,18 @@ class WorkbenchStub:
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]
     """One liveness tick: the whole projected event stream plus the working-document version signal."""
+    GetThread: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]
+    """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+    projection the coordinator's stream is in. A read: it advances nothing.
+    """
+    Steer: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.SteerRequest, _workbench_pb2.SteerResponse]
+    """Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+    a new one.
+    """
+    Interrupt: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.InterruptRequest, _workbench_pb2.InterruptResponse]
+    """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+    and the session goes idle, ready for the curator's next turn.
+    """
     GetDocument: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]
     """The current working document as a produced|not-produced result, or a named historical version."""
     DescribePaper: _grpc.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]
@@ -98,6 +110,18 @@ class WorkbenchAsyncStub(WorkbenchStub):
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _aio.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]  # type: ignore[assignment]
     """One liveness tick: the whole projected event stream plus the working-document version signal."""
+    GetThread: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]  # type: ignore[assignment]
+    """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+    projection the coordinator's stream is in. A read: it advances nothing.
+    """
+    Steer: _aio.UnaryUnaryMultiCallable[_workbench_pb2.SteerRequest, _workbench_pb2.SteerResponse]  # type: ignore[assignment]
+    """Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+    a new one.
+    """
+    Interrupt: _aio.UnaryUnaryMultiCallable[_workbench_pb2.InterruptRequest, _workbench_pb2.InterruptResponse]  # type: ignore[assignment]
+    """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+    and the session goes idle, ready for the curator's next turn.
+    """
     GetDocument: _aio.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]  # type: ignore[assignment]
     """The current working document as a produced|not-produced result, or a named historical version."""
     DescribePaper: _aio.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]  # type: ignore[assignment]
@@ -154,6 +178,36 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         context: _ServicerContext,
     ) -> _typing.Union[_workbench_pb2.PollResponse, _abc.Awaitable[_workbench_pb2.PollResponse]]:
         """One liveness tick: the whole projected event stream plus the working-document version signal."""
+
+    @_abc_1.abstractmethod
+    def GetThread(
+        self,
+        request: _workbench_pb2.ThreadRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_workbench_pb2.ThreadResponse, _abc.Awaitable[_workbench_pb2.ThreadResponse]]:
+        """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+        projection the coordinator's stream is in. A read: it advances nothing.
+        """
+
+    @_abc_1.abstractmethod
+    def Steer(
+        self,
+        request: _workbench_pb2.SteerRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_workbench_pb2.SteerResponse, _abc.Awaitable[_workbench_pb2.SteerResponse]]:
+        """Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+        a new one.
+        """
+
+    @_abc_1.abstractmethod
+    def Interrupt(
+        self,
+        request: _workbench_pb2.InterruptRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_workbench_pb2.InterruptResponse, _abc.Awaitable[_workbench_pb2.InterruptResponse]]:
+        """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+        and the session goes idle, ready for the curator's next turn.
+        """
 
     @_abc_1.abstractmethod
     def GetDocument(

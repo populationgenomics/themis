@@ -117,9 +117,8 @@ A destructive migration is allowed only where that window costs nothing real: th
 data worth keeping and no users to fail, and the migration's own doc names which reads and writes break and until when.
 The expand/contract shape the rule otherwise forces — write both columns, tolerate the absent one, drop it a deploy
 later — is a compatibility mode in every reader and writer of the column, so it is worth declining while an environment
-is still disposable and worth paying once it is not. `analysis-scenarios.md` §Implementation state is the worked
-instance: `0008_analysis_inputs` drops a `NOT NULL` column and deletes every row, and records the failing window it
-accepts.
+is still disposable and worth paying once it is not. `analysis-scenarios.md` §Storage is the worked instance:
+`0008_analysis_inputs` drops a `NOT NULL` column and deletes every row, and records the failing window it accepts.
 
 ### Identity and the ownership bootstrap
 

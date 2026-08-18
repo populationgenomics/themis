@@ -17,14 +17,14 @@ import type { GenFile, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { DescribePaperRequestSchema, LocateRequestSchema, LocateResponseSchema, PaperInfoSchema } from "../../rpc/literature_pb";
 import { file_themis_rpc_literature } from "../../rpc/literature_pb";
-import type { CreateAnalysisRequestSchema, CreateAnalysisResponseSchema, DocumentRequestSchema, DocumentResponseSchema, ListAnalysesRequestSchema, ListAnalysesResponseSchema, ListProjectsRequestSchema, ListProjectsResponseSchema, PollRequestSchema, PollResponseSchema } from "../models/workbench_pb";
+import type { CreateAnalysisRequestSchema, CreateAnalysisResponseSchema, DocumentRequestSchema, DocumentResponseSchema, InterruptRequestSchema, InterruptResponseSchema, ListAnalysesRequestSchema, ListAnalysesResponseSchema, ListProjectsRequestSchema, ListProjectsResponseSchema, PollRequestSchema, PollResponseSchema, SteerRequestSchema, SteerResponseSchema, ThreadRequestSchema, ThreadResponseSchema } from "../models/workbench_pb";
 import { file_themis_workbench_models_workbench } from "../models/workbench_pb";
 
 /**
  * Describes the file themis/workbench/rpc/workbench.proto.
  */
 export const file_themis_workbench_rpc_workbench: GenFile = /*@__PURE__*/
-  fileDesc("CiR0aGVtaXMvd29ya2JlbmNoL3JwYy93b3JrYmVuY2gucHJvdG8SFHRoZW1pcy53b3JrYmVuY2gucnBjMq0GCglXb3JrYmVuY2gSfwoMTGlzdFByb2plY3RzEjYudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkxpc3RQcm9qZWN0c1JlcXVlc3QaNy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTGlzdFByb2plY3RzUmVzcG9uc2UShQEKDkNyZWF0ZUFuYWx5c2lzEjgudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkNyZWF0ZUFuYWx5c2lzUmVxdWVzdBo5LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5DcmVhdGVBbmFseXNpc1Jlc3BvbnNlEn8KDExpc3RBbmFseXNlcxI2LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5MaXN0QW5hbHlzZXNSZXF1ZXN0GjcudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkxpc3RBbmFseXNlc1Jlc3BvbnNlEmcKBFBvbGwSLi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUG9sbFJlcXVlc3QaLy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUG9sbFJlc3BvbnNlEnYKC0dldERvY3VtZW50EjIudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRvY3VtZW50UmVxdWVzdBozLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Eb2N1bWVudFJlc3BvbnNlEl4KDURlc2NyaWJlUGFwZXISKy50aGVtaXMucnBjLmxpdGVyYXR1cmUuRGVzY3JpYmVQYXBlclJlcXVlc3QaIC50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGFwZXJJbmZvElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlYgZwcm90bzM", [file_themis_rpc_literature, file_themis_workbench_models_workbench]);
+  fileDesc("CiR0aGVtaXMvd29ya2JlbmNoL3JwYy93b3JrYmVuY2gucHJvdG8SFHRoZW1pcy53b3JrYmVuY2gucnBjMoMJCglXb3JrYmVuY2gSfwoMTGlzdFByb2plY3RzEjYudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkxpc3RQcm9qZWN0c1JlcXVlc3QaNy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTGlzdFByb2plY3RzUmVzcG9uc2UShQEKDkNyZWF0ZUFuYWx5c2lzEjgudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkNyZWF0ZUFuYWx5c2lzUmVxdWVzdBo5LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5DcmVhdGVBbmFseXNpc1Jlc3BvbnNlEn8KDExpc3RBbmFseXNlcxI2LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5MaXN0QW5hbHlzZXNSZXF1ZXN0GjcudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkxpc3RBbmFseXNlc1Jlc3BvbnNlEmcKBFBvbGwSLi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUG9sbFJlcXVlc3QaLy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUG9sbFJlc3BvbnNlEnAKCUdldFRocmVhZBIwLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5UaHJlYWRSZXF1ZXN0GjEudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRocmVhZFJlc3BvbnNlEmoKBVN0ZWVyEi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN0ZWVyUmVxdWVzdBowLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5TdGVlclJlc3BvbnNlEnYKCUludGVycnVwdBIzLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5JbnRlcnJ1cHRSZXF1ZXN0GjQudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkludGVycnVwdFJlc3BvbnNlEnYKC0dldERvY3VtZW50EjIudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRvY3VtZW50UmVxdWVzdBozLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Eb2N1bWVudFJlc3BvbnNlEl4KDURlc2NyaWJlUGFwZXISKy50aGVtaXMucnBjLmxpdGVyYXR1cmUuRGVzY3JpYmVQYXBlclJlcXVlc3QaIC50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGFwZXJJbmZvElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlYgZwcm90bzM", [file_themis_rpc_literature, file_themis_workbench_models_workbench]);
 
 /**
  * The workbench surface a curator reaches. Every method is scoped to the caller the BFF verified
@@ -79,6 +79,39 @@ export const Workbench: GenService<{
     methodKind: "unary";
     input: typeof PollRequestSchema;
     output: typeof PollResponseSchema;
+  },
+  /**
+   * One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+   * projection the coordinator's stream is in. A read: it advances nothing.
+   *
+   * @generated from rpc themis.workbench.rpc.Workbench.GetThread
+   */
+  getThread: {
+    methodKind: "unary";
+    input: typeof ThreadRequestSchema;
+    output: typeof ThreadResponseSchema;
+  },
+  /**
+   * Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+   * a new one.
+   *
+   * @generated from rpc themis.workbench.rpc.Workbench.Steer
+   */
+  steer: {
+    methodKind: "unary";
+    input: typeof SteerRequestSchema;
+    output: typeof SteerResponseSchema;
+  },
+  /**
+   * Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+   * and the session goes idle, ready for the curator's next turn.
+   *
+   * @generated from rpc themis.workbench.rpc.Workbench.Interrupt
+   */
+  interrupt: {
+    methodKind: "unary";
+    input: typeof InterruptRequestSchema;
+    output: typeof InterruptResponseSchema;
   },
   /**
    * The current working document as a produced|not-produced result, or a named historical version.

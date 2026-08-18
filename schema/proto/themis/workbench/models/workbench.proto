@@ -26,24 +26,81 @@ message ToolResult {
   bool is_error = 2;  // the call failed (non-zero exit / ToolError)
 }
 
-// A tool call, projected for display. `name` tags the tool; `intent` is the one-line label (the
-// shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the
-// name); `command` is the full untruncated invocation the row reveals on expand. `result` is
-// absent until the call returns.
+// The syntax a tool call's `command` is written in. UNSPECIFIED where that text is not one lexable
+// unit in a named language; a caller renders such a body unhighlighted
+// (agent-output-rendering.md, "The language belongs to the text, not the tool").
+enum ToolLanguage {
+  TOOL_LANGUAGE_UNSPECIFIED = 0;
+  TOOL_LANGUAGE_PYTHON = 1;
+  TOOL_LANGUAGE_SHELL = 2;
+  TOOL_LANGUAGE_MARKDOWN = 3;
+  TOOL_LANGUAGE_JSON = 4;
+  TOOL_LANGUAGE_TYPESCRIPT = 5;
+}
+
+// Which side of a replacement a diff line falls on.
+enum DiffLineKind {
+  DIFF_LINE_KIND_UNSPECIFIED = 0;
+  DIFF_LINE_KIND_CONTEXT = 1;
+  DIFF_LINE_KIND_REMOVED = 2;
+  DIFF_LINE_KIND_ADDED = 3;
+}
+
+// One line of a projected replacement, in reading order. `text` carries no sign prefix: the sign is
+// `kind`, and a caller draws it. The lines diff the replacement the tool was given, never the file
+// it targets (agent-output-rendering.md, "A replacement crosses as kinded lines").
+message DiffLine {
+  DiffLineKind kind = 1;
+  string text = 2;
+}
+
+// A tool call, projected for display. `name` tags the tool; `intent` is the one-line label — the
+// shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the name —
+// and is never empty. The body a row reveals on expand is EITHER `command`, the body text in
+// `language`, OR `diff`, a replacement line by line: never both, and neither where the body is
+// empty text. `result` is absent until the call returns. (agent-output-rendering.md, "A tool call
+// is a label and a body".)
 message ToolCall {
   string name = 1;
   string intent = 2;
   string command = 3;
   ToolResult result = 4;
+  ToolLanguage language = 5;
+  repeated DiffLine diff = 6;
 }
 
-// One line of the projected conversation stream. A oneof over the three variants, so the
-// kind-iff-payload invariant is structural; the client surfaces it as a tagged union. `id` is stable
-// across polls (the client replaces by id, never appends); `occurred_at` orders the stream — array
-// position stops being load-bearing once interleaved sub-agent threads fold into one list. The
-// projection is flat: it carries neither per-turn agent/thread attribution (coordinator vs a named
-// sub-agent) nor a thinking variant — both are additive fields, deferred until the workbench renders
-// them.
+// The display state of a spawned thread. RUNNING: working, and what a thread that has reported no
+// status yet reads as. IDLE: returned to the coordinator, awaiting its next instruction. DONE:
+// finished. The projection never emits 0, but a caller can still receive it — an unknown status
+// *name* decodes to 0 under a proto3-JSON parse — and renders it as its neutral unknown state.
+enum SubAgentStatus {
+  SUB_AGENT_STATUS_UNSPECIFIED = 0;
+  SUB_AGENT_STATUS_RUNNING = 1;
+  SUB_AGENT_STATUS_IDLE = 2;
+  SUB_AGENT_STATUS_DONE = 3;
+}
+
+// A thread the coordinator spawned, folded to one line of the stream: `prompt`, the coordinator's
+// first message to it; `summary`, the last message it returned; and where it stands. Each text is
+// absent until it lands, never empty — an empty string means a message that carried no text block,
+// a distinct state. The card's event id IS the thread id: `sthr_`-prefixed, disjoint from the
+// `sevt_` event-id space. The thread's own narration and tool calls are not here; `GetThread`
+// fetches them. (conversation-view.md, "A spawned thread folds to one card".)
+message SubAgent {
+  string thread_id = 1;
+  SubAgentStatus status = 2;
+  optional string prompt = 3;
+  optional string summary = 4;
+}
+
+// One line of the projected conversation stream. A oneof over its variants, so kind-iff-payload is
+// structural and a caller can surface it as a tagged union. `id` is stable across polls: replace by
+// id, never append. `occurred_at` orders the stream, total and stable — sorted by stamp, with the
+// listing's relative order kept between equal stamps; an event upstream left unstamped inherits the
+// stamp before it, or the first stamp after it where the unstamped run leads the stream. There is
+// no per-turn agent attribution; the `sub_agent` card is the attribution. A thinking variant is
+// deferred. (conversation-view.md, "The stream carries four kinds of line, ordered by their
+// stamps".)
 message ConversationEvent {
   string id = 1;
   google.protobuf.Timestamp occurred_at = 5;
@@ -53,6 +110,7 @@ message ConversationEvent {
     Narration assistant = 2;
     Narration user = 3;
     ToolCall tool = 4;
+    SubAgent sub_agent = 6;
   }
 }
 
@@ -62,25 +120,96 @@ message Project {
   string name = 2;
 }
 
+// The inputs of a variant-classification Analysis: which variant, on which transcript, in what
+// clinical picture. `transcript` is a RefSeq accession with its version (NM_001382309.1) and
+// `hgvs_c` the coding change against it (c.332del) — two fields, not one string. Neither carries a
+// format rule; only presence and length are checked.
+message VariantClassificationInputs {
+  // Non-blank and bounded, like every field here: 255 characters for an identifier, 10 000 for a
+  // prose field. A cap is not a format rule.
+  string transcript = 1 [
+    (buf.validate.field).cel = {
+      id: "transcript.non_blank"
+      message: "transcript must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    },
+    (buf.validate.field).string.max_len = 255
+  ];
+  string hgvs_c = 2 [
+    (buf.validate.field).cel = {
+      id: "hgvs_c.non_blank"
+      message: "hgvs_c must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    },
+    (buf.validate.field).string.max_len = 255
+  ];
+  string clinical_context = 3 [
+    (buf.validate.field).cel = {
+      id: "clinical_context.non_blank"
+      message: "clinical_context must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    },
+    (buf.validate.field).string.max_len = 10000
+  ];
+}
+
+// The inputs of an Analysis a curator states in their own words — the scenario for work no structured
+// scenario covers yet.
+message FreeFormInputs {
+  string prompt = 1 [
+    (buf.validate.field).cel = {
+      id: "prompt.non_blank"
+      message: "prompt must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    },
+    (buf.validate.field).string.max_len = 10000
+  ];
+}
+
+// What an Analysis was asked to do: the scenario, and the inputs that scenario takes. Exactly one
+// member is set, and which one IS the scenario — read the scenario off the oneof case, never off a
+// field beside it. Every surface that names or previews an Analysis renders from here, per scenario.
+message AnalysisInputs {
+  oneof scenario {
+    option (buf.validate.oneof).required = true;
+
+    VariantClassificationInputs variant_classification = 1;
+    FreeFormInputs free_form = 2;
+  }
+}
+
 // An Analysis: a collaborative working session bound to a Project (GLOSSARY). `session_id` is the
-// backend session the agent runs in, minted at create.
+// backend session the agent runs in, minted at create. The kickoff text the agent receives is
+// rendered from `inputs` and is not carried here: the conversation is where what was sent is read.
 message Analysis {
   string id = 1;
   string session_id = 2;
   string project_id = 3;
-  string prompt = 4;
+  // Superseded by `inputs`, which types what `prompt` carried as free text. Retired — deleted, with
+  // its number and name reserved — once nothing sets it (proto.md §Schema evolution).
+  string prompt = 4 [deprecated = true];
   google.protobuf.Timestamp created_at = 5;
+  AnalysisInputs inputs = 6;
 }
 
-// The create request: the kickoff prompt and the Project the analysis lands in. A whitespace-only
-// prompt or a blank project id is rejected at the boundary.
+// The create request: the scenario inputs to run, and the Project the analysis lands in. A blank
+// project id is rejected at the boundary, as is a scenario missing a field.
 message CreateAnalysisRequest {
-  string prompt = 1 [(buf.validate.field).cel = {
-    id: "prompt.non_blank"
-    message: "prompt must contain a non-whitespace character"
-    expression: "this.matches('\\\\S')"
-  }];
+  // Superseded by `inputs`, which types what `prompt` carried as free text. Until the retirement
+  // every create carries `prompt` — its non-blank rule admits no exemption — and `inputs` is
+  // optional and set by no caller. The retirement deletes `prompt`, reserving its number and its
+  // name (proto.md §Schema evolution), and makes `inputs` required; it lands with the change that
+  // stops setting `prompt`.
+  string prompt = 1 [
+    deprecated = true,
+    (buf.validate.field).cel = {
+      id: "prompt.non_blank"
+      message: "prompt must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    }
+  ];
   string project_id = 2 [(buf.validate.field).string.min_len = 1];
+  AnalysisInputs inputs = 3;
 }
 
 // The create reply: the minted analysis id, which the client puts in the URL.
@@ -112,13 +241,58 @@ message PollRequest {
   string analysis_id = 1 [(buf.validate.field).string.min_len = 1];
 }
 
-// One poll tick. `events` is the whole projected stream every tick (the client replaces by id,
-// never appends): the upstream event log has no since-cursor, so the adapter re-projects the lot
-// each poll. The progressive reveal is server-side state, not a client-threaded cursor.
+// One poll tick. `events` is the whole projected stream every tick: replace by id, never append.
+// There is no since-cursor to pass — the upstream event log offers none.
 message PollResponse {
   repeated ConversationEvent events = 1;
   optional int32 working_document_version = 2 [(buf.validate.field).int32.gte = 1];  // absent until a working document is produced, then its version
 }
+
+// The spawned thread whose own conversation to fetch. No field names a session: it is read off the
+// authorized analysis row, so a thread id the caller's own session does not hold answers NOT_FOUND,
+// exactly as an unknown analysis does.
+message ThreadRequest {
+  string analysis_id = 1 [(buf.validate.field).string.min_len = 1];
+  string thread_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// A spawned thread's own stream, in the same projection the coordinator's is in: the coordinator's
+// instruction is the thread's `user` turn, and its tool calls carry the same derived label, body and
+// language. `events` never carries a `sub_agent` card — delegation is one level deep — so a caller
+// may treat one as an error. (conversation-view.md, "GetThread".)
+message ThreadResponse {
+  repeated ConversationEvent events = 1;
+}
+
+// A curator turn appended to a running Analysis — an answer, a correction, a constraint the run must
+// respect. Prose and nothing else: what the turn settles is the agent's to record in the working
+// document, never a field here. `text` is non-blank and bounded, like every prose field.
+// (conversation-view.md, "Steer".)
+message SteerRequest {
+  string analysis_id = 1 [(buf.validate.field).string.min_len = 1];
+  string text = 2 [
+    (buf.validate.field).cel = {
+      id: "text.non_blank"
+      message: "text must contain a non-whitespace character"
+      expression: "this.matches('\\\\S')"
+    },
+    (buf.validate.field).string.max_len = 10000
+  ];
+}
+
+// The steer reply. Empty: the turn is accepted, and the poll is what surfaces it and whatever the
+// agent does with it.
+message SteerResponse {}
+
+// Halt the Analysis's current step: the run stops what it is doing and goes idle, ready for the
+// curator's next turn. Against a run that is already idle it is a no-op, so it is safe to send
+// while a step is completing.
+message InterruptRequest {
+  string analysis_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// The interrupt reply. Empty: the poll is what surfaces the halted step.
+message InterruptResponse {}
 
 // A produced working document: its version and markdown body.
 message WorkingDocument {

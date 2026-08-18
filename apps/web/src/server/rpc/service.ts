@@ -16,7 +16,10 @@ import { requireUserContext } from "./context";
 // rather than a masked Internal. The methods do no reshaping — the backend and the port already
 // return view-model messages, and Connect serializes them.
 
-export const workbenchService: ServiceImpl<typeof Workbench> = {
+// `Partial` while a declared method has no handler: Connect answers those Unimplemented, which is
+// what a contract carries before its implementation. The total `ServiceImpl` is what makes a missing
+// handler a compile error, so narrow back to it as soon as the set is whole.
+export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
   async listProjects(_request, ctx) {
     const { backend } = requireUserContext(ctx);
     return { projects: await backend.listProjects() };

@@ -3,7 +3,8 @@
 **Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
 [`spike-infrastructure.md`](spike-infrastructure.md) owns the IAP/Cloud Run/secret infra this rides on;
 [`workspace-model.md`](workspace-model.md) owns the Project/Analysis/working-document/Report entities the UI surfaces;
-[`agent-runtime.md`](agent-runtime.md) owns the Managed Agents coordinator and the trace feeders.
+[`agent-runtime.md`](agent-runtime.md) owns the Managed Agents coordinator and the trace feeders;
+[`conversation-view.md`](conversation-view.md) owns what the conversation region renders and how a curator adds to it.
 
 ## Why this exploration
 
@@ -60,8 +61,10 @@ Anthropic runs the agent loop; the web tier never holds a connection for the run
   returns the whole projected stream (the client replaces by id, never appends). The BFF holds the Anthropic API key and
   is the **authorization and projection point** — the browser never reaches Anthropic directly. Anthropic's log *is* the
   live transcript; the BFF relays it, it does not copy it.
-- **Steering** — occasional curator interjections are a Workbench method that calls `sessions.events.send`
-  (`user.message` / `user.interrupt`). SSE/WebSocket push is deferred (Open questions).
+- **Steering** — a curator interjection is the `Steer` method, which sends the turn as a `user.message` on the
+  Analysis's existing session; the poll remains the single authority on the conversation
+  ([`conversation-view.md`](conversation-view.md)). `Interrupt` halts the run on that session, owned by the same doc;
+  SSE/WebSocket push is deferred (Open questions).
 
 The poll-through fits the async, progressive-disclosure interaction model (PRODUCT §7): agent messages and thinking
 arrive in chunks over seconds, so seconds-granularity liveness is adequate, and the whole web tier stays

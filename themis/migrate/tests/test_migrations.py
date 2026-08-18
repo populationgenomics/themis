@@ -70,6 +70,21 @@ def test_projects_migration_renders_and_splits_cleanly() -> None:
     assert len(migrate.split_statements(rendered)) == 5
 
 
+def test_analysis_inputs_migration_runs_in_the_only_order_that_works() -> None:
+    inputs = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'analysis_inputs')
+    assert '${' not in inputs.sql  # no substitutions — the web SA's grants already cover the table
+    statements = migrate.split_statements(inputs.sql)
+    # Order, not just presence: session_context clears before analyses or the FK rejects the delete,
+    # and both clear before the NOT NULL column is added or every surviving row fails it. A count and
+    # unordered substrings pass on either inversion and the migration still fails at runtime.
+    assert [_command(s) for s in statements] == [
+        'DELETE FROM session_context',
+        'DELETE FROM analyses',
+        'ALTER TABLE analyses DROP COLUMN prompt',
+        'ALTER TABLE analyses ADD COLUMN inputs bytea NOT NULL',
+    ]
+
+
 def test_deploy_provides_every_migration_substitution() -> None:
     """A `${VAR}` in a committed migration has an entry in every `THEMIS_MIGRATE_SUBSTITUTIONS` deploy passes."""
     workflow = yaml.safe_load(_DEPLOY_WORKFLOW.read_text('utf-8'))
@@ -85,3 +100,9 @@ def test_deploy_provides_every_migration_substitution() -> None:
         provided = dict.fromkeys(json.loads(raw), 'login')
         for migration in migrate.discover(_MIGRATIONS_DIR):
             migrate.render(migration.sql, provided)  # raises on a ${VAR} the deploy does not provide
+
+
+def _command(statement: str) -> str:
+    """The SQL of a statement, without the comment lines that precede it."""
+    body = [ln for ln in statement.splitlines() if not ln.strip().startswith('--')]
+    return ' '.join(' '.join(body).split())

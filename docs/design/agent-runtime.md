@@ -133,17 +133,30 @@ injected tool call mid-gather. Hardening the injection leg beyond this is tool-s
 
 ## Trace integration
 
-The trace ([`trace-schema.md`](trace-schema.md)) has two feeders, both consistent with hosting only tools and sandboxes:
+The trace ([`trace-schema.md`](trace-schema.md)) has two feeders, both consistent with hosting only tools and sandboxes.
+They cover different halves of what a run did, and neither can supply the other's.
 
-- **Our services** write provenance-rich records host-side on each call (URL, args, response hash, source-database
-  version) — they are where the call actually executes.
-- **The session client** projects the Managed Agents event stream into the trace vocabulary: `span.model_request_end`
-  for per-agent token/cache usage, `agent.tool_use` / `agent.custom_tool_use` for calls, `agent.thinking`, and the
-  `session.thread_*` per-thread streams for sub-agent activity — the coordinator fans out across threads, so the client
-  consumes those, not just the primary stream.
+- **Our internal services** are where a call actually executes, so they are the only place that knows what it reached.
+  Each writes a provenance-rich record host-side as the call runs — the URL, the arguments, a hash of the response, the
+  version of the source database it read. That is the evidentiary half of the trace: what was looked up, where, and in
+  which snapshot of the data.
+- **The session client** reads Anthropic's event stream, which is the only place that knows what the *agent* did — its
+  thinking, the calls it chose to make, and the tokens each turn cost — and projects that stream into the trace
+  vocabulary. It reads the per-thread streams as well as the primary one: the coordinator fans out across threads, so a
+  client consuming only the primary stream would record none of a sub-agent's activity.
 
-Mapping: session/thread → `AgentRun`; tool calls → `ToolCall` (+ `ToolCallIntent`); the typed emits → `EvidenceClaim` /
-`InformationGap` / `Verdict`.
+One limit of the second feeder is worth naming, because it bounds what per-agent cost reporting can ever show. Token and
+cache usage arrives on a span that carries no thread id — neither when the stream is read at session scope nor at thread
+scope — so per-thread cost cannot be summed from spans; it comes from the thread listing's own aggregated usage instead,
+at whatever granularity that listing offers.
+
+The mapping into the trace schema:
+
+| What a feeder carries                     | Trace record                                 |
+| ----------------------------------------- | -------------------------------------------- |
+| A session, and each thread within it      | `AgentRun`                                   |
+| A tool call                               | `ToolCall`, with its `ToolCallIntent`        |
+| The agent's typed emits into our services | `EvidenceClaim`, `InformationGap`, `Verdict` |
 
 ## Model selection
 

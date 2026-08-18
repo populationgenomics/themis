@@ -204,9 +204,9 @@ binary legs tolerate the skew, but the browser seam rejects a JSON key the schem
 (`ignoreUnknownFields: false`), so a browser-facing field is retired in two changes: stop sending it and deploy, then
 delete it. One change suffices only where that skew costs nothing real — the condition [`migrations.md`](migrations.md)
 puts on a destructive migration: no users to fail, and the consuming doc naming what breaks and until when.
-`analysis-scenarios.md` §Implementation state is the worked instance, retiring `CreateAnalysisRequest.prompt` in one
-change: a tab still running the previous bundle fails its create until it reloads, which no migration clears. So there
-is no schema version, no migration, no version dispatch: a reader parses every artifact ever written, and binary proto's
+`analysis-scenarios.md` §Storage is the worked instance, retiring `CreateAnalysisRequest.prompt` in one change: a tab
+still running the previous bundle fails its create until it reloads, which no migration clears. So there is no schema
+version, no migration, no version dispatch: a reader parses every artifact ever written, and binary proto's
 unknown-field retention means an older reader round-trips a newer writer's fields untouched.
 
 - **CI compat gate** (`buf breaking`, `schema-compat.yml`). Each committed `.proto` is diffed against its base-branch

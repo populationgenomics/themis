@@ -37,6 +37,18 @@ service Workbench {
   // One liveness tick: the whole projected event stream plus the working-document version signal.
   rpc Poll(themis.workbench.models.workbench.PollRequest) returns (themis.workbench.models.workbench.PollResponse);
 
+  // One spawned thread's own conversation — its instruction, narration and tool calls, in the same
+  // projection the coordinator's stream is in. A read: it advances nothing.
+  rpc GetThread(themis.workbench.models.workbench.ThreadRequest) returns (themis.workbench.models.workbench.ThreadResponse);
+
+  // Append a curator turn to a running Analysis's session — the same `user.message` send that seeds
+  // a new one.
+  rpc Steer(themis.workbench.models.workbench.SteerRequest) returns (themis.workbench.models.workbench.SteerResponse);
+
+  // Halt a running Analysis's current step: the in-flight tool call is closed with an error result
+  // and the session goes idle, ready for the curator's next turn.
+  rpc Interrupt(themis.workbench.models.workbench.InterruptRequest) returns (themis.workbench.models.workbench.InterruptResponse);
+
   // The current working document as a produced|not-produced result, or a named historical version.
   rpc GetDocument(themis.workbench.models.workbench.DocumentRequest) returns (themis.workbench.models.workbench.DocumentResponse);
 

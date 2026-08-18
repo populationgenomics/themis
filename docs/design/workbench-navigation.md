@@ -30,7 +30,8 @@ Three consequences:
 - Search, filter, rename, archive/delete, pin. The list is read-and-create.
 - Cross-Project browsing. The Project is the access boundary, and every Analysis *listing* a curator navigates is scoped
   to one; the Projects page's counts read across them (§Projects) but surface no Analysis.
-- A composer on the Analysis page. Steering has no RPC; when it gains one it is an Analysis-page surface, not this one.
+- Creating an Analysis on the Analysis page. The create composer belongs to the Project page; the Analysis page's
+  composer steers the run it is already showing ([`conversation-view.md`](conversation-view.md)) and starts nothing.
 - Pagination. `ListAnalyses` returns a Project's Analyses whole.
 - What a card says about an Analysis. The scenario decides that ([`analysis-scenarios.md`](analysis-scenarios.md)); this
   design places the cards.
@@ -39,15 +40,19 @@ Three consequences:
 
 ### Routes
 
-| Route                    | Renders                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------- |
-| `/`                      | The Projects the caller belongs to. The default landing page.                      |
-| `/project/[projectId]`   | One Project: a "New analysis" composer, then that Project's Analyses newest first. |
-| `/analysis/[analysisId]` | The workbench for one Analysis.                                                    |
-| `/pane`                  | Unchanged — a mirror window's tab area ([`document-pane.md`](document-pane.md)).   |
+| Route                    | Renders                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| `/`                      | The default landing page: the Projects the caller belongs to, then the curation panel. |
+| `/project/[projectId]`   | One Project: a "New analysis" composer, then that Project's Analyses newest first.     |
+| `/analysis/[analysisId]` | The workbench for one Analysis.                                                        |
+| `/pane`                  | Unchanged — a mirror window's tab area ([`document-pane.md`](document-pane.md)).       |
 
 A Project id never appears in an Analysis URL: the Analysis names its Project, so `/analysis/<id>` is complete on its
 own and the cross-param pairing rules go with the flat URL.
+
+The routes under `/curation` belong to the curation surface and are designed there
+([`curation-surface.md`](curation-surface.md)). `/` composes that surface's panel beside the Projects one and owns
+neither: each panel resolves its own caller and its own data.
 
 ### Projects (`/`)
 
@@ -81,7 +86,9 @@ never its decision, so a new scenario changes no code here.
 The workbench — conversation region plus tab area, unchanged ([`document-pane.md`](document-pane.md)). Its chrome
 carries a back link to the Analysis's Project page, the Analysis's identity as its scenario renders it — the identifying
 line, over the scenario's label and the creation time ([`analysis-scenarios.md`](analysis-scenarios.md) §"Identity is
-derived") — and the conversation-dock control. Nothing on it switches Project or Analysis.
+derived") — and the conversation-dock control. Nothing on it switches Project or Analysis. The conversation region ends
+in the steer composer, which carries the page's two mutations — a curator turn, and halting the run's current step
+([`conversation-view.md`](conversation-view.md)).
 
 ### Chrome
 
@@ -125,8 +132,16 @@ machine-readable instant stays in the markup as `<time dateTime>` whatever the l
 
 Moving the lists off TanStack Query removes the invalidation a mutation used to trigger, and a server-rendered list has
 no equivalent: Next's client Router Cache would serve the pre-create payload when a curator navigates back to the
-Project page they just created in. The composer therefore refreshes the router cache before it navigates, which is the
-whole of the freshness rule — nothing else on these pages mutates.
+Project page they just created in. The create composer therefore refreshes the router cache before it navigates, which
+is the whole of the freshness rule for the curator's own create: the only other mutation is a steer, which changes
+nothing any page rendered on the server and so needs no refresh — its freshness path is the poll.
+
+A co-member's create is not covered, and is accepted rather than solved. A Project is M:N to users
+([`GLOSSARY.md`](../../GLOSSARY.md)), so an Analysis another curator starts changes what `/project/[projectId]` lists
+and what `/` counts, with nothing to invalidate a cache the creating browser does not hold. Those pages are therefore
+current as of the navigation that rendered them; a curator who wants a colleague's newest run navigates or reloads.
+Closing that would mean polling every listing, or a shared invalidation channel, for a page a curator arrives at fresh
+and leaves — a cost the staleness does not justify.
 
 Each page therefore resolves its subject before it renders. `/analysis/[analysisId]` is `notFound()` for an unknown id
 or one outside the caller's Projects, rather than a workbench polling a dead id behind chrome that names nothing.
