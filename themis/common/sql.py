@@ -1,10 +1,10 @@
 """Cloud SQL access shared across themis packages (verified live at deploy, not offline).
 
 The pg8000 DBAPI surface (`Cursor`, `Connection`) and the IAM-authed connect
-(`iam_connect`) used by every Cloud SQL consumer — the migrate runner and the auth
-service — factored out so they aren't redefined per package. Importing this module pulls
-the connector (and, transitively, pg8000), so it is imported only by the live paths, never
-by the hermetic unit tests (which run against in-memory/fixture backends).
+(`iam_connect`) used by every Cloud SQL consumer — the migrate runner, the auth service, and the
+evidence service's crosswalk lookup — factored out so they aren't redefined per package. Importing this
+module pulls the connector (and, transitively, pg8000), so any module importing it carries that cost
+whether or not it dials.
 
 The connection is IAM-authed: the calling service account is the DB user, no stored
 password.

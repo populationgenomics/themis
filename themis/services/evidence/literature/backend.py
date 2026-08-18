@@ -15,17 +15,12 @@ The fixture's seed format and its parser live here too, with the dataclasses the
 from __future__ import annotations
 
 import abc
-import asyncio
 import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from typing import override
 
 from themis.rpc import literature_pb2
-
-# Default cadence for the AwaitFullText poll loop. Readiness derives from GCS with no push channel, so
-# the wait is a bounded poll; the total wait is capped by the caller's timeout regardless.
-_AWAIT_POLL_INTERVAL_SECONDS = 2.0
 
 
 class UnknownPaperError(Exception):
@@ -38,6 +33,23 @@ class MissingContentError(Exception):
 
 class RepresentationUnavailableError(Exception):
     """The paper has no rendering in the requested representation — FAILED_PRECONDITION."""
+
+
+class CrosswalkNotConfiguredError(Exception):
+    """This deployment wires no crosswalk — the servicer maps this to FAILED_PRECONDITION.
+
+    A permanent property of the deployment, not an outage, so it is deliberately not
+    ``CrosswalkUnavailableError``: UNAVAILABLE is retried by gRPC's default policy, and a caller would
+    burn its whole retry budget against a call that can never succeed here.
+    """
+
+
+class CrosswalkUnavailableError(Exception):
+    """The crosswalk could not be reached — the servicer maps this to UNAVAILABLE.
+
+    Whole-batch by construction, never a per-id miss. A caller that read an outage as "this id is
+    not in the corpus" would write papers off permanently on a transient failure.
+    """
 
 
 class PdfLocationUnavailableError(Exception):
@@ -108,6 +120,19 @@ class LiteratureBackend(abc.ABC):
         ...
 
     @abc.abstractmethod
+    async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
+        """Look each scheme-qualified external id up in the crosswalk, returning the ids it knows.
+
+        A read, never a mint: minting *claims*, so an id the corpus has never ingested would take a
+        ``doc_id`` naming no manifest. An id absent from the result is a genuine miss.
+
+        Raises:
+            CrosswalkNotConfiguredError: this deployment wires no crosswalk (permanent).
+            CrosswalkUnavailableError: the crosswalk could not be reached (whole-batch, transient).
+        """
+        ...
+
+    @abc.abstractmethod
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         """Per-doc_id full-text readiness (READY / PENDING / terminal / unknown).
 
@@ -115,41 +140,6 @@ class LiteratureBackend(abc.ABC):
         one bad id never fails the batch.
         """
         ...
-
-    async def await_full_text_readiness(
-        self,
-        doc_ids: Sequence[str],
-        timeout_seconds: float,
-        *,
-        poll_interval_seconds: float = _AWAIT_POLL_INTERVAL_SECONDS,
-    ) -> dict[str, literature_pb2.FullTextState]:
-        """Block until no id is PENDING (all settled) or ``timeout_seconds`` elapses; return readiness.
-
-        Polls :meth:`full_text_readiness` — readiness derives from GCS, there is no push channel to
-        wake on — returning as soon as nothing is PENDING or the deadline passes (whichever first). The
-        total wait is bounded by ``timeout_seconds`` regardless of ``poll_interval_seconds``. Concrete
-        over the abstract probe so both backends share one loop; a backend with a real completion
-        signal can override.
-
-        Each cycle re-polls only the ids still PENDING, carrying settled states forward: a poll costs a
-        read per id, and only PENDING can still transition — the same monotonicity the settle
-        short-circuit already relies on. Duplicate ids collapse to one readiness.
-        """
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-        pending = list(dict.fromkeys(doc_ids))
-        settled: dict[str, literature_pb2.FullTextState] = {}
-        while True:
-            states = await self.full_text_readiness(pending)
-            settled.update(
-                (doc_id, state) for doc_id, state in states.items() if state != literature_pb2.FULL_TEXT_STATE_PENDING
-            )
-            pending = [doc_id for doc_id, state in states.items() if state == literature_pb2.FULL_TEXT_STATE_PENDING]
-            if not pending:
-                return settled
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                return settled | dict.fromkeys(pending, literature_pb2.FULL_TEXT_STATE_PENDING)
-            await asyncio.sleep(min(poll_interval_seconds, remaining))
 
 
 # --- Fixture seed --------------------------------------------------------------------------------
@@ -174,6 +164,7 @@ class SeededPaper:
     """One paper's fixture data: its representations, files, and per-representation quote locations."""
 
     title: str
+    external_ids: tuple[str, ...] = ()  # scheme-qualified, as the crosswalk keys them
     files: tuple[SeededFile, ...] = ()
     markdown_gcs_uri: str | None = None
     markdown_from_xml: bool = False
@@ -187,6 +178,9 @@ class FixtureBackend(LiteratureBackend):
 
     def __init__(self, papers: Mapping[str, SeededPaper]) -> None:
         self._papers = dict(papers)
+        self._crosswalk = {
+            external_id: doc_id for doc_id, paper in self._papers.items() for external_id in paper.external_ids
+        }
 
     def _paper(self, doc_id: str) -> SeededPaper:
         try:
@@ -262,6 +256,14 @@ class FixtureBackend(LiteratureBackend):
         if not located_in:
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in any representation')
         return literature_pb2.ValidateResponse(ok=True, located_in=located_in)
+
+    @override
+    async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
+        return {
+            external_id: self._crosswalk[external_id]
+            for external_id in dict.fromkeys(external_ids)
+            if external_id in self._crosswalk
+        }
 
     @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
@@ -351,7 +353,8 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 def _parse_paper(var_name: str, doc_id: str, paper: object) -> SeededPaper:
     if not isinstance(paper, dict):
         raise SystemExit(f'{var_name} paper {doc_id!r} must be a JSON object')
-    unknown = set(paper) - {'title', 'files', 'markdown', 'markdown_locations', 'pdf', 'pdf_locations'}
+    known = {'title', 'external_ids', 'files', 'markdown', 'markdown_locations', 'pdf', 'pdf_locations'}
+    unknown = set(paper) - known
     if unknown:
         raise SystemExit(f'{var_name} paper {doc_id!r} has unknown field(s) {sorted(unknown)}')
     title = paper.get('title')
@@ -359,6 +362,10 @@ def _parse_paper(var_name: str, doc_id: str, paper: object) -> SeededPaper:
         raise SystemExit(f'{var_name} paper {doc_id!r} must set a non-empty "title"')
     return SeededPaper(
         title=title,
+        external_ids=tuple(
+            _parse_external_id(var_name, doc_id, i)
+            for i in _as_list(var_name, doc_id, 'external_ids', paper.get('external_ids', []))
+        ),
         files=tuple(
             _parse_file(var_name, doc_id, f) for f in _as_list(var_name, doc_id, 'files', paper.get('files', []))
         ),
@@ -368,6 +375,12 @@ def _parse_paper(var_name: str, doc_id: str, paper: object) -> SeededPaper:
         markdown_locations=_parse_offsets(var_name, doc_id, paper.get('markdown_locations', {})),
         pdf_locations=_parse_pdf_locations(var_name, doc_id, paper.get('pdf_locations', {})),
     )
+
+
+def _parse_external_id(var_name: str, doc_id: str, value: object) -> str:
+    if not isinstance(value, str) or ':' not in value:
+        raise SystemExit(f'{var_name} paper {doc_id!r} external id must be a scheme-qualified string')
+    return value
 
 
 def _as_list(var_name: str, doc_id: str, key: str, value: object) -> list[object]:

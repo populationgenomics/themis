@@ -20,9 +20,10 @@ Blocking GCS I/O is offloaded with ``asyncio.to_thread`` so it never stalls the 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import mimetypes
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import override
 
 import anchorite
@@ -31,7 +32,8 @@ from google.cloud import storage
 from google.protobuf import message as _message
 from pubmed_proto import pubmed_pb2
 
-from themis.litcache import outcome, writer
+from themis.common import sql
+from themis.litcache import crosswalk, outcome, writer
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
@@ -74,8 +76,9 @@ class _Paper:
 class LitcacheBackend(literature_backend.LiteratureBackend):
     """Serve the literature rpcs by reading the litcache directory for each ``doc_id``."""
 
-    def __init__(self, bucket: storage.Bucket) -> None:
+    def __init__(self, bucket: storage.Bucket, *, connect: Callable[[], sql.Connection] | None = None) -> None:
         self._bucket = bucket
+        self._connect = connect
 
     @override
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
@@ -165,6 +168,14 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
         return literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
 
     @override
+    async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
+        if self._connect is None:
+            raise literature_backend.CrosswalkNotConfiguredError('no crosswalk is configured')
+        if not external_ids:
+            return {}  # no dial for an empty batch; `crosswalk.lookup` rejects one outright
+        return await asyncio.to_thread(self._lookup, list(external_ids))
+
+    @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         # One to two GCS reads per distinct id: READY derives from the manifest alone, but anything
         # else probes the sidecar too. Gathered so a batch runs concurrently, not serially.
@@ -173,6 +184,25 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
         return dict(zip(distinct, states, strict=True))
 
     # --- GCS reads (synchronous; called via asyncio.to_thread) -----------------------------------
+
+    def _lookup(self, external_ids: Sequence[str]) -> dict[str, str]:
+        """One crosswalk read, on a connection opened and closed per call.
+
+        A fresh connection per call, not a pooled one: the lookup is rare next to the GCS reads, and
+        Cloud Run scales to zero, so a held connection would idle against the instance's cap far more
+        often than it saves a dial.
+        """
+        if self._connect is None:
+            raise literature_backend.CrosswalkNotConfiguredError('no crosswalk is configured')
+        try:
+            with contextlib.closing(self._connect()) as conn:
+                return crosswalk.lookup(conn, external_ids)
+        except Exception as e:
+            # Any dial or query failure is an outage of the whole batch. Deliberately broad: pg8000
+            # and the Cloud SQL connector raise from several unrelated hierarchies (socket, TLS,
+            # Admin API, DBAPI), and mistaking any of them for "this paper is not in the corpus" is
+            # the failure this method exists to prevent.
+            raise literature_backend.CrosswalkUnavailableError(str(e)) from e
 
     def _readiness(self, doc_id: str) -> literature_pb2.FullTextState:
         return _READINESS_STATE[outcome.read_readiness(self._bucket, doc_id)]

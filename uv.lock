@@ -3512,9 +3512,11 @@ dispatcher = [
 ]
 evidence = [
     { name = "anchorite" },
+    { name = "cloud-sql-python-connector" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto" },
 ]
@@ -3710,9 +3712,11 @@ dispatcher = [
 ]
 evidence = [
     { name = "anchorite", specifier = "==0.5.1" },
+    { name = "cloud-sql-python-connector" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto", specifier = "==0.1.0" },
 ]

@@ -1,6 +1,3 @@
-import datetime
-
-from google.protobuf import duration_pb2 as _duration_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -163,12 +160,6 @@ class LocateResponse(_message.Message):
     not_located: QuoteNotLocated
     def __init__(self, offsets: _Optional[_Union[TextOffsets, _Mapping]] = ..., region: _Optional[_Union[PdfRegion, _Mapping]] = ..., not_located: _Optional[_Union[QuoteNotLocated, _Mapping]] = ...) -> None: ...
 
-class EnsureFullTextRequest(_message.Message):
-    __slots__ = ("doc_ids",)
-    DOC_IDS_FIELD_NUMBER: _ClassVar[int]
-    doc_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, doc_ids: _Optional[_Iterable[str]] = ...) -> None: ...
-
 class FullTextReadiness(_message.Message):
     __slots__ = ("doc_id", "state")
     DOC_ID_FIELD_NUMBER: _ClassVar[int]
@@ -177,25 +168,39 @@ class FullTextReadiness(_message.Message):
     state: FullTextState
     def __init__(self, doc_id: _Optional[str] = ..., state: _Optional[_Union[FullTextState, str]] = ...) -> None: ...
 
-class EnsureFullTextResponse(_message.Message):
-    __slots__ = ("readiness",)
-    READINESS_FIELD_NUMBER: _ClassVar[int]
-    readiness: _containers.RepeatedCompositeFieldContainer[FullTextReadiness]
-    def __init__(self, readiness: _Optional[_Iterable[_Union[FullTextReadiness, _Mapping]]] = ...) -> None: ...
-
-class AwaitFullTextRequest(_message.Message):
-    __slots__ = ("doc_ids", "timeout")
+class PollFullTextsRequest(_message.Message):
+    __slots__ = ("doc_ids",)
     DOC_IDS_FIELD_NUMBER: _ClassVar[int]
-    TIMEOUT_FIELD_NUMBER: _ClassVar[int]
     doc_ids: _containers.RepeatedScalarFieldContainer[str]
-    timeout: _duration_pb2.Duration
-    def __init__(self, doc_ids: _Optional[_Iterable[str]] = ..., timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
+    def __init__(self, doc_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
-class AwaitFullTextResponse(_message.Message):
+class PollFullTextsResponse(_message.Message):
     __slots__ = ("readiness",)
     READINESS_FIELD_NUMBER: _ClassVar[int]
     readiness: _containers.RepeatedCompositeFieldContainer[FullTextReadiness]
     def __init__(self, readiness: _Optional[_Iterable[_Union[FullTextReadiness, _Mapping]]] = ...) -> None: ...
+
+class PaperReadiness(_message.Message):
+    __slots__ = ("external_id", "doc_id", "state")
+    EXTERNAL_ID_FIELD_NUMBER: _ClassVar[int]
+    DOC_ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    external_id: str
+    doc_id: str
+    state: FullTextState
+    def __init__(self, external_id: _Optional[str] = ..., doc_id: _Optional[str] = ..., state: _Optional[_Union[FullTextState, str]] = ...) -> None: ...
+
+class MaybeIngestPapersRequest(_message.Message):
+    __slots__ = ("external_ids",)
+    EXTERNAL_IDS_FIELD_NUMBER: _ClassVar[int]
+    external_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, external_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class MaybeIngestPapersResponse(_message.Message):
+    __slots__ = ("readiness",)
+    READINESS_FIELD_NUMBER: _ClassVar[int]
+    readiness: _containers.RepeatedCompositeFieldContainer[PaperReadiness]
+    def __init__(self, readiness: _Optional[_Iterable[_Union[PaperReadiness, _Mapping]]] = ...) -> None: ...
 
 class ValidateRequest(_message.Message):
     __slots__ = ("doc_id", "quote")

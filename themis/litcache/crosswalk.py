@@ -108,6 +108,39 @@ class MintResult:
     linked_doc_ids: tuple[str, ...]
 
 
+def lookup(conn: Connection, external_ids: Iterable[str]) -> dict[str, str]:
+    """Read the `doc_id` each external id already maps to, claiming nothing.
+
+    The read-only counterpart to `mint`, for a caller that wants to know whether a paper is in the
+    corpus. Never reach for `mint` to answer that: it *claims*, so an id litcache has never ingested
+    would come back with a fresh `doc_id` that names no manifest — permanently unresolvable, and a
+    crosswalk claim on someone else's DOI. Minting belongs to ingestion.
+
+    Args:
+        conn: A Postgres connection; only `SELECT` is issued, so a read-only role suffices.
+        external_ids: `{scheme}:{value}` keys. Order-insensitive; duplicates collapse.
+
+    Returns:
+        A mapping of external id to `doc_id`, holding only the ids the crosswalk knows. An id absent
+        from the result is a genuine miss (litcache has not ingested that paper), never an error.
+
+    Raises:
+        ValueError: If `external_ids` is empty.
+    """
+    # Folded for the query and re-keyed on the way out: every write folds, so a raw spelling misses a
+    # paper the corpus holds, and the caller's spelling is what it gets echoed back. One fold can carry
+    # several spellings — a caller may pass both — and each must resolve.
+    as_supplied: dict[str, list[str]] = {}
+    for external_id in external_ids:
+        as_supplied.setdefault(normalise_key(external_id), []).append(external_id)
+    ids = sorted(as_supplied)
+    if not ids:
+        raise ValueError('lookup requires at least one external id')
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.execute('SELECT external_id, doc_id FROM litcache.crosswalk WHERE external_id = ANY(%s)', (ids,))
+        return {supplied: doc_id for folded, doc_id in cur.fetchall() for supplied in as_supplied[folded]}
+
+
 def mint(conn: Connection, external_ids: Iterable[str]) -> MintResult:
     """Claim a paper's external ids, minting or adopting a `doc_id` atomically.
 

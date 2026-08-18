@@ -90,8 +90,9 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # layout: google-cloud-storage for the bucket, pubmed_proto for the metadata.pb title. The litcache_pb2
 # stubs pull the vendored buf/validate stubs (shipped in the image), which need only protobuf at runtime;
 # no protovalidate, no conversion/fetch deps — the read path never validates or converts. anchorite
-# locates a verbatim quote to markdown offsets, exact-pinned like the others.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", "pubmed_proto==0.1.0", "anchorite==0.5.1"]
+# locates a verbatim quote to markdown offsets, exact-pinned like the others. cloudsql is the crosswalk
+# lookup (MaybeIngestPapers), the one part of the read path that leaves GCS.
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", "pubmed_proto==0.1.0", "anchorite==0.5.1", { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts

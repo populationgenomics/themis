@@ -57,19 +57,24 @@ class LiteratureStub:
     """
     Validate: _grpc.UnaryUnaryMultiCallable[_literature_pb2.ValidateRequest, _literature_pb2.ValidateResponse]
     """Whether a quote locates in any representation — the agent's authoring-time check."""
-    EnsureFullText: _grpc.UnaryUnaryMultiCallable[_literature_pb2.EnsureFullTextRequest, _literature_pb2.EnsureFullTextResponse]
-    """Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
-    present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+    PollFullTexts: _grpc.UnaryUnaryMultiCallable[_literature_pb2.PollFullTextsRequest, _literature_pb2.PollFullTextsResponse]
+    """Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
+    effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
     sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
-    an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
-    with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
-    PENDING id settles only once one is written.
+    anything else is PENDING; an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a
+    whole-batch abort). Blocking server-side is deliberately not offered: a caller with somewhere to
+    sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
+    serving slot for the whole wait.
     """
-    AwaitFullText: _grpc.UnaryUnaryMultiCallable[_literature_pb2.AwaitFullTextRequest, _literature_pb2.AwaitFullTextResponse]
-    """Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
-    each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
-    Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
-    and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+    MaybeIngestPapers: _grpc.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]
+    """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
+    crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
+    one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
+    so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+    The name is the shape it grows into: resolving ids upstream and starting production for what is
+    unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
+    outage affects the batch, and a caller reading it per-id would write papers off permanently.
     """
 
 @_typing.type_check_only
@@ -90,19 +95,24 @@ class LiteratureAsyncStub(LiteratureStub):
     """
     Validate: _aio.UnaryUnaryMultiCallable[_literature_pb2.ValidateRequest, _literature_pb2.ValidateResponse]  # type: ignore[assignment]
     """Whether a quote locates in any representation — the agent's authoring-time check."""
-    EnsureFullText: _aio.UnaryUnaryMultiCallable[_literature_pb2.EnsureFullTextRequest, _literature_pb2.EnsureFullTextResponse]  # type: ignore[assignment]
-    """Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
-    present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+    PollFullTexts: _aio.UnaryUnaryMultiCallable[_literature_pb2.PollFullTextsRequest, _literature_pb2.PollFullTextsResponse]  # type: ignore[assignment]
+    """Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
+    effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
     sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
-    an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
-    with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
-    PENDING id settles only once one is written.
+    anything else is PENDING; an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a
+    whole-batch abort). Blocking server-side is deliberately not offered: a caller with somewhere to
+    sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
+    serving slot for the whole wait.
     """
-    AwaitFullText: _aio.UnaryUnaryMultiCallable[_literature_pb2.AwaitFullTextRequest, _literature_pb2.AwaitFullTextResponse]  # type: ignore[assignment]
-    """Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
-    each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
-    Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
-    and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+    MaybeIngestPapers: _aio.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]  # type: ignore[assignment]
+    """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
+    crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
+    one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
+    so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+    The name is the shape it grows into: resolving ids upstream and starting production for what is
+    unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
+    outage affects the batch, and a caller reading it per-id would write papers off permanently.
     """
 
 class LiteratureServicer(metaclass=_abc_1.ABCMeta):
@@ -146,29 +156,34 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         """Whether a quote locates in any representation — the agent's authoring-time check."""
 
     @_abc_1.abstractmethod
-    def EnsureFullText(
+    def PollFullTexts(
         self,
-        request: _literature_pb2.EnsureFullTextRequest,
+        request: _literature_pb2.PollFullTextsRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_literature_pb2.EnsureFullTextResponse, _abc.Awaitable[_literature_pb2.EnsureFullTextResponse]]:
-        """Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
-        present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+    ) -> _typing.Union[_literature_pb2.PollFullTextsResponse, _abc.Awaitable[_literature_pb2.PollFullTextsResponse]]:
+        """Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
+        effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
         sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
-        an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
-        with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
-        PENDING id settles only once one is written.
+        anything else is PENDING; an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a
+        whole-batch abort). Blocking server-side is deliberately not offered: a caller with somewhere to
+        sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
+        serving slot for the whole wait.
         """
 
     @_abc_1.abstractmethod
-    def AwaitFullText(
+    def MaybeIngestPapers(
         self,
-        request: _literature_pb2.AwaitFullTextRequest,
+        request: _literature_pb2.MaybeIngestPapersRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_literature_pb2.AwaitFullTextResponse, _abc.Awaitable[_literature_pb2.AwaitFullTextResponse]]:
-        """Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
-        each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
-        Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
-        and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+    ) -> _typing.Union[_literature_pb2.MaybeIngestPapersResponse, _abc.Awaitable[_literature_pb2.MaybeIngestPapersResponse]]:
+        """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
+        crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
+        one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
+        so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+        The name is the shape it grows into: resolving ids upstream and starting production for what is
+        unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+        A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
+        outage affects the batch, and a caller reading it per-id would write papers off permanently.
         """
 
 def add_LiteratureServicer_to_server(servicer: LiteratureServicer, server: _typing.Union[_grpc.Server, _aio.Server]) -> None: ...

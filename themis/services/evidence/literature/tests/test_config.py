@@ -8,6 +8,7 @@ import json
 
 import pytest
 from google.api_core import exceptions as api_exceptions
+from google.cloud.sql import connector as sql_connector
 
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
@@ -15,6 +16,12 @@ from themis.services.evidence.literature import config
 from themis.services.evidence.literature import litcache as litcache_backend
 
 _BUCKET = 'a-bucket'
+_CROSSWALK_VARS = (
+    'THEMIS_LITERATURE_CROSSWALK_INSTANCE',
+    'THEMIS_LITERATURE_CROSSWALK_DATABASE',
+    'THEMIS_LITERATURE_CROSSWALK_DB_USER',
+)
+_CROSSWALK_ENV = dict(zip(_CROSSWALK_VARS, ('p:r:i', 'themis', 'themis-evidence@p.iam'), strict=True))
 
 
 def _from_env() -> literature_backend.LiteratureBackend:
@@ -52,6 +59,8 @@ class _FakeClient:
 def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
     monkeypatch.setenv('THEMIS_LITERATURE_FULLTEXT_BUCKET', _BUCKET)
+    for var in _CROSSWALK_VARS:
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(config.storage, 'Client', lambda: client)
 
 
@@ -117,3 +126,73 @@ def test_live_selector_fails_loud_on_an_unreadable_bucket(monkeypatch: pytest.Mo
         assert closed, 'a failed startup probe leaks no client'
 
     asyncio.run(build())
+
+
+def test_live_selector_without_the_crosswalk_leaves_id_resolution_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Absent config is a legitimate deployment (the doc_id path needs no crosswalk), so it must not
+    # fail startup. The RPC that needs it reports a permanent condition, distinct from an outage:
+    # no number of retries wires a crosswalk.
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    backend = _from_env()
+    with pytest.raises(literature_backend.CrosswalkNotConfiguredError):
+        asyncio.run(backend.resolve_external_ids(['doi:10.1/x']))
+
+
+@pytest.mark.parametrize('omitted', _CROSSWALK_VARS)
+def test_a_partial_crosswalk_config_fails_at_startup(monkeypatch: pytest.MonkeyPatch, omitted: str) -> None:
+    # Half-configured would fail per request instead of at deploy, which is the shape that reaches
+    # production unnoticed.
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    for var, value in _CROSSWALK_ENV.items():
+        if var != omitted:
+            monkeypatch.setenv(var, value)
+    with pytest.raises(SystemExit, match='all be set or all unset'):
+        _from_env()
+
+
+def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    dialled: list[tuple[str, str, str]] = []
+    closed: list[bool] = []
+
+    class _FakeCursor:
+        def execute(self, operation: str, args: object = ()) -> None:
+            del operation, args
+
+        def fetchall(self) -> list[tuple[str, str]]:
+            return [('doi:10.1/x', 'doc-1')]
+
+        def close(self) -> None:
+            pass
+
+    class _FakeConnection:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+        def close(self) -> None:
+            pass
+
+    class _FakeConnector:
+        def connect(self, connection_name: str, driver: str, **kwargs: object) -> _FakeConnection:
+            del driver
+            dialled.append((connection_name, str(kwargs['db']), str(kwargs['user'])))
+            return _FakeConnection()
+
+        def close(self) -> None:
+            closed.append(True)
+
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    for var, value in _CROSSWALK_ENV.items():
+        monkeypatch.setenv(var, value)
+    monkeypatch.setattr(sql_connector, 'Connector', _FakeConnector)
+
+    async def build() -> dict[str, str]:
+        async with contextlib.AsyncExitStack() as stack:
+            backend = config.backend_from_env(stack)
+            found = await backend.resolve_external_ids(['doi:10.1/x'])
+            assert not closed, 'the connector is held for as long as the server runs'
+        assert closed, 'the stack closed the connector on unwind'
+        return found
+
+    assert asyncio.run(build()) == {'doi:10.1/x': 'doc-1'}
+    instance, database, db_user = _CROSSWALK_ENV.values()
+    assert dialled == [(instance, database, db_user)]

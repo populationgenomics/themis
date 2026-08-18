@@ -29,13 +29,17 @@ COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
-# The litcache manifest stubs the literature live backend reads (+ the vendored buf/validate stubs
-# litcache_pb2 imports); the litcache package init is docstring-only and the other litcache modules
-# (conversion, fetch) are not imported by the read path.
+# The read path reaches into litcache for the manifest stubs, the readiness derivation, the manifest
+# key, and the crosswalk lookup, and litcache reaches themis/common for storage + the Cloud SQL dial —
+# so both packages ship whole rather than as a hand-listed subset that silently rots as the read path
+# grows. buf carries the vendored validate stubs litcache_pb2 imports.
 COPY buf ./buf
-COPY themis/litcache/__init__.py ./themis/litcache/__init__.py
-COPY themis/litcache/models ./themis/litcache/models
+COPY themis/common ./themis/common
+COPY themis/litcache ./themis/litcache
 COPY themis/services/evidence ./themis/services/evidence
+# Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
+# deployed revision crash-loops, since nothing else imports the image's own tree.
+RUN python -c 'import themis.services.evidence.__main__'
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime.
 RUN useradd --system --uid 10001 app
 USER app

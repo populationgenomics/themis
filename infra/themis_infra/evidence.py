@@ -7,8 +7,9 @@ service.
 
 Literature (docs/design/document-pane.md) reads the litcache fulltext bucket (object-viewer,
 read-only) to resolve a paper's rendering / PDF / associated-file object and locate a quote:
-`THEMIS_LITERATURE_BACKEND=live`, no auth service and no Cloud SQL — a `doc_id` is the litcache
-canonical id and the corpus is not session-scoped (entitlement is a deferred non-goal).
+`THEMIS_LITERATURE_BACKEND=live`. No auth service — the corpus is not session-scoped (entitlement is a
+deferred non-goal). It does hold one Cloud SQL login, `SELECT` on `litcache.crosswalk` alone, to
+resolve an external id to a `doc_id`; the table grant is the migration's, keyed on this login.
 
 Its callers are the web BFF — quote location for the document pane, plus some paper management — and,
 the primary consumer, the sandbox agents (reading a paper's full text and validating quotes at authoring
@@ -25,12 +26,16 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+from themis_infra import sql
+
 
 class EvidenceService(pulumi.ComponentResource):
     """Cloud Run evidence service (IAM-gated ingress) hosting the evidence image's interfaces.
 
     Attributes:
         service_account_email: The runtime SA's email — the object-viewer on the fulltext bucket.
+        db_user: The runtime SA's Cloud SQL IAM DB-user login — the crosswalk `SELECT` grant's
+            subject, fed to the migrate runner as `EVIDENCE_DB_USER`.
         service_name: The Cloud Run service name, for the web SA's invoker binding.
         url: The service's ``run.app`` URL — the audience the BFF's ID-token interceptor mints for.
     """
@@ -42,6 +47,9 @@ class EvidenceService(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         fulltext_bucket: pulumi.Input[str],
+        sql_instance: gcp.sql.DatabaseInstance,
+        sql_connection_name: pulumi.Input[str],
+        sql_database: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
@@ -66,6 +74,23 @@ class EvidenceService(pulumi.ComponentResource):
             opts=child,
         )
 
+        # The crosswalk login and its connect roles. The table grant (SELECT only) is the
+        # 0008_litcache_crosswalk_read_grant migration, keyed on this login.
+        db_user = sql.iam_db_user(
+            'themis-evidence',
+            project=project,
+            instance=sql_instance,
+            service_account_email=service_account.email,
+            opts=child,
+        )
+        sql.grant_cloudsql_connect(
+            'themis-evidence',
+            project=project,
+            service_account_email=service_account.email,
+            opts=child,
+        )
+        self.db_user = db_user.name
+
         service = gcp.cloudrunv2.Service(
             'themis-evidence-service',
             project=project,
@@ -89,6 +114,17 @@ class EvidenceService(pulumi.ComponentResource):
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
                                 name='THEMIS_LITERATURE_FULLTEXT_BUCKET', value=fulltext_bucket
                             ),
+                            # The crosswalk trio, all-or-nothing: the interface fails startup on a
+                            # partial set rather than answering UNAVAILABLE per request.
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+                                name='THEMIS_LITERATURE_CROSSWALK_INSTANCE', value=sql_connection_name
+                            ),
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+                                name='THEMIS_LITERATURE_CROSSWALK_DATABASE', value=sql_database
+                            ),
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+                                name='THEMIS_LITERATURE_CROSSWALK_DB_USER', value=db_user.name
+                            ),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
                         startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
@@ -104,6 +140,7 @@ class EvidenceService(pulumi.ComponentResource):
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
+                'db_user': self.db_user,
                 'service_name': self.service_name,
                 'url': self.url,
             }

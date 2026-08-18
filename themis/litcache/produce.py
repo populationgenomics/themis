@@ -18,10 +18,10 @@ empty), it records the terminal `.fetch_outcome` NO_FULL_TEXT marker instead. Wh
 rather than raising, so the worker settles the paper (2xx) instead of retrying to the same dead end.
 Transient fetch/convert errors still propagate, to be retried.
 
-Standalone by construction: a module-level function, not a request handler. `EnsureFullText` reports
-readiness and enqueues; the Cloud Tasks worker calls this. Keeping fetch/convert out of the request
-handler is what keeps the read service's image lean (architecture B) and leaves the door open to
-inline the fast OA path later without a wire change.
+Standalone by construction: a module-level function, not a request handler. The Cloud Tasks worker
+calls this; the read service only reports readiness. Keeping fetch/convert out of the request handler
+is what keeps the read service's image lean (architecture B) and leaves the door open to inline the
+fast OA path later without a wire change.
 
 The fetcher, resolver, and PDF converter are injected so the path runs offline in tests — a fake
 `fetch` returns a canned `OaSource` (or `None`) and a fake `convert_pdf` returns canned markdown, so

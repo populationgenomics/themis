@@ -53,6 +53,42 @@ def test_mint_treats_case_variants_as_one_claim(conn: pg8000.dbapi.Connection) -
     assert _doc_ids(conn) == {'doi:10.1/abc': first.doc_id}  # one row, folded
 
 
+def test_lookup_finds_a_paper_under_any_spelling_of_its_id(conn: pg8000.dbapi.Connection) -> None:
+    # Every write folds, so querying a raw spelling would miss a paper the corpus holds — and the miss
+    # is indistinguishable from a genuine absence, which is the failure this whole path guards against.
+    minted = crosswalk.mint(conn, ['doi:10.1/AbC', 'pmcid:PMC7'])
+    assert crosswalk.lookup(conn, ['doi:10.1/abc']) == {'doi:10.1/abc': minted.doc_id}
+    assert crosswalk.lookup(conn, ['doi:10.1/AbC']) == {'doi:10.1/AbC': minted.doc_id}
+    assert crosswalk.lookup(conn, ['pmcid:pmc7']) == {'pmcid:pmc7': minted.doc_id}
+
+
+def test_lookup_echoes_the_spelling_it_was_given(conn: pg8000.dbapi.Connection) -> None:
+    # The caller keys its own results off what it asked for; handing back the folded spelling would
+    # silently drop every mixed-case id from the response.
+    minted = crosswalk.mint(conn, ['doi:10.1/AbC'])
+    assert crosswalk.lookup(conn, ['doi:10.1/aBc']) == {'doi:10.1/aBc': minted.doc_id}
+
+
+def test_lookup_resolves_every_spelling_the_caller_passed(conn: pg8000.dbapi.Connection) -> None:
+    # The servicer dedups on the raw spelling, so both reach here; folding them together and keeping
+    # one would report the other as absent — the same miss the fold exists to prevent, one level down.
+    minted = crosswalk.mint(conn, ['pmcid:PMC7'])
+    assert crosswalk.lookup(conn, ['pmcid:PMC7', 'pmcid:pmc7']) == {
+        'pmcid:PMC7': minted.doc_id,
+        'pmcid:pmc7': minted.doc_id,
+    }
+
+
+def test_lookup_omits_an_id_the_crosswalk_does_not_hold(conn: pg8000.dbapi.Connection) -> None:
+    minted = crosswalk.mint(conn, ['doi:10.1/abc'])
+    assert crosswalk.lookup(conn, ['doi:10.1/abc', 'doi:10.1/nope']) == {'doi:10.1/abc': minted.doc_id}
+
+
+def test_lookup_rejects_an_empty_batch(conn: pg8000.dbapi.Connection) -> None:
+    with pytest.raises(ValueError, match='at least one'):
+        crosswalk.lookup(conn, [])
+
+
 def test_normalise_key_folds_the_case_insensitive_schemes() -> None:
     assert crosswalk.normalise_key('doi:10.1/AbC') == 'doi:10.1/abc'
     assert crosswalk.normalise_key('pmcid:pmc99') == 'pmcid:PMC99'

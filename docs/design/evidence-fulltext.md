@@ -85,10 +85,9 @@ outcome supersedes an earlier one. The two terminal kinds:
 
 ### Two planes: readiness and content
 
-- **Readiness** — `EnsureFullText([ids]) → [{id, state}]` (batch, idempotent: cache-hits return READY, misses enqueue
-  and return PENDING) and `AwaitFullText([ids], timeout)` (blocks server-side until nothing is PENDING or the wait
-  elapses, whichever first; the wait is a requested duration, clamped to a server ceiling, and is not the client's RPC
-  deadline).
+- **Readiness** — `PollFullTexts([doc_ids]) → [{doc_id, state}]` (batch, pure: it produces nothing and enqueues nothing)
+  and `MaybeIngestPapers([external_ids]) → [{external_id, doc_id, state}]`, the same readiness for a caller holding a
+  DOI or a PMID rather than a `doc_id`.
 - **Content** — `ResolveContent` / `Locate` (by `doc_id`, doc pane: a GCS location the BFF streams), and a
   `FetchFullText` (by external id, agent: the markdown) that is not yet built. These read a rendering the readiness
   plane made present.
@@ -96,15 +95,49 @@ outcome supersedes an earlier one. The two terminal kinds:
 The split keeps readiness responses small (a batch of full texts would exceed the gRPC message limit) and reuses the
 streaming content path.
 
-### Every miss enqueues a Cloud Task
+### Production is enqueued, never inline
 
-`EnsureFullText` on a miss:
+A conversion is a Cloud Task keyed by `doc_id`. The task, not a request, walks the OA ladder and picks the converter for
+whatever source it finds; which source served a paper is then an outcome recorded in the manifest, not a branch the
+caller sees. Re-enqueueing is safe to repeat — the task name is the `doc_id`, so a duplicate is an `AlreadyExists`
+no-op.
 
-1. Take the external ids from the manifest (`Manifest.external_ids`) — no crosswalk needed on the `doc_id` path.
-1. Enqueue a Cloud Task keyed by `doc_id` and return PENDING.
+Nothing enqueues today, and that is why a readiness query has nothing to trigger. The bulk ingestion pipeline commits
+each manifest last, with its renderings already in it, so a paper it ingested is READY the moment it exists — never
+PENDING for want of a conversion. PENDING is left for the papers that pipeline cannot finish: a PDF source with no
+markdown rendering, awaiting the OCR route. Those are real, and a caller must handle the state; what does not exist yet
+is anything that would advance them on demand. The reconcile sweep is the first producer: corpus state *is* the queue —
+a paper with no rendering and no marker is the work item — so no outbox is needed, which is the direct payoff of GCS as
+the only durable store.
 
-The task, not the request, walks the OA ladder and picks the converter for whatever source it finds. Which source served
-a paper is then an outcome recorded in the manifest, not a branch the caller sees.
+### Resolving an external id is a lookup, never a mint
+
+The agent holds a DOI or a PMID; only the document pane holds a `doc_id`. `MaybeIngestPapers` closes that gap with a
+read-only `crosswalk.lookup`, and the distinction from `mint` is load-bearing: `mint` *claims*, so calling it here would
+give any paper litcache has never ingested a fresh `doc_id` naming no manifest — permanently unresolvable — plus a
+crosswalk claim on that DOI. Minting belongs to ingestion. A miss is therefore an empty `doc_id` with `UNKNOWN_PAPER`,
+and the service holds `SELECT` on `litcache.crosswalk` and nothing more.
+
+The name reserves a shape the call does not yet have. Today it only reads. What it grows into is resolving ids against
+upstream sources litcache has not ingested, and starting production for whatever comes back unsettled — at which point
+`Maybe` is load-bearing twice over, since such a call may resolve nothing and produce nothing. Naming it for the read
+alone would have to be renamed then, and a renamed rpc is a broken one for every deployed caller.
+
+This is the first thing to put Cloud SQL on the evidence service's request path; it read only GCS before.
+
+Failure semantics follow the rule this lane keeps relearning — never let a transient failure look like a terminal fact,
+and the converse. A crosswalk that cannot be reached is `UNAVAILABLE` for the **whole call**, never a per-id empty
+`doc_id`: an outage affects the batch, and a caller reading it per-id writes every one of those papers off as absent
+from the corpus. A deployment that wires *no* crosswalk is `FAILED_PRECONDITION`, not `UNAVAILABLE` — gRPC retries
+UNAVAILABLE by default policy, and no number of retries configures one.
+
+Ids are scheme-qualified (`doi:` / `pmid:` / `pmcid:`); an unqualified one is `INVALID_ARGUMENT` rather than guessed at,
+since a wrong guess resolves to a different paper. Two ids naming one paper (a DOI and its PMID) both appear in the
+response, sharing a `doc_id` — the collapse happens after resolution, where the reads are, not on the input.
+
+The lookup only finds ids captured **at ingest**: a caller holding a PMCID for a paper stored under its DOI and PMID
+misses even though the corpus has it. Closing that needs id resolution (DOI↔PMID↔PMCID) in front of the lookup —
+deferred, because it adds a network round trip to the request path and `ExternalIds` captures doi/pmid for most papers.
 
 ### Conversion runs in the pushed request
 
@@ -179,16 +212,19 @@ delimited *data*, never as instructions.
 `GATED` is already representable (`Source.access` ≠ `free_to_read`). `FAILED` / `NO_FULL_TEXT` live in the
 `.fetch_outcome` sidecar. So the async terminal outcomes are durable in GCS without an additive `Manifest` field.
 
-### The agent waits without burning tokens
+### The agent waits in the sandbox, not in the server
 
 A blocked tool call costs tokens per round-trip, not per wall-clock second — the model generates nothing while awaiting
-the result. So the agent **fires and continues** (`EnsureFullText([batch])` returns ready-now + pending; it works with
-what is ready and revisits the rest, never idling) and **long-polls** only when it must wait (`AwaitFullText` blocks,
-near-free, O(few) calls over a minutes-long conversion rather than a busy loop).
+the result. So the agent **fires and continues**: it works with what is READY and revisits the rest, never idling. When
+it must wait, it sleeps **in the sandbox** — a sleep-and-poll loop is one tool call that blocks in-process and returns
+once, the same token cost as a server-side long-poll without holding a Cloud Run serving slot for minutes.
 
-There is no completion push to subscribe to, so an agent that must keep waiting past one `AwaitFullText` return loops
-over it with a sleep. That belongs in a literature skill as guidance rather than in the interface: the substrate is the
-same either way, and only the agent's waiting idiom would change.
+A server-side wait was built and removed. Its ceiling derived from Cloud Run's 300s request timeout — the *outermost*
+bound — while the binding one is four layers in: postern's `Sandbox.run` defaults to 60s and the agent's `shell` tool to
+120s, so the first caller through a sandbox is killed while the server still holds the wait.
+
+A streaming `WatchFullText` is deferred, not rejected: it survives an implementation change from polling to push, and
+the document pane has no sandbox to sleep in.
 
 ## Alternatives considered
 
@@ -205,20 +241,22 @@ same either way, and only the agent's waiting idiom would change.
   spawned background task is unreliable short of pinning an always-on-CPU warm instance.
 - **An additive `Manifest.FetchOutcome` field.** Rejected as unnecessary: the sidecar marker records terminal state
   without mutating the create-only manifest, and `GATED` is already modelled by `Access`.
-- **A synchronous `PENDING` status the agent then polls tightly.** Rejected: a tight poll loop burns a turn per poll.
-  The readiness/await split + long-poll makes waiting near-free in tokens.
+- **A server-side long-poll (`AwaitFullText`).** Built, then removed. Its ceiling was derived from the wrong bound (see
+  *The agent waits in the sandbox*), and the token saving that justified it is free to any caller with somewhere to
+  sleep — a sandbox sleep loop is one tool call. It also conflated command and query: polling that enqueues lets a
+  caller re-drive work it already asked for on every poll.
 
 ## Implementation state
 
-Built: `DescribePaper` / `ResolveContent` / `Locate` / `Validate` and the readiness plane `EnsureFullText` /
-`AwaitFullText`, all reading the litcache GCS layout directly from a `doc_id`; the `.fetch_outcome` sidecar
-(`outcome.py`); the generation-matched manifest-RMW write-back (`writer.add_rendering`,
-`writer.add_source_and_rendering`); and the producer `produce.produce_full_text`, which walks the OA ladder and the
-PDF-OCR branch off any request path.
+Built: `DescribePaper` / `ResolveContent` / `Locate` / `Validate` / `PollFullTexts`, all reading the litcache GCS layout
+directly from a `doc_id`; the `.fetch_outcome` sidecar (`outcome.py`); the generation-matched manifest-RMW write-back
+(`writer.add_rendering`, `writer.add_source_and_rendering`); the producer `produce.produce_full_text`, which walks the
+OA ladder and the PDF-OCR branch off any request path; and the conversion lane — the Cloud Tasks queue, the `/convert`
+worker, and the invoker identity.
 
-Not yet built: the Cloud Tasks queue and the `/convert` handler. Nothing calls `produce_full_text`, so no request
-reaches the producer and a PENDING id settles only when a rendering arrives by another route — today, the ingestion
-pipeline. Resolution by external id is absent too: the backend takes a `doc_id` and does no crosswalk lookup.
+Not yet built: anything that enqueues. The lane is inert until the reconcile sweep lands, so a PENDING id settles only
+when a rendering arrives by another route — today, the ingestion pipeline. The worker's PDF branch has no model backend
+wired: it raises (not an `OcrError`), so the paper stays PENDING rather than being written off.
 
 ## Open questions
 

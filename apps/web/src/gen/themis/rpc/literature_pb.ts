@@ -16,15 +16,13 @@
 
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { Duration } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_duration } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/literature.proto.
  */
 export const file_themis_rpc_literature: GenFile = /*@__PURE__*/
-  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiKAoVRW5zdXJlRnVsbFRleHRSZXF1ZXN0Eg8KB2RvY19pZHMYASADKAkiWAoRRnVsbFRleHRSZWFkaW5lc3MSDgoGZG9jX2lkGAEgASgJEjMKBXN0YXRlGAIgASgOMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0U3RhdGUiVQoWRW5zdXJlRnVsbFRleHRSZXNwb25zZRI7CglyZWFkaW5lc3MYASADKAsyKC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRSZWFkaW5lc3MiUwoUQXdhaXRGdWxsVGV4dFJlcXVlc3QSDwoHZG9jX2lkcxgBIAMoCRIqCgd0aW1lb3V0GAIgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uIlQKFUF3YWl0RnVsbFRleHRSZXNwb25zZRI7CglyZWFkaW5lc3MYASADKAsyKC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRSZWFkaW5lc3MiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJKmUKDlJlcHJlc2VudGF0aW9uEh4KGlJFUFJFU0VOVEFUSU9OX1VOU1BFQ0lGSUVEEAASGwoXUkVQUkVTRU5UQVRJT05fTUFSS0RPV04QARIWChJSRVBSRVNFTlRBVElPTl9QREYQAipYCghGaWxlUm9sZRIZChVGSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIUChBGSUxFX1JPTEVfRklHVVJFEAESGwoXRklMRV9ST0xFX1NVUFBMRU1FTlRBUlkQAirJAQoNRnVsbFRleHRTdGF0ZRIfChtGVUxMX1RFWFRfU1RBVEVfVU5TUEVDSUZJRUQQABIZChVGVUxMX1RFWFRfU1RBVEVfUkVBRFkQARIbChdGVUxMX1RFWFRfU1RBVEVfUEVORElORxACEiAKHEZVTExfVEVYVF9TVEFURV9OT19GVUxMX1RFWFQQAxIaChZGVUxMX1RFWFRfU1RBVEVfRkFJTEVEEAQSIQodRlVMTF9URVhUX1NUQVRFX1VOS05PV05fUEFQRVIQBTLjBAoKTGl0ZXJhdHVyZRJeCg1EZXNjcmliZVBhcGVyEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLkRlc2NyaWJlUGFwZXJSZXF1ZXN0GiAudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVySW5mbxJmCg5SZXNvbHZlQ29udGVudBIsLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXNvbHZlQ29udGVudFJlcXVlc3QaJi50aGVtaXMucnBjLmxpdGVyYXR1cmUuQ29udGVudExvY2F0aW9uElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlElsKCFZhbGlkYXRlEiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlZhbGlkYXRlUmVxdWVzdBonLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlc3BvbnNlEm0KDkVuc3VyZUZ1bGxUZXh0EiwudGhlbWlzLnJwYy5saXRlcmF0dXJlLkVuc3VyZUZ1bGxUZXh0UmVxdWVzdBotLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5FbnN1cmVGdWxsVGV4dFJlc3BvbnNlEmoKDUF3YWl0RnVsbFRleHQSKy50aGVtaXMucnBjLmxpdGVyYXR1cmUuQXdhaXRGdWxsVGV4dFJlcXVlc3QaLC50aGVtaXMucnBjLmxpdGVyYXR1cmUuQXdhaXRGdWxsVGV4dFJlc3BvbnNlYgZwcm90bzM", [file_google_protobuf_duration]);
+  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiWAoRRnVsbFRleHRSZWFkaW5lc3MSDgoGZG9jX2lkGAEgASgJEjMKBXN0YXRlGAIgASgOMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0U3RhdGUiJwoUUG9sbEZ1bGxUZXh0c1JlcXVlc3QSDwoHZG9jX2lkcxgBIAMoCSJUChVQb2xsRnVsbFRleHRzUmVzcG9uc2USOwoJcmVhZGluZXNzGAEgAygLMigudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0UmVhZGluZXNzImoKDlBhcGVyUmVhZGluZXNzEhMKC2V4dGVybmFsX2lkGAEgASgJEg4KBmRvY19pZBgCIAEoCRIzCgVzdGF0ZRgDIAEoDjIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GdWxsVGV4dFN0YXRlIjAKGE1heWJlSW5nZXN0UGFwZXJzUmVxdWVzdBIUCgxleHRlcm5hbF9pZHMYASADKAkiVQoZTWF5YmVJbmdlc3RQYXBlcnNSZXNwb25zZRI4CglyZWFkaW5lc3MYASADKAsyJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGFwZXJSZWFkaW5lc3MiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJKmUKDlJlcHJlc2VudGF0aW9uEh4KGlJFUFJFU0VOVEFUSU9OX1VOU1BFQ0lGSUVEEAASGwoXUkVQUkVTRU5UQVRJT05fTUFSS0RPV04QARIWChJSRVBSRVNFTlRBVElPTl9QREYQAipYCghGaWxlUm9sZRIZChVGSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIUChBGSUxFX1JPTEVfRklHVVJFEAESGwoXRklMRV9ST0xFX1NVUFBMRU1FTlRBUlkQAirJAQoNRnVsbFRleHRTdGF0ZRIfChtGVUxMX1RFWFRfU1RBVEVfVU5TUEVDSUZJRUQQABIZChVGVUxMX1RFWFRfU1RBVEVfUkVBRFkQARIbChdGVUxMX1RFWFRfU1RBVEVfUEVORElORxACEiAKHEZVTExfVEVYVF9TVEFURV9OT19GVUxMX1RFWFQQAxIaChZGVUxMX1RFWFRfU1RBVEVfRkFJTEVEEAQSIQodRlVMTF9URVhUX1NUQVRFX1VOS05PV05fUEFQRVIQBTLsBAoKTGl0ZXJhdHVyZRJeCg1EZXNjcmliZVBhcGVyEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLkRlc2NyaWJlUGFwZXJSZXF1ZXN0GiAudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVySW5mbxJmCg5SZXNvbHZlQ29udGVudBIsLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXNvbHZlQ29udGVudFJlcXVlc3QaJi50aGVtaXMucnBjLmxpdGVyYXR1cmUuQ29udGVudExvY2F0aW9uElUKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlElsKCFZhbGlkYXRlEiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlZhbGlkYXRlUmVxdWVzdBonLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlc3BvbnNlEmoKDVBvbGxGdWxsVGV4dHMSKy50aGVtaXMucnBjLmxpdGVyYXR1cmUuUG9sbEZ1bGxUZXh0c1JlcXVlc3QaLC50aGVtaXMucnBjLmxpdGVyYXR1cmUuUG9sbEZ1bGxUZXh0c1Jlc3BvbnNlEnYKEU1heWJlSW5nZXN0UGFwZXJzEi8udGhlbWlzLnJwYy5saXRlcmF0dXJlLk1heWJlSW5nZXN0UGFwZXJzUmVxdWVzdBowLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5NYXliZUluZ2VzdFBhcGVyc1Jlc3BvbnNlYgZwcm90bzM");
 
 /**
  * @generated from message themis.rpc.literature.DescribePaperRequest
@@ -405,25 +403,6 @@ export const LocateResponseSchema: GenMessage<LocateResponse> = /*@__PURE__*/
   messageDesc(file_themis_rpc_literature, 13);
 
 /**
- * @generated from message themis.rpc.literature.EnsureFullTextRequest
- */
-export type EnsureFullTextRequest = Message<"themis.rpc.literature.EnsureFullTextRequest"> & {
-  /**
-   * litcache canonical doc_ids; duplicates collapse to one readiness. More than 100 is INVALID_ARGUMENT.
-   *
-   * @generated from field: repeated string doc_ids = 1;
-   */
-  docIds: string[];
-};
-
-/**
- * Describes the message themis.rpc.literature.EnsureFullTextRequest.
- * Use `create(EnsureFullTextRequestSchema)` to create a new message.
- */
-export const EnsureFullTextRequestSchema: GenMessage<EnsureFullTextRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 14);
-
-/**
  * @generated from message themis.rpc.literature.FullTextReadiness
  */
 export type FullTextReadiness = Message<"themis.rpc.literature.FullTextReadiness"> & {
@@ -443,61 +422,31 @@ export type FullTextReadiness = Message<"themis.rpc.literature.FullTextReadiness
  * Use `create(FullTextReadinessSchema)` to create a new message.
  */
 export const FullTextReadinessSchema: GenMessage<FullTextReadiness> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 15);
+  messageDesc(file_themis_rpc_literature, 14);
 
 /**
- * @generated from message themis.rpc.literature.EnsureFullTextResponse
+ * @generated from message themis.rpc.literature.PollFullTextsRequest
  */
-export type EnsureFullTextResponse = Message<"themis.rpc.literature.EnsureFullTextResponse"> & {
-  /**
-   * one per distinct requested doc_id, order not guaranteed
-   *
-   * @generated from field: repeated themis.rpc.literature.FullTextReadiness readiness = 1;
-   */
-  readiness: FullTextReadiness[];
-};
-
-/**
- * Describes the message themis.rpc.literature.EnsureFullTextResponse.
- * Use `create(EnsureFullTextResponseSchema)` to create a new message.
- */
-export const EnsureFullTextResponseSchema: GenMessage<EnsureFullTextResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 16);
-
-/**
- * @generated from message themis.rpc.literature.AwaitFullTextRequest
- */
-export type AwaitFullTextRequest = Message<"themis.rpc.literature.AwaitFullTextRequest"> & {
+export type PollFullTextsRequest = Message<"themis.rpc.literature.PollFullTextsRequest"> & {
   /**
    * litcache canonical doc_ids; duplicates collapse to one readiness. More than 100 is INVALID_ARGUMENT.
    *
    * @generated from field: repeated string doc_ids = 1;
    */
   docIds: string[];
-
-  /**
-   * Requested server-side wait. The call blocks until no requested id is PENDING (all settled), or the
-   * wait elapses, then returns each id's current readiness. Unset or negative is INVALID_ARGUMENT; a
-   * wait longer than the server's ceiling is clamped to it, so a return with ids still PENDING is the
-   * expected result of a long wait, not an error. The client must set an RPC deadline no shorter
-   * than the wait it expects; transport cancellation abandons the wait.
-   *
-   * @generated from field: google.protobuf.Duration timeout = 2;
-   */
-  timeout?: Duration | undefined;
 };
 
 /**
- * Describes the message themis.rpc.literature.AwaitFullTextRequest.
- * Use `create(AwaitFullTextRequestSchema)` to create a new message.
+ * Describes the message themis.rpc.literature.PollFullTextsRequest.
+ * Use `create(PollFullTextsRequestSchema)` to create a new message.
  */
-export const AwaitFullTextRequestSchema: GenMessage<AwaitFullTextRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 17);
+export const PollFullTextsRequestSchema: GenMessage<PollFullTextsRequest> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 15);
 
 /**
- * @generated from message themis.rpc.literature.AwaitFullTextResponse
+ * @generated from message themis.rpc.literature.PollFullTextsResponse
  */
-export type AwaitFullTextResponse = Message<"themis.rpc.literature.AwaitFullTextResponse"> & {
+export type PollFullTextsResponse = Message<"themis.rpc.literature.PollFullTextsResponse"> & {
   /**
    * one per distinct requested doc_id, order not guaranteed
    *
@@ -507,11 +456,85 @@ export type AwaitFullTextResponse = Message<"themis.rpc.literature.AwaitFullText
 };
 
 /**
- * Describes the message themis.rpc.literature.AwaitFullTextResponse.
- * Use `create(AwaitFullTextResponseSchema)` to create a new message.
+ * Describes the message themis.rpc.literature.PollFullTextsResponse.
+ * Use `create(PollFullTextsResponseSchema)` to create a new message.
  */
-export const AwaitFullTextResponseSchema: GenMessage<AwaitFullTextResponse> = /*@__PURE__*/
+export const PollFullTextsResponseSchema: GenMessage<PollFullTextsResponse> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 16);
+
+/**
+ * One requested external id, the paper it names, and that paper's full-text readiness.
+ *
+ * @generated from message themis.rpc.literature.PaperReadiness
+ */
+export type PaperReadiness = Message<"themis.rpc.literature.PaperReadiness"> & {
+  /**
+   * echoed back exactly as supplied, scheme-qualified
+   *
+   * @generated from field: string external_id = 1;
+   */
+  externalId: string;
+
+  /**
+   * The litcache canonical id. Empty when the id resolved to no paper — a genuine miss, reported
+   * alongside FULL_TEXT_STATE_UNKNOWN_PAPER rather than as a call-level error.
+   *
+   * @generated from field: string doc_id = 2;
+   */
+  docId: string;
+
+  /**
+   * @generated from field: themis.rpc.literature.FullTextState state = 3;
+   */
+  state: FullTextState;
+};
+
+/**
+ * Describes the message themis.rpc.literature.PaperReadiness.
+ * Use `create(PaperReadinessSchema)` to create a new message.
+ */
+export const PaperReadinessSchema: GenMessage<PaperReadiness> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 17);
+
+/**
+ * @generated from message themis.rpc.literature.MaybeIngestPapersRequest
+ */
+export type MaybeIngestPapersRequest = Message<"themis.rpc.literature.MaybeIngestPapersRequest"> & {
+  /**
+   * Scheme-qualified external ids (`doi:…`, `pmid:…`, `pmcid:…`). An unqualified id is
+   * INVALID_ARGUMENT rather than guessed at. More than 100 is INVALID_ARGUMENT.
+   *
+   * @generated from field: repeated string external_ids = 1;
+   */
+  externalIds: string[];
+};
+
+/**
+ * Describes the message themis.rpc.literature.MaybeIngestPapersRequest.
+ * Use `create(MaybeIngestPapersRequestSchema)` to create a new message.
+ */
+export const MaybeIngestPapersRequestSchema: GenMessage<MaybeIngestPapersRequest> = /*@__PURE__*/
   messageDesc(file_themis_rpc_literature, 18);
+
+/**
+ * @generated from message themis.rpc.literature.MaybeIngestPapersResponse
+ */
+export type MaybeIngestPapersResponse = Message<"themis.rpc.literature.MaybeIngestPapersResponse"> & {
+  /**
+   * One per distinct requested external_id, order not guaranteed. Two ids naming one paper (a DOI
+   * and its PMID) both appear, carrying the same doc_id.
+   *
+   * @generated from field: repeated themis.rpc.literature.PaperReadiness readiness = 1;
+   */
+  readiness: PaperReadiness[];
+};
+
+/**
+ * Describes the message themis.rpc.literature.MaybeIngestPapersResponse.
+ * Use `create(MaybeIngestPapersResponseSchema)` to create a new message.
+ */
+export const MaybeIngestPapersResponseSchema: GenMessage<MaybeIngestPapersResponse> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_literature, 19);
 
 /**
  * @generated from message themis.rpc.literature.ValidateRequest
@@ -533,7 +556,7 @@ export type ValidateRequest = Message<"themis.rpc.literature.ValidateRequest"> &
  * Use `create(ValidateRequestSchema)` to create a new message.
  */
 export const ValidateRequestSchema: GenMessage<ValidateRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 19);
+  messageDesc(file_themis_rpc_literature, 20);
 
 /**
  * Authoring-time answer for the agent: whether the quote locates in any representation, and which.
@@ -564,7 +587,7 @@ export type ValidateResponse = Message<"themis.rpc.literature.ValidateResponse">
  * Use `create(ValidateResponseSchema)` to create a new message.
  */
 export const ValidateResponseSchema: GenMessage<ValidateResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 20);
+  messageDesc(file_themis_rpc_literature, 21);
 
 /**
  * Which rendering of a paper a request concerns. Markdown is a converter's output; PDF is the
@@ -644,14 +667,15 @@ export enum FullTextState {
   READY = 1,
 
   /**
-   * a fetch/conversion is possible or underway; poll again
+   * no rendering and no terminal marker: production has not been attempted, or has not settled. Not a
+   * promise that one is underway — a paper the ladder has no rung for reads PENDING too.
    *
    * @generated from enum value: FULL_TEXT_STATE_PENDING = 2;
    */
   PENDING = 2,
 
   /**
-   * terminal: no source served it, nothing to convert
+   * terminal, marker-only: the ladder ran and served nothing
    *
    * @generated from enum value: FULL_TEXT_STATE_NO_FULL_TEXT = 3;
    */
@@ -727,32 +751,37 @@ export const Literature: GenService<{
     output: typeof ValidateResponseSchema;
   },
   /**
-   * Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
-   * present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+   * Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
+   * effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
    * sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
-   * an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
-   * with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
-   * PENDING id settles only once one is written.
+   * anything else is PENDING; an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a
+   * whole-batch abort). Blocking server-side is deliberately not offered: a caller with somewhere to
+   * sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
+   * serving slot for the whole wait.
    *
-   * @generated from rpc themis.rpc.literature.Literature.EnsureFullText
+   * @generated from rpc themis.rpc.literature.Literature.PollFullTexts
    */
-  ensureFullText: {
+  pollFullTexts: {
     methodKind: "unary";
-    input: typeof EnsureFullTextRequestSchema;
-    output: typeof EnsureFullTextResponseSchema;
+    input: typeof PollFullTextsRequestSchema;
+    output: typeof PollFullTextsResponseSchema;
   },
   /**
-   * Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
-   * each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
-   * Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
-   * and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+   * Resolve external ids to papers and report each one's full-text readiness. Today it looks the
+   * crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
+   * one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
+   * so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+   * The name is the shape it grows into: resolving ids upstream and starting production for what is
+   * unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+   * A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
+   * outage affects the batch, and a caller reading it per-id would write papers off permanently.
    *
-   * @generated from rpc themis.rpc.literature.Literature.AwaitFullText
+   * @generated from rpc themis.rpc.literature.Literature.MaybeIngestPapers
    */
-  awaitFullText: {
+  maybeIngestPapers: {
     methodKind: "unary";
-    input: typeof AwaitFullTextRequestSchema;
-    output: typeof AwaitFullTextResponseSchema;
+    input: typeof MaybeIngestPapersRequestSchema;
+    output: typeof MaybeIngestPapersResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_themis_rpc_literature, 0);

@@ -54,15 +54,15 @@ class LiteratureStub:
                 request_serializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_literature__pb2.ValidateResponse.FromString,
                 _registered_method=True)
-        self.EnsureFullText = channel.unary_unary(
-                '/themis.rpc.literature.Literature/EnsureFullText',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.FromString,
+        self.PollFullTexts = channel.unary_unary(
+                '/themis.rpc.literature.Literature/PollFullTexts',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.PollFullTextsRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.PollFullTextsResponse.FromString,
                 _registered_method=True)
-        self.AwaitFullText = channel.unary_unary(
-                '/themis.rpc.literature.Literature/AwaitFullText',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.FromString,
+        self.MaybeIngestPapers = channel.unary_unary(
+                '/themis.rpc.literature.Literature/MaybeIngestPapers',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
                 _registered_method=True)
 
 
@@ -101,23 +101,28 @@ class LiteratureServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def EnsureFullText(self, request, context):
-        """Report each paper's full-text readiness (batch), derived from the litcache layout. A rendering
-        present is READY; a paper whose source could yield one but has none is PENDING; a terminal
+    def PollFullTexts(self, request, context):
+        """Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
+        effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
         sidecar is NO_FULL_TEXT (nothing served it) or FAILED (a conversion will not succeed on retry);
-        an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a whole-batch abort). The caller works
-        with the READY papers and polls the PENDING ids. Nothing produces a rendering on demand yet, so a
-        PENDING id settles only once one is written.
+        anything else is PENDING; an unknown doc_id is UNKNOWN_PAPER (a per-id result, never a
+        whole-batch abort). Blocking server-side is deliberately not offered: a caller with somewhere to
+        sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
+        serving slot for the whole wait.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def AwaitFullText(self, request, context):
-        """Block until every requested paper has settled (no id PENDING) or the wait elapses, then report
-        each id's readiness — the long-poll the caller uses to wait on PENDING ids without busy-polling.
-        Same per-id readiness shape as EnsureFullText; an unset or negative timeout is INVALID_ARGUMENT,
-        and one longer than the server ceiling is clamped, so a caller that must wait longer calls again.
+    def MaybeIngestPapers(self, request, context):
+        """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
+        crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
+        one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
+        so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+        The name is the shape it grows into: resolving ids upstream and starting production for what is
+        unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+        A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
+        outage affects the batch, and a caller reading it per-id would write papers off permanently.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -146,15 +151,15 @@ def add_LiteratureServicer_to_server(servicer, server):
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_literature__pb2.ValidateResponse.SerializeToString,
             ),
-            'EnsureFullText': grpc.unary_unary_rpc_method_handler(
-                    servicer.EnsureFullText,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.SerializeToString,
+            'PollFullTexts': grpc.unary_unary_rpc_method_handler(
+                    servicer.PollFullTexts,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.PollFullTextsRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.PollFullTextsResponse.SerializeToString,
             ),
-            'AwaitFullText': grpc.unary_unary_rpc_method_handler(
-                    servicer.AwaitFullText,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.SerializeToString,
+            'MaybeIngestPapers': grpc.unary_unary_rpc_method_handler(
+                    servicer.MaybeIngestPapers,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -276,7 +281,7 @@ class Literature:
             _registered_method=True)
 
     @staticmethod
-    def EnsureFullText(request,
+    def PollFullTexts(request,
             target,
             options=(),
             channel_credentials=None,
@@ -289,9 +294,9 @@ class Literature:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/themis.rpc.literature.Literature/EnsureFullText',
-            themis_dot_rpc_dot_literature__pb2.EnsureFullTextRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.EnsureFullTextResponse.FromString,
+            '/themis.rpc.literature.Literature/PollFullTexts',
+            themis_dot_rpc_dot_literature__pb2.PollFullTextsRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.PollFullTextsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -303,7 +308,7 @@ class Literature:
             _registered_method=True)
 
     @staticmethod
-    def AwaitFullText(request,
+    def MaybeIngestPapers(request,
             target,
             options=(),
             channel_credentials=None,
@@ -316,9 +321,9 @@ class Literature:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/themis.rpc.literature.Literature/AwaitFullText',
-            themis_dot_rpc_dot_literature__pb2.AwaitFullTextRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.AwaitFullTextResponse.FromString,
+            '/themis.rpc.literature.Literature/MaybeIngestPapers',
+            themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
             options,
             channel_credentials,
             insecure,

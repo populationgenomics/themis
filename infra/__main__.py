@@ -206,7 +206,10 @@ evidence_service = evidence.EvidenceService(
     region=region,
     image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
     fulltext_bucket=fulltext.name,
-    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+    sql_instance=database.instance,
+    sql_connection_name=database.instance_connection_name,
+    sql_database=database.database_name,
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, database]),
 )
 # The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
 # request path. Nothing enqueues onto the queue yet — the reconcile sweep is its first producer.
@@ -428,6 +431,8 @@ pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
+# The migrate runner's EVIDENCE_DB_USER substitution (the crosswalk SELECT grant's subject).
+pulumi.export('evidence_db_user', evidence_service.db_user)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)

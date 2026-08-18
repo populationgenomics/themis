@@ -22,64 +22,65 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from google.protobuf import duration_pb2 as google_dot_protobuf_dot_duration__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bthemis/rpc/literature.proto\x12\x15themis.rpc.literature\x1a\x1egoogle/protobuf/duration.proto\"&\n\x14\x44\x65scribePaperRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\"[\n\x08\x46ileInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12-\n\x04role\x18\x02 \x01(\x0e\x32\x1f.themis.rpc.literature.FileRole\x12\x12\n\nmedia_type\x18\x03 \x01(\t\"\xe3\x01\n\tPaperInfo\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x14\n\x0chas_markdown\x18\x03 \x01(\x08\x12\x19\n\x11markdown_from_xml\x18\x04 \x01(\x08\x12\x0f\n\x07has_pdf\x18\x05 \x01(\x08\x12\x45\n\x16\x64\x65\x66\x61ult_representation\x18\x06 \x01(\x0e\x32%.themis.rpc.literature.Representation\x12.\n\x05\x66iles\x18\x07 \x03(\x0b\x32\x1f.themis.rpc.literature.FileInfo\"\x12\n\x10MarkdownSelector\"\r\n\x0bPdfSelector\"\x1c\n\x0c\x46ileSelector\x12\x0c\n\x04name\x18\x01 \x01(\t\"\xd8\x01\n\x15ResolveContentRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12;\n\x08markdown\x18\x02 \x01(\x0b\x32\'.themis.rpc.literature.MarkdownSelectorH\x00\x12\x31\n\x03pdf\x18\x03 \x01(\x0b\x32\".themis.rpc.literature.PdfSelectorH\x00\x12\x33\n\x04\x66ile\x18\x04 \x01(\x0b\x32#.themis.rpc.literature.FileSelectorH\x00\x42\n\n\x08selector\"6\n\x0f\x43ontentLocation\x12\x0f\n\x07gcs_uri\x18\x01 \x01(\t\x12\x12\n\nmedia_type\x18\x02 \x01(\t\"m\n\rLocateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\x12=\n\x0erepresentation\x18\x03 \x01(\x0e\x32%.themis.rpc.literature.Representation\")\n\x0bTextOffsets\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\";\n\x04Rect\x12\t\n\x01x\x18\x01 \x01(\x02\x12\t\n\x01y\x18\x02 \x01(\x02\x12\r\n\x05width\x18\x03 \x01(\x02\x12\x0e\n\x06height\x18\x04 \x01(\x02\"E\n\tPdfRegion\x12\x0c\n\x04page\x18\x01 \x01(\x05\x12*\n\x05rects\x18\x02 \x03(\x0b\x32\x1b.themis.rpc.literature.Rect\"\x11\n\x0fQuoteNotLocated\"\xc4\x01\n\x0eLocateResponse\x12\x35\n\x07offsets\x18\x01 \x01(\x0b\x32\".themis.rpc.literature.TextOffsetsH\x00\x12\x32\n\x06region\x18\x02 \x01(\x0b\x32 .themis.rpc.literature.PdfRegionH\x00\x12=\n\x0bnot_located\x18\x03 \x01(\x0b\x32&.themis.rpc.literature.QuoteNotLocatedH\x00\x42\x08\n\x06result\"(\n\x15\x45nsureFullTextRequest\x12\x0f\n\x07\x64oc_ids\x18\x01 \x03(\t\"X\n\x11\x46ullTextReadiness\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x33\n\x05state\x18\x02 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"U\n\x16\x45nsureFullTextResponse\x12;\n\treadiness\x18\x01 \x03(\x0b\x32(.themis.rpc.literature.FullTextReadiness\"S\n\x14\x41waitFullTextRequest\x12\x0f\n\x07\x64oc_ids\x18\x01 \x03(\t\x12*\n\x07timeout\x18\x02 \x01(\x0b\x32\x19.google.protobuf.Duration\"T\n\x15\x41waitFullTextResponse\x12;\n\treadiness\x18\x01 \x03(\x0b\x32(.themis.rpc.literature.FullTextReadiness\"0\n\x0fValidateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\"i\n\x10ValidateResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x39\n\nlocated_in\x18\x02 \x03(\x0e\x32%.themis.rpc.literature.Representation\x12\x0e\n\x06reason\x18\x03 \x01(\t*e\n\x0eRepresentation\x12\x1e\n\x1aREPRESENTATION_UNSPECIFIED\x10\x00\x12\x1b\n\x17REPRESENTATION_MARKDOWN\x10\x01\x12\x16\n\x12REPRESENTATION_PDF\x10\x02*X\n\x08\x46ileRole\x12\x19\n\x15\x46ILE_ROLE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x46ILE_ROLE_FIGURE\x10\x01\x12\x1b\n\x17\x46ILE_ROLE_SUPPLEMENTARY\x10\x02*\xc9\x01\n\rFullTextState\x12\x1f\n\x1b\x46ULL_TEXT_STATE_UNSPECIFIED\x10\x00\x12\x19\n\x15\x46ULL_TEXT_STATE_READY\x10\x01\x12\x1b\n\x17\x46ULL_TEXT_STATE_PENDING\x10\x02\x12 \n\x1c\x46ULL_TEXT_STATE_NO_FULL_TEXT\x10\x03\x12\x1a\n\x16\x46ULL_TEXT_STATE_FAILED\x10\x04\x12!\n\x1d\x46ULL_TEXT_STATE_UNKNOWN_PAPER\x10\x05\x32\xe3\x04\n\nLiterature\x12^\n\rDescribePaper\x12+.themis.rpc.literature.DescribePaperRequest\x1a .themis.rpc.literature.PaperInfo\x12\x66\n\x0eResolveContent\x12,.themis.rpc.literature.ResolveContentRequest\x1a&.themis.rpc.literature.ContentLocation\x12U\n\x06Locate\x12$.themis.rpc.literature.LocateRequest\x1a%.themis.rpc.literature.LocateResponse\x12[\n\x08Validate\x12&.themis.rpc.literature.ValidateRequest\x1a\'.themis.rpc.literature.ValidateResponse\x12m\n\x0e\x45nsureFullText\x12,.themis.rpc.literature.EnsureFullTextRequest\x1a-.themis.rpc.literature.EnsureFullTextResponse\x12j\n\rAwaitFullText\x12+.themis.rpc.literature.AwaitFullTextRequest\x1a,.themis.rpc.literature.AwaitFullTextResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bthemis/rpc/literature.proto\x12\x15themis.rpc.literature\"&\n\x14\x44\x65scribePaperRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\"[\n\x08\x46ileInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12-\n\x04role\x18\x02 \x01(\x0e\x32\x1f.themis.rpc.literature.FileRole\x12\x12\n\nmedia_type\x18\x03 \x01(\t\"\xe3\x01\n\tPaperInfo\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x14\n\x0chas_markdown\x18\x03 \x01(\x08\x12\x19\n\x11markdown_from_xml\x18\x04 \x01(\x08\x12\x0f\n\x07has_pdf\x18\x05 \x01(\x08\x12\x45\n\x16\x64\x65\x66\x61ult_representation\x18\x06 \x01(\x0e\x32%.themis.rpc.literature.Representation\x12.\n\x05\x66iles\x18\x07 \x03(\x0b\x32\x1f.themis.rpc.literature.FileInfo\"\x12\n\x10MarkdownSelector\"\r\n\x0bPdfSelector\"\x1c\n\x0c\x46ileSelector\x12\x0c\n\x04name\x18\x01 \x01(\t\"\xd8\x01\n\x15ResolveContentRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12;\n\x08markdown\x18\x02 \x01(\x0b\x32\'.themis.rpc.literature.MarkdownSelectorH\x00\x12\x31\n\x03pdf\x18\x03 \x01(\x0b\x32\".themis.rpc.literature.PdfSelectorH\x00\x12\x33\n\x04\x66ile\x18\x04 \x01(\x0b\x32#.themis.rpc.literature.FileSelectorH\x00\x42\n\n\x08selector\"6\n\x0f\x43ontentLocation\x12\x0f\n\x07gcs_uri\x18\x01 \x01(\t\x12\x12\n\nmedia_type\x18\x02 \x01(\t\"m\n\rLocateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\x12=\n\x0erepresentation\x18\x03 \x01(\x0e\x32%.themis.rpc.literature.Representation\")\n\x0bTextOffsets\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\";\n\x04Rect\x12\t\n\x01x\x18\x01 \x01(\x02\x12\t\n\x01y\x18\x02 \x01(\x02\x12\r\n\x05width\x18\x03 \x01(\x02\x12\x0e\n\x06height\x18\x04 \x01(\x02\"E\n\tPdfRegion\x12\x0c\n\x04page\x18\x01 \x01(\x05\x12*\n\x05rects\x18\x02 \x03(\x0b\x32\x1b.themis.rpc.literature.Rect\"\x11\n\x0fQuoteNotLocated\"\xc4\x01\n\x0eLocateResponse\x12\x35\n\x07offsets\x18\x01 \x01(\x0b\x32\".themis.rpc.literature.TextOffsetsH\x00\x12\x32\n\x06region\x18\x02 \x01(\x0b\x32 .themis.rpc.literature.PdfRegionH\x00\x12=\n\x0bnot_located\x18\x03 \x01(\x0b\x32&.themis.rpc.literature.QuoteNotLocatedH\x00\x42\x08\n\x06result\"X\n\x11\x46ullTextReadiness\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x33\n\x05state\x18\x02 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"\'\n\x14PollFullTextsRequest\x12\x0f\n\x07\x64oc_ids\x18\x01 \x03(\t\"T\n\x15PollFullTextsResponse\x12;\n\treadiness\x18\x01 \x03(\x0b\x32(.themis.rpc.literature.FullTextReadiness\"j\n\x0ePaperReadiness\x12\x13\n\x0b\x65xternal_id\x18\x01 \x01(\t\x12\x0e\n\x06\x64oc_id\x18\x02 \x01(\t\x12\x33\n\x05state\x18\x03 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"0\n\x18MaybeIngestPapersRequest\x12\x14\n\x0c\x65xternal_ids\x18\x01 \x03(\t\"U\n\x19MaybeIngestPapersResponse\x12\x38\n\treadiness\x18\x01 \x03(\x0b\x32%.themis.rpc.literature.PaperReadiness\"0\n\x0fValidateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\"i\n\x10ValidateResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x39\n\nlocated_in\x18\x02 \x03(\x0e\x32%.themis.rpc.literature.Representation\x12\x0e\n\x06reason\x18\x03 \x01(\t*e\n\x0eRepresentation\x12\x1e\n\x1aREPRESENTATION_UNSPECIFIED\x10\x00\x12\x1b\n\x17REPRESENTATION_MARKDOWN\x10\x01\x12\x16\n\x12REPRESENTATION_PDF\x10\x02*X\n\x08\x46ileRole\x12\x19\n\x15\x46ILE_ROLE_UNSPECIFIED\x10\x00\x12\x14\n\x10\x46ILE_ROLE_FIGURE\x10\x01\x12\x1b\n\x17\x46ILE_ROLE_SUPPLEMENTARY\x10\x02*\xc9\x01\n\rFullTextState\x12\x1f\n\x1b\x46ULL_TEXT_STATE_UNSPECIFIED\x10\x00\x12\x19\n\x15\x46ULL_TEXT_STATE_READY\x10\x01\x12\x1b\n\x17\x46ULL_TEXT_STATE_PENDING\x10\x02\x12 \n\x1c\x46ULL_TEXT_STATE_NO_FULL_TEXT\x10\x03\x12\x1a\n\x16\x46ULL_TEXT_STATE_FAILED\x10\x04\x12!\n\x1d\x46ULL_TEXT_STATE_UNKNOWN_PAPER\x10\x05\x32\xec\x04\n\nLiterature\x12^\n\rDescribePaper\x12+.themis.rpc.literature.DescribePaperRequest\x1a .themis.rpc.literature.PaperInfo\x12\x66\n\x0eResolveContent\x12,.themis.rpc.literature.ResolveContentRequest\x1a&.themis.rpc.literature.ContentLocation\x12U\n\x06Locate\x12$.themis.rpc.literature.LocateRequest\x1a%.themis.rpc.literature.LocateResponse\x12[\n\x08Validate\x12&.themis.rpc.literature.ValidateRequest\x1a\'.themis.rpc.literature.ValidateResponse\x12j\n\rPollFullTexts\x12+.themis.rpc.literature.PollFullTextsRequest\x1a,.themis.rpc.literature.PollFullTextsResponse\x12v\n\x11MaybeIngestPapers\x12/.themis.rpc.literature.MaybeIngestPapersRequest\x1a\x30.themis.rpc.literature.MaybeIngestPapersResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.literature_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_REPRESENTATION']._serialized_start=1840
-  _globals['_REPRESENTATION']._serialized_end=1941
-  _globals['_FILEROLE']._serialized_start=1943
-  _globals['_FILEROLE']._serialized_end=2031
-  _globals['_FULLTEXTSTATE']._serialized_start=2034
-  _globals['_FULLTEXTSTATE']._serialized_end=2235
-  _globals['_DESCRIBEPAPERREQUEST']._serialized_start=86
-  _globals['_DESCRIBEPAPERREQUEST']._serialized_end=124
-  _globals['_FILEINFO']._serialized_start=126
-  _globals['_FILEINFO']._serialized_end=217
-  _globals['_PAPERINFO']._serialized_start=220
-  _globals['_PAPERINFO']._serialized_end=447
-  _globals['_MARKDOWNSELECTOR']._serialized_start=449
-  _globals['_MARKDOWNSELECTOR']._serialized_end=467
-  _globals['_PDFSELECTOR']._serialized_start=469
-  _globals['_PDFSELECTOR']._serialized_end=482
-  _globals['_FILESELECTOR']._serialized_start=484
-  _globals['_FILESELECTOR']._serialized_end=512
-  _globals['_RESOLVECONTENTREQUEST']._serialized_start=515
-  _globals['_RESOLVECONTENTREQUEST']._serialized_end=731
-  _globals['_CONTENTLOCATION']._serialized_start=733
-  _globals['_CONTENTLOCATION']._serialized_end=787
-  _globals['_LOCATEREQUEST']._serialized_start=789
-  _globals['_LOCATEREQUEST']._serialized_end=898
-  _globals['_TEXTOFFSETS']._serialized_start=900
-  _globals['_TEXTOFFSETS']._serialized_end=941
-  _globals['_RECT']._serialized_start=943
-  _globals['_RECT']._serialized_end=1002
-  _globals['_PDFREGION']._serialized_start=1004
-  _globals['_PDFREGION']._serialized_end=1073
-  _globals['_QUOTENOTLOCATED']._serialized_start=1075
-  _globals['_QUOTENOTLOCATED']._serialized_end=1092
-  _globals['_LOCATERESPONSE']._serialized_start=1095
-  _globals['_LOCATERESPONSE']._serialized_end=1291
-  _globals['_ENSUREFULLTEXTREQUEST']._serialized_start=1293
-  _globals['_ENSUREFULLTEXTREQUEST']._serialized_end=1333
-  _globals['_FULLTEXTREADINESS']._serialized_start=1335
-  _globals['_FULLTEXTREADINESS']._serialized_end=1423
-  _globals['_ENSUREFULLTEXTRESPONSE']._serialized_start=1425
-  _globals['_ENSUREFULLTEXTRESPONSE']._serialized_end=1510
-  _globals['_AWAITFULLTEXTREQUEST']._serialized_start=1512
-  _globals['_AWAITFULLTEXTREQUEST']._serialized_end=1595
-  _globals['_AWAITFULLTEXTRESPONSE']._serialized_start=1597
-  _globals['_AWAITFULLTEXTRESPONSE']._serialized_end=1681
-  _globals['_VALIDATEREQUEST']._serialized_start=1683
-  _globals['_VALIDATEREQUEST']._serialized_end=1731
-  _globals['_VALIDATERESPONSE']._serialized_start=1733
-  _globals['_VALIDATERESPONSE']._serialized_end=1838
-  _globals['_LITERATURE']._serialized_start=2238
-  _globals['_LITERATURE']._serialized_end=2849
+  _globals['_REPRESENTATION']._serialized_start=1880
+  _globals['_REPRESENTATION']._serialized_end=1981
+  _globals['_FILEROLE']._serialized_start=1983
+  _globals['_FILEROLE']._serialized_end=2071
+  _globals['_FULLTEXTSTATE']._serialized_start=2074
+  _globals['_FULLTEXTSTATE']._serialized_end=2275
+  _globals['_DESCRIBEPAPERREQUEST']._serialized_start=54
+  _globals['_DESCRIBEPAPERREQUEST']._serialized_end=92
+  _globals['_FILEINFO']._serialized_start=94
+  _globals['_FILEINFO']._serialized_end=185
+  _globals['_PAPERINFO']._serialized_start=188
+  _globals['_PAPERINFO']._serialized_end=415
+  _globals['_MARKDOWNSELECTOR']._serialized_start=417
+  _globals['_MARKDOWNSELECTOR']._serialized_end=435
+  _globals['_PDFSELECTOR']._serialized_start=437
+  _globals['_PDFSELECTOR']._serialized_end=450
+  _globals['_FILESELECTOR']._serialized_start=452
+  _globals['_FILESELECTOR']._serialized_end=480
+  _globals['_RESOLVECONTENTREQUEST']._serialized_start=483
+  _globals['_RESOLVECONTENTREQUEST']._serialized_end=699
+  _globals['_CONTENTLOCATION']._serialized_start=701
+  _globals['_CONTENTLOCATION']._serialized_end=755
+  _globals['_LOCATEREQUEST']._serialized_start=757
+  _globals['_LOCATEREQUEST']._serialized_end=866
+  _globals['_TEXTOFFSETS']._serialized_start=868
+  _globals['_TEXTOFFSETS']._serialized_end=909
+  _globals['_RECT']._serialized_start=911
+  _globals['_RECT']._serialized_end=970
+  _globals['_PDFREGION']._serialized_start=972
+  _globals['_PDFREGION']._serialized_end=1041
+  _globals['_QUOTENOTLOCATED']._serialized_start=1043
+  _globals['_QUOTENOTLOCATED']._serialized_end=1060
+  _globals['_LOCATERESPONSE']._serialized_start=1063
+  _globals['_LOCATERESPONSE']._serialized_end=1259
+  _globals['_FULLTEXTREADINESS']._serialized_start=1261
+  _globals['_FULLTEXTREADINESS']._serialized_end=1349
+  _globals['_POLLFULLTEXTSREQUEST']._serialized_start=1351
+  _globals['_POLLFULLTEXTSREQUEST']._serialized_end=1390
+  _globals['_POLLFULLTEXTSRESPONSE']._serialized_start=1392
+  _globals['_POLLFULLTEXTSRESPONSE']._serialized_end=1476
+  _globals['_PAPERREADINESS']._serialized_start=1478
+  _globals['_PAPERREADINESS']._serialized_end=1584
+  _globals['_MAYBEINGESTPAPERSREQUEST']._serialized_start=1586
+  _globals['_MAYBEINGESTPAPERSREQUEST']._serialized_end=1634
+  _globals['_MAYBEINGESTPAPERSRESPONSE']._serialized_start=1636
+  _globals['_MAYBEINGESTPAPERSRESPONSE']._serialized_end=1721
+  _globals['_VALIDATEREQUEST']._serialized_start=1723
+  _globals['_VALIDATEREQUEST']._serialized_end=1771
+  _globals['_VALIDATERESPONSE']._serialized_start=1773
+  _globals['_VALIDATERESPONSE']._serialized_end=1878
+  _globals['_LITERATURE']._serialized_start=2278
+  _globals['_LITERATURE']._serialized_end=2898
 # @@protoc_insertion_point(module_scope)
