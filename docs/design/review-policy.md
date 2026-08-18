@@ -50,7 +50,11 @@ What the interface PR can hold is bounded, and each bound is enforced by a check
   [`proto.md`](proto.md) §Schema evolution allows the skew (a browser-sent field is deleted only after the stop-setting
   change has deployed), else it follows as its own change. An rpc declared ahead of its handler additionally needs the
   service impl widened to `Partial<ServiceImpl<T>>`, narrowed back in the implementation PR; that narrowing is what
-  catches a handler nobody wrote.
+  catches a handler nobody wrote. Python has no `Partial<>`: mypy-protobuf marks every rpc on the generated servicer
+  base abstract, so pyright rejects a servicer implementing a subset — a stronger claim than grpc makes, where an rpc
+  the servicer leaves alone answers `UNIMPLEMENTED`. The interface PR says so where it builds the servicer
+  (`# pyright: ignore[reportAbstractUsage]`) rather than writing stub methods that duplicate the generated base; the
+  implementation PR rewrites those lines as it fills the servicer in, and the suppression goes with them.
 - **An addition need not be separable either.** A new `AnalysisInputs` member fails the tests holding every scenario
   named, labelled and rendered, so it ships with the surfaces that render it.
 - **A migration carries its `deploy.yml` substitution** — a `${VAR}` in its SQL is rendered from the
