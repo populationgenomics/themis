@@ -20,6 +20,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import override
 
+from themis.litcache import crosswalk
 from themis.rpc import literature_pb2
 
 
@@ -178,8 +179,12 @@ class FixtureBackend(LiteratureBackend):
 
     def __init__(self, papers: Mapping[str, SeededPaper]) -> None:
         self._papers = dict(papers)
+        # Folded on both sides, as the live crosswalk is: the seed spells ids as the crosswalk keys
+        # them, and a caller may spell them any way the scheme allows.
         self._crosswalk = {
-            external_id: doc_id for doc_id, paper in self._papers.items() for external_id in paper.external_ids
+            crosswalk.normalise_key(external_id): doc_id
+            for doc_id, paper in self._papers.items()
+            for external_id in paper.external_ids
         }
 
     def _paper(self, doc_id: str) -> SeededPaper:
@@ -260,9 +265,9 @@ class FixtureBackend(LiteratureBackend):
     @override
     async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
         return {
-            external_id: self._crosswalk[external_id]
-            for external_id in dict.fromkeys(external_ids)
-            if external_id in self._crosswalk
+            external_id: self._crosswalk[folded]
+            for external_id, folded in ((i, crosswalk.normalise_key(i)) for i in dict.fromkeys(external_ids))
+            if folded in self._crosswalk
         }
 
     @override

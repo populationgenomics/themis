@@ -297,6 +297,15 @@ def test_two_ids_naming_one_paper_both_report_the_shared_doc_id() -> None:
     }
 
 
+def test_a_doi_resolves_under_any_spelling() -> None:
+    # DOI names are case-insensitive by specification and the crosswalk holds them folded, so the
+    # fixture must answer a mixed-case spelling exactly as the litcache backend does — a caller that
+    # develops against the fixture would otherwise see UNKNOWN_PAPER where production returns a hit.
+    spelled = DOI_XML.upper().replace('DOI:', 'doi:')
+    response = _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[spelled])))
+    assert _paper_readiness(response) == {spelled: (DOC_XML, literature_pb2.FULL_TEXT_STATE_READY)}
+
+
 def test_an_id_the_corpus_does_not_know_is_an_empty_doc_id() -> None:
     # A miss is per-id and modelled: an empty doc_id with UNKNOWN_PAPER, never a call-level error and
     # never a minted doc_id that would name no manifest.
