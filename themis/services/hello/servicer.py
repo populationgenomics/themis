@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import override
+
 import grpc.aio
 
 from themis.clients.auth import session as session_mod
@@ -19,6 +21,7 @@ class Servicer(hello_pb2_grpc.HelloServicer):
     def __init__(self, session_resolver: session_mod.SessionResolver) -> None:
         self._session_resolver = session_resolver
 
+    @override
     async def SayHello(
         self, request: hello_pb2.SayHelloRequest, context: grpc.aio.ServicerContext
     ) -> hello_pb2.SayHelloResponse:

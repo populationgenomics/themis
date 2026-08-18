@@ -6,6 +6,7 @@ import asyncio
 import io
 import pathlib
 import tarfile
+from typing import override
 
 import postern
 import pytest
@@ -45,6 +46,7 @@ def test_restore_first_spawn_boots_empty(tmp_path: pathlib.Path) -> None:
 
 def test_restore_fails_closed_on_a_document_store_error(tmp_path: pathlib.Path) -> None:
     class _Failing(store_client.FixtureStore):
+        @override
         async def get_working_document(self) -> str | None:
             raise RuntimeError('store down')
 
@@ -54,6 +56,7 @@ def test_restore_fails_closed_on_a_document_store_error(tmp_path: pathlib.Path) 
 
 def test_scratch_fails_open_leaving_the_document(tmp_path: pathlib.Path) -> None:
     class _BadScratch(store_client.FixtureStore):
+        @override
         async def get_workspace(self) -> bytes | None:
             raise RuntimeError('store down')
 

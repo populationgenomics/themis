@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Iterable, Mapping
-from typing import NamedTuple
+from typing import NamedTuple, override
 
 # Zero-padded so a prefix listing orders numerically and the newest is the last key
 # (self-hosted-sandbox.md §9); wide enough that the pad never overflows in practice.
@@ -76,19 +76,23 @@ class FixtureStorage(Storage):
         self._working_documents: dict[str, list[str]] = {k: list(v) for k, v in (working_documents or {}).items()}
         self._workspaces: dict[str, bytes] = {}
 
+    @override
     async def put_working_document(self, analysis_id: str, markdown: str) -> int:
         versions = self._working_documents.setdefault(analysis_id, [])
         versions.append(markdown)
         return len(versions)
 
+    @override
     async def get_working_document(self, analysis_id: str) -> WorkingDocument | None:
         versions = self._working_documents.get(analysis_id)
         if not versions:
             return None
         return WorkingDocument(version=len(versions), markdown=versions[-1])
 
+    @override
     async def put_workspace(self, analysis_id: str, archive: bytes) -> None:
         self._workspaces[analysis_id] = archive
 
+    @override
     async def get_workspace(self, analysis_id: str) -> bytes | None:
         return self._workspaces.get(analysis_id)

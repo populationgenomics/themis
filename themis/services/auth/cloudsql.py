@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import override
 
 from google.cloud.sql import connector
 
@@ -41,6 +42,7 @@ class CloudSqlBackend(auth_backend.SessionBackend):
             db_user=self._db_user,
         )
 
+    @override
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
         # pg8000 is a blocking driver; offload so the query doesn't stall the event loop.
         return await asyncio.get_running_loop().run_in_executor(None, self._resolve_blocking, session_token)

@@ -11,6 +11,7 @@ workspace RPCs stream ``WorkspaceChunk``s; the servicer marshals them to and fro
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import override
 
 import grpc
 from google.protobuf import empty_pb2
@@ -33,6 +34,7 @@ class Servicer(store_pb2_grpc.StoreServicer):
         self._storage = storage
         self._session_resolver = session_resolver
 
+    @override
     async def PutWorkingDocument(
         self, request: store_pb2.PutWorkingDocumentRequest, context: grpc.aio.ServicerContext
     ) -> store_pb2.PutWorkingDocumentResponse:
@@ -40,6 +42,7 @@ class Servicer(store_pb2_grpc.StoreServicer):
         version = await self._storage.put_working_document(session.analysis_id, request.markdown)
         return store_pb2.PutWorkingDocumentResponse(version=version)
 
+    @override
     async def GetWorkingDocument(
         self, request: empty_pb2.Empty, context: grpc.aio.ServicerContext
     ) -> store_pb2.WorkingDocumentSnapshot:
@@ -49,6 +52,7 @@ class Servicer(store_pb2_grpc.StoreServicer):
             await context.abort(grpc.StatusCode.NOT_FOUND, 'no working document for this analysis')
         return store_pb2.WorkingDocumentSnapshot(version=snapshot.version, markdown=snapshot.markdown)
 
+    @override
     async def PutWorkspace(
         self, request_iterator: AsyncIterator[store_pb2.WorkspaceChunk], context: grpc.aio.ServicerContext
     ) -> store_pb2.PutWorkspaceResponse:
@@ -66,6 +70,7 @@ class Servicer(store_pb2_grpc.StoreServicer):
         await self._storage.put_workspace(session.analysis_id, b''.join(chunks))
         return store_pb2.PutWorkspaceResponse()
 
+    @override
     async def GetWorkspace(
         self, request: empty_pb2.Empty, context: grpc.aio.ServicerContext
     ) -> AsyncIterator[store_pb2.WorkspaceChunk]:

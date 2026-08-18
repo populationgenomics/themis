@@ -8,6 +8,8 @@ the worker's own async checkpoint channel.
 
 from __future__ import annotations
 
+from typing import override
+
 import grpc
 from postern import grpc as postern_grpc
 
@@ -28,9 +30,8 @@ class HelloForwarder(hello_pb2_grpc.HelloServicer):
         self._stub = hello_pb2_grpc.HelloStub(channel)
         self._metadata = ((_SESSION_TOKEN_METADATA, session_token),)
 
-    def SayHello(  # noqa: N802 — mirrors the proto service's PascalCase rpc name (generated base)
-        self, request: hello_pb2.SayHelloRequest, context: grpc.ServicerContext
-    ) -> hello_pb2.SayHelloResponse:
+    @override
+    def SayHello(self, request: hello_pb2.SayHelloRequest, context: grpc.ServicerContext) -> hello_pb2.SayHelloResponse:
         del context
         return self._stub.SayHello(request, metadata=self._metadata)
 

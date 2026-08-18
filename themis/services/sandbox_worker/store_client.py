@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import AsyncIterator
+from typing import override
 
 import grpc
 import grpc.aio
@@ -45,6 +46,7 @@ class GrpcStore(Store):
         self._stub = store_pb2_grpc.StoreStub(channel)
         self._metadata = ((_SESSION_TOKEN_METADATA, session_token),)
 
+    @override
     async def get_working_document(self) -> str | None:
         try:
             snapshot = await self._stub.GetWorkingDocument(empty_pb2.Empty(), metadata=self._metadata)
@@ -54,12 +56,14 @@ class GrpcStore(Store):
             raise
         return snapshot.markdown
 
+    @override
     async def put_working_document(self, markdown: str) -> int:
         response = await self._stub.PutWorkingDocument(
             store_pb2.PutWorkingDocumentRequest(markdown=markdown), metadata=self._metadata
         )
         return response.version
 
+    @override
     async def get_workspace(self) -> bytes | None:
         call = self._stub.GetWorkspace(empty_pb2.Empty(), metadata=self._metadata)
         chunks: list[bytes] = []
@@ -72,6 +76,7 @@ class GrpcStore(Store):
             raise
         return b''.join(chunks)
 
+    @override
     async def put_workspace(self, archive: bytes) -> None:
         await self._stub.PutWorkspace(_chunks(archive), metadata=self._metadata)
 
@@ -85,16 +90,20 @@ class FixtureStore(Store):
         self.put_documents: list[str] = []
         self.put_workspaces: list[bytes] = []
 
+    @override
     async def get_working_document(self) -> str | None:
         return self._document
 
+    @override
     async def put_working_document(self, markdown: str) -> int:
         self.put_documents.append(markdown)
         return len(self.put_documents)
 
+    @override
     async def get_workspace(self) -> bytes | None:
         return self._workspace
 
+    @override
     async def put_workspace(self, archive: bytes) -> None:
         self.put_workspaces.append(archive)
 

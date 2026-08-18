@@ -23,6 +23,7 @@ import asyncio
 import dataclasses
 import mimetypes
 from collections.abc import Sequence
+from typing import override
 
 import anchorite
 from google.api_core import exceptions as api_exceptions
@@ -76,6 +77,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
     def __init__(self, bucket: storage.Bucket) -> None:
         self._bucket = bucket
 
+    @override
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
         paper, metadata = await asyncio.to_thread(self._read_for_describe, doc_id)
         has_markdown = paper.rendering is not None
@@ -98,6 +100,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             ],
         )
 
+    @override
     async def resolve_content(
         self, doc_id: str, selector: literature_backend.ContentSelector
     ) -> literature_pb2.ContentLocation:
@@ -124,6 +127,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             case _:  # unreachable over the closed ContentSelector union — fail loud if it ever opens
                 raise ValueError(f'unhandled content selector {selector!r}')
 
+    @override
     async def locate(
         self, doc_id: str, quote: str, representation: literature_pb2.Representation
     ) -> literature_pb2.LocateResponse:
@@ -140,6 +144,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             raise literature_backend.PdfLocationUnavailableError(f'{doc_id}: PDF quote location is not yet available')
         raise ValueError(f'unsupported representation {representation!r}')
 
+    @override
     async def validate(self, doc_id: str, quote: str) -> literature_pb2.ValidateResponse:
         # Markdown-only: PDF quote validation is not implemented, so a PDF-only paper is "unknown",
         # not "absent" — the reason says what was and wasn't checked, never a false "not located".
@@ -159,6 +164,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in the markdown rendering')
         return literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
 
+    @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         # One to two GCS reads per distinct id: READY derives from the manifest alone, but anything
         # else probes the sidecar too. Gathered so a batch runs concurrently, not serially.

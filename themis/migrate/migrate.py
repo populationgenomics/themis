@@ -16,6 +16,7 @@ import dataclasses
 import pathlib
 import re
 from collections.abc import Mapping, Sequence
+from typing import override
 
 _FILENAME_RE = re.compile(r'^(\d{4})_([a-z0-9_]+)\.sql$')
 _PLACEHOLDER_RE = re.compile(r'\$\{(\w+)\}')
@@ -203,9 +204,11 @@ class InMemoryLedger(Ledger):
     def __init__(self) -> None:
         self._applied: dict[int, str] = {}
 
+    @override
     def applied_versions(self) -> set[int]:
         return set(self._applied)
 
+    @override
     def record(self, migration: Migration, sql: str) -> None:
         self._applied[migration.version] = sql
 

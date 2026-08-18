@@ -240,10 +240,6 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]
-"themis/services/*/servicer.py" = [
-    "N802",   # gRPC servicer methods mirror the proto service's PascalCase rpc names
-    "ARG002", # the (request, context) signature is the generated base's; a paramless (Empty) rpc ignores request
-]
 "themis/migrate/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
@@ -251,9 +247,7 @@ ignore = [
 "themis/clients/auth/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
-    "N802",   # inline test servicers mirror the proto service's PascalCase rpc names
     "S105",   # fixture session tokens are not secrets
-    "ARG002", # a servicer override keeps the base signature even where a param is unused
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -278,10 +272,31 @@ max-locals = 25
 [tool.pyright]
 pythonVersion = "3.13"
 include = ["tools", "tests", "schema/tests", "infra", "themis"]
-# themis/rpc, themis/litcache/models, themis/workbench/models, and themis/workbench/rpc are
-# generated buf output (dynamic message classes); the committed .pyi gives importers static
-# types, but the stubs themselves are not standard-mode clean, so exclude them from checking.
-# Re-list pyright's auto-excludes, which specifying `exclude` would otherwise drop.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/rpc", "themis/litcache/models", "themis/workbench/models", "themis/workbench/rpc", "themis/services/sandbox_worker/_generated.py", "buf"]
+# Re-list pyright's auto-excludes, which specifying `exclude` would otherwise drop. The committed
+# buf output stays *in*: `exclude` drops a file from analysis entirely, so a servicer's generated
+# base becomes invisible and `reportImplicitOverride` silently passes on the case it exists for.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"
+# An override that does not say so is one a base-method rename or removal leaves behind silently,
+# implementing nothing. Repo-wide rather than scoped: every port, fixture backend and servicer here
+# overrides an abc the same way, and a rule that holds in one directory is one a new implementation
+# elsewhere quietly escapes.
+reportImplicitOverride = "error"
+
+# Three upstream codegen defects. `ignore` suppresses their reporting while leaving the files
+# analysed, which `exclude` would not: the servicer bases have to stay visible for the rule above.
+# The committed `.pyi` beside each generated `.py` stays checked — those are the files importers,
+# and the override rule, actually read.
+# `_pb2.py` — assigns `FileDescriptor._loaded_options`, which protobuf's own bundled stubs do not
+# declare. `types-protobuf` declares it, but installs as `google-stubs` and would shadow the pinned
+# protobuf wheel's types repo-wide, so `lint` deliberately does not carry it.
+# `_pb2_grpc.py` — the plugin emits a channel-less "simple stubs" class calling
+# `grpc.experimental.unary_unary` without importing it. Nothing here calls that class, and grpc holds
+# the AttributeError to be the intended opt-in gate, so it will not be fixed
+# (https://github.com/grpc/grpc/issues/39555). The `.pyi` beside it stays checked — that is the file
+# the servicer base and stub types come from.
+# `sandbox_options_pb2.pyi` — protoc's --pyi_out annotates a top-level extension's field-number
+# constant `ClassVar[int]` at module scope, where `ClassVar` is not valid
+# (https://github.com/protocolbuffers/protobuf/issues/29221).
+ignore = ["**/*_pb2.py", "**/*_pb2_grpc.py", "themis/rpc/sandbox_options_pb2.pyi"]

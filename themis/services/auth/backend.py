@@ -13,6 +13,7 @@ from __future__ import annotations
 import abc
 import hashlib
 from collections.abc import Mapping
+from typing import override
 
 from themis.rpc import auth_pb2
 
@@ -47,6 +48,7 @@ class FixtureBackend(SessionBackend):
     def __init__(self, bindings_by_token_hash: Mapping[str, auth_pb2.SessionContext]) -> None:
         self._by_hash = dict(bindings_by_token_hash)
 
+    @override
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
         try:
             return self._by_hash[hash_token(session_token)]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import typing
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import override
 
 import grpc
 import grpc.aio
@@ -318,6 +319,7 @@ class _RecordingWaitBackend(literature_backend.FixtureBackend):
         super().__init__(papers)
         self.waits: list[float] = []
 
+    @override
     async def await_full_text_readiness(
         self, doc_ids: Sequence[str], timeout_seconds: float, **kwargs: object
     ) -> dict[str, literature_pb2.FullTextState]:
@@ -361,6 +363,7 @@ class _CountingBackend(literature_backend.FixtureBackend):
         super().__init__(papers)
         self.polls: list[list[str]] = []
 
+    @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         self.polls.append(list(doc_ids))
         return await super().full_text_readiness(doc_ids)

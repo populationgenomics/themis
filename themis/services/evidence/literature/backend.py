@@ -19,6 +19,7 @@ import asyncio
 import dataclasses
 import json
 from collections.abc import Mapping, Sequence
+from typing import override
 
 from themis.rpc import literature_pb2
 
@@ -193,6 +194,7 @@ class FixtureBackend(LiteratureBackend):
         except KeyError:
             raise UnknownPaperError(doc_id) from None
 
+    @override
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
         paper = self._paper(doc_id)
         has_markdown = paper.markdown_gcs_uri is not None
@@ -207,6 +209,7 @@ class FixtureBackend(LiteratureBackend):
             files=[literature_pb2.FileInfo(name=f.name, role=f.role, media_type=f.media_type) for f in paper.files],
         )
 
+    @override
     async def resolve_content(self, doc_id: str, selector: ContentSelector) -> literature_pb2.ContentLocation:
         paper = self._paper(doc_id)
         match selector:
@@ -224,6 +227,7 @@ class FixtureBackend(LiteratureBackend):
                         return literature_pb2.ContentLocation(gcs_uri=f.gcs_uri, media_type=f.media_type)
                 raise MissingContentError(f'{doc_id} has no file {name!r}')
 
+    @override
     async def locate(
         self, doc_id: str, quote: str, representation: literature_pb2.Representation
     ) -> literature_pb2.LocateResponse:
@@ -245,6 +249,7 @@ class FixtureBackend(LiteratureBackend):
             return literature_pb2.LocateResponse(region=_pdf_region(location))
         raise ValueError(f'unsupported representation {representation!r}')
 
+    @override
     async def validate(self, doc_id: str, quote: str) -> literature_pb2.ValidateResponse:
         paper = self._papers.get(doc_id)
         if paper is None:
@@ -258,6 +263,7 @@ class FixtureBackend(LiteratureBackend):
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in any representation')
         return literature_pb2.ValidateResponse(ok=True, located_in=located_in)
 
+    @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         # The seed models no terminal marker and no conversion queue, so only READY and PENDING are
         # expressible here and a PENDING paper never advances.

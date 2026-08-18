@@ -13,6 +13,7 @@ google-cloud-storage is blocking; each ``Storage`` method offloads its work to a
 from __future__ import annotations
 
 import asyncio
+from typing import override
 
 from google.api_core import exceptions
 from google.cloud import storage as gcs
@@ -32,17 +33,21 @@ class GcsStorage(storage_mod.Storage):
         self._working_documents = self._client.bucket(working_document_bucket)
         self._workspaces = self._client.bucket(workspace_bucket)
 
+    @override
     async def put_working_document(self, analysis_id: str, markdown: str) -> int:
         return await asyncio.get_running_loop().run_in_executor(
             None, self._put_working_document_blocking, analysis_id, markdown
         )
 
+    @override
     async def get_working_document(self, analysis_id: str) -> storage_mod.WorkingDocument | None:
         return await asyncio.get_running_loop().run_in_executor(None, self._get_working_document_blocking, analysis_id)
 
+    @override
     async def put_workspace(self, analysis_id: str, archive: bytes) -> None:
         await asyncio.get_running_loop().run_in_executor(None, self._put_workspace_blocking, analysis_id, archive)
 
+    @override
     async def get_workspace(self, analysis_id: str) -> bytes | None:
         return await asyncio.get_running_loop().run_in_executor(None, self._get_workspace_blocking, analysis_id)
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from typing import override
 
 import grpc
 import grpc.aio
@@ -31,6 +32,7 @@ class _StubAuth(auth_pb2_grpc.AuthServicer):
     def __init__(self, abort_code: grpc.StatusCode = grpc.StatusCode.PERMISSION_DENIED) -> None:
         self._abort_code = abort_code
 
+    @override
     async def ResolveSession(
         self, request: auth_pb2.ResolveTokenRequest, context: grpc.aio.ServicerContext
     ) -> auth_pb2.SessionContext:
@@ -45,6 +47,7 @@ class _GuardServicer(auth_pb2_grpc.AuthServicer):
     def __init__(self, session_resolver: session.SessionResolver) -> None:
         self._session_resolver = session_resolver
 
+    @override
     async def ResolveSession(
         self, request: auth_pb2.ResolveTokenRequest, context: grpc.aio.ServicerContext
     ) -> auth_pb2.SessionContext:

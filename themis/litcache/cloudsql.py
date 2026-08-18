@@ -20,7 +20,7 @@ across threads once built.
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, override
 
 from google.cloud.sql import connector
 
@@ -42,6 +42,7 @@ class CrosswalkConnFactory:
         self._connector: connector.Connector | None = None
         self._lock = threading.Lock()
 
+    @override
     def __getstate__(self) -> dict[str, str]:
         # Ship only the dial config; the Connector and lock are worker-local, rebuilt
         # on unpickle (neither is picklable).

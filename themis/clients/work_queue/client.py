@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+from typing import override
 
 import anthropic
 from anthropic.types.beta.environments import beta_self_hosted_work
@@ -60,6 +61,7 @@ class AnthropicWorkQueue(WorkQueue):
         self._client = client
         self._environment_id = environment_id
 
+    @override
     async def poll(self, *, reclaim_older_than_ms: int) -> WorkItem | None:
         # Low-level poll, never work.poller: the poller acks on yield, but our ack is deferred until the
         # worker proves restore. Omitting block_ms is the non-blocking default — the run_started webhook
@@ -71,11 +73,13 @@ class AnthropicWorkQueue(WorkQueue):
             return None
         return _to_work_item(work)
 
+    @override
     async def ack(self, work_id: str) -> None:
         await self._client.beta.environments.work.ack(
             work_id, environment_id=self._environment_id, timeout=_ACK_TIMEOUT_S
         )
 
+    @override
     async def stop(self, work_id: str) -> None:
         await self._client.beta.environments.work.stop(
             work_id, environment_id=self._environment_id, timeout=_ACK_TIMEOUT_S

@@ -57,6 +57,7 @@ import logging
 import threading
 import urllib.parse
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from typing import override
 
 import apache_beam as beam
 import httpx
@@ -288,9 +289,11 @@ class _ExtractIdentityFn(beam.DoFn):
         self._seen = metric.Metrics.counter(METRICS_NAMESPACE, 'papers_seen')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
 
+    @override
     def setup(self) -> None:
         self._bucket = self._bucket_factory()
 
+    @override
     def process(self, ref: SeedRef) -> Iterator[tuple[str, _PaperWork]]:
         self._seen.inc()
         # A pathologically large seed pdf (hundreds of MB) is read whole into memory and parsed
@@ -353,9 +356,11 @@ class _ResolveBatchFn(beam.DoFn):
     def __init__(self, *, transport_factory: TransportFactory | None) -> None:
         self._transport_factory = transport_factory
 
+    @override
     def setup(self) -> None:
         self._transport = self._transport_factory() if self._transport_factory is not None else None
 
+    @override
     def process(
         self, batch: tuple[int, Iterable[resolve.ResolveRequest]]
     ) -> Iterator[tuple[str, resolve.ResolvedPaper]]:
@@ -469,6 +474,7 @@ class _WritePaperFn(beam.DoFn):
         self._unresolved = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_unresolved')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
 
+    @override
     def setup(self) -> None:
         self._bucket = self._bucket_factory()
         self._fetchers = self._fetchers_factory() if self._fetchers_factory is not None else None
@@ -494,6 +500,7 @@ class _WritePaperFn(beam.DoFn):
             doi=by_scheme.get('doi'),
         )
 
+    @override
     def process(self, joined: tuple[str, dict[str, list[object]]]) -> Iterator[str]:
         _claim_key, grouped = joined
         works = [work for work in grouped['work'] if isinstance(work, _PaperWork)]

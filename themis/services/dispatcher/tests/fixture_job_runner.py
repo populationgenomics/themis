@@ -5,6 +5,8 @@ Kept out of ``job_runner`` so the production module ships no test-only code.
 
 from __future__ import annotations
 
+from typing import override
+
 from themis.services.dispatcher import job_runner
 
 
@@ -14,5 +16,6 @@ class FixtureJobRunner(job_runner.JobRunner):
     def __init__(self) -> None:
         self.spawns: list[job_runner.SpawnRequest] = []
 
+    @override
     async def spawn(self, request: job_runner.SpawnRequest) -> None:
         self.spawns.append(request)

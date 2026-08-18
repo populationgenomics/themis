@@ -8,6 +8,8 @@ rejection, not a modelled body this slice.
 
 from __future__ import annotations
 
+from typing import override
+
 import grpc
 
 from themis.rpc import auth_pb2, auth_pb2_grpc
@@ -18,6 +20,7 @@ class Servicer(auth_pb2_grpc.AuthServicer):
     def __init__(self, backend: auth_backend.SessionBackend) -> None:
         self._backend = backend
 
+    @override
     async def ResolveSession(
         self, request: auth_pb2.ResolveTokenRequest, context: grpc.aio.ServicerContext
     ) -> auth_pb2.SessionContext:

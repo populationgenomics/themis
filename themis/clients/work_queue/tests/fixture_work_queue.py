@@ -6,6 +6,8 @@ dispatcher tests import it here.
 
 from __future__ import annotations
 
+from typing import override
+
 from themis.clients.work_queue import client
 
 
@@ -22,12 +24,15 @@ class FixtureWorkQueue(client.WorkQueue):
         self.acked: list[str] = []
         self.stopped: list[str] = []
 
-    async def poll(self, *, reclaim_older_than_ms: int) -> client.WorkItem | None:  # noqa: ARG002 — port signature
+    @override
+    async def poll(self, *, reclaim_older_than_ms: int) -> client.WorkItem | None:
         self.polls += 1
         return self._items.pop(0) if self._items else None
 
+    @override
     async def ack(self, work_id: str) -> None:
         self.acked.append(work_id)
 
+    @override
     async def stop(self, work_id: str) -> None:
         self.stopped.append(work_id)

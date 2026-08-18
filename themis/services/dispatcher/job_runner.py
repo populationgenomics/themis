@@ -16,6 +16,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import dataclasses
+from typing import override
 
 import aiohttp
 import google.auth.credentials
@@ -59,6 +60,7 @@ class CloudRunJobRunner(JobRunner):
         self._url = f'https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{job}:run'
         self._credentials = credentials
 
+    @override
     async def spawn(self, request: SpawnRequest) -> None:
         token = await asyncio.to_thread(self._access_token)
         async with self._session.post(

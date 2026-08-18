@@ -9,6 +9,8 @@ INVALID_ARGUMENT. A quote that does not locate is a modelled ``not_located`` res
 
 from __future__ import annotations
 
+from typing import override
+
 import grpc
 
 from themis.rpc import literature_pb2, literature_pb2_grpc
@@ -33,6 +35,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
     def __init__(self, backend: literature_backend.LiteratureBackend) -> None:
         self._backend = backend
 
+    @override
     async def DescribePaper(
         self, request: literature_pb2.DescribePaperRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.PaperInfo:
@@ -41,6 +44,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, f'unknown doc_id {request.doc_id!r}')
 
+    @override
     async def ResolveContent(
         self, request: literature_pb2.ResolveContentRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.ContentLocation:
@@ -54,6 +58,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         except literature_backend.MissingContentError as e:
             await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
 
+    @override
     async def Locate(
         self, request: literature_pb2.LocateRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.LocateResponse:
@@ -70,12 +75,14 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         except literature_backend.MissingContentError as e:
             await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
 
+    @override
     async def Validate(
         self, request: literature_pb2.ValidateRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.ValidateResponse:
         del context  # required by the servicer interface; Validate never aborts
         return await self._backend.validate(request.doc_id, request.quote)
 
+    @override
     async def EnsureFullText(
         self, request: literature_pb2.EnsureFullTextRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.EnsureFullTextResponse:
@@ -87,6 +94,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
             readiness=[literature_pb2.FullTextReadiness(doc_id=doc_id, state=state) for doc_id, state in states.items()]
         )
 
+    @override
     async def AwaitFullText(
         self, request: literature_pb2.AwaitFullTextRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.AwaitFullTextResponse:

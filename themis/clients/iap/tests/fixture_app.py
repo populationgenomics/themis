@@ -7,6 +7,8 @@ the production module so it ships no test-only surface.
 
 from __future__ import annotations
 
+from typing import override
+
 import requests
 from requests import adapters, models
 
@@ -21,6 +23,7 @@ class FixtureAdapter(adapters.BaseAdapter):
         self.calls: list[models.PreparedRequest] = []
         self.timeouts: list[float | tuple[float | None, float | None] | None] = []
 
+    @override
     def send(
         self,
         request: models.PreparedRequest,
@@ -41,6 +44,7 @@ class FixtureAdapter(adapters.BaseAdapter):
             response.headers['Location'] = 'https://accounts.google.com/signin'
         return response
 
+    @override
     def close(self) -> None:
         return
 

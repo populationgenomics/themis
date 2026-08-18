@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import pathlib
 from collections.abc import Mapping, Sequence
+from typing import override
 
 from google.cloud.sql import connector
 
@@ -42,6 +43,7 @@ class CloudSqlLedger(migrate.Ledger):
     def __init__(self, conn: sql.Connection) -> None:
         self._conn = conn
 
+    @override
     def applied_versions(self) -> set[int]:
         with contextlib.closing(self._conn.cursor()) as cursor:
             cursor.execute(self._CREATE_LEDGER)
@@ -50,6 +52,7 @@ class CloudSqlLedger(migrate.Ledger):
             rows = cursor.fetchall()
         return {row[0] for row in rows}
 
+    @override
     def record(self, migration: migrate.Migration, sql: str) -> None:
         with contextlib.closing(self._conn.cursor()) as cursor:
             for statement in migrate.split_statements(sql):

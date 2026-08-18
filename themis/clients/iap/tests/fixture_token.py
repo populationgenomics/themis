@@ -11,6 +11,7 @@ import base64
 import datetime
 import json
 from collections.abc import Mapping
+from typing import override
 
 from google.auth import transport
 
@@ -53,14 +54,17 @@ class _Response(transport.Response):
         self._data = data
 
     @property
+    @override
     def status(self) -> int:
         return self._status
 
     @property
+    @override
     def headers(self) -> Mapping[str, str]:
         return {'Content-Type': 'application/json'}
 
     @property
+    @override
     def data(self) -> bytes:
         return self._data
 
@@ -73,6 +77,7 @@ class FixtureTransport(transport.Request):
         self.status = status
         self.calls: list[dict[str, object]] = []
 
+    @override
     def __call__(
         self,
         url: str,

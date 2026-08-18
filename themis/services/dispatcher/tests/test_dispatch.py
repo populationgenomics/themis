@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import override
 
 from themis.clients.auth.tests import fixture_deriver
 from themis.clients.work_queue import client as work_queue_mod
@@ -72,6 +73,7 @@ def test_force_stops_a_non_session_item_and_does_not_spawn() -> None:
 
 def test_spawn_failure_leaves_item_unacked_and_keeps_draining() -> None:
     class _FailBoom(fixture_job_runner.FixtureJobRunner):
+        @override
         async def spawn(self, request: job_runner_mod.SpawnRequest) -> None:
             if request.session_id == 'boom':
                 raise RuntimeError('spawn failed')
