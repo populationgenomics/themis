@@ -100,6 +100,13 @@ def _manifests(bucket: gcs.Bucket) -> list[litcache_pb2.Manifest]:
     ]
 
 
+def _crosswalk(conn: pg8000.dbapi.Connection) -> dict[str, str]:
+    """Every claimed external id and the doc_id it resolves to."""
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.execute('SELECT external_id, doc_id FROM litcache.crosswalk')
+        return {str(external_id): str(doc_id) for external_id, doc_id in cur.fetchall()}
+
+
 # --- pair_seed_keys (pure, no Docker) -------------------------------------------
 
 
@@ -373,8 +380,13 @@ def _run(
     return root.result
 
 
-def _counter(result: runner.PipelineResult, name: str) -> int:
-    return ingest_beam.read_counter(result, name)
+def _dead_letters(bucket: gcs.Bucket) -> list[dict[str, object]]:
+    """Every dead-letter record on the bucket — what the run recorded, and why."""
+    return [
+        json.loads(blob.download_as_bytes())
+        for blob in bucket.list_blobs(prefix='diagnostics/dead_letters/')
+        if blob.name.endswith('.json')
+    ]
 
 
 def test_build_pipeline_ingests_both_papers(
@@ -383,9 +395,8 @@ def test_build_pipeline_ingests_both_papers(
     seeded_bucket: tuple[str, gcs.Bucket],
 ) -> None:
     token, bucket = seeded_bucket
-    result = _run(token, conn_factory)
+    _run(token, conn_factory)
 
-    # Outcome before counters: the counters are diagnostics read back out of Beam's metrics.
     manifests = _manifests(bucket)
     assert len(manifests) == 2
     assert {m.external_ids.doi for m in manifests} == {'10.5555/synthetic.aaa', '10.5555/synthetic.bbb'}
@@ -396,13 +407,6 @@ def test_build_pipeline_ingests_both_papers(
     assert row is not None
     assert row[0] == 2
 
-    # Per-stage counters: both papers seen, both minted fresh, both written.
-    counters = {name: _counter(result, name) for name in ingest_beam._COUNTER_NAMES}
-    assert counters['papers_seen'] == 2, counters
-    assert counters['doc_id_minted'] == 2, counters
-    assert counters['paper_written'] == 2, counters
-    assert counters['paper_skipped'] == 0, counters
-
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
 def test_build_pipeline_limit_caps_ingestion(
@@ -410,29 +414,29 @@ def test_build_pipeline_limit_caps_ingestion(
 ) -> None:
     token, bucket = seeded_bucket
     # Two papers seeded; limit=1 ingests only the first in stem order ("aaa" < "bbb").
-    result = _run(token, conn_factory, limit=1)
+    _run(token, conn_factory, limit=1)
 
-    assert _counter(result, 'papers_seen') == 1
-    assert _counter(result, 'paper_written') == 1
     manifests = _manifests(bucket)
     assert len(manifests) == 1
     assert {m.external_ids.doi for m in manifests} == {'10.5555/synthetic.aaa'}
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
-def test_build_pipeline_re_run_skips_cached_papers(
-    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+def test_build_pipeline_re_run_adopts_the_incumbent_doc_ids(
+    conn: pg8000.dbapi.Connection,
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
 ) -> None:
     token, _bucket = seeded_bucket
     _run(token, conn_factory)
-    second = _run(token, conn_factory)
+    first_ids = _crosswalk(conn)
 
-    # The second run adopts the incumbent doc_ids and skips both (manifests exist).
-    assert _counter(second, 'papers_seen') == 2
-    assert _counter(second, 'doc_id_minted') == 0
-    assert _counter(second, 'doc_id_adopted') == 2
-    assert _counter(second, 'paper_written') == 0
-    assert _counter(second, 'paper_skipped') == 2
+    _run(token, conn_factory)
+
+    # A second pass claims nothing new. Only the crosswalk can show that: the manifests are
+    # create-only (`writer.write_paper`), so they are unchanged whichever branch the run takes, and
+    # a skip leaves no other trace. The skip itself is `test_pipeline.test_re_run_is_idempotent_and_skips`;
+    # what this adds is that the Beam wrapper, with its shared mint connection, does not re-mint.
+    assert _crosswalk(conn) == first_ids
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
@@ -447,11 +451,11 @@ def test_report_run_summarizes_and_leaves_seed_intact(
     rep = ingest_beam.report_run(ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token))
 
     # The report totals: two papers written, the one unpaired seed surfaced, and no
-    # no_text_layer flags (the synthetic text pdf is char-addressable).
+    # no_text_layer flags (the synthetic text pdf is char-addressable). Every field
+    # asserted here is counted off the bucket, not read back out of Beam's metrics.
     assert rep.papers_total == 2
     assert rep.unpaired_seeds == ['ingest/lonely.json']
     assert rep.flagged == []
-    assert rep.counters['paper_written'] == 2
     assert rep.dead_lettered == 0
 
     # The report never deletes: the seed prefix is left intact for the manual
@@ -499,12 +503,12 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
             )
         result = root.result
 
-        assert _counter(result, 'papers_seen') == 1
-        assert _counter(result, 'paper_unresolved') == 1
-        assert _counter(result, 'paper_written') == 0
-        dead_lettered = list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))
-        assert len(dead_lettered) == 1
-        assert 'synthetic.ghost' in dead_lettered[0].name
+        # Recorded as unresolved rather than failed, and nothing written. The record carries which
+        # of the two it was, where the counter only carried how many.
+        records = _dead_letters(gcs_bucket)
+        assert [r['reason'] for r in records] == ['metadata unresolved']
+        assert 'synthetic.ghost' in str(records[0]['key'])
+        assert _manifests(gcs_bucket) == []
 
         # The report counts the records on the bucket, so a run whose metrics never
         # reached the driver still reports its failures rather than a clean 0.
@@ -563,15 +567,12 @@ def test_build_pipeline_dead_letters_write_failures(request: pytest.FixtureReque
     gcs_bucket.blob('ingest/10.5555%2Fsynthetic.aaa.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
     _BUCKETS[token] = gcs_bucket
     try:
-        result = _run(token, _failing_conn)
+        _run(token, _failing_conn)
 
-        assert _counter(result, 'papers_seen') == 1
-        assert _counter(result, 'paper_failed') == 1
-        assert _counter(result, 'paper_written') == 0
-        dead_lettered = list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))
-        assert len(dead_lettered) == 1
-        record = json.loads(dead_lettered[0].download_as_bytes())
-        assert 'simulated crosswalk failure' in record['reason']
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        assert 'simulated crosswalk failure' in str(records[0]['reason'])
+        assert _manifests(gcs_bucket) == []
     finally:
         del _BUCKETS[token]
 
@@ -587,14 +588,12 @@ def test_build_pipeline_dead_letters_oversized_seed_pdf(
     gcs_bucket.blob('ingest/10.5555%2Fhuge.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
     _BUCKETS[token] = gcs_bucket
     try:
-        result = _run(token, _forbidden_conn)
+        _run(token, _forbidden_conn)
 
-        assert _counter(result, 'papers_seen') == 1
-        assert _counter(result, 'paper_failed') == 1
-        assert _counter(result, 'paper_written') == 0
-        dead_lettered = list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))
-        assert len(dead_lettered) == 1
-        assert 'too large' in json.loads(dead_lettered[0].download_as_bytes())['reason']
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        assert 'too large' in str(records[0]['reason'])
+        assert _manifests(gcs_bucket) == []
     finally:
         del _BUCKETS[token]
 
@@ -608,15 +607,12 @@ def test_build_pipeline_dead_letters_unreadable_seed(request: pytest.FixtureRequ
     gcs_bucket.blob('ingest/10.5555%2Fbroken.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
     _BUCKETS[token] = gcs_bucket
     try:
-        result = _run(token, _forbidden_conn)
+        _run(token, _forbidden_conn)
 
-        assert _counter(result, 'papers_seen') == 1
-        assert _counter(result, 'paper_failed') == 1
-        assert _counter(result, 'paper_written') == 0
-        dead_lettered = list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))
-        assert len(dead_lettered) == 1
-        record = json.loads(dead_lettered[0].download_as_bytes())
-        assert 'not valid JSON' in record['reason']
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        assert 'not valid JSON' in str(records[0]['reason'])
+        assert _manifests(gcs_bucket) == []
     finally:
         del _BUCKETS[token]
 
@@ -671,11 +667,10 @@ def test_paper_failed_totals_both_stages(request: pytest.FixtureRequest, gcs_buc
     gcs_bucket.blob('ingest/10.5555%2Fsynthetic.aaa.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
     _BUCKETS[token] = gcs_bucket
     try:
-        result = _run(token, _failing_conn)
+        _run(token, _failing_conn)
 
-        assert _counter(result, 'papers_seen') == 2
-        assert _counter(result, 'paper_written') == 0
-        assert _counter(result, 'paper_failed') == 2
+        # Both papers dead-lettered and neither written: the bucket says so without asking Beam.
         assert len(list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))) == 2
+        assert _manifests(gcs_bucket) == []
     finally:
         del _BUCKETS[token]
