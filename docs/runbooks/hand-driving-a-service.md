@@ -37,31 +37,37 @@ stub.PollFullTexts(
 
 ## The web app, behind IAP
 
-Same account, different audience. IAP does not take a service URL: it admits a token whose `aud` is an OAuth client id
-**registered against this resource**, in `programmaticClients` (`infra/themis_infra/web.py`). The client this backend
-runs on is Google-managed and shared across every IAP tenant, so it reports no id of its own and none can be borrowed —
-a registered id is the only address IAP answers to here. The id is public and carries no secret: it is an address, and a
-token bearing it still needs `roles/iap.httpsResourceAccessor` or IAP answers 403.
+Same account, different audience. IAP does not take a service URL as an OIDC audience, but it accepts a second token
+type: a JWT the account signs itself, whose `aud` is the app's own URL. Nothing has to be registered for it — no OAuth
+client, no allowlist — and `iss`/`sub` carry the email the app authorizes on, so no extra flag is needed.
 
-`--include-email` is required. `generateIdToken` omits the email claim by default, and that claim is what IAP puts in
-the assertion the app authorizes on.
+Use the path wildcard. An `aud` of the exact URL admits that one URL only, so `https://…/` reaches `/` and gets a `401`
+on every API path.
 
 ```bash
-AUD=$(cd infra && pulumi config get iapProgrammaticClients | tr -d '[]" ')
-TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$CLU" --include-email --audiences="$AUD")
+APP=https://themis-dev.populationgenomics.org.au
+NOW=$(date +%s)
+printf '{"iss":"%s","sub":"%s","aud":"%s/*","iat":%s,"exp":%s}' \
+  "$CLU" "$CLU" "$APP" "$NOW" "$((NOW + 600))" > /tmp/iap-jwt.json
+TOKEN=$(gcloud iam service-accounts sign-jwt /tmp/iap-jwt.json /dev/stdout --iam-account="$CLU")
 
 curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' \
-  https://themis-dev.populationgenomics.org.au/api/rpc/themis.workbench.rpc.Workbench/ListProjects
+  "$APP/api/rpc/themis.workbench.rpc.Workbench/ListProjects"
 ```
 
-A `401` is IAP refusing the token: an audience that is not registered, or one minted without `--include-email`. A `403`
-is IAP admitting it and the accessor binding refusing the account. The two are indistinguishable from the status alone,
-which is why they are named here.
+`exp` must be within 3600 seconds of `iat`; signing needs the same `serviceAccountTokenCreator` the service calls above
+use, so a person who can reach a service can reach the app.
+
+A `401` is IAP refusing the token, and its body says which check failed —
+`Audience specified does not match requested endpoint` for an `aud` that is not this URL (or lacks the wildcard the path
+needs). A `403` is IAP admitting the token and the accessor binding refusing the account. The two are indistinguishable
+from the status alone, which is why they are named here.
 
 The app authorizes on the email in the IAP assertion, and that email is the account's rather than yours — so a call
 lands on the Projects `project_members` names `themis-clu@…` against, not the ones you see in a browser, and an
 otherwise-correct call answers empty until such a row exists. The app's logs attribute the call to the account; which
-person made it is in the impersonation's delegation chain in Cloud Audit Logs.
+person made it is in the signing's delegation chain in Cloud Audit Logs, logged as `signJwt` rather than the
+`generateIdToken` the service calls above produce.
 
 ## The database
 

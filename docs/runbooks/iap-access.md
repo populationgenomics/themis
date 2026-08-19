@@ -30,34 +30,23 @@ the principal).
 ## Programmatic access
 
 Reaching the app without a browser goes through the same account as every other deployed surface: a person or a script
-impersonates `themis-clu` and mints an ID token, rather than holding a credential of its own. The account is granted
+impersonates `themis-clu` and presents a token, rather than holding a credential of its own. The account is granted
 `roles/iap.httpsResourceAccessor` on the backend alongside the access group, so IAP admits it as it admits a person.
 
-There is no consent flow, no client secret and no cached refresh token. There *is* an OAuth client id, and it is
-load-bearing: IAP admits a programmatic caller only when the token's audience is a client id registered against this
-resource, in `themis:iapProgrammaticClients`. The client IAP itself runs on is Google-managed and shared across every
-tenant, so it reports no id that can be used — a registered id is the only address IAP answers to here. The id is
-public, an address rather than a credential; a token bearing it still needs the accessor role or IAP answers 403.
+Nothing has to be registered for it. IAP accepts two token types from a service account, and they differ in what the
+audience is:
+
+- A **self-signed JWT** — the account signs it, `aud` is the app's own URL. This is what Themis uses. No OAuth client,
+  no allowlist, no consent flow, no secret and no cached refresh token.
+- An **OIDC ID token** — Google issues it, and `aud` must be an OAuth client id registered against the resource in
+  `programmaticClients`. Themis registers none, so this type is refused here.
+
+The second is the one whose audience cannot be derived from the deployment: the client IAP itself runs on is
+Google-managed and shared across every tenant, so it reports no id of its own and none can be borrowed. That constrains
+the OIDC type only; it says nothing about the JWT type, whose audience is the URL you are calling.
 
 The token shape and what the app sees as the caller's identity are in
 [`hand-driving-a-service.md`](hand-driving-a-service.md), with the services and the database.
-
-## The registered client, and what was retired
-
-The registered id belongs to a Desktop OAuth client. It once carried programmatic access through a browser consent flow,
-with its secret in stack config and a per-developer cache of `client_id`, `client_secret` and `refresh_token`. The flow
-is gone — impersonation supplies the identity now — but **the client must survive**: it is the audience, and deleting it
-in the Console takes programmatic access down with it (every candidate audience IAP will admit is enumerated in
-[`hand-driving-a-service.md`](hand-driving-a-service.md); there is no substitute).
-
-What is left to clean up is the credential half, which nothing uses:
-
-- Rotate the client's secret in the Console (APIs & Services → Credentials). That invalidates every cached refresh token
-  without touching the id, so the audience keeps working.
-- Each developer removes their cache: `rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/themis/iap.json"` (or whatever
-  `$THEMIS_IAP_CREDENTIALS` pointed at).
-
-Until both are done the secret sits on disks with no use for it.
 
 ## The OAuth consent screen
 

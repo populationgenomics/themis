@@ -30,8 +30,6 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',
-    # iap.admin is policy-only (get/setIamPolicy); IapSettings needs its own role.
-    'roles/iap.settingsAdmin',
     'roles/run.admin',
     'roles/secretmanager.admin',
     'roles/serviceusage.serviceUsageAdmin',
