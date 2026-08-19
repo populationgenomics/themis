@@ -37,27 +37,26 @@ stub.PollFullTexts(
 
 ## The web app, behind IAP
 
-Same account, different audience. IAP admits a token whose `aud` names the protected resource, and this backend runs a
-Google-managed OAuth client, so there is no client id to use — `iap.oauth2ClientId` on the backend service is empty. In
-its place IAP names the resource itself, in the same form the app already verifies assertions against
-(`apps/web/src/server/adapters/live/identity.ts`): `/projects/<project number>/global/backendServices/<backend id>`.
-Both halves come from the stack, the id also being `themis:iapBackendServiceId`.
+Same account, different audience. IAP does not take a service URL: it admits a token whose `aud` is an OAuth client id
+**registered against this resource**, in `programmaticClients` (`infra/themis_infra/web.py`). The client this backend
+runs on is Google-managed and shared across every IAP tenant, so it reports no id of its own and none can be borrowed —
+a registered id is the only address IAP answers to here. The id is public and carries no secret: it is an address, and a
+token bearing it still needs `roles/iap.httpsResourceAccessor` or IAP answers 403.
+
+`--include-email` is required. `generateIdToken` omits the email claim by default, and that claim is what IAP puts in
+the assertion the app authorizes on.
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe cpg-themis-dev --format='value(projectNumber)')
-BACKEND_ID=$(gcloud compute backend-services list --project=cpg-themis-dev --format='value(id)' --limit=1)
-# --include-email: generateIdToken omits the email claim by default, and IAP gates on it.
-TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$CLU" --include-email \
-  --audiences="/projects/$PROJECT_NUMBER/global/backendServices/$BACKEND_ID")
+AUD=$(cd infra && pulumi config get iapProgrammaticClients | tr -d '[]" ')
+TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$CLU" --include-email --audiences="$AUD")
 
 curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' \
   https://themis-dev.populationgenomics.org.au/api/rpc/themis.workbench.rpc.Workbench/ListProjects
 ```
 
-Confirm this once, the first time the account is used: it is the one assumption in this design that could not be tested
-before the account existed. A `401` means IAP rejected the token itself — a wrong audience, or one minted without
-`--include-email`, which are indistinguishable from the status alone. A `403` means IAP admitted the token and the
-accessor binding did not.
+A `401` is IAP refusing the token: an audience that is not registered, or one minted without `--include-email`. A `403`
+is IAP admitting it and the accessor binding refusing the account. The two are indistinguishable from the status alone,
+which is why they are named here.
 
 The app authorizes on the email in the IAP assertion, and that email is the account's rather than yours — so a call
 lands on the Projects `project_members` names `themis-clu@…` against, not the ones you see in a browser, and an

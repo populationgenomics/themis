@@ -80,6 +80,10 @@ anthropic_workspace_id = config.require('anthropicWorkspaceId')
 # output, fed back as config (docs/runbooks/fresh-environment.md §3).
 project_number = gcp.organizations.get_project(project_id=project).number
 iap_backend_service_id = config.require('iapBackendServiceId')
+# OAuth client ids IAP accepts as the audience of a programmatic caller's token
+# (docs/runbooks/hand-driving-a-service.md). Ids only — no secret; the caller's identity comes from
+# impersonating themis-clu, and a token bearing one of these still needs the accessor role.
+iap_programmatic_clients: list[str] = config.require_object('iapProgrammaticClients')
 # May impersonate the themis-clu account to call a backend service by hand. The group + roster live
 # in cpg-infrastructure-private; this is the principal only (no PII).
 clu_group = config.require('cluGroup')
@@ -248,6 +252,7 @@ site = web.WebService(
     iap_members={'group': f'group:{iap_access_group}', 'clu': automation_user.member},
     # The group's binding is the one the deployed stack already has; see WebService.
     iap_member_keeping_the_unsuffixed_name='group',
+    iap_programmatic_clients=iap_programmatic_clients,
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,

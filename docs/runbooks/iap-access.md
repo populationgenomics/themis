@@ -30,25 +30,34 @@ the principal).
 ## Programmatic access
 
 Reaching the app without a browser goes through the same account as every other deployed surface: a person or a script
-impersonates `themis-clu` and mints an ID token, rather than holding a credential of its own. There is no consent flow,
-no OAuth client and no cached refresh token — the account is granted `roles/iap.httpsResourceAccessor` on the backend
-alongside the access group, so IAP admits it as it admits a person.
+impersonates `themis-clu` and mints an ID token, rather than holding a credential of its own. The account is granted
+`roles/iap.httpsResourceAccessor` on the backend alongside the access group, so IAP admits it as it admits a person.
 
-The token shape, the audience IAP wants, and what the app sees as the caller's identity are in
+There is no consent flow, no client secret and no cached refresh token. There *is* an OAuth client id, and it is
+load-bearing: IAP admits a programmatic caller only when the token's audience is a client id registered against this
+resource, in `themis:iapProgrammaticClients`. The client IAP itself runs on is Google-managed and shared across every
+tenant, so it reports no id that can be used — a registered id is the only address IAP answers to here. The id is
+public, an address rather than a credential; a token bearing it still needs the accessor role or IAP answers 403.
+
+The token shape and what the app sees as the caller's identity are in
 [`hand-driving-a-service.md`](hand-driving-a-service.md), with the services and the database.
 
-## Retiring the programmatic Desktop client
+## The registered client, and what was retired
 
-A Desktop OAuth client used to carry programmatic access, with its secret in stack config and a per-developer cache of
-`client_id`, `client_secret` and `refresh_token`. Dropping it from IAP's allowlist stops that audience being admitted,
-which closes the path — but it does not destroy the credential, so decommissioning it is two manual steps:
+The registered id belongs to a Desktop OAuth client. It once carried programmatic access through a browser consent flow,
+with its secret in stack config and a per-developer cache of `client_id`, `client_secret` and `refresh_token`. The flow
+is gone — impersonation supplies the identity now — but **the client must survive**: it is the audience, and deleting it
+in the Console takes programmatic access down with it (every candidate audience IAP will admit is enumerated in
+[`hand-driving-a-service.md`](hand-driving-a-service.md); there is no substitute).
 
-- Delete the client in the Console (APIs & Services → Credentials). It is the only OAuth client this project owned
-  beyond the consent screen itself.
+What is left to clean up is the credential half, which nothing uses:
+
+- Rotate the client's secret in the Console (APIs & Services → Credentials). That invalidates every cached refresh token
+  without touching the id, so the audience keeps working.
 - Each developer removes their cache: `rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/themis/iap.json"` (or whatever
   `$THEMIS_IAP_CREDENTIALS` pointed at).
 
-Until both are done the secret exists on disks that no longer have any use for it.
+Until both are done the secret sits on disks with no use for it.
 
 ## The OAuth consent screen
 

@@ -14,6 +14,11 @@ config:
   # adding a member grants publish-and-retract on world-readable content. The group +
   # roster live in cpg-infrastructure-private; this is the principal only (no PII).
   themis:iapAccessGroup: themis-dev-access@populationgenomics.org.au
+  # The audience IAP accepts from a programmatic caller. An OAuth client id is public — it is an
+  # address, not a credential, and IAP will not honour a token bearing it without the accessor role.
+  # No paired secret: the caller impersonates themis-clu rather than completing a consent flow.
+  themis:iapProgrammaticClients:
+    - 698160839187-a795noio4k4g6slu28rqbuu4p18sq0q2.apps.googleusercontent.com
   # May impersonate themis-clu@ to call a backend service by hand
   # (docs/runbooks/hand-driving-a-service.md); the roster lives in cpg-infrastructure-private.
   # Deliberately not iapAccessGroup: that gate admits clinical users of the web app, who have no

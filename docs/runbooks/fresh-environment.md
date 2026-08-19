@@ -19,6 +19,10 @@ program change.
 - The project has an OAuth consent screen (brand), configured once in the Console — `infra/` declares no
   `gcp.iap.Brand`, so no `up` creates it; see [`iap-access.md`](iap-access.md), whose user type also decides whether
   out-of-org accounts can be admitted at all.
+- This environment has its own Desktop OAuth client in the Console — a fresh one, never another environment's — and its
+  id is in `Pulumi.<stack>.yaml` as `themis:iapProgrammaticClients`. It is the audience IAP admits from a programmatic
+  caller, so `preview` stops at `config.require*` without it; see [`iap-access.md`](iap-access.md). The id alone: the
+  paired secret is unused and belongs nowhere in config.
 - The `themis-clu` group exists — see [`hand-driving-a-service.md`](hand-driving-a-service.md). It must exist before
   `pulumi up` too: the impersonation binding names it, and GCP rejects a binding whose `group:` member does not resolve.
 

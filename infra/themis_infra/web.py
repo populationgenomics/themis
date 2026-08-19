@@ -14,7 +14,7 @@ resolves, the managed certificate stays PROVISIONING.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
 import pulumi
@@ -71,6 +71,7 @@ class WebService(pulumi.ComponentResource):
         image: pulumi.Input[str],
         iap_members: Mapping[str, pulumi.Input[str]],
         iap_member_keeping_the_unsuffixed_name: str,
+        iap_programmatic_clients: Sequence[str],
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
@@ -221,10 +222,12 @@ class WebService(pulumi.ComponentResource):
         load_balancer = self._build_load_balancer(
             'themis',
             project=project,
+            project_number=project_number,
             region=region,
             domain=domain,
             iap_members=iap_members,
             iap_member_keeping_the_unsuffixed_name=iap_member_keeping_the_unsuffixed_name,
+            iap_programmatic_clients=iap_programmatic_clients,
             child=child,
         )
         self.ip_address = load_balancer.ip_address
@@ -246,10 +249,12 @@ class WebService(pulumi.ComponentResource):
         name: str,
         *,
         project: str,
+        project_number: pulumi.Input[str],
         region: str,
         domain: str,
         iap_members: Mapping[str, pulumi.Input[str]],
         iap_member_keeping_the_unsuffixed_name: str,
+        iap_programmatic_clients: Sequence[str],
         child: pulumi.ResourceOptions,
     ) -> _LoadBalancer:
         """Build the external HTTPS load balancer chain.
@@ -294,6 +299,30 @@ class WebService(pulumi.ComponentResource):
         # Who may reach the app: the access group in a browser, and the automation account anything
         # programmatic impersonates. One binding each — the resource is per-member, so a shared one
         # would fight over the same policy.
+        # IAP admits a programmatic caller only when the token's audience is a client id registered
+        # against this resource: the Google-managed client it runs on reports no id of its own, and a
+        # token addressed to anything else is refused before IAM is consulted. The id is an address,
+        # not a credential — a token bearing it still needs `iap.httpsResourceAccessor` — so it lives
+        # in plaintext config and no secret accompanies it.
+        # This resource owns the backend's whole IapSettings object — the provider PATCHes it
+        # unmasked — so an environment that registers nobody must not declare it at all.
+        if iap_programmatic_clients:
+            gcp.iap.Settings(
+                f'{name}-iap-settings',
+                # IAP resolves the backend service's name to its id here; `generated_id` can't
+                # be used, as the id exceeds 2^53 and the int output rounds to a float64.
+                name=pulumi.Output.format('projects/{0}/iap_web/compute/services/{1}', project_number, backend.name),
+                access_settings=gcp.iap.SettingsAccessSettingsArgs(
+                    oauth_settings=gcp.iap.SettingsAccessSettingsOauthSettingsArgs(
+                        programmatic_clients=iap_programmatic_clients,
+                    ),
+                ),
+                # Emptying the client list drops this resource; DELETE makes that destroy PATCH
+                # the settings empty in GCP, where ABANDON would leave the allowlist live.
+                deletion_policy='DELETE',
+                opts=child,
+            )
+
         # One binding per member: the resource is per-(role, member), so a shared one would fight over
         # the same policy. The named member's binding predates the others and keeps its unsuffixed
         # resource name — suffixing it would read as a rename but destroy and recreate, and an
