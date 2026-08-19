@@ -76,11 +76,9 @@ key** (raises the litcache id-resolver's rate limit; not strictly required).
 No DB password (IAM auth), no Anthropic key (WIF), no app session key (the app trusts the IAP JWT per request,
 stateless). IAP's own browser path likewise needs none — it uses a Google-managed OAuth client.
 
-One exception sits outside Secret Manager: `themis:iapProgrammaticClientSecret`, the Desktop OAuth client local
-automation authenticates as ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)). No service reads it, so it is
-KMS-encrypted in `Pulumi.<stack>.yaml` rather than deployed — the stack's KMS key already gates decryption to
-developers, which is precisely the boundary that keeps programmatic access away from curators. Rotated in the Console on
-exposure; every developer must then consent again.
+Programmatic access carries no secret of its own. A person reaching the app without a browser impersonates the
+`themis-clu` account and mints a short-lived ID token ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)), so
+what gates it is group membership.
 
 Self-hosted sandboxes (§8) add **two scoped stored secrets**: the `ANTHROPIC_ENVIRONMENT_KEY` the sandbox worker uses to
 claim its work queue, and the **webhook signing key** (`whsec_…`) that verifies the wake webhook letting the worker

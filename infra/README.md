@@ -22,6 +22,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
 | `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                                                                         |
 | `themis_infra/sandbox.py`     | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret. |
+| `themis_infra/clu.py`         | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                            |
 | `themis_infra/deploy_iam.py`  | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                               |
 | `bootstrap/bootstrap.sh`      | One-time substrate setup (below). Run locally, never CI.                                                                                                             |
 
@@ -101,9 +102,6 @@ Per-environment, in `Pulumi.<stack>.yaml`. The `config.require*` calls at the to
 the program reads — a missing key fails `pulumi up`; `Pulumi.dev.yaml` is the worked example of every one. Two things
 that list cannot express:
 
-- `themis:iapProgrammaticClientSecret` is declared but never read by the program. `themis.clients.iap login` reads it
-  out of stack config itself, at consent time ([`docs/runbooks/iap-access.md`](../docs/runbooks/iap-access.md)), so an
-  environment still has to carry it.
 - `themis:iapBackendServiceId` and `themis:anthropicFederationRuleId` name values the stack itself produces, so a fresh
   environment holds placeholders for them until its first `up`
   ([`fresh-environment.md`](../docs/runbooks/fresh-environment.md) §3).
@@ -131,11 +129,9 @@ stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.ya
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
 each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId` and
 `themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
-copied one breaks loudly. Two are quiet instead, deploying clean onto a wrong outcome: `themis:iapProgrammaticClients`,
-because dev's client id deploys onto another environment's IAP gate and a developer holding a dev consent then mints
-tokens that gate admits — each environment gets its own Console client; and `themis:enablePrScreenshotBucket`, because a
-copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one. No program
-change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+copied one breaks loudly. One is quiet instead, deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`,
+because a copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one. No
+program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

@@ -51,26 +51,21 @@ Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The inf
 
 ## Project registry and membership
 
-`projects` and `project_members` have no writer: the web SA holds `SELECT` only, and both are owned by the migrator DB
-role, so rows go in by hand. Authorization is default-deny — without a `project_members` row a user who cleared the IAP
-gate sees no Projects and cannot create an Analysis, so seed before the smoke. Member emails are PII: database only,
-never this repo.
+`projects` and `project_members` are owned by the migrator DB role and the web SA holds `SELECT` only, so rows go in by
+hand — as `themis-clu`, which is a member of that role. Authorization is default-deny — without a `project_members` row
+a user who cleared the IAP gate sees no Projects and cannot create an Analysis, so seed before the smoke. Member emails
+are PII: database only, never this repo.
 
 The instance refuses direct connections (empty `authorizedNetworks`) and a personal identity has no DB login, so reach
-it through the connector as the deploy SA (`gcloud components install cloud-sql-proxy` — the v2 binary, which carries
-`--auto-iam-authn`):
+it through `tools/psql.py`, which runs the connector and connects as `themis-clu` — the account a person impersonates
+for this (`infra/themis_infra/clu.py`):
 
 ```sh
-cloud-sql-proxy --auto-iam-authn \
-  --impersonate-service-account=themis-deploy@cpg-themis-dev.iam.gserviceaccount.com \
-  cpg-themis-dev:australia-southeast1:themis-sql &   # the sql_connection_name output
-
-psql "host=127.0.0.1 dbname=themis user=themis-deploy@cpg-themis-dev.iam" <<'SQL'
+uv run python -m tools.psql -- -c "
 INSERT INTO projects (id, name) VALUES ('demo', 'Demo project')
     ON CONFLICT (id) DO NOTHING;
 INSERT INTO project_members (project_id, user_email) VALUES ('demo', 'someone@populationgenomics.org.au')
-    ON CONFLICT DO NOTHING;
-SQL
+    ON CONFLICT DO NOTHING;"
 ```
 
 `user_email` must match the email in the IAP assertion (the signed-in Google account), and the Project must be

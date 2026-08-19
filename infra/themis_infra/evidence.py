@@ -75,7 +75,7 @@ class EvidenceService(pulumi.ComponentResource):
         )
 
         # The crosswalk login and its connect roles. The table grant (SELECT only) is the
-        # 0008_litcache_crosswalk_read_grant migration, keyed on this login.
+        # 0010_litcache_crosswalk_read_grant migration, keyed on this login.
         db_user = sql.iam_db_user(
             'themis-evidence',
             project=project,

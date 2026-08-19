@@ -16,6 +16,7 @@ import pulumi_gcp as gcp
 from themis_infra import (
     auth,
     baseline,
+    clu,
     convert,
     deploy_iam,
     evidence,
@@ -79,8 +80,9 @@ anthropic_workspace_id = config.require('anthropicWorkspaceId')
 # output, fed back as config (docs/runbooks/fresh-environment.md §3).
 project_number = gcp.organizations.get_project(project_id=project).number
 iap_backend_service_id = config.require('iapBackendServiceId')
-# OAuth client ids IAP accepts programmatically (docs/runbooks/iap-access.md).
-iap_programmatic_clients: list[str] = config.require_object('iapProgrammaticClients')
+# May impersonate the themis-clu account to call a backend service by hand. The group + roster live
+# in cpg-infrastructure-private; this is the principal only (no PII).
+clu_group = config.require('cluGroup')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -135,6 +137,13 @@ sql.grant_cloudsql_connect(
     project=project,
     service_account_email=migrator_email,
     opts=pulumi.ResourceOptions(depends_on=[database]),
+)
+automation_user = clu.AutomationUser(
+    project=project,
+    group_member=f'group:{clu_group}',
+    sql_instance=database.instance,
+    migrator_db_role=migrator_db_user.name,
+    opts=pulumi.ResourceOptions(depends_on=[base, database, migrator_db_user]),
 )
 auth_service = auth.AuthService(
     project=project,
@@ -236,8 +245,9 @@ site = web.WebService(
     region=region,
     domain=domain,
     image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
-    iap_member=f'group:{iap_access_group}',
-    iap_programmatic_clients=iap_programmatic_clients,
+    iap_members={'group': f'group:{iap_access_group}', 'clu': automation_user.member},
+    # The group's binding is the one the deployed stack already has; see WebService.
+    iap_member_keeping_the_unsuffixed_name='group',
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
@@ -271,6 +281,16 @@ gcp.storage.BucketIAMMember(
 # The BFF resolves papers through the evidence service (its ID token, audience = the service URL)
 # and serves the resolved object from the fulltext bucket itself — so grant the web SA invoke on
 # evidence and read on the bucket.
+# Reading the corpus by hand. The convert worker has no binding because nothing has needed to drive a
+# conversion by hand, not because it is withheld.
+gcp.cloudrunv2.ServiceIamMember(
+    'themis-clu-invokes-evidence',
+    project=project,
+    location=region,
+    name=evidence_service.service_name,
+    role='roles/run.invoker',
+    member=automation_user.member,
+)
 gcp.cloudrunv2.ServiceIamMember(
     'themis-web-invokes-evidence',
     project=project,
@@ -417,6 +437,7 @@ pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('evidence_url', evidence_service.url)
 pulumi.export('evidence_sa_email', evidence_service.service_account_email)
+pulumi.export('clu_sa_email', automation_user.service_account_email)
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)

@@ -16,12 +16,11 @@ program change.
   `gcloud auth application-default login`.
 - The IAP access group exists — see [`iap-access.md`](iap-access.md). It must exist before `pulumi up` (the IAP IAM
   binding targets it).
-- This environment's own programmatic Desktop OAuth client exists in the Console — a fresh one, never another
-  environment's — and its id is in `Pulumi.<stack>.yaml` as `themis:iapProgrammaticClients`; see
-  [`iap-access.md`](iap-access.md). The allowlist is required, and an environment that admits no programmatic client yet
-  declares it as `[]`, which is what makes the program leave the backend's IAP settings undeclared. A stand-in client id
-  is not the inert value: it would be written into those settings for real. The paired secret is an encrypted write, so
-  it cannot be set until the stack exists — §2 does it.
+- The project has an OAuth consent screen (brand), configured once in the Console — `infra/` declares no
+  `gcp.iap.Brand`, so no `up` creates it; see [`iap-access.md`](iap-access.md), whose user type also decides whether
+  out-of-org accounts can be admitted at all.
+- The `themis-clu` group exists — see [`hand-driving-a-service.md`](hand-driving-a-service.md). It must exist before
+  `pulumi up` too: the impersonation binding names it, and GCP rejects a binding whose `group:` member does not resolve.
 
 ### Local-operator KMS access (named individuals)
 
@@ -56,10 +55,8 @@ The registry is created by the program, so the first `pulumi up` uses a public p
 the registry *and* brings the edge up running the placeholder; later deploys push real images to that registry.
 
 Two of the required keys name values this same `up` produces, so they carry placeholders for this one run —
-[§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads must already hold its real value,
-including the allowlist from Prerequisites: `preview` stops at the first `config.require*` the stack does not satisfy,
-before anything is created. The client secret is not one of them — the program never reads it, so a missing one is
-silent here and surfaces at the first `login`.
+[§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads must already hold its real value:
+`preview` stops at the first `config.require*` the stack does not satisfy, before anything is created.
 
 ```sh
 cd infra
@@ -68,9 +65,6 @@ pulumi login gs://cpg-themis-dev-pulumi-state
 # from the committed Pulumi.dev.yaml; without it Pulumi falls back to passphrase.
 pulumi stack init dev \
   --secrets-provider="gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi"
-# Encrypted to the stack's key, so it waits for the init above. No `up` reads it,
-# so a stack that never gets it deploys clean and fails at the first `login`.
-pulumi config set --secret themis:iapProgrammaticClientSecret <secret-from-the-console>
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi preview   # review the plan
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
 ```

@@ -146,7 +146,7 @@ def iam_db_user(
     project: str,
     instance: gcp.sql.DatabaseInstance,
     service_account_email: pulumi.Input[str],
-    database_roles: Sequence[str] | None = None,
+    database_roles: Sequence[pulumi.Input[str]] | None = None,
     opts: pulumi.ResourceOptions | None = None,
 ) -> gcp.sql.User:
     """Create the Cloud SQL IAM database user a service account logs in as.

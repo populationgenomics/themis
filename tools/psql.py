@@ -6,10 +6,18 @@ Auth is IAM (`cloudsql.iam_authentication`), so the Postgres login is a GCP prin
 password. This tool bridges that to a real ``psql`` session: it runs ``cloud-sql-proxy
 --auto-iam-authn`` on a loopback port and execs ``psql`` against it, tearing the proxy down on exit.
 
+It connects as ``themis-clu`` by default: a personal identity has no database login, and that account
+is the one anything else reaches the instance as (`infra/themis_infra/clu.py`). ``--as`` overrides
+it, and ``--as ''`` uses the caller's own principal.
+
 Run: ``uv run python -m tools.psql`` (add ``--project``, ``--as <sa>``, or pass ``psql`` args after
 ``--``, e.g. ``-- -c 'select 1'``). The login principal still needs both the project roles a
 connection requires (`roles/cloudsql.instanceUser` + `roles/cloudsql.client`) and the in-database
-GRANTs the migrations apply — the two are separate.
+GRANTs the migrations apply — the two are separate, so a connection can succeed and every table still
+be unreadable.
+
+``themis-clu`` is a member of the migrator role and inherits it, so it reads and writes every table the
+migrator owns.
 """
 
 from __future__ import annotations
@@ -28,6 +36,8 @@ _DEFAULT_PROJECT = 'cpg-themis-dev'
 _PROXY = 'cloud-sql-proxy'
 _PSQL = 'psql'
 _IAM_SA_SUFFIX = '.gserviceaccount.com'
+# The automation identity: impersonated rather than anyone holding a database login of their own.
+_DEFAULT_IMPERSONATE = 'themis-clu@{project}.iam.gserviceaccount.com'
 
 
 def _resolve_binary(name: str) -> str:
@@ -104,14 +114,17 @@ def main() -> None:
         '--as',
         dest='impersonate',
         metavar='SERVICE_ACCOUNT',
-        help='Impersonate this service account for both the proxy and the Postgres login',
+        default=None,
+        help='Impersonate this service account for both the proxy and the Postgres login '
+        "(default: themis-clu in --project; pass '' for your own principal)",
     )
     args, psql_args = parser.parse_known_args()
     # parse_known_args leaves the `--` separator in the extras; drop it so it doesn't reach psql
     # (psql treats everything after its own `--` as positional and would ignore the query).
     if psql_args and psql_args[0] == '--':
         psql_args = psql_args[1:]
-    raise SystemExit(_run(args.project, args.impersonate, psql_args))
+    impersonate = _DEFAULT_IMPERSONATE.format(project=args.project) if args.impersonate is None else args.impersonate
+    raise SystemExit(_run(args.project, impersonate or None, psql_args))
 
 
 if __name__ == '__main__':
