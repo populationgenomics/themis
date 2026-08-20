@@ -1,13 +1,15 @@
 """Shared pytest fixtures for container-backed tests.
 
-One home for the Docker probe and the fake-gcs-server wiring so tests across themis don't
-each re-derive the daemon check or stand up their own emulator. Testcontainers is imported
-lazily inside the fixture that needs it, so this module stays cheap for tests that don't.
+One home for finding the Docker daemon, the probe that gates on reaching it, and the
+fake-gcs-server wiring, so tests across themis don't each re-derive the daemon check or stand up
+their own emulator. Testcontainers is imported lazily inside the fixture that needs it, so this
+module stays cheap for tests that don't.
 """
 
 from __future__ import annotations
 
 import functools
+import os
 import shutil
 import subprocess
 import time
@@ -19,7 +21,19 @@ import requests
 from google.auth import credentials
 from google.cloud import storage
 
+from themis.testing import docker_env
+
 _READY_TIMEOUT_S = 30
+
+
+def pytest_configure() -> None:
+    """Fill in what the environment leaves out about reaching the Docker daemon.
+
+    Configuration runs before collection, and testcontainers reads these variables later still —
+    when it builds its client, and when it starts its reaper — so no container fixture can outrun
+    this.
+    """
+    os.environ.update(docker_env.env_additions(os.environ))
 
 
 @functools.cache

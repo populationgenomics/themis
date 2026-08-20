@@ -133,7 +133,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # --strict-markers: an unregistered marker is a collection error, not a warning. A misspelled
 # `sandbox` would otherwise deselect the test from both CI jobs, which reports as a pass.
@@ -255,6 +255,9 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture session tokens are not secrets
+]
+"themis/testing/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
 ]
 
 [tool.ruff.lint.pydocstyle]
