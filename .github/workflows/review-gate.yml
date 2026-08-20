@@ -51,18 +51,32 @@ jobs:
                     isDraft
                     headRefOid
                     author { login }
-                    reviewRequests(first: 10) {
+                    timelineItems(last: 250, itemTypes: [REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT]) {
+                      pageInfo { hasPreviousPage }
                       nodes {
-                        requestedReviewer {
-                          ... on User { login }
-                          ... on Team { slug }
-                          ... on Bot { login }
-                          ... on Mannequin { login }
+                        __typename
+                        ... on ReviewRequestedEvent {
+                          createdAt
+                          requestedReviewer {
+                            ... on User { login }
+                            ... on Team { slug }
+                            ... on Bot { login }
+                            ... on Mannequin { login }
+                          }
+                        }
+                        ... on ReviewRequestRemovedEvent {
+                          createdAt
+                          requestedReviewer {
+                            ... on User { login }
+                            ... on Team { slug }
+                            ... on Bot { login }
+                            ... on Mannequin { login }
+                          }
                         }
                       }
                     }
                     latestOpinionatedReviews(last: 100) {
-                      nodes { state author { login } }
+                      nodes { state submittedAt author { login } }
                     }
                   }
                 }
@@ -72,10 +86,36 @@ jobs:
           head_sha="$(jq -r '.headRefOid' <<<"$pr")"
           is_draft="$(jq -r '.isDraft' <<<"$pr")"
           author="$(jq -r '.author.login' <<<"$pr")"
-          # The "unknown" fallback keeps a reviewer type outside the fragments
-          # non-empty, so an unrecognised request still fails the gate.
-          requested="$(jq -r '[.reviewRequests.nodes[].requestedReviewer | .login // .slug // "unknown"] | join(", ")' \
-            <<<"$pr")"
+          # The reconstruction below is trusted only when the event window is
+          # complete and every requested reviewer resolves to a login or slug;
+          # fail rather than guess otherwise.
+          guard="$(jq -r '
+            if .timelineItems.pageInfo.hasPreviousPage
+            then "request history exceeds the event window"
+            elif [.timelineItems.nodes[] | select((.requestedReviewer | .login // .slug) == null)] != []
+            then "a requested reviewer of unrecognised type"
+            else "" end' <<<"$pr")"
+          # GitHub consumes a review request when the reviewer submits *any*
+          # review — a comment-only one included — with no timeline event;
+          # only an explicit withdrawal emits REVIEW_REQUEST_REMOVED_EVENT. So
+          # the live request set cannot carry the requirement; reconstruct it:
+          # a reviewer is owed while their newest request has no later removal
+          # and no later approval (ISO-8601 UTC, string order is time order;
+          # a removal in the same second as the request does not clear it).
+          owed="$(jq -r '
+            [.timelineItems.nodes[]
+             | {type: .__typename, at: .createdAt,
+                who: (.requestedReviewer | .login // .slug)}] as $events
+            | [.latestOpinionatedReviews.nodes[] | select(.state == "APPROVED")
+               | {who: .author.login, at: .submittedAt}] as $approvals
+            | $events | group_by(.who)
+            | map({who: .[0].who,
+                   requested: ([.[] | select(.type == "ReviewRequestedEvent") | .at] | max),
+                   removed: ([.[] | select(.type == "ReviewRequestRemovedEvent") | .at] | max)})
+            | map(select(.requested != null and (.removed == null or .removed <= .requested)))
+            | map(select(.who as $who | .requested as $since
+                         | ($approvals | map(select(.who == $who and .at > $since)) | length) == 0))
+            | map(.who) | join(", ")' <<<"$pr")"
           # latestOpinionatedReviews: one review per reviewer, APPROVED or
           # CHANGES_REQUESTED only — a dismissed review drops out on its own.
           changes_requested_by="$(jq -r \
@@ -96,15 +136,18 @@ jobs:
           if [[ "$is_draft" == 'true' ]]; then
             state='pending'
             description='draft — evaluated when the PR goes ready for review'
+          elif [[ -n "$guard" ]]; then
+            state='failure'
+            description="cannot evaluate: ${guard}"
           elif [[ -n "$changes_requested_by" ]]; then
             state='failure'
             description="changes requested by ${changes_requested_by}"
-          elif [[ -n "$requested" ]]; then
+          elif [[ -n "$owed" ]]; then
             state='failure'
-            description="waiting on requested review: ${requested}"
+            description="waiting on approval from requested reviewer: ${owed}"
           elif grep -Fxq "$author" <<<"$maintainers"; then
             state='success'
-            description="maintainer-authored (${author}); no review pending"
+            description="maintainer-authored (${author}); no review owed"
           elif [[ -n "$approved_by" ]]; then
             state='success'
             description="approved by ${approved_by}"

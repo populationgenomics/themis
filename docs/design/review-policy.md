@@ -32,7 +32,8 @@ Two tiers, keyed on direct admin collaboratorship:
   author, though requesting a review for any PR is fine (e.g. limited subject-matter expertise in the area touched).
   Author-merged does not mean unreviewed: code is largely agent-written, and the author's own read of the diff is the
   human review of an implementation PR — a PR opens as a draft and goes ready only after that read. A requested review
-  is waited for — machine-enforced: the `review gate` check fails while a request is unfulfilled.
+  is waited for — machine-enforced: the `review gate` check fails until the requested reviewer approves or the request
+  is withdrawn; a comment-only review does not fulfil it.
 - **Everyone else** (org members with write access, bots such as doc-garden). One approving review required — in
   practice a maintainer's. Maintainers learn of these PRs by watching the repo; nothing auto-requests a review.
 
@@ -74,7 +75,7 @@ flowchart TD
         cr{"changes<br>requested?"} -->|no| rq{"unfulfilled<br>review request?"}
         rq -->|no| ma{"maintainer<br>author?"}
         ma -->|no| ap{"approving<br>review?"}
-        cr -->|yes| red["red — until the blocker clears:<br>re-review, requested review<br>given, or approval"]
+        cr -->|yes| red["red — until the blocker clears: re-review,<br>the requested reviewer's approval or the<br>request's withdrawal, or an approval"]
         rq -->|yes| red
         ap -->|no| red
         ma -->|yes| green["green"]
@@ -89,11 +90,16 @@ flowchart TD
 - PR required; no ruleset-level approval count — a flat count cannot express the two tiers, so the review requirement
   lives in the `review gate` required check; review-thread resolution; squash the only merge method.
 - `review gate` (`.github/workflows/review-gate.yml`): a commit status posted to the PR head; the chart above is its
-  verdict chain. An unfulfilled request outranks an existing approval — re-requesting means "look again". It runs on
-  `pull_request_target` + `pull_request_review`, so the default branch's workflow judges every PR — a PR cannot edit its
-  own gate — and it checks out nothing. The required context is the posted status, not the job's own check run: the job
-  succeeds even when the verdict it posts is a failure, so the two must not share a name. Its required-check entry
-  carries no `integration_id`, so a hand-posted status satisfies it too.
+  verdict chain. An unfulfilled request outranks an existing approval — re-requesting means "look again". GitHub
+  consumes the live request when the reviewer submits any review — a comment-only one included — so the gate
+  reconstructs the requirement from the request/removal timeline: only an approval after the newest request, or an
+  explicit withdrawal of the request, fulfils it. A consumed request leaves nothing live to withdraw, so withdrawing
+  after the reviewer has already reviewed means re-requesting and then removing the request — also the exit when a
+  requested reviewer cannot approve (a bot, a team). It runs on `pull_request_target` + `pull_request_review`, so the
+  default branch's workflow judges every PR — a PR cannot edit its own gate — and it checks out nothing. The required
+  context is the posted status, not the job's own check run: the job succeeds even when the verdict it posts is a
+  failure, so the two must not share a name. Its required-check entry carries no `integration_id`, so a hand-posted
+  status satisfies it too.
 - Required status checks, non-strict: `review gate`, `regex screen`, `review + LLM screen`, `pre-commit`, `pytest`,
   `pytest-sandbox`, `web`, `backward-compatible`, `regen-is-fresh`. Non-strict: an up-to-date-branch requirement would
   have every merge to `main` invalidate every other open PR — a rebase plus a full check re-run (LLM review included)
@@ -124,7 +130,7 @@ Consequences:
   default.
 - Stale approvals survive new pushes: dismissal would re-notify the reviewer on every fixup or restack of an
   already-judged diff. Symmetrically, a stale changes-requested keeps the gate red until its reviewer re-reviews or
-  dismisses it.
+  dismisses it; for a requested reviewer, dismissal returns the PR to waiting on their approval — red either way.
 - Required checks skip a draft, so a chain of them is unverified until each goes ready. The author's read is a draft's
   only gate; a long-lived draft stack is not green, it is untested. The `review gate` is the exception — it posts
   `pending` on a draft and evaluates at ready.
