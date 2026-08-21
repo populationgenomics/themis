@@ -261,7 +261,7 @@ export type ClinVarVariation = Message<"themis.rpc.variant.ClinVarVariation"> & 
   variationId: number;
 
   /**
-   * The same id in ClinVar's accession form, zero-padded to nine digits ("VCV000704508"): the form
+   * The same id in ClinVar's accession form, zero-padded to nine digits ("VCV001685262"): the form
    * efetch and clinvar.DescribeVariant take.
    *
    * @generated from field: string vcv = 2;
@@ -299,7 +299,7 @@ export type ClinVarAllele = Message<"themis.rpc.variant.ClinVarAllele"> & {
   alleleId: number;
 
   /**
-   * ClinVar's own rendering of the allele, e.g. "NM_005249.5(FOXG1):c.219GCC[5] (p.Pro80del)" — the
+   * ClinVar's own rendering of the allele, e.g. "NM_000522.5(HOXA13):c.381CGC[5] (p.Ala133del)" — the
    * name ClinVar indexes it under, which need not be the expression the request carried.
    *
    * @generated from field: string preferred_name = 2;

@@ -118,7 +118,13 @@ export type AnnotateResponse = Message<"themis.rpc.vep.AnnotateResponse"> & {
   mostSevereConsequence: Consequence;
 
   /**
-   * the full VEP JSON — transcript_consequences, plugin scores
+   * The full VEP JSON. Where a predictor score is read: the element of `transcript_consequences`
+   * whose `transcript_id` names the transcript, and on that element one flat key per wire form — a
+   * first-class field under VEP's own name (AlphaMissense: `am_pathogenicity`), a dbNSFP column under
+   * the plugin's column name, case included (BayesDel: `BayesDel_noAF_score`). Neither nests under a
+   * per-plugin object. An element omitting that key, or stating it null, is VEP serving no score for
+   * that predictor on that transcript rather than schema drift — for a predictor `predictors` asked
+   * for; a response fetched without one carries no key for it either.
    *
    * @generated from field: google.protobuf.Struct raw = 15;
    */

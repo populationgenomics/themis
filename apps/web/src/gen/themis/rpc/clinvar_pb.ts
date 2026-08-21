@@ -136,7 +136,7 @@ export const file_themis_rpc_clinvar: GenFile = /*@__PURE__*/
  */
 export type DescribeVariantRequest = Message<"themis.rpc.clinvar.DescribeVariantRequest"> & {
   /**
-   * ClinVar's variation accession for the allele whose own record to fetch, e.g. "VCV000704508",
+   * ClinVar's variation accession for the allele whose own record to fetch, e.g. "VCV001685262",
    * from Variant.Normalize's `clinvar_variations`. Optional: unset says the registry's crosswalk
    * named no ClinVar variation for the allele, and the gene pool is then the whole answer. efetch
    * takes the ZERO-PADDED accession and answers a bare numeric UID with a 200 carrying an empty
@@ -144,12 +144,12 @@ export type DescribeVariantRequest = Message<"themis.rpc.clinvar.DescribeVariant
    * comes back empty.
    *
    * An accession and not an HGVS string, because ClinVar indexes RENDERINGS and no one string spans
-   * version, notation and shift at once: FOXG1 NM_005249.5:c.234_236del is VCV000704508 — Likely
-   * benign, 2 stars, three laboratories — indexed under the NM_005249.4 spelling and titled in repeat
-   * notation ("NM_005249.5(FOXG1):c.219GCC[5]"), so an exact-phrase search for the caller's own string
-   * matches nothing while an unquoted one is tokenised and answers with a DIFFERENT allele of the same
-   * codon. The registry resolves the allele's identity; this rpc fetches the record that identity
-   * names.
+   * version, notation and shift at once: HOXA13 NM_000522.5:c.396_398del is VCV001685262 — Benign,
+   * 1 star, two laboratories — indexed under the NM_000522.4:c.396_398delCGC spelling and titled in
+   * repeat notation ("NM_000522.5(HOXA13):c.381CGC[5]"), so an exact-phrase search for the caller's own
+   * string matches nothing while a neighbouring plain-notation record, NM_000522.5:c.375_377del, is a
+   * DIFFERENT allele rendering the same p.Ala133del. The registry resolves the allele's identity; this
+   * rpc fetches the record that identity names.
    *
    * @generated from field: string vcv = 1;
    */

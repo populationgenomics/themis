@@ -464,10 +464,10 @@ could score.
 
 **The queried allele's own record is asked for by identity, not by string.** ClinVar indexes an allele only under the
 renderings its submitters and its curated expression list happen to carry, and those need not include the transcript
-version a caller holds: `FOXG1` `NM_005249.5:c.234_236del` is a two-star record three laboratories classified, and a
+version a caller holds: `HOXA13` `NM_000522.5:c.396_398del` is a one-star record two laboratories classified, and a
 search for that exact string matches nothing — ClinVar indexes the allele under the `.4` spelling and under a
 repeat-notation title. No string bridges version × notation × shift, and a miss read as "novel allele" is a scored claim
-about an allele three laboratories have classified.
+about an allele two laboratories have classified.
 
 So the lookup is keyed on the allele's identity. `Variant.Normalize` surfaces the ClinGen Allele Registry's ClinVar
 crosswalk as a typed field — the variation id, its RCV accessions, the ClinVar allele id and the preferred name — and
