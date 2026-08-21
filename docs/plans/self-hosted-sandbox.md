@@ -369,13 +369,19 @@ note-to-self, an intermediate dataset. Under run-lived self-hosting those vanish
 the gap surfaces as lost coherence when a curator steers after a pause.
 
 The naive fix reintroduces the exact credential hole the design avoids. A native Cloud Run GCS-FUSE volume authenticates
-as the **job's runtime SA**, and agent code can mint that SA's token off the metadata server — reachable from
-application code, and blockable by neither the proxy (a cooperative injector, not a network chokepoint) nor the VPC
-firewall (metadata is link-local) (§7, §8). So it can call the GCS API directly and bypass the mount view. A shared
-bucket then means cross-session — and, since one job has one SA spanning all Projects, cross-**Project** — read/write:
-the GKE-sample hole (§1). So scratch persistence must hold three properties at once: the agent's SA holds **no storage
+as the **job's runtime SA**, and agent code sharing the instance's network namespace can mint that SA's token off the
+metadata server — blockable by neither the proxy (a cooperative injector, not a network chokepoint) nor the VPC firewall
+(metadata is link-local) (§7, §8). So it can call the GCS API directly and bypass the mount view. A shared bucket then
+means cross-session — and, since one job has one SA spanning all Projects, cross-**Project** — read/write: the
+GKE-sample hole (§1). So scratch persistence must hold three properties at once: the agent's SA holds **no storage
 role**, each session is confined to **its own state even against adversarial code**, and the agent still sees a **real
 filesystem**.
+
+That is a property of the shared network namespace, not of GCS-FUSE. Untrusted code confined to an **empty** network
+namespace has no route to the link-local metadata address at all, and cannot re-point the filesystem view it is handed
+(`mount`, `umount2`, `unshare`, `setns`, `pivot_root` are denied by seccomp), so a host-side mount bound in read-only
+holds the credential on the host side of the boundary and satisfies all three properties — the bypass is absent, not
+mitigated ([`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1).
 
 We route scratch through the same store under the same session token, so the proxy holds no GCS credential: it is just
 another authorized `workspace put`/`get`, using the per-session token that also carries the document (§7). `/workspace`
