@@ -10,12 +10,13 @@ repos:
     hooks:
       - id: check-yaml
       - id: check-json
-      # Generated stubs are committed verbatim from buf generate; a hygiene rewrite would
-      # drift them from the generator and break the freshness gate.
+      # Generated stubs are committed verbatim from buf generate, and schema/proto/clinvar_proto/
+      # byte for byte from the wheel that publishes it; a hygiene rewrite would drift them from
+      # the generator and break the freshness gate.
       - id: end-of-file-fixer
-        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/)'
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/)'
       - id: trailing-whitespace
-        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/)'
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/)'
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: detect-private-key

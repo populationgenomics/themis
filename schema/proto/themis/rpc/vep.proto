@@ -1,0 +1,90 @@
+// vep: Ensembl's Variant Effect Predictor, the consolidator — one call carrying the routing
+// consequence, the calibrated predictor scores and a colocated-variant snapshot.
+// Design: docs/design/evidence-interfaces.md.
+//
+// Modelled from:
+//   Ensembl VEP REST (HGVS endpoint): `AnnotateResponse.raw` is its JSON verbatim, and `predictors`
+//     names each score by the VEP flag or dbNSFP-plugin column that serves it.
+//   This interface's own design: `AnnotateRequest` (the closed predictor set, the GRCh38 pin), and
+//     `AnnotateResponse.most_severe_consequence`, VEP's term re-encoded onto the shared SVCv4 enum.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication, so the SVCv4 codes named throughout
+// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
+// classification composed from these facts is not a clinical variant classification.
+//
+// Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
+// metadata and resolves via themis.clients.auth; it is never a message field.
+//
+// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// themis/evidence/models/evidence.proto.
+
+syntax = "proto3";
+
+package themis.rpc.vep;
+
+import "google/protobuf/struct.proto";
+import "themis/evidence/models/evidence.proto";
+
+
+// One VEP call carries several SVCv4 lines at once. Doc maps each to its code so the agent knows
+// what it is holding:
+//   consequence          -> the routing key (and the NUL_ vs CDS_ LoF path)
+//   per-transcript hgvsc / hgvsp / exon / canonical / mane_select / mane_plus_clinical
+//                         -> the transcript each annotation belongs to, the exon it lands in, and
+//                            which model is MANE. VEP emits NONE of these by default, so the rpc
+//                            asks for them on every call (`hgvs`, `numbers`, `canonical`, `mane`) —
+//                            `predictors` adds scores on top and never replaces them.
+//   predictor score       -> MIS_PRD candidate score. WHICH predictor is the frozen per-gene policy
+//                            in themis.svcv4 (BayesDel by default, AlphaMissense for PKD1), read
+//                            before the call; the library applies that predictor's score->bin table
+//                            and enforces ONE calibrated predictor per gene — do NOT tool-shop here.
+//                            The others ride in raw as what a policy revision would be argued from,
+//                            never a per-variant pick.
+//   SpliceAI deltas       -> SPL_PRD (every variant type checks a splice effect)
+//   colocated ClinVar     -> context ONLY — an Ensembl-release snapshot, not live; use clinvar for
+//                            the informative-variant pool at a stated review-status floor
+//   colocated gnomAD      -> context ONLY — a snapshot; use Gnomad for FAF/homozygotes
+// Two wire forms, fixed service-side (see `predictors`). AlphaMissense, CADD, REVEL and SpliceAI are
+// first-class VEP fields; BayesDel, ESM1b, MutPred2 and VARITY_R reach VEP through the dbNSFP
+// plugin, whose values arrive as per-transcript dotted strings and are resolved HERE to one value
+// per transcript — a string naming several is an error, not a pick. Served by neither wire form:
+// VEST4 and LoFtool.
+message AnnotateRequest {
+  // An HGVS expression over a reference sequence that names the assembly its coordinates belong to:
+  // a RefSeq or Ensembl transcript/protein accession, a versioned RefSeq genomic accession, or an
+  // LRG id ("NM_001042492.3:c.3496G>C", "NC_000017.11:g.31232881G>C", "ENSP00000351015:p.Gly1166Arg").
+  // A transcript/protein version is OPTIONAL — c./n./p. coordinates are relative to that sequence,
+  // not to an assembly — but a GENOMIC accession must carry one, because the version is what names
+  // the assembly (NC_000017.10 is GRCh37, NC_000017.11 is GRCh38). ClinVar's decorations are
+  // tolerated and stripped ("NM_1.2(GENE):c.3G>C (p.Ala1Gly)"), so any `ClinVarRecord.hgvs` chains
+  // straight in — including repeat notation ("c.1656TCA[1]"), which `ClinVar.DescribeVariant` itself cannot take.
+  // The rpc pins GRCh38 — MANE is GRCh38-only, which alone fixes the build, and AlphaMissense is
+  // too — so a reference naming NO assembly is INVALID_ARGUMENT: a chrom-pos-ref-alt id and a bare
+  // chromosome name ("17:g.41209079dup") would both be read at GRCh38, and a GRCh37 locus then
+  // annotates as a DIFFERENT variant — 200, another gene, no warning. `Gnomad` and `Splice` take the
+  // positional id; this rpc does not.
+  string variant = 1;
+  // Which scores to ask for, by predictor name: "AlphaMissense", "BayesDel", "CADD", "ESM1b",
+  // "MutPred2", "REVEL", "SpliceAI", "VARITY_R". The service maps each to its own wire form — a VEP
+  // flag or a dbNSFP column — because Ensembl IGNORES a flag it does not recognise: "?BayesDel=1" is
+  // a 200 with the score absent, which no caller can tell from the variant having none. For the same
+  // reason a name outside that set is INVALID_ARGUMENT rather than passed through.
+  //
+  // The policy names which predictor a gene's MIS_PRD rests on; asking for a second one is asking
+  // about a different SVCv4 line, never a second opinion on this one. Additive: the per-transcript
+  // options above ride on every call, so an empty list still returns HGVS, exon numbers and MANE.
+  repeated string predictors = 2;
+}
+// VEP's consolidated annotation: the routing consequence typed, the rest of the payload in raw.
+message AnnotateResponse {
+  themis.evidence.models.Consequence most_severe_consequence = 1;
+  google.protobuf.Struct raw = 15;    // the full VEP JSON — transcript_consequences, plugin scores
+  repeated themis.evidence.models.Provenance provenance = 16;
+}
+
+service Vep {
+  // Ensembl VEP: routing consequence + the policy's predictor score (MIS_PRD) + SpliceAI (SPL_PRD)
+  // deltas + a ClinVar/gnomAD snapshot (context only). See AnnotateResponse.
+  rpc Annotate(AnnotateRequest) returns (AnnotateResponse);
+}

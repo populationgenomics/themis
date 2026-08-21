@@ -18,11 +18,12 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 litdown = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 anchorite = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 postern = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+clinvar-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 pubmed-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
-litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -451,6 +452,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9b/98/518d8e5081007684232226f475082b30087d0f585e8457db087298259f49/click-8.4.1.tar.gz", hash = "sha256:918b5633eddf6b41c32d4f454bf0de810065c74e3f7dbf8ee5452f8be88d3e96", size = 353007, upload-time = "2026-05-22T04:08:37.769Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/0d/67e5b4109ea4a837e80daa87c2c696711955e40449a97e8926672534def2/click-8.4.1-py3-none-any.whl", hash = "sha256:482be17c6991b8c19c5429a1e995d9b0efdbb63172824c41f99965dc0ade8ec2", size = 116639, upload-time = "2026-05-22T04:08:35.26Z" },
+]
+
+[[package]]
+name = "clinvar-proto"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a2/2d/d748a9b375d53a9b07dccba1274700f63dd1b79d1354ca95ea0f73b68ed3/clinvar_proto-0.1.0.tar.gz", hash = "sha256:b1780881f1bd3a06a33966f957236ac8945485de7a90f2d1a82b33adca096bf1", size = 106392, upload-time = "2026-08-21T03:30:42.736Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/f0/23c0f7220a0d7ab4f0229ad37386188924d6de0bbace80b7e4b17751de2d/clinvar_proto-0.1.0-py3-none-any.whl", hash = "sha256:c5e83761729b7e255d42a19ac709e331e04f549cda1769f683728d5b27ac9fe9", size = 110072, upload-time = "2026-08-21T03:30:41.17Z" },
 ]
 
 [[package]]
@@ -2218,10 +2232,10 @@ resolution-markers = [
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "pytz" },
-    { name = "tzdata" },
+    { name = "numpy", marker = "python_full_version >= '3.14'" },
+    { name = "python-dateutil", marker = "python_full_version >= '3.14'" },
+    { name = "pytz", marker = "python_full_version >= '3.14'" },
+    { name = "tzdata", marker = "python_full_version >= '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -2263,9 +2277,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy" },
-    { name = "python-dateutil" },
-    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
+    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
+    { name = "tzdata", marker = "(python_full_version < '3.14' and sys_platform == 'emscripten') or (python_full_version < '3.14' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
 wheels = [
@@ -3288,8 +3302,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -3436,11 +3450,23 @@ auth = [
     { name = "pg8000" },
     { name = "protobuf" },
 ]
+classifier-eval = [
+    { name = "anthropic" },
+    { name = "cloud-sql-python-connector" },
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "pg8000" },
+    { name = "protobuf" },
+    { name = "pubmed-proto" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
 cloudsql = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
 codegen = [
+    { name = "clinvar-proto" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
 ]
@@ -3477,13 +3503,18 @@ dispatcher = [
 ]
 evidence = [
     { name = "anchorite" },
+    { name = "clinvar-proto" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "httpx" },
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto" },
+    { name = "requests" },
 ]
 guest = [
     { name = "grpcio" },
@@ -3506,7 +3537,9 @@ lint = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
+    { name = "clinvar-proto" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3592,7 +3625,9 @@ test = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extra = ["gcp"] },
+    { name = "clinvar-proto" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3626,11 +3661,23 @@ auth = [
     { name = "pg8000" },
     { name = "protobuf" },
 ]
+classifier-eval = [
+    { name = "anthropic" },
+    { name = "cloud-sql-python-connector" },
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "pg8000" },
+    { name = "protobuf" },
+    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
 cloudsql = [
     { name = "cloud-sql-python-connector" },
     { name = "pg8000" },
 ]
 codegen = [
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
 ]
@@ -3667,13 +3714,18 @@ dispatcher = [
 ]
 evidence = [
     { name = "anchorite", specifier = "==0.5.1" },
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
+    { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "httpx" },
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "requests" },
 ]
 guest = [
     { name = "grpcio" },
@@ -3696,7 +3748,9 @@ lint = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
@@ -3776,7 +3830,9 @@ test = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "cloud-sql-python-connector" },
+    { name = "defusedxml" },
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },

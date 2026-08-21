@@ -105,6 +105,7 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
   themis/litcache/models/         # at-rest domain contracts (the manifest)
+  clinvar_proto/                  # a copy of an upstream's published schema (below)
 buf.yaml                          # module, lint rules, buf breaking config, deps
 buf.lock                          # pinned buf deps (protovalidate)
 apps/web/buf.gen.yaml             # protobuf-es (local protoc-gen-es plugin)
@@ -119,8 +120,10 @@ Generated (committed, never hand-edited): `themis/<pkg>/*_pb2.py` + `.pyi` (+ `*
 
 | Stage           | Tool                                     | Output                                                        |
 | --------------- | ---------------------------------------- | ------------------------------------------------------------- |
+| Upstream copy   | the pinned `clinvar-proto` wheel         | `schema/proto/clinvar_proto/clinvar.proto`                    |
 | Python messages | `grpcio-tools` protoc (`--python/--pyi`) | `themis/**/*_pb2.py` + `.pyi`; `buf/validate/validate_pb2.py` |
 | gRPC stubs      | `grpcio-tools` protoc (`--grpc_python`)  | `themis/rpc/*_pb2_grpc.py` (service protos only)              |
+| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc` | `themis/rpc/*_pb2_grpc.pyi` (service protos only)             |
 | protobuf-es     | local `protoc-gen-es` via `buf generate` | `apps/web/src/gen/**/*_pb.ts`                                 |
 
 `buf export` first materializes the protos + the `buf.lock`-pinned `buf/validate` dep into a temp tree (a cached module
@@ -155,9 +158,8 @@ package/directory rules are excepted — see `buf.yaml`):
   empty variant is rejected.
 - **Declared-field constraints are protovalidate options** — `repeated.min_items`, `string.min_len`, message-level `cel`
   for cross-field rules — enforced by `protovalidate.validate` at the boundary.
-- **Document with leading `//` comments** on messages, fields, enums, and rpcs; the `.proto` is the source of truth and
-  carries the domain documentation. (`protoc` carries a comment into an rpc's generated stub docstring but not into a
-  message/field stub — see Documentation flow.)
+- **Document with leading `//` comments** on messages, fields, enums, and rpcs. The `.proto` is the source of truth and
+  carries the domain documentation; what the generators do and do not carry across is Documentation flow, below.
 - **Explicit field numbers**; evolution adds fields and retires them against a reservation (see Schema evolution).
 
 ## Read-modify-write and integrity
@@ -192,6 +194,47 @@ retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, ne
 re-fetchable PubMed XML); a cached per-request response we keep as received and cannot re-derive is bucket 3 (preserve
 the raw bytes, tolerant subset read).
 
+## Generated upstream schemas
+
+Some upstreams publish a schema for their own payload. Where one does, and we return that payload typed rather than as a
+`Struct`, the message is **generated from the upstream's schema** rather than hand-modelled. Hand-modelling a
+thousand-element XSD is a transcription nobody can review, and it leaves every consumer re-deriving a schema the source
+already publishes.
+
+The generating happens in its own repo, not this one. [xsd-former](https://github.com/populationgenomics/xsd-former)
+takes an upstream's schema document plus the transforms that shape the result — which wrappers are flattened away, what
+annotation each message and field carries — and emits a proto and everything generated from it. That repo publishes the
+lot as a wheel: `clinvar-proto` for ClinVar's VCV record, `pubmed-proto` for a PubMed citation.
+
+We consume the wheel — its stubs, its XML converter, its pydantic models — so **the pin is the single version knob**. A
+new revision of the upstream's schema, or a correction to the transforms, is a release there and a pin bump here;
+schema, stubs and converter move together because they were generated together.
+
+That leaves one thing the wheel cannot supply: our own protos have to *import* the record type in order to embed it, and
+an import needs a `.proto` inside the buf module. So a regeneration copies the wheel's `.proto` in verbatim, at the path
+the wheel's own stubs register their descriptor under — the one placement that works. protoc derives the generated
+import from that path, so our stub imports the wheel's module instead of a second registration of the same descriptor.
+The Python pass generates nothing for the copy, for the same reason; the web tier, which has no wheel to import,
+generates from it like any other proto. The freshness gate catches both ways the copy can go stale: a hand edit, and a
+pin bumped without a regeneration.
+
+Only a type our own protos embed needs a copy. `pubmed-proto` gets none: no message of ours has a field of that type —
+the litcache reads a stored citation through the wheel's stubs directly.
+
+Four properties a reader has to know, because the copy does not behave like the hand-authored protos beside it:
+
+- **Never hand-edited**, like every other generated artifact here — it is the wheel's file byte for byte, rewritten by
+  every regeneration.
+- **Field numbers are positional**, assigned by the generator in document order. A pin bump is therefore a coordinated
+  wholesale rewrite of the file, not the additive evolution the [Schema evolution](#schema-evolution) rules describe:
+  numbers move, and no reservation can make them stable.
+- **`buf breaking` does not bind it**, which is what makes that acceptable: the copy sits on the pre-release exclusion
+  list (`tools/schema/buf_compat.py`) permanently rather than until it stabilizes, since the instability is the
+  generator's design and not a phase it grows out of.
+- **The message is never persisted and never round-tripped.** It carries an upstream payload in flight, inside one rpc
+  response, and both ends of that call ship together. Nothing reads a stored copy of it, so a renumbering breaks no
+  reader — the condition the two rules above rest on, and the one to re-check before any new use of this bucket.
+
 ## Schema evolution
 
 **Breaking changes are ruled out.** A proto evolves in place: add a field with a fresh number, add enum members.
@@ -216,10 +259,9 @@ unknown-field retention means an older reader round-trips a newer writer's field
   client, shipped in the same deploy: a level change there reaches no caller that predates it (bucket 2 above). The gRPC
   contracts keep the rule, where the level carries retry semantics a deployed client reads. Pre-release contracts (no
   persisted data, no deployed consumer) are excluded until they stabilize (`tools/schema/buf_compat.py`).
-- **Statically-typed stubs.** The stubs are all autogenerated, but by default they can't be statically type-checked in
-  Python. In particular, calling a deleted method in a client implementation would not fail statically, but only at
-  run-time. We hence use the `protoc-gen-mypy_grpc` plug-in to generate `.pyi` stub files, so pyright can check methods
-  at the client call site statically.
+- **Statically-typed stubs.** protoc's Python output cannot be type-checked on its own, so a call to a method the
+  contract no longer declares would fail at run time rather than at check time. The `protoc-gen-mypy_grpc` plug-in emits
+  a `.pyi` beside each stub, which is what lets pyright catch it at the call site.
 - **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
   evolution stayed compatible.
 

@@ -29,6 +29,12 @@ _SYNC_GROUP = re.compile(r'--group\s+([\w-]+)')
 # no env to declare and are built out of band.
 _UNDEPLOYED_PREFIX = 'tools/'
 
+# The runtimes an entry may declare. `test_image_contents.py` decides whether to walk an image's
+# imports from this key rather than inferring it from the Dockerfile, so a missing or misspelt one
+# has to fail here: inference that finds nothing to walk reads as a skip, and a skipped image is an
+# unchecked image. Teaching that file a new runtime is what earns an addition here.
+_RUNTIMES = frozenset({'bun', 'python'})
+
 
 def _declared() -> list[dict[str, str]]:
     return json.loads(_IMAGES_JSON.read_text('utf-8'))
@@ -73,6 +79,13 @@ def test_declared_dependency_groups_exist() -> None:
         named = _SYNC_GROUP.findall((_REPO_ROOT / entry['file']).read_text('utf-8'))
         unknown = sorted(set(named) - groups)
         assert not unknown, f'{entry["file"]} syncs undeclared group(s) {unknown}'
+
+
+def test_every_declared_runtime_is_one_the_image_tests_know() -> None:
+    declared = {entry['name']: entry.get('runtime') for entry in _declared()}
+    assert declared, 'images.json declares no images'
+    unknown = sorted(name for name, runtime in declared.items() if runtime not in _RUNTIMES)
+    assert not unknown, f'entries whose runtime is missing or unknown: {unknown}'
 
 
 def test_image_names_are_unique() -> None:

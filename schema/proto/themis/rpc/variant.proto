@@ -1,0 +1,128 @@
+// variant: the spine. One transcript HGVS in, the canonical allele and its projections out, so every
+// other evidence interface joins on a shared key and the right SVCv4 decision tree is selected.
+// Design: docs/design/evidence-interfaces.md.
+//
+// Modelled from:
+//   ClinGen Allele Registry (allele lookup by HGVS, and its ClinVar crosswalk): `ClinVarVariation`,
+//     `ClinVarAllele` carry the crosswalk's fields under its names; `caid` is its canonical allele id.
+//   This interface's own design: `NormalizeRequest`, `NormalizeResponse`, `TranscriptProjection` —
+//     the Allele Registry, VariantValidator and Ensembl VEP re-keyed onto one join key; no upstream
+//     returns this shape.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication, so the SVCv4 codes named throughout
+// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
+// classification composed from these facts is not a clinical variant classification.
+//
+// Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
+// metadata and resolves via themis.clients.auth; it is never a message field.
+//
+// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// themis/evidence/models/evidence.proto.
+
+syntax = "proto3";
+
+package themis.rpc.variant;
+
+import "google/protobuf/struct.proto";
+import "themis/evidence/models/evidence.proto";
+
+
+// Canonicalise a transcript HGVS onto the MANE Select transcript and project it, so every
+// downstream fact joins on a shared key and the right decision tree is selected. Wraps ClinGen
+// Allele Registry (canonical CAID + GRCh37/38 + dbSNP/ClinVar/gnomAD crosswalk), VariantValidator
+// (HGVS validation + MANE projection + both-build VCF loci), and VEP (molecular consequence). It
+// re-keys what those state rather than re-implementing an annotation pipeline: when the variant
+// arrives pre-annotated upstream (PRODUCT §6), the caller may skip straight to the fact rpcs.
+message NormalizeRequest {
+  // Versioned RefSeq transcript HGVS, e.g. "NM_001042492.3:c.3496G>C" — any transcript of the gene,
+  // canonicalised onto MANE Select (else MANE Plus Clinical). ClinVar's decorations are tolerated
+  // and stripped: "NM_1.2(GENE):c.3G>C (p.Ala1Gly)". VariantValidator serves RefSeq accessions only,
+  // so an Ensembl ENST HGVS is rejected, as are the non-HGVS identifier forms (VCF locus, gnomAD id,
+  // rsID, CAID) and protein HGVS: all fail with INVALID_ARGUMENT rather than being normalised.
+  string variant = 1;
+  string genome_build = 2;  // "GRCh38" | "GRCh37" (required); output always carries both
+}
+// The canonical allele: the ids every other rpc joins on, the routing consequence, the projections.
+message NormalizeResponse {
+  string caid = 1;                       // ClinGen canonical allele id — the join key across sources
+  string gnomad_v4_id = 2;               // GRCh38 chrom-pos-ref-alt, for gnomad (dataset gnomad_r4)
+  string gnomad_v2_id = 3;               // GRCh37 id, for co-occurrence (v2-only) and v2 datasets
+  themis.evidence.models.Consequence consequence = 4;           // the routing key
+  // Every transcript THIS ALLELE PROJECTS ONTO, in both accession namespaces — the union of what
+  // VariantValidator validated and what the Allele Registry lists, deduped on `accession_base` and
+  // stamped per element with the sources that stated it. That is the projection set, NOT the gene's
+  // transcript set: a transcript the allele does not touch is absent, so this is the wrong
+  // denominator for an exon elsewhere in the gene. Transcript.AssessExonRelevance's
+  // `transcript_inventory` is the gene-scoped one.
+  // BOTH namespaces can carry `mane_select`: the registry lists a MANE transcript once per
+  // namespace and flags both. Transcript.GetStructure, Transcript.AssessExonRelevance and
+  // Splice.PredictSkipOutcome take the RefSeq
+  // `NM_` form only, so select on the accession's namespace as well as on the flag. No position is
+  // a safe pick instead — the registry lists the Ensembl form of a pair first, and the element
+  // VariantValidator contributed is the transcript the request named, which need not be MANE.
+  repeated TranscriptProjection transcripts = 5;
+  string gene_symbol = 6;                // HGNC symbol, from the VEP consequence
+  string hgnc_id = 7;                    // "HGNC:nnnn" — the gene identity gene_disease/clinvar key on
+  // Every ClinVar VARIATION record the registry's crosswalk names for this allele — the accession
+  // clinvar.DescribeVariant takes. An entry can name a record the allele is only INCLUDED in (a
+  // haplotype or genotype ClinVar classifies as a unit); which kind it is, is read off that rpc's
+  // archive rather than inferred here.
+  //
+  // EMPTY says the crosswalk names no ClinVar variation for the allele AS OF ITS LAST ClinVar
+  // INGEST. The crosswalk tracks ClinVar's releases and lags them — MYH7 c.1543A>G is registered as
+  // CA389050360 whose record carries no ClinVar link, while the VCV004884318 that classifies it was
+  // evaluated 2026-08-04 — so an empty list is a release-bounded absence, and that is what a novelty
+  // finding rests on and all it rests on. An expression the registry registers NO allele for has no
+  // `caid` and fails the rpc, so an empty list is always the crosswalk's answer about a registered
+  // allele, never an unregistered one read as novel.
+  repeated ClinVarVariation clinvar_variations = 8;
+  // ClinVar's own ALLELE records for this allele, where the crosswalk names any.
+  repeated ClinVarAllele clinvar_alleles = 9;
+  google.protobuf.Struct raw = 15;       // full Allele-Registry / VariantValidator payloads
+  repeated themis.evidence.models.Provenance provenance = 16;   // one per source (Allele Registry, VariantValidator, VEP)
+}
+// One transcript this allele projects onto, in the accession namespace the source stated it in.
+message TranscriptProjection {
+  string transcript = 1;        // RefSeq NM_ / Ensembl ENST (versioned)
+  string hgvs_c = 2;
+  string hgvs_p = 3;
+  bool mane_select = 4;
+  bool mane_plus_clinical = 5;
+  // Every source that stated this projection, by the same label its Provenance carries
+  // ("VariantValidator", "ClinGen Allele Registry"). Two entries where both did; one either way
+  // otherwise — VariantValidator projects only the transcripts it was asked to validate, and the
+  // registry lists an Ensembl model VariantValidator has no record of.
+  repeated string sources = 6;
+  // The accession without its version run. The two sources can state different versions of one
+  // transcript; the element keeps VariantValidator's, and this is what a join to
+  // Transcript.AssessExonRelevance's `transcript_inventory` runs on.
+  string accession_base = 7;
+}
+
+// One ClinVar variation record the registry's crosswalk names for this allele.
+message ClinVarVariation {
+  int32 variation_id = 1;  // ClinVar's VariationID, as the registry states it
+  // The same id in ClinVar's accession form, zero-padded to nine digits ("VCV000704508"): the form
+  // efetch and clinvar.DescribeVariant take.
+  string vcv = 2;
+  // The variation's RCV accessions, one per condition ClinVar aggregates it under. No rpc here takes
+  // an RCV; they identify the aggregation a submission was filed into.
+  repeated string rcv = 3;
+}
+// One ClinVar allele record the registry's crosswalk names for this allele. Its own list rather than
+// a field of ClinVarVariation because the two are different ClinVar entity levels and the registry
+// states no key between them: an allele record is the sequence change, a variation record can be a
+// haplotype or genotype the change is one part of.
+message ClinVarAllele {
+  int32 allele_id = 1;
+  // ClinVar's own rendering of the allele, e.g. "NM_005249.5(FOXG1):c.219GCC[5] (p.Pro80del)" — the
+  // name ClinVar indexes it under, which need not be the expression the request carried.
+  string preferred_name = 2;
+}
+
+service Variant {
+  // Canonicalise the variant, project transcripts, set the routing consequence — the join
+  // key every other interface's facts hang on. ClinGen Allele Registry + VariantValidator + VEP.
+  rpc Normalize(NormalizeRequest) returns (NormalizeResponse);
+}

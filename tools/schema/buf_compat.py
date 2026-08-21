@@ -56,10 +56,27 @@ _MODULE_SCOPE = '<module>'
 _MODULE_FILES = ('buf.yaml', 'buf.lock')
 
 # Pre-release contracts, held out of the compared module on both sides: no persisted data and
-# no deployed consumer, so a one-time reshape is intended. Each rejoins the gate once released.
-# Paths are relative to _PROTO_DIR, and a renamed or deleted contract keeps its old path listed
-# until the baseline no longer carries it — a path here is never compared, present or not.
-_PRE_RELEASE = frozenset({'themis/litcache/models/litcache.proto'})
+# no deployed consumer, so a one-time reshape is intended. Each rejoins the gate once released —
+# except the copied upstream schema, whose field numbers are positional, so a pin bump rewrites it
+# wholesale for as long as we carry it. Paths are relative to _PROTO_DIR, and a renamed or deleted
+# contract keeps its old path listed until the baseline no longer carries it — a path here is never
+# compared, present or not.
+_PRE_RELEASE = frozenset(
+    {
+        'clinvar_proto/clinvar.proto',
+        'themis/litcache/models/litcache.proto',
+        'themis/evidence/models/evidence.proto',
+        'themis/rpc/clinvar.proto',
+        'themis/rpc/cspec.proto',
+        'themis/rpc/gene_disease.proto',
+        'themis/rpc/gnomad.proto',
+        'themis/rpc/mavedb.proto',
+        'themis/rpc/splice.proto',
+        'themis/rpc/transcript.proto',
+        'themis/rpc/variant.proto',
+        'themis/rpc/vep.proto',
+    }
+)
 
 # buf breaking runner, pinned by digest (not a moving tag).
 _BUF_IMAGE = 'bufbuild/buf@sha256:c34c81ac26044490a10fb5009eb618640834b9048f38d4717538421c6a25e4d7'

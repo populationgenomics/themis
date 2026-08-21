@@ -1,0 +1,396 @@
+// cspec: the ClinGen Criteria Specification Registry — what an expert panel wrote its own criteria
+// to say for a gene. Design: docs/design/evidence-interfaces.md.
+//
+// Modelled from:
+//   ClinGen Criteria Specification Registry (CSpec) — its gene, specification and rule-set records:
+//     `VcepSpecification`, `SpecifiedEntity`, `SpecificationCitation`, `SpecificationReference`,
+//     `CriterionNote`, `StrengthSpecification`, `CriterionSpecification` and `SpecificationAttachment`
+//     carry its fields under its names; the codes and the strength ladder are ACMG/AMP 2015's.
+//   This interface's own design: `ListSpecificationsRequest`, `SpecificationCoverage`,
+//     `SpecificationStatus` (derived over the registry's state history and legacy flags), and
+//     `Applicability` (the registry's several wordings folded onto one determination).
+//   SVCv4: nothing here models it — the registry serves no SVCv4 profile.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication, so the SVCv4 codes named throughout
+// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
+// classification composed from these facts is not a clinical variant classification.
+//
+// Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
+// metadata and resolves via themis.clients.auth; it is never a message field.
+//
+// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// themis/evidence/models/evidence.proto.
+
+syntax = "proto3";
+
+package themis.rpc.cspec;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "themis/evidence/models/evidence.proto";
+
+
+// The ClinGen Criteria Specification Registry (CSpec) specification(s) covering a gene: the VCEP's
+// criterion-by-criterion wording, its per-strength gene-specific thresholds, and the attribution a
+// working document quotes it under. SM3 ranks "a curated VCEP or community threshold" FIRST among
+// its DAFT methods, so this is the framework's own top-ranked source; served here it is quotable and
+// citable, where the same document reached through a page fetch is neither.
+//
+// WHAT THIS IS NOT, since the shapes invite it. CSpec serves ACMG/AMP-2015 profiles and there is no
+// SVCv4 profile (evidence-interfaces.md): nothing returned here is an SVCv4 code, an SVCv4 point value or a
+// DAFT, and no field is shaped like one. `default_strength` and `strengths[].strength` are the 2015
+// strength ladder; `strengths[].default_points` is a STRING carrying the panel's own points verbatim
+// under whatever Bayesian framework IT adopted, never a number to add to an SVCv4 tally; the panel's
+// criteria-combining rules ride in `raw` untyped, because typing them would be an invitation to run
+// them. A VCEP threshold does not become an SVCv4 DAFT by virtue of who published it — it enters
+// SM3's method ordering at the rung its OWN derivation earns, and `strengths[].text`,
+// `general_comments` and `references` are returned so that derivation can be read and weighed. The
+// rpc quotes the specification; the analyst places it.
+//
+// Doc maps fields to what they answer:
+//   specifications[]         -> every specification whose RULE SET names the gene, unreduced. A gene
+//                               can be covered by several (a multi-gene legacy document and the
+//                               per-gene one carved out of it), and a specification can cover several
+//                               genes, so this is neither one-to-one nor a pick.
+//   ...status / ...state     -> which of them is in force. The registry serves approved and
+//                               in-preparation and withdrawn documents alike under the same shape,
+//                               so a draft's criteria read exactly like an approved panel's without
+//                               this field.
+//   ...criteria[]            -> the criterion as the panel specified it: whether it applies to this
+//                               gene at all, and what each strength requires.
+//   ...citation              -> what a quotation of it is attributed to (see SpecificationCitation).
+//   ...entities[]            -> the gene x disease x inheritance the panel wrote the criteria FOR:
+//                               its own scope statement, to check against the MDE being classified.
+//   coverage                 -> which of the two absences an empty `specifications` is.
+// Not served: the bytes of an attached PDF (`attachments` names them and says so), and the registry's
+// Disease/Gene ontology records, which are large and are other rpcs' subject.
+
+// Whether the registry carries a specification for the gene, and which of the two absences it is in
+// when it does not: a gene no panel has specified and a gene the registry's own gene table has no
+// entry for are different facts, neither readable as the other.
+enum SpecificationCoverage {
+  SPECIFICATION_COVERAGE_UNSPECIFIED = 0;
+  SPECIFICATION_COVERAGE_SPECIFIED = 1;         // `specifications` is non-empty
+  // The registry holds the gene and no specification's rule set names it: no VCEP has specified the
+  // ACMG/AMP criteria for it. The ordinary answer — the registry carries every HGNC gene and a few
+  // hundred specifications.
+  SPECIFICATION_COVERAGE_NO_SPECIFICATION = 2;
+  // The registry's gene table has no entry under the symbol. Its keys are HGNC's approved symbols
+  // and the lookup is case-sensitive, so this is usually a superseded symbol, an alias or a typo —
+  // and is NOT the same finding as "no VCEP has specified this gene", which is why it is its own
+  // value. A symbol HGNC approved after the registry's snapshot lands here too.
+  SPECIFICATION_COVERAGE_GENE_ABSENT = 3;
+}
+
+// Where a specification sits in the registry's release lifecycle — the only thing saying whether its
+// text is the panel's approved position. Derived over the document's state history, its CURRENT
+// state, and its `legacyReplaced` / `legacyFullySuperseded` flags; `VcepSpecification.state` carries
+// the registry's own current state name beside it. The registry's own published recipe reads the
+// history alone, which reports a document the panel has reopened as a current release — three of its
+// documents are in that state today — so the current state is read as well.
+enum SpecificationStatus {
+  SPECIFICATION_STATUS_UNSPECIFIED = 0;
+  // Released and still current: the panel's approved position for this gene.
+  SPECIFICATION_STATUS_IN_FORCE = 1;
+  // A multi-gene legacy document whose per-gene successors have all been re-released, so its own
+  // text no longer governs. Still carries a Released event, which is why it needs saying.
+  SPECIFICATION_STATUS_REPLACED = 2;
+  // Released, and it has not yet displaced the legacy document it was carved out of: that legacy
+  // document is the one in force, and it is in `specifications` too.
+  SPECIFICATION_STATUS_NOT_YET_EFFECTIVE = 3;
+  // No Released event ever: in preparation, submitted for review, or withdrawn — `state` says which.
+  // Its criteria are readable and are not the panel's approved position; quoting one as the VCEP's
+  // specification misattributes a draft.
+  SPECIFICATION_STATUS_UNRELEASED = 4;
+  // Released once — approved, dated and given a DOI — and the panel has since reopened it: `state` is
+  // a review state rather than `Released`. Its own text is still the last position the panel
+  // approved, and there is no newer released document for the gene, so it is neither IN_FORCE nor a
+  // draft. Quote it as the panel's last approved position and say the panel has it under revision;
+  // ATM, PALB2 and SERPINC1 are all in this state, so it is not a corner. Distinct from a released
+  // document whose revision has not touched its own state (which stays IN_FORCE).
+  SPECIFICATION_STATUS_RELEASED_UNDER_REVISION = 5;
+}
+
+// Whether a criterion, or one strength of it, applies at all under this specification. The
+// determination that decided the ACTC1 case: the Cardiomyopathy panel marks PVS1 not applicable, and
+// a run that could not read that scored a null variant. `applicability_term` carries the registry's
+// own wording beside it — the registry spells one determination several ways, including in two
+// letter cases, so a caller must not compare the term as a string.
+enum Applicability {
+  // The record states none. Ordinary at the criterion level (the per-strength determinations are
+  // what that specification states); never returned for a strength, which always carries one.
+  APPLICABILITY_UNSPECIFIED = 0;
+  APPLICABILITY_APPLICABLE = 1;
+  // Both "not applicable" and "not applicable for this VCEP" fold here: they are one determination —
+  // the panel does not use this criterion — spelled two ways, and the spelling is in
+  // `applicability_term`.
+  APPLICABILITY_NOT_APPLICABLE = 2;
+  // Applies as the panel specified it: the gene-specific wording in `text` is the operative rule.
+  APPLICABILITY_APPLICABLE_WITH_VCEP_SPECIFICATION = 3;
+  // Applies with the panel adding nothing: `original_acmg_summary` is the operative rule and `text`
+  // is usually empty.
+  APPLICABILITY_APPLICABLE_AS_ORIGINALLY_DESCRIBED = 4;
+}
+
+// The gene whose criteria specification(s) are wanted.
+message ListSpecificationsRequest {
+  // HGNC symbol (required), as the registry's gene table spells it: HGNC's approved symbol, and the
+  // lookup is CASE-SENSITIVE. `Variant.Normalize` supplies that form. An empty symbol is INVALID_ARGUMENT;
+  // anything else the registry has no entry for comes back as SPECIFICATION_COVERAGE_GENE_ABSENT
+  // rather than as a specification of some other gene.
+  //
+  // Deliberately the only field. A disease field would have to narrow on the panel's OWN scope terms
+  // (`SpecifiedEntity.mondo_id`), which some specifications state and others do not, and which no
+  // ontology closure is run over here — so it would drop a specification whose stated term differs
+  // from the analyst's while still governing the gene. A criterion filter would buy nothing either:
+  // a gene's whole criteria set is tens of kilobytes and costs the same requests whichever criteria
+  // are wanted, so filtering server-side would only hide the ones the caller did not think to ask
+  // for.
+  string gene = 1;
+}
+
+// One gene x disease x inheritance a specification's rule set is written for: the panel's own scope
+// statement, to be checked against the MDE being classified rather than joined to it. The terms are
+// the panel's, not resolved against anything: `GeneDisease` is where a curated entity is resolved
+// under MONDO's subclass closure, and nothing here repeats that.
+message SpecifiedEntity {
+  string gene = 1;                  // HGNC symbol, as the rule set names it
+  // The accession the criteria's coordinates are written against, e.g. "NM_005159.5". Empty where
+  // the rule set names none. Compare it against the transcript the variant was resolved onto before
+  // reading a position-dependent criterion: the panel's rule is written on ITS transcript.
+  string preferred_transcript = 2;
+  string mondo_id = 3;              // "MONDO:nnnnnnn"; empty where the rule set states no term
+  string disease_label = 4;         // the panel's own label for it
+  // Every mode the rule set states for this disease, spelled as it spells them ("Autosomal dominant
+  // inheritance"). Not harmonised onto `Inheritance`: the registry states the mode in two different
+  // shapes and states none at all on some entries, and no rule here keys on it — a harmonised mode
+  // is load-bearing on `GeneDisease`, and reading one off a scope statement would invite joining the
+  // two.
+  repeated string inheritance_terms = 5;
+}
+
+// What a quotation of this specification is attributed to.
+//
+// The DOI is the citable permalink; the registry URLs are not. The registry publishes itself as a
+// BETA service whose content addresses and IRIs are "not permalinks and subject to change", and it
+// edits a record in place under one `version` — `modified` moves without `version` doing. So a
+// working document attributes a quote to `document_doi` + `version`, and `registry_url` is a
+// convenience for opening the document.
+//
+// Nothing stores this text, so a quote of it anchors to nothing the way a corpus paper's `doc_id`
+// does. Zenodo already holds this exact version under `document_doi`, so a stored copy would
+// duplicate a permanent artefact and add a second copy to keep in step with it. The consequence a
+// caller must accept: the quotable text is the one in THIS response, and no linter can re-check a
+// quote against a store — so quote from the response, and name the version you quoted.
+message SpecificationCitation {
+  // Zenodo DOI of THIS version — what a quote cites. Empty where the registry has minted none, which
+  // is the ordinary state of a document that has never been Released.
+  string document_doi = 1;
+  // Zenodo DOI resolving to whatever the latest version is. Never what a quote cites: it will resolve
+  // to a different document once the panel releases again.
+  string concept_doi = 2;
+  string version = 3;                          // the panel's own version string, e.g. "1.2"
+  google.protobuf.Timestamp approved_on = 4;   // when the release was approved; absent where unreleased
+  // The registry record's own last edit. It moves without `version` moving, so two retrievals of one
+  // version can differ; stamp it beside the version when a quote has to be reproducible.
+  google.protobuf.Timestamp modified = 5;
+  string release_notes = 6;                    // what the panel says changed in this version
+  string registry_url = 7;                     // the registry's rendered document page
+  string publisher_url = 8;                    // the panel's own published page; empty where it states none
+}
+
+// One work a specification cites. The route to a panel's stated derivation: a threshold's warrant is
+// usually a paper, and its PMID goes straight to the literature service. The identifying fields
+// only — volume, issue and pages are not carried, since the PMID or the DOI is what reaches the work.
+message SpecificationReference {
+  string namespace = 1;  // "pmid" | "url", as the registry labels the identifier
+  string id = 2;         // the PMID under "pmid"; a registry-internal uuid under "url"
+  string url = 3;        // the link a "url" reference carries; empty for a pmid
+  string title = 4;
+  string authors = 5;    // rendered as one display string, as the registry lists them
+  string journal = 6;
+  string year = 7;
+  string doi = 8;
+}
+
+// A headed block of notes the registry attaches to one strength — the caveats and worked examples a
+// panel hangs off its rule. Kept structured rather than flattened into the strength's text, because
+// the heading says which of the four kinds it is and the text does not.
+message CriterionNote {
+  string heading = 1;         // "Notes" | "Caveats" | "Example" | "Examples", as the registry heads it
+  repeated string lines = 2;  // the block's own items, in order
+}
+
+// What one strength of a criterion requires under this specification. The registry states all five
+// ACMG/AMP-2015 strengths on every criterion, whether or not the panel uses it, so a strength the
+// panel does not admit is present and `applicability` says so — an absent entry would read as a
+// strength the specification says nothing about.
+message StrengthSpecification {
+  string strength = 1;  // "Stand Alone" | "Very Strong" | "Strong" | "Moderate" | "Supporting"
+  Applicability applicability = 2;
+  string applicability_term = 3;  // the registry's own wording; see Applicability
+  // The panel's own wording for this strength — the quotable content, and the gene-specific threshold
+  // where there is one ("Variant has a PopMax FAF >=0.005 (0.5%) in gnomAD"). Markdown, and it can
+  // carry inline citation anchors keyed to `SpecificationReference`. Empty where the panel states no
+  // wording, which is ordinary for a strength it does not admit and for one it applies as originally
+  // described.
+  string text = 4;
+  // How the panel says to apply it, where it says that apart from `text`. The registry states this as
+  // a string on some records and as a list of them on others; both arrive as a list, so a caller
+  // reads it one way.
+  repeated string instructions = 5;
+  repeated CriterionNote notes = 6;
+  // How the panel classes its own change to the criterion at this strength ("Gene-specific",
+  // "Disease-specific", "Strength", "Clarification", "No change", "General recommendation", …). The
+  // registry states this as a string on some records and as a list on others; both arrive as a list.
+  repeated string specification_types = 7;
+  // The panel's approval state for this strength ("approved" | "not approved"), empty where the
+  // record states none. Not the document's status — that is `VcepSpecification.status`.
+  string status = 8;
+  // The points the panel itself assigns this strength, VERBATIM and as a STRING ("4", "-1", "Not
+  // Applicable"), because the registry states both forms in this field. NOT an SVCv4 point value:
+  // these are the panel's own points under the Bayesian framework it adopted, on the 2015 code it
+  // adopted, and adding one to an SVCv4 tally scores a number from another framework. Empty where the
+  // panel assigns none, which is most specifications.
+  string default_points = 9;
+}
+
+// One ACMG/AMP-2015 criterion as this specification writes it.
+message CriterionSpecification {
+  string code = 1;  // "PVS1", "PM2", "BA1", … — the 2015 code, which is what the panel specified
+  // The genes this criterion is scoped to within the specification. EMPTY means it is scoped to the
+  // whole document rather than to a gene, which is how a single-gene specification and the registry's
+  // base ACMG/AMP document both state it — so an empty list is not "applies to no gene".
+  repeated string genes = 2;
+  // The MONDO terms this criterion is scoped to, where a multi-disease specification scopes one.
+  // Empty means document-scoped, not "applies to no disease".
+  repeated string diseases = 3;
+  // Whether the panel uses this criterion for this gene at all. UNSPECIFIED where the record states
+  // none, which is ordinary — the per-strength determinations are then what the specification states,
+  // and a criterion whose every strength is NOT_APPLICABLE is one the panel does not use however this
+  // field reads.
+  Applicability applicability = 4;
+  string applicability_term = 5;  // the registry's own wording; see Applicability
+  string base_strength = 6;       // "Pathogenic" | "Benign" — which direction the criterion argues
+  // The strength the criterion carries when the panel states no other, e.g. "Pathogenic Very Strong".
+  // The 2015 ladder, not an SVCv4 strength.
+  string default_strength = 7;
+  string evidence_category = 8;   // e.g. "Population Data", "Computational And Predictive Data"
+  // The ACMG/AMP-2015 wording the panel started from, caveats included. Returned so a quotation can
+  // show what the panel changed and what it left alone; it is Richards et al. 2015's text, not this
+  // panel's, and attributing it to the panel misreads the specification.
+  string original_acmg_summary = 9;
+  // The panel's criterion-level instructions, where it states them apart from the per-strength
+  // wording. A string on some records and a list on others; both arrive as a list.
+  repeated string instructions = 10;
+  // The panel's criterion-level free-text note. This is where a "not applicable" is explained — ACTC1
+  // PVS1 carries "Not currently applicable to ACTC1. See PM4 for truncating variants that do NOT
+  // undergo NMD." — so read it whenever `applicability` is NOT_APPLICABLE.
+  string additional_comments = 11;
+  // The works this criterion cites, where it cites any apart from the specification's own list.
+  repeated SpecificationReference references = 12;
+  // How the panel classes its own change to the criterion as a whole, where it states that apart from
+  // the per-strength classes ("Gene-specific", "Disease-specific", "No change", …). A string on some
+  // records and a list on others; both arrive as a list.
+  repeated string specification_types = 14;
+  // One entry per ACMG/AMP-2015 strength the specification states, ordered strongest first: Stand
+  // Alone, Very Strong, Strong, Moderate, Supporting. The order is IMPOSED here — the registry's own
+  // array puts Supporting ahead of Moderate on some criteria, so reading a rung by position off the
+  // source would read the wrong one. See StrengthSpecification.
+  repeated StrengthSpecification strengths = 13;
+}
+
+// A file the panel attached to its specification — a PVS1 decision tree, a worked-example appendix, an
+// excluded-variant list. Named rather than served: the registry exposes no endpoint that returns the
+// bytes, so a criterion's "see the attached decision tree" is a pointer this rpc cannot follow. That
+// is stated rather than left to look like the criterion had no more to say.
+message SpecificationAttachment {
+  string label = 1;        // the panel's own label, e.g. "CM-VCEP PS4 Example Scenarios"
+  string description = 2;  // the panel's description of it; empty where it gives none
+  string file_name = 3;
+  string media_type = 4;   // the registry's own type word, e.g. "pdf", "png"
+  int64 size_bytes = 5;
+  string registry_url = 6; // the registry entity for the attachment; it serves metadata, not content
+}
+
+// One specification: a panel's ACMG/AMP-2015 criteria for the genes its rule set names.
+message VcepSpecification {
+  string id = 1;           // the registry's namespace id, e.g. "GN101" — stable across the document's versions
+  string title = 2;        // the panel's full title for the document
+  string short_title = 3;
+  SpecificationStatus status = 4;
+  // The registry's own current state name, verbatim ("Released", "Pilot Rules In Prep", "CSpec
+  // Deleted", …) — what `status` was derived from, so an UNRELEASED document says which kind it is.
+  string state = 5;
+  string expert_panel = 6;               // the VCEP's full title
+  string expert_panel_abbreviation = 7;  // empty where the registry states none
+  SpecificationCitation citation = 8;
+  // Every gene x disease named by the rule set(s) of this document that cover the requested gene.
+  // More than the requested gene on a multi-gene document, since one rule set can name twelve — and
+  // that is the rule set's scope, not a claim that the criteria below apply to each of them, which
+  // is `CriterionSpecification.genes`.
+  repeated SpecifiedEntity entities = 9;
+  // The panel's own preamble to the rule set, where it writes one. Where a threshold's derivation is
+  // stated outside a criterion, this is usually where.
+  string general_comments = 10;
+  repeated SpecificationReference references = 11;
+  // The criteria this specification states for the REQUESTED gene: every criterion scoped to it, plus
+  // every criterion the document scopes to no gene at all (which is how a single-gene document states
+  // all of them). A multi-gene document's criteria for its other genes are not here. Empty only on a
+  // document that has never been released — a draft can link no criterion at all — and a released
+  // document that carries none fails the rpc rather than answering, since an under-detailed read of
+  // the registry produces exactly that shape behind a 200.
+  repeated CriterionSpecification criteria = 12;
+  repeated SpecificationAttachment attachments = 13;
+}
+
+// Every criteria specification the registry holds for the gene, unreduced, with what was searched.
+message ListSpecificationsResponse {
+  // Every specification whose rule set names the requested gene, unreduced and unranked: a gene
+  // carried by both a multi-gene legacy document and the per-gene document carved out of it is named
+  // by both, and which one governs is `status`, never position. Empty is a real answer — `coverage`
+  // says which absence.
+  repeated VcepSpecification specifications = 1;
+  SpecificationCoverage coverage = 2;
+  // Keyed, since a caller reads these by name:
+  //   gene                   -> the registry's own gene record: its HGNC snapshot for the symbol
+  //                             (hgnc_id, MANE accessions, previous symbols and aliases).
+  //   specifications         -> each returned document's own registry record (its state history, its
+  //                             legacy flags, the panel's description and notes), so every lifecycle
+  //                             judgement `status` states is auditable against what it was read from.
+  //   candidate_specifications -> every specification the gene's registry links reached, and whether
+  //                             each one's rule set actually names the gene. The registry cross-links
+  //                             genes to documents that do not specify them — one legacy document
+  //                             links all ten genes of two panels — so the ones dropped are named
+  //                             here rather than silently omitted.
+  //   rule_sets              -> keyed by specification id, the rule-set records that cover the gene,
+  //                             whole. This is where the panel's criteria-COMBINING rules live
+  //                             (`rules`): the point tables and the code combinations it maps to a
+  //                             class. Untyped on purpose — they are an ACMG/AMP-2015 combining
+  //                             algorithm, and SVCv4 combines differently, so nothing should route
+  //                             them into a tally.
+  google.protobuf.Struct raw = 15;
+  // One per request issued: the gene lookup, each specification document, and each rule set read for
+  // its attachments. A document's own entry carries "<id> <version>" as its sole `dataset_versions`
+  // element, since the registry publishes no release version of its own and the document's version is
+  // what a fact read off it rests on.
+  repeated themis.evidence.models.Provenance provenance = 16;
+}
+
+service Cspec {
+  // ClinGen CSpec Registry: every criteria specification whose rule set names the gene, with
+  // each ACMG/AMP-2015 criterion's applicability, per-strength gene-specific wording and thresholds,
+  // the panel's cited works and attachments, and the DOI + version a quotation is attributed to.
+  // Reduced across nothing and selected from by nothing: a gene can be covered by a multi-gene legacy
+  // document and by the per-gene one carved out of it, and which governs is each one's `status`. A
+  // gene no panel has specified and a symbol the registry's gene table has no entry for are distinct
+  // answers (`coverage`), neither an error. The derived leaves are `status` (over the document's
+  // state history and its two legacy flags), the registry URLs and the rendered author strings.
+  //
+  // SM3 ranks a curated VCEP threshold first among its DAFT methods, and this is how that method is
+  // reached. It is NOT an SVCv4 profile: the codes, strengths and points here are ACMG/AMP-2015 and
+  // the panel's own, and a threshold enters SM3's ordering at the rung ITS derivation earns rather
+  // than at method 1 because a VCEP published it. See ListSpecificationsResponse.
+  rpc ListSpecifications(ListSpecificationsRequest) returns (ListSpecificationsResponse);
+}

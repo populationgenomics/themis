@@ -41,9 +41,9 @@ or TypeScript — fails CI.
   inbound at the top of each method — `session = await session.require_session(context, self._session_resolver)` before
   touching scoped state; it aborts `UNAUTHENTICATED`/`PERMISSION_DENIED` and never returns `None`.
 - **`<port>.py`** — the backend port as an `abc.ABC`, plus an in-memory **fixture** implementation for offline runs.
-- **`__main__.py`** — builds each backend from a **required** env var, one per port (`THEMIS_<PORT>_BACKEND`, e.g.
-  `THEMIS_STORAGE_BACKEND`; unset/unknown ⇒ `SystemExit`, never a silent default), registers the servicer + a
-  `grpc.health.v1` health servicer on a `grpc.aio` server, serves on `$PORT`.
+- **`__main__.py`** — builds its backends from one **required** env var (`THEMIS_<INTERFACE>_BACKEND`; unset/unknown ⇒
+  `SystemExit`, never a silent default), registers the servicer + a `grpc.health.v1` health servicer on a `grpc.aio`
+  server, serves on `$PORT`.
 
 Fail-loud seeding: the fixture is seeded explicitly from the environment (JSON env var), never a code default — `{}` is
 a deliberate empty store ([`general.md`](../style/general.md)).
@@ -66,24 +66,29 @@ for the entrypoint wiring. No contract test — the generated servicer base is t
 Root `pyproject.toml`:
 
 - `[dependency-groups]` — add `<name> = [...]` (`grpcio`, `grpcio-health-checking`, `protobuf`, and
-  `{ include-group = "session" }` for the inbound auth client); include it in the `test` and `lint` groups. Keep
-  `grpcio` pinned to the `codegen` group's `grpcio-tools` version.
+  `{ include-group = "session" }` for the inbound auth client); include it in the `test` and `lint` groups. No version
+  specifier — the runtime `grpcio` and the codegen toolchain's `grpcio-tools` resolve to one version out of the shared
+  `uv.lock` ([`services.md`](../design/services.md), "Wiring into the repo").
 - `[tool.pytest.ini_options]` — append `themis/services/<name>/tests` to `testpaths`.
 - `[tool.ruff.lint.per-file-ignores]` — add a `"themis/services/<name>/tests/**"` entry (`S101`, …). The patterns are
-  root-anchored, so the `"tests/**"` entry does not reach a nested dir and every `assert` trips `S101`. (The
-  `"themis/services/*/servicer.py"` ignores are a glob and need no edit.)
+  root-anchored, so the `"tests/**"` entry does not reach a nested dir and every `assert` trips `S101`. Every entry
+  names one tests directory; none of them generalises to a new one.
 
-`Dockerfile` (copy `themis/services/auth/Dockerfile`): multi-stage, build context the repo root;
-`uv sync --locked --group <name>`; `COPY` the `themis/rpc/<domain>_pb2*` stubs plus the `themis/…` subtrees the service
-needs; `PYTHONPATH=/app`. Bake **no** default for a backend selector or its seed — the runtime must exit without them,
-so a deploy that drops the real override fails loud instead of serving an empty store
-([`services.md`](../design/services.md), "Wiring into the repo").
+`Dockerfile` (copy `themis/services/evidence/Dockerfile`): multi-stage, build context the repo root.
 
-`.github/images.json` — add a `{ "name", "context", "file", "env" }` entry for the image. This one list is what the
-`images` build-check (every Dockerfile still builds) and `deploy` both read; a service with no entry is never built. Add
-the matching `_<NAME>_IMAGE_ENV = 'THEMIS_<NAME>_IMAGE'` constant in `infra/__main__.py` in the same PR — not the deploy
-follow-up — because `tests/test_images_manifest.py` holds the entry to both the tracked Dockerfile set and those
-constants, so `pytest` (step 7) fails otherwise.
+- `uv sync --locked --group <name>`, then `COPY` the `themis/rpc/<domain>_pb2*` stubs plus the `themis/…` subtrees the
+  service needs; `PYTHONPATH=/app`.
+- `RUN python -c 'import <entrypoint>.__main__'`, so the image's own interpreter resolves the entrypoint at build — the
+  complement of the pre-merge import walk in [`tests/test_image_contents.py`](../../tests/test_image_contents.py).
+- Bake **no** default for a backend selector or its seed. The runtime must exit without them, so a deploy that drops the
+  real override fails loud instead of serving an empty store ([`services.md`](../design/services.md), "Wiring into the
+  repo").
+
+`.github/images.json` — add a `{ "name", "context", "file", "env", "runtime" }` entry for the image. This one list is
+what the `images` build-check (every Dockerfile still builds) and `deploy` both read; a service with no entry is never
+built. Add the matching `_<NAME>_IMAGE_ENV = 'THEMIS_<NAME>_IMAGE'` constant in `infra/__main__.py` in the same PR — not
+the deploy follow-up — because [`tests/test_images_manifest.py`](../../tests/test_images_manifest.py) holds the entry to
+both the tracked Dockerfile set and those constants, so `pytest` (step 7) fails otherwise.
 
 ## 5. Service-to-service calls (if any)
 
@@ -93,11 +98,11 @@ not this outbound leg.
 
 ## 6. Expose to the sandbox agent (agent-facing services only)
 
-Skip for platform (worker-only) services. Exposure is the `agent_exposed` proto option + `@agent_exposed` servicer
-decorator, from which `regen` generates the hatch allowlist, forwarders, guest stubs, image manifest, and prompt
-fragment — the steps, the threat model (an exposed RPC must assume a hostile caller), and what is built vs planned are
-in [`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md) ("In practice", "Implementation state"). The codegen
-is landing in slices under #235; only the pieces marked shipped there are followable today.
+Skip for platform (worker-only) services. Exposure is the `agent_exposed` option on the service's `.proto`, and it is
+fail-closed: `regen` derives the hatch's method allowlist from the files carrying it
+([`tools/schema/agent_exposed.py`](../../tools/schema/agent_exposed.py)), and a proto without the option reaches the
+guest with nothing. The steps, the rest of the surface the option drives, and the threat model — an exposed RPC must
+assume a hostile caller — are in [`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md) ("In practice").
 
 ## 7. Validate
 

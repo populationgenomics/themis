@@ -1,0 +1,78 @@
+// mavedb: MaveDB — the depositor's calibrated multiplexed-assay result for one variant, the *_FXN
+// input. Design: docs/design/evidence-interfaces.md.
+//
+// Modelled from:
+//   MaveDB API (mapped variants by ClinGen allele id, and the score set behind a row):
+//     `DescribeVariantResponse` carries the depositor's Brnich calibration fields — `oddspath_ratio`,
+//     `acmg_criterion`, `acmg_strength`, `score` — under MaveDB's names; `raw` is the score-set row.
+//   This interface's own design: `DescribeVariantRequest` — the HGVS the service registers a ClinGen
+//     allele under, since MaveDB holds no HGVS-keyed lookup.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication, so the SVCv4 codes named throughout
+// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
+// classification composed from these facts is not a clinical variant classification.
+//
+// Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
+// metadata and resolves via themis.clients.auth; it is never a message field.
+//
+// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// themis/evidence/models/evidence.proto.
+
+syntax = "proto3";
+
+package themis.rpc.mavedb;
+
+import "google/protobuf/struct.proto";
+import "themis/evidence/models/evidence.proto";
+
+
+// Finds the variant's deposited MAVE row through the ClinGen allele it registers, and returns the
+// calibration bin the row's score falls in, when the depositor deposited one (often absent). Doc
+// maps fields to codes:
+//   oddspath_ratio  -> the OddsPath from the depositor's Brnich calibration: the *_FXN input.
+//   acmg_criterion  -> the functional ACMG criterion the calibration asserts (e.g. "PS3" / "BS3").
+//   acmg_strength   -> its strength (e.g. "Strong" / "Moderate" / "Supporting").
+//   score           -> the variant's raw MAVE functional score; context for the *_FXN judgement.
+// MaveDB runs no Brnich calibration and exposes no raw control counts, so computing OddsPath when no
+// depositor calibration exists is a separate curated step (themis.svcv4 / curator), not this rpc;
+// assay evidence living only in papers is the literature service's, not here.
+// Several deposits can score one variant; the one carrying a calibration for its score is returned,
+// and every candidate URN rides in the provenance query.
+message DescribeVariantRequest {
+  // The coding or protein HGVS the variant registers a ClinGen allele under — the join MaveDB
+  // publishes, since it holds no HGVS-keyed lookup of its own.
+  //
+  // SEND THE CODING FORM ("NM_001042492.3:c.3496G>C") whenever you have it. It registers the
+  // canonical allele AND the protein alleles of its transcripts, so MaveDB matches your exact
+  // nucleotide change. A protein expression ("NP_001035957.1:p.Gly1166Arg", the predicted form
+  // Variant.Normalize returns included) registers the protein allele alone, and MaveDB can then only report a
+  // nucleotide-level deposit as *equivalent* — it cannot tell your codon from another encoding the
+  // same residue. Those rank below an exact match, so the two forms can rank the same deposits
+  // differently, and a nucleotide-level deposit is reachable exactly only from the coding form.
+  //
+  // Deposits measure different things — loss of function, dominant-negative effect, stability — and
+  // a variant can be abnormal on one and normal on another without either being wrong. What each
+  // one measured is in `raw.scoreSet` (title, shortDescription, experiment); read it before
+  // treating a score as the functional answer.
+  //
+  // A bare change with no accession names no allele and is INVALID_ARGUMENT — unchecked it would
+  // read back as "no assay covers this variant", which is a scored input.
+  string variant = 1;
+}
+// The deposit that scores the allele: the depositor's own calibration, and the scoreset behind it.
+message DescribeVariantResponse {
+  optional double oddspath_ratio = 1;  // absent when the depositor deposited no calibration
+  string acmg_criterion = 2;
+  string acmg_strength = 3;
+  optional double score = 4;           // absent when the row carries no numeric score
+  google.protobuf.Struct raw = 15;     // the MaveDB scoreset row + scoreCalibrations payload
+  repeated themis.evidence.models.Provenance provenance = 16;
+}
+
+service MaveDb {
+  // MaveDB, keyed on the variant's ClinGen allele (ClinGen Allele Registry): reads the
+  // depositor's OddsPath calibration for the assayed row's score (when one was deposited) -> *_FXN.
+  // See DescribeVariantResponse.
+  rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse);
+}

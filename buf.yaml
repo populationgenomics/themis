@@ -13,7 +13,9 @@ lint:
   # .hello) in themis/rpc/ because each package names a distinct gRPC service wire path that
   # deployed clients bind — consolidating to one package, or splitting to one directory each,
   # would break those wire paths or churn every import. themis/workbench/models/ likewise
-  # carries a package the compat gate now pins in place.
+  # carries a package the compat gate now pins in place. The copied upstream schema (clinvar_proto/)
+  # is neither ours to rename nor free to move: its package is the upstream's, and its directory is
+  # the path the publishing wheel registers its descriptor under.
   use:
     - BASIC
     - ENUM_VALUE_PREFIX

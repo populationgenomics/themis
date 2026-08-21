@@ -1,0 +1,158 @@
+// splice: whether a splice site is lost (SpliceAI + Pangolin deltas), and what the transcript
+// becomes when one is. Design: docs/design/evidence-interfaces.md.
+//
+// Modelled from:
+//   Broad SpliceAI + Pangolin lookup service: `PredictDeltasResponse.raw` carries both hosts'
+//     per-position deltas; the four typed scalars are those deltas reduced onto one orientation.
+//   SVCv4 SM8 (NMD, the 50-nt rule) and SM16 (NSD / stop-lost): `SpliceProduct`, and
+//     `PredictedSkip.nmd_predicted` / `nt_upstream_of_last_junction`, model the null-vs-coding fork
+//     the workflows route on.
+//   This interface's own design: both request messages, `PredictedSkip` and
+//     `PredictSkipOutcomeResponse` — the skipped transcript is composed here from VariantValidator's
+//     exon table and NCBI Nucleotide's sequence, and no upstream returns it.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication, so the SVCv4 codes named throughout
+// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
+// classification composed from these facts is not a clinical variant classification.
+//
+// Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
+// metadata and resolves via themis.clients.auth; it is never a message field.
+//
+// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// themis/evidence/models/evidence.proto.
+
+syntax = "proto3";
+
+package themis.rpc.splice;
+
+import "google/protobuf/struct.proto";
+import "themis/evidence/models/evidence.proto";
+
+
+// ---- PredictDeltas: SpliceAI + Pangolin deltas for SPL_PRD -------------------------------------
+// Every variant type checks a splice effect. Each predictor reports gain apart from loss, because
+// the two do NOT share a sign convention in `raw`: SpliceAI's four deltas are magnitudes (all >= 0),
+// Pangolin signs a loss negative (DS_SL <= 0) — so one predictor's max over its own deltas is not
+// comparable with the other's, and a loss is invisible next to a co-reported gain. Doc maps fields
+// to codes:
+// Each typed delta is a max over the SCORED TRANSCRIPTS as well as over its own delta pair, so it is
+// the predictor's strongest effect of that kind anywhere on the variant, not one transcript's.
+//   spliceai_gain / spliceai_loss -> the SPL_PRD input: max(DS_AG, DS_DG) and max(DS_AL, DS_DL);
+//                       SPL_PRD reads the stronger of the two. The library bins the trichotomy,
+//                       this rpc does not.
+//   pangolin_gain / pangolin_loss -> the second predictor's pair, the SPL_PRD concordance
+//                       cross-check: compare gain against gain and loss against loss.
+// All four are oriented the same way — a larger number is a stronger predicted effect of that kind
+// — so pangolin_loss is -DS_SL (0.71 where `raw` carries -0.71).
+// The predicted splice PRODUCT's consequence (exon skip vs intron retention -> in-frame vs NMD) and
+// whether to re-evaluate it against exon relevance are the model's calls (SM11/SM18), not returned
+// typed here; the per-position deltas the model reasons over ride in `raw`.
+message PredictDeltasRequest {
+  // A GRCh38 genomic locus (chr-pos-ref-alt) / gnomAD id; the Broad service rejects HGVS. Held to
+  // that shape here because the service reports an id it cannot parse INSIDE a 200 ("unable to
+  // parse variant"), which reads back as "the position is unscorable" — the SPL_PRD finding — so an
+  // unchecked field would turn a typo into evidence.
+  //
+  // A large indel spells a long id, and length is refused SEPARATELY from shape, with a message that
+  // says which: the Broad services carry the id in a GET request line and their hosts answer a
+  // request line past ~8 kB with a bare 400, so an id too long to fit is refused here rather than
+  // reaching them as an uncharacterised fault. Nothing below that bound is refused for its length —
+  // a 1 kb deletion's 1019-character id is well-formed and is scored.
+  string variant = 1;
+}
+// Each predictor's per-transcript deltas reduced to one gain and one loss, on a shared orientation.
+message PredictDeltasResponse {
+  optional double spliceai_gain = 1;    // max(DS_AG, DS_DG); absent if SpliceAI returned no score
+  optional double spliceai_loss = 2;    // max(DS_AL, DS_DL); absent if SpliceAI returned no score
+  optional double pangolin_gain = 3;    // DS_SG; absent if Pangolin returned no score
+  optional double pangolin_loss = 4;    // -DS_SL; absent if Pangolin returned no score
+  google.protobuf.Struct raw = 15;      // full SpliceAI + Pangolin per-position deltas
+  repeated themis.evidence.models.Provenance provenance = 16;  // SpliceAI and Pangolin stamped separately
+}
+
+// ---- PredictSkipOutcome: the structural consequence of a GIVEN splice defect -------------------
+// What the transcript becomes IF the named exon's donor or acceptor is lost. Scope, stated so it is
+// not over-read: this rpc does NOT predict whether the defect occurs — that is PredictDeltas (the
+// SpliceAI/Pangolin deltas feeding SPL_PRD) — and does not decide whether the aberrant product is
+// clinically relevant (SM11/SM18, the model's call). Intron retention is out of scope: the retained
+// intron is not part of the transcript this rpc splices. Doc maps fields to codes:
+//   frame_shift    -> in-frame vs out-of-frame skipping: the NUL_ (null) vs CDS_ (coding) path fork
+//   product        -> which decision tree the aberrant transcript routes to
+//   ptc_cds_position / ptc_codon -> where the premature termination codon lands in the aberrant
+//                     transcript, for the reported protein consequence
+//   nmd_predicted  -> the SM8 50-nt determination over the aberrant transcript's own exon structure
+// The skipped transcript is built from the exon table and the RefSeq transcript sequence and
+// translated, so the PTC is read off the sequence rather than assumed from the frame shift.
+enum SpliceProduct {
+  SPLICE_PRODUCT_UNSPECIFIED = 0;
+  // The product terminates at the reference termination codon: an in-frame deletion of the skipped
+  // residues, no PTC. Routes to the in-frame-indel tree, not the null path.
+  SPLICE_PRODUCT_INFRAME_DELETION = 1;
+  // The product terminates before it — a PTC. `nmd_predicted` answers the NUL_/CDS_ fork.
+  SPLICE_PRODUCT_PREMATURE_STOP = 2;
+  // The product reads past the reference termination codon and stops in the 3'UTR: a C-terminal
+  // extension, never NMD. Read it WITH `frame_shift` — 0 is the stop-lost tree (NSD, SM16);
+  // non-zero is a frameshift whose new frame happens to reach its first stop beyond the reference
+  // one, which routes to the frameshift tree instead.
+  SPLICE_PRODUCT_EXTENDED_TERMINATION = 3;
+  // No in-frame stop before the transcript's 3' end: translation reaches the polyA. NSD, not NMD.
+  SPLICE_PRODUCT_NO_TERMINATION = 4;
+  // The skip removes the initiation codon; the start-lost tree applies and no PTC is computed.
+  SPLICE_PRODUCT_START_LOST = 5;
+}
+// The transcript and the exon whose splice site is lost — the defect is given, not predicted here.
+message PredictSkipOutcomeRequest {
+  string transcript = 1;    // versioned RefSeq accession, as GetStructureRequest takes
+  string genome_build = 2;  // "GRCh38" | "GRCh37" (required)
+  // Which exon's splice site is lost — by number, or by a c. position whose exon is taken. For a
+  // canonical-splice HGVS give the anchor without the offset (c.3496+1 -> 3496): the exon whose
+  // donor is lost is the one the anchor sits in. There is no genomic arm — an intronic locus does
+  // not name an exon (an intron's donor belongs to the exon before it, its acceptor to the one
+  // after), so the caller resolves that with Transcript.GetStructure first.
+  oneof affected {
+    int32 exon = 3;
+    int32 cds_position = 4;
+  }
+}
+// One skip the lost site could produce, and what the mature transcript becomes under it.
+message PredictedSkip {
+  repeated int32 skipped_exons = 1;  // the exon(s) lost from the mature transcript, in order
+  int32 coding_nt_removed = 2;       // CDS nt the skip removes
+  int32 frame_shift = 3;             // coding_nt_removed % 3; 0 = the downstream frame is preserved
+  SpliceProduct product = 4;
+  // Set only for SPLICE_PRODUCT_PREMATURE_STOP, and in the ABERRANT transcript's own coordinates
+  // (the skip has already shifted them): the c. position of the PTC's first base, and the codon
+  // number it terminates at (usable as p.(Ter<n>)).
+  optional int32 ptc_cds_position = 5;
+  optional int32 ptc_codon = 6;
+  // nt between the PTC and the aberrant transcript's last exon-exon junction — the SM8 50-nt margin,
+  // so the NMD call is auditable rather than asserted. Absent when the product is single-exon (no
+  // junction exists, and SM8 never predicts NMD there).
+  optional int32 nt_upstream_of_last_junction = 7;
+  bool nmd_predicted = 8;  // SM8 over the aberrant transcript; false for every non-PTC product
+}
+// The skips a lost site at the affected exon produces, over the transcript's own exon table.
+message PredictSkipOutcomeResponse {
+  string transcript = 1;
+  int32 affected_exon = 2;
+  string gene = 4;          // HGNC symbol
+  string genome_build = 5;  // the assembly the exon table was read on
+  // The single-exon skip always; plus the adjacent-pair skips (exon-1 with it, it with exon+1) when
+  // the single skip shifts the frame — the frame-restoring alternatives an analyst weighs. Which
+  // outcome the variant actually produces is not decided here.
+  repeated PredictedSkip skips = 3;
+  google.protobuf.Struct raw = 15;      // the exon table's upstream record + the sequence record's header
+  repeated themis.evidence.models.Provenance provenance = 16;  // VariantValidator (structure) + NCBI Nucleotide (sequence)
+}
+
+service Splice {
+  // Broad SpliceAI + Pangolin: each predictor's per-transcript deltas reduced to one gain and
+  // one loss on a shared orientation -> SPL_PRD input; the product-consequence call is the model's
+  // (SM11/SM18). See PredictDeltasResponse.
+  rpc PredictDeltas(PredictDeltasRequest) returns (PredictDeltasResponse);
+  // The exon table (VariantValidator) + the RefSeq transcript sequence (NCBI Nucleotide): given a
+  // lost splice site, the skipped transcript's frame, PTC and NMD prediction — NOT whether the site
+  // is lost (that is PredictDeltas). See PredictSkipOutcomeResponse.
+  rpc PredictSkipOutcome(PredictSkipOutcomeRequest) returns (PredictSkipOutcomeResponse);
+}
