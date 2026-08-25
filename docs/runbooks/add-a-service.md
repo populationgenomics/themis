@@ -52,8 +52,8 @@ Adding an **interface to an existing deployment** instead of a new service — a
 `themis/services/<name>/<domain>/` with a `config.py` + `interface.py`, its own nested `tests/`, and one entry in the
 entrypoint's `INTERFACES`. It writes no `__main__.py`, and adds no `Dockerfile` or `.github/images.json` entry (step 4),
 but it does edit the existing image's: a `COPY` for any tree it reads, and its deps into that image's dependency group.
-Step 4's `testpaths` and `per-file-ignores` edits apply to the nested `tests/` path. See
-[`../design/services.md`](../design/services.md) §"One deployment, several interfaces".
+Step 4's `testpaths` edit names the nested `tests/` path. See [`../design/services.md`](../design/services.md) §"One
+deployment, several interfaces".
 
 ## 3. Tests
 
@@ -70,9 +70,8 @@ Root `pyproject.toml`:
   specifier — the runtime `grpcio` and the codegen toolchain's `grpcio-tools` resolve to one version out of the shared
   `uv.lock` ([`services.md`](../design/services.md), "Wiring into the repo").
 - `[tool.pytest.ini_options]` — append `themis/services/<name>/tests` to `testpaths`.
-- `[tool.ruff.lint.per-file-ignores]` — add a `"themis/services/<name>/tests/**"` entry (`S101`, …). The patterns are
-  root-anchored, so the `"tests/**"` entry does not reach a nested dir and every `assert` trips `S101`. Every entry
-  names one tests directory; none of them generalises to a new one.
+- `[tool.ruff.lint.per-file-ignores]` — no edit. `"themis/**/tests/**"` already reaches a new service's tests at any
+  depth.
 
 `Dockerfile` (copy `themis/services/evidence/Dockerfile`): multi-stage, build context the repo root.
 

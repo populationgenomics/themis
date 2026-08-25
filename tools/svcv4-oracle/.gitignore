@@ -1,0 +1,7 @@
+# calc-phase3.js is fetched and evaluated in memory and never written to disk (© Baylor BRL, no
+# open-source license), so nothing fetched is persisted here. The basename is ignored defensively
+# in case a future revision (or a manual dump) ever lands it on disk.
+calc-phase3.js
+
+# Only present if a future revision genuinely needs npm deps (none today).
+node_modules/

@@ -257,9 +257,9 @@ The [runbook](../runbooks/add-a-service.md) has the edits. Three of them are dec
 - **The service's dependency group pins no `grpcio` version.** The runtime `grpcio` and the codegen toolchain's
   `grpcio-tools` resolve to one version out of the shared `uv.lock`, which is what keeps them compatible: a generated
   stub refuses at import to run against a `grpcio` older than the toolchain that emitted it.
-- **A new `tests/` directory needs its own ruff `per-file-ignores` entry.** The patterns are root-anchored, so the
-  repo-wide entry does not reach a nested one and every `assert` trips `S101`. The generated `themis/rpc` tree is
-  `extend-exclude`d once, so a new domain needs no edit there.
+- **A new `tests/` directory needs no ruff entry.** One `per-file-ignores` block, `themis/**/tests/**`, reaches every
+  tests tree under `themis/` at any depth; a per-directory list meant a new interface's tests failed lint until someone
+  remembered to add it. The generated `themis/rpc` tree is `extend-exclude`d once, so a new domain needs no edit there.
 - **The image's build context is the repo root**, so the committed stubs ship, and it copies whole `themis/…` subtrees
   rather than files. A guard walks the entrypoint's transitive first-party imports and fails on one the image does not
   put on the import path ([`tests/test_image_contents.py`](../../tests/test_image_contents.py)).

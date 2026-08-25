@@ -1,0 +1,1298 @@
+{
+  "meta": {
+    "provenance": {
+      "what": "Themis's own machine-readable transcription of the public SVCv4 pilot specification: the code names, point values, thresholds, matrix multipliers and routing an implementation needs. It carries none of the supplement texts.",
+      "verified_against": "the supplements, at the line each value's citation names, and the ClinGen pilot calculator's cap tables via tools/svcv4-oracle, where every departure from the calculator is pinned with the passage behind it.",
+      "citation_form": "SM<n> §<m> is line <m> of that supplement's text extraction under svcv4-docs/code-specific-workflow-guidance/txt/ in the repository meta.cited_documents pins; a decision-tree citation names a transcription under svcv4-docs/workflow-images/ there."
+    },
+    "cited_documents": {
+      "repository": "populationgenomics/SVCv4-info",
+      "revision": "4e7050dc79f12ea80e81ce03e65013f0271ba8e2",
+      "note": "The revision every SM<n> §<m> and decision-tree citation in this file resolves against. The text extractions and workflow transcriptions are line-addressed, so a citation names one line only under a fixed tree."
+    },
+    "framework": "SVCv4",
+    "full_name": "ACMG/AMP/CAP/ClinGen Sequence Variant Classification version 4",
+    "status": "draft-phase3-pilot",
+    "pilot_opened": "2026-07-21",
+    "feedback_deadline": "2026-08-19",
+    "target_publication": "2027-01 (Genetics in Medicine)",
+    "unit_of_classification": "MDE",
+    "usage": "Evaluation only. Not a validated implementation, not for clinical or diagnostic use; output is not a clinical variant classification. Re-verify every value against the final published standard and the ClinGen Pilot Calculator (https://calculator.clinicalgenome.org/v4/pilot/ui/classification).",
+    "variant_under_analysis": "VBC"
+  },
+  "classification": {
+    "ordered_classes": [
+      {
+        "code": "B",
+        "label": "Benign",
+        "points": "<= -4.0",
+        "posterior_prob_pathogenic": "< 1%"
+      },
+      {
+        "code": "LB",
+        "label": "Likely Benign",
+        "points": "> -4.0 to <= -1.0",
+        "posterior_prob_pathogenic": "1% to < 10%"
+      },
+      {
+        "code": "VUS",
+        "label": "Variant of Uncertain Significance",
+        "points": "> -1.0 to < +6.0",
+        "posterior_prob_pathogenic": "10% to < 90%"
+      },
+      {
+        "code": "LP",
+        "label": "Likely Pathogenic",
+        "points": ">= +6.0 to < +10.0",
+        "posterior_prob_pathogenic": "> 90% to < 99%"
+      },
+      {
+        "code": "P",
+        "label": "Pathogenic",
+        "points": ">= +10.0",
+        "posterior_prob_pathogenic": "> 99%"
+      }
+    ],
+    "vus_subclasses": [
+      {
+        "code": "VUS-low",
+        "points": "> -1.0 to < +2.0",
+        "posterior_prob_pathogenic": "10% to < 34%",
+        "meaning": "closer to LB than LP"
+      },
+      {
+        "code": "VUS-mid",
+        "points": ">= +2.0 to < +4.0",
+        "posterior_prob_pathogenic": "34% to < 66%",
+        "meaning": "equivocal between LB and LP"
+      },
+      {
+        "code": "VUS-high",
+        "points": ">= +4.0 to < +6.0",
+        "posterior_prob_pathogenic": "66% to < 90%",
+        "meaning": "closer to LP than LB"
+      }
+    ]
+  },
+  "odds_path_calibration": {
+    "scale": [
+      {
+        "strength": "Benign-Strong",
+        "odds_path": "1:18.7",
+        "points": -4
+      },
+      {
+        "strength": "Benign-Supporting",
+        "odds_path": "1:2.08",
+        "points": -1
+      },
+      {
+        "strength": "Indeterminate",
+        "odds_path": "-",
+        "points": 0
+      },
+      {
+        "strength": "Pathogenic-Supporting",
+        "odds_path": "2.08:1",
+        "points": 1
+      },
+      {
+        "strength": "Pathogenic-Moderate",
+        "odds_path": "4.33:1",
+        "points": 2
+      },
+      {
+        "strength": "Pathogenic-Strong",
+        "odds_path": "18.7:1",
+        "points": 4
+      },
+      {
+        "strength": "Pathogenic-Very-Strong",
+        "odds_path": "350:1",
+        "points": 8
+      }
+    ],
+    "notes": "v4 uses a continuous point scale rather than discrete strength buckets. Benign boundary set at 1% posterior probability (v3 Bayesian assumed 0.1%).\n"
+  },
+  "gene_disease_validity_gate": {
+    "levels": [
+      {
+        "level": "GATE_LEVEL_DEFINITIVE",
+        "allows": [
+          "P",
+          "LP",
+          "VUS",
+          "LB",
+          "B"
+        ]
+      },
+      {
+        "level": "GATE_LEVEL_STRONG",
+        "allows": [
+          "P",
+          "LP",
+          "VUS",
+          "LB",
+          "B"
+        ]
+      },
+      {
+        "level": "GATE_LEVEL_MODERATE",
+        "allows": [
+          "LP",
+          "VUS",
+          "LB",
+          "B"
+        ]
+      },
+      {
+        "level": "GATE_LEVEL_LIMITED",
+        "allows": [
+          "VUS",
+          "LB",
+          "B"
+        ]
+      },
+      {
+        "level": "GATE_LEVEL_LESS_THAN_LIMITED",
+        "allows": [],
+        "result": "Variant in Gene of Uncertain Significance"
+      },
+      {
+        "level": "GATE_LEVEL_DISPUTED_OR_REFUTED",
+        "allows": [],
+        "result": "Do not report"
+      }
+    ],
+    "note": "Also required (SM18) for molecular-mechanism scoring to be > \"Uncertain\": gene-disease validity must be Moderate or higher.\n"
+  },
+  "code_abbreviations": {
+    "AFF": "affected individual",
+    "ALT": "alternate cause",
+    "CCS": "case-control study",
+    "CDS": "coding DNA sequence (i.e., not NUL / not NMD path)",
+    "DNV": "de novo",
+    "FRQ": "frequency",
+    "FXN": "function (functional assay)",
+    "INF": "informative variants",
+    "LOC": "locus",
+    "NUL": "null (NMD / loss-of-transcript path)",
+    "MIS": "missense",
+    "NCG": "non-coding gene",
+    "PHE": "phenotype",
+    "POP": "population",
+    "PRD": "prediction (in silico)",
+    "REG": "regulatory",
+    "SEG": "segregation",
+    "SPA": "splice assay (RNA)",
+    "UAF": "unaffected",
+    "HMZ": "homozygous/hemizygous population occurrence",
+    "NA": "not applicable",
+    "ND": "no data"
+  },
+  "concepts": {
+    "PRD": "In-silico / predictive evidence (initial point value, may be scaled by mechanism x exon matrix)",
+    "FXN": "Functional-assay evidence (Brnich/OddsPath calibrated)",
+    "INF": "Informative-variant evidence (other classified variants at/near the locus)",
+    "SPA": "Splice-assay (RNA) evidence, specific to splice codes"
+  },
+  "v3_to_v4_mapping": {
+    "PVS1": [
+      "NUL_PRD",
+      "CDS_PRD"
+    ],
+    "PS1": [
+      "PRD_MIS",
+      "CDS_INF",
+      "NUL_INF",
+      "SPL_INF"
+    ],
+    "PS2": [
+      "CLN_DNV"
+    ],
+    "PS3": [
+      "MIS_FXN",
+      "NUL_FXN",
+      "CDS_FXN",
+      "SPL_FXN",
+      "SPL_SPA"
+    ],
+    "PS4": [
+      "CLN_CCS",
+      "CLN_AFF"
+    ],
+    "PM3": [
+      "CLN_AFF"
+    ],
+    "PM4": [
+      "CDS"
+    ],
+    "PM5": [
+      "MIS_INF",
+      "CDS_INF",
+      "NUL_INF",
+      "SPL_INF"
+    ],
+    "PM6": [
+      "CLN_DNV"
+    ],
+    "PP1": [
+      "LOC_SEG"
+    ],
+    "PP3": [
+      "MIS_PRD",
+      "SPL_PRD"
+    ],
+    "PP4": [
+      "LOC_PHE"
+    ],
+    "PM2": [
+      "POP_FRQ"
+    ],
+    "BA1": [
+      "POP_FRQ"
+    ],
+    "BS1": [
+      "POP_FRQ"
+    ],
+    "BS2": [
+      "POP_HMZ",
+      "CLN_UAF"
+    ],
+    "BS3": [
+      "MIS_FXN",
+      "NUL_FXN",
+      "CDS_FXN",
+      "SPL_FXN",
+      "SPL_SPA"
+    ],
+    "BS4": [
+      "LOC_SEG"
+    ],
+    "BP2": [
+      "CLN_ALT"
+    ],
+    "BP5": [
+      "CLN_ALT"
+    ],
+    "BP3": [
+      "CDS"
+    ],
+    "BP4": [
+      "MIS_PRD",
+      "SPL_PRD"
+    ],
+    "BP7": [
+      "SPL_PRD"
+    ],
+    "dropped": {
+      "PM1": "dropped for missense (predictors now reach +4.0); retained narrowly (e.g. collagen Gly-X-Y glycine). See SM6/SM7.",
+      "PP2": "dropped; redundant with calibrated predictors.",
+      "BP1": "dropped; redundant with calibrated predictors.",
+      "PP5": "dropped (ClinGen 2018 recommendation, PMID 29543229).",
+      "BP6": "dropped (same as PP5)."
+    }
+  },
+  "mechanism_exon_matrix": {
+    "applies_to": "positive initial PRD points only",
+    "final_multiplier": "mechanism_factor * exon_factor",
+    "molecular_mechanism": {
+      "Established": 1.0,
+      "Likely": 0.5,
+      "Suspected": 0.25,
+      "Unlikely": 0.0,
+      "Unknown": 0.0,
+      "Uncertain": 0.0
+    },
+    "exon_relevance": {
+      "All": 1.0,
+      "Most": 0.5,
+      "Few": 0.0
+    },
+    "omitted_cell": "Suspected x Most: SM18 Figure 1 states 0%, not the 0.25 x 0.5 axis product",
+    "reference_data": {
+      "MANE": "tark.ensembl.org - 19,253 MANE Select + 66 MANE Plus Clinical (as of 2026-06-01)",
+      "tools": [
+        "gnomAD pext / Show Transcripts",
+        "GTEx",
+        "UCSC Determine Exon Relevance track (hg19/hg38)"
+      ]
+    }
+  },
+  "population_frequency": {
+    "POP_FRQ": {
+      "input": "FAF (grpmax filtering allele frequency, lower bound 95% CI)",
+      "caveats": [
+        "FAF not computed when AC=1",
+        "beware low allele-number distortions (e.g. lcr flag)"
+      ],
+      "bins": [
+        {
+          "ratio": "< 1.5x DAFT",
+          "points": 0.0
+        },
+        {
+          "ratio": "> 1.5x to < 5x DAFT",
+          "points": -1.0
+        },
+        {
+          "ratio": "> 5x to < 15x DAFT",
+          "points": -3.0
+        },
+        {
+          "ratio": "> 15x DAFT",
+          "points": -6.0
+        }
+      ],
+      "DAFT_methods": {
+        "calculator": {
+          "preferred_when": "no curated VCEP or community threshold exists for the MDE, and the analyst can estimate prevalence, penetrance, and locus and allelic heterogeneity",
+          "tool": "cardiodb.org/allelefrequencyapp",
+          "inputs": [
+            "inheritance",
+            "prevalence (1/X)",
+            "genetic_heterogeneity",
+            "allelic_heterogeneity",
+            "penetrance"
+          ],
+          "penetrance_defaults": [
+            0.2,
+            0.5,
+            0.8
+          ],
+          "guidance": "err toward high DAFT (conservative for benign calls)"
+        },
+        "binning": {
+          "use_when": "X-linked or sparse data",
+          "locus_and_allelic_heterogeneity": 1,
+          "prevalence_bins": [
+            "1/500",
+            "1/1,000",
+            "1/5,000",
+            "1/10,000",
+            "1/50,000",
+            "1/100,000",
+            "1/500,000",
+            "1/1,000,000"
+          ],
+          "penetrance_bins": [
+            "20-<50%",
+            "50-<80%",
+            ">80%"
+          ],
+          "lookup": "SM3 Tables 1-6",
+          "prevalence_rule": "select the more common bin where the estimate falls between two, i.e. round the prevalence up: an estimated 1/2,000 takes the 1/1,000 bin. Estimate the phenotype prevalence lumping together every gene associated with the MDE (locus homogeneity assumed), and only over forms sharing its inheritance pattern.",
+          "penetrance_rule": "use the lower bin near a boundary, i.e. round the penetrance estimate down to a column",
+          "penetrance_columns": [
+            "80%",
+            "50%",
+            "20%"
+          ],
+          "penetrance_column_note": "the images head their columns 80%, 50%, 20% over the instruction 'round down - i.e., disease is less penetrant', so a column is 'penetrance at least this value'. SM3's prose bins ('20% to <50%, 50% to <80% and >80%') leave 80% itself in no bin; the column labels govern.",
+          "marker_note": "the '*' printed on three cells of Tables 2 and 5 is defined nowhere in SM3: no footnote or endnote stream, no legend inside either image, no mention in the text. Every marked cell holds 0.05000, the largest value in either table.",
+          "no_table_for": "a combined-sex frequency in an X-linked-recessive MDE: SM3 prints no such table, so that observation has no binned route",
+          "provenance": {
+            "read_from": "the PNGs embedded in \"Supplementary Material 3. Population Database Frequency.docx\" (word/media). The six tables exist in SM3 only as images and appear in no text extraction of it.",
+            "table_to_image": "taken from the r:embed order in word/document.xml, where each caption precedes its image; the media filenames do not follow caption order",
+            "read_at": "1500 px wide renders (1.3x native); Tables 2 and 6, whose digits follow no arithmetic pattern that would catch a misread, re-read at 2x on cropped row bands",
+            "read_on": "2026-08-07",
+            "completeness": "all 144 cells in frame and legible; no cell empty, none unreadable"
+          },
+          "tables": [
+            {
+              "number": 1,
+              "caption": "Table 1: DAFT Lookup Table for Monogenic Disease Entities with Autosomal Dominant Inheritance",
+              "title": "AUTOSOMAL DOMINANT",
+              "applies_to": "an autosomal-dominant MDE, on the overall prevalence",
+              "cells": {
+                "1/500": [0.001250000, 0.002000000, 0.005000000],
+                "1/1,000": [0.000625000, 0.001000000, 0.002500000],
+                "1/5,000": [0.000125000, 0.000200000, 0.000500000],
+                "1/10,000": [0.000062500, 0.000100000, 0.000250000],
+                "1/50,000": [0.000012500, 0.000020000, 0.000050000],
+                "1/100,000": [0.000006250, 0.000010000, 0.000025000],
+                "1/500,000": [0.000001250, 0.000002000, 0.000005000],
+                "1/1,000,000": [0.000000625, 0.000001000, 0.000002500]
+              },
+              "marked_cells": [],
+              "media_file": "image4.png",
+              "media_pixels": "1136x1038",
+              "legibility": "clear"
+            },
+            {
+              "number": 2,
+              "caption": "Table 2: DAFT Lookup Table for Monogenic Disease Entities with Autosomal Recessive Inheritance",
+              "title": "AUTOSOMAL RECESSIVE",
+              "applies_to": "an autosomal-recessive MDE, on the overall prevalence",
+              "cells": {
+                "1/500": [0.05000, 0.05000, 0.05000],
+                "1/1,000": [0.03540, 0.04470, 0.05000],
+                "1/5,000": [0.01580, 0.02000, 0.03160],
+                "1/10,000": [0.01120, 0.01410, 0.02240],
+                "1/50,000": [0.00500, 0.00632, 0.01000],
+                "1/100,000": [0.00354, 0.00447, 0.00707],
+                "1/500,000": [0.00158, 0.00200, 0.00316],
+                "1/1,000,000": [0.00112, 0.00141, 0.00224]
+              },
+              "marked_cells": [
+                [
+                  "1/500",
+                  "50%"
+                ],
+                [
+                  "1/500",
+                  "20%"
+                ],
+                [
+                  "1/1,000",
+                  "20%"
+                ]
+              ],
+              "media_file": "image3.png",
+              "media_pixels": "1140x988",
+              "legibility": "clear"
+            },
+            {
+              "number": 3,
+              "caption": "Table 3: DAFT Lookup Table for Monogenic Disease Entities with X-Linked Inheritance - Male Frequencies",
+              "title": "X-LINKED DOMINANT OR RECESSIVE - MALE (sex-specific prevalence)",
+              "applies_to": "an X-linked MDE, dominant or recessive, scoring a male frequency, on the male-specific prevalence",
+              "cells": {
+                "1/500": [0.00250000, 0.00400000, 0.01000000],
+                "1/1,000": [0.00125000, 0.00200000, 0.00500000],
+                "1/5,000": [0.00025000, 0.00040000, 0.00100000],
+                "1/10,000": [0.00012500, 0.00020000, 0.00050000],
+                "1/50,000": [0.00002500, 0.00004000, 0.00010000],
+                "1/100,000": [0.00001250, 0.00002000, 0.00005000],
+                "1/500,000": [0.00000250, 0.00000400, 0.00001000],
+                "1/1,000,000": [0.00000125, 0.00000200, 0.00000500]
+              },
+              "marked_cells": [],
+              "media_file": "image8.png",
+              "media_pixels": "1140x1034",
+              "legibility": "clear"
+            },
+            {
+              "number": 4,
+              "caption": "Table 4: DAFT Lookup Table for Monogenic Disease Entities with X-Linked Dominant Inheritance - Female Frequencies",
+              "title": "X-LINKED DOMINANT - FEMALE (sex-specific prevalence)",
+              "applies_to": "an X-linked-dominant MDE scoring a female frequency, on the female-specific prevalence",
+              "cells": {
+                "1/500": [0.001250000, 0.002000, 0.0050000],
+                "1/1,000": [0.000625000, 0.001000, 0.0025000],
+                "1/5,000": [0.000125000, 0.000200, 0.0005000],
+                "1/10,000": [0.000062500, 0.000100, 0.0002500],
+                "1/50,000": [0.000012500, 0.000020, 0.0000500],
+                "1/100,000": [0.000006250, 0.000010, 0.0000250],
+                "1/500,000": [0.000001250, 0.000002, 0.0000050],
+                "1/1,000,000": [0.000000625, 0.000001, 0.0000025]
+              },
+              "marked_cells": [],
+              "media_file": "image5.png",
+              "media_pixels": "1140x992",
+              "legibility": "clear"
+            },
+            {
+              "number": 5,
+              "caption": "Table 5: DAFT Lookup Table for Monogenic Disease Entities with X-Linked Recessive Inheritance - Female Frequencies",
+              "title": "X-LINKED RECESSIVE - FEMALE (sex-specific prevalence)",
+              "applies_to": "an X-linked-recessive MDE scoring a female frequency, on the female-specific prevalence",
+              "cells": {
+                "1/500": [0.05000, 0.05000, 0.05000],
+                "1/1,000": [0.03540, 0.04470, 0.05000],
+                "1/5,000": [0.01580, 0.02000, 0.03160],
+                "1/10,000": [0.01120, 0.01410, 0.02240],
+                "1/50,000": [0.00500, 0.00632, 0.01000],
+                "1/100,000": [0.00354, 0.00447, 0.00707],
+                "1/500,000": [0.00158, 0.00200, 0.00316],
+                "1/1,000,000": [0.00112, 0.00141, 0.00224]
+              },
+              "marked_cells": [
+                [
+                  "1/500",
+                  "50%"
+                ],
+                [
+                  "1/500",
+                  "20%"
+                ],
+                [
+                  "1/1,000",
+                  "20%"
+                ]
+              ],
+              "media_file": "image7.png",
+              "media_pixels": "1140x992",
+              "legibility": "clear"
+            },
+            {
+              "number": 6,
+              "caption": "Table 6: DAFT Lookup Table for Monogenic Disease Entities with X-Linked Dominant Inheritance - Combined Male and Female Frequencies",
+              "title": "X-LINKED DOMINANT - COMBINED (combined male and female prevalence)",
+              "applies_to": "an X-linked-dominant MDE scoring a combined-sex frequency, on the combined prevalence",
+              "cells": {
+                "1/500": [0.001670000, 0.002670000, 0.006670000],
+                "1/1,000": [0.000833000, 0.001330000, 0.003330000],
+                "1/5,000": [0.000167000, 0.000267000, 0.000667000],
+                "1/10,000": [0.000083300, 0.000133000, 0.000333000],
+                "1/50,000": [0.000016700, 0.000026700, 0.000066700],
+                "1/100,000": [0.000008330, 0.000013300, 0.000033300],
+                "1/500,000": [0.000001670, 0.000002670, 0.000006670],
+                "1/1,000,000": [0.000000833, 0.000001330, 0.000003330]
+              },
+              "marked_cells": [],
+              "media_file": "image6.png",
+              "media_pixels": "1140x1032",
+              "legibility": "clear"
+            }
+          ]
+        },
+        "pathogenic_variants": {
+          "use_when": ">= 10 known P/LP variants",
+          "rule": "highest continental FAF excluding founders (> 5x)"
+        }
+      }
+    },
+    "POP_HMZ": {
+      "source": "SM3 §§70-72 and Table 7",
+      "requires": [
+        ">= 2 eligible gnomAD observations",
+        "age-matched penetrance of the MDE near 100%",
+        "affected individuals not expected to be present in population databases (a mild phenotype does not qualify)"
+      ],
+      "excludes": "unaffected individuals whose clinical details are given: those are CLN_UAF, not POP_HMZ",
+      "per_observation_points": {
+        "AD_homozygous": -1.0,
+        "semidominant_or_AR_or_Xlinked_homo_hemizygous": -0.5
+      }
+    }
+  },
+  "clinical_observations": {
+    "pop_frq_precondition": {
+      "conditioned_codes": [
+        "CLN_AFF"
+      ],
+      "admissible_pop_frq_points": [
+        0.0,
+        -1.0
+      ],
+      "source": "SM4 §25, which admits Tables 1 and 2 only at those two POP_FRQ point thresholds"
+    },
+    "CLN_CCS": {
+      "trigger": "OR > 5.0 -> +4.0",
+      "requires": [
+        ">= 5 case observations",
+        ">= 100 unrelated cases",
+        "matched controls",
+        "CI excludes 1.0"
+      ],
+      "effect_when_applied": "all other CLN codes = NA except CLN_DNV"
+    },
+    "CLN_AFF": {
+      "aggregation": "sum across unrelated probands",
+      "table1_monoallelic_per_proband": {
+        "SPECIFIC_phenotype": {
+          "all_genes_tested_and_nongenetic_unlikely_and_no_other_variant": 1.0,
+          "with_caveats": 0.5,
+          "PLP_in_trans_same_gene_or_explanatory_PLP_other_gene": 0.0
+        },
+        "CONSISTENT_phenotype": {
+          "all_genes_tested_and_nongenetic_unlikely_and_no_other_variant": 0.5,
+          "with_caveats": 0.25,
+          "PLP_in_trans_same_gene_or_explanatory_PLP_other_gene": 0.0
+        },
+        "NOT_CONSISTENT": 0.0
+      },
+      "table2_biallelic_per_proband": {
+        "columns": [
+          "confirmed_in_trans_PLP",
+          "assumed_in_trans_PLP",
+          "confirmed_in_trans_VUS",
+          "homozygous",
+          "no_or_cis_or_unknown_second_variant"
+        ],
+        "consistent_all_tested_cooccurrence_lt_0.0001": [
+          3.0,
+          1.5,
+          1.5,
+          1.0,
+          0.0
+        ],
+        "consistent_all_tested_cooccurrence_0.0001_to_0.01": [
+          2.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "with_caveats": [
+          1.0,
+          0.75,
+          0.5,
+          0.5,
+          0.0
+        ],
+        "explanatory_PLP_other_gene": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "NOT_CONSISTENT": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "cooccurrence_formula": "(in-trans + unphased counts) / 125,748 (gnomAD v2)"
+      }
+    },
+    "CLN_DNV": {
+      "additive_with": "CLN_AFF",
+      "row_applicability": {
+        "SPECIFIC": "monoallelic only",
+        "CONSISTENT": "monoallelic or biallelic; a biallelic proband takes this row, Table 2 having one consistency category (SM4 §140)",
+        "NOT_CONSISTENT": "monoallelic or biallelic"
+      },
+      "table3": {
+        "SPECIFIC": {
+          "confirmed_parentage": 7.0,
+          "unconfirmed_parentage": 2.0
+        },
+        "CONSISTENT": {
+          "confirmed_parentage": 4.0,
+          "unconfirmed_parentage": 1.0
+        },
+        "NOT_CONSISTENT": {
+          "confirmed_parentage": 0.0,
+          "unconfirmed_parentage": 0.0
+        }
+      },
+      "note": "mosaic events count (exclude CHIP / revertants)"
+    },
+    "CLN_ALT": {
+      "values": [
+        0.0,
+        -0.5,
+        -1.0
+      ]
+    },
+    "CLN_UAF": {
+      "near_100pct_penetrance": {
+        "dominant_or_semidominant_or_homo_hemizygous_or_in_trans_P": -4.0,
+        "in_trans_LP": -2.0
+      },
+      "penetrance_80_100pct": {
+        "dominant_or_semidominant_or_homo_hemizygous_or_in_trans_P": -2.0,
+        "in_trans_LP": -1.0
+      },
+      "penetrance_lt_80pct": 0.0
+    }
+  },
+  "locus_evidence": {
+    "combined_cap": "LOC total capped at +4.0 (below the +6.0 LP threshold by design)",
+    "LOC_PHE": {
+      "range": [
+        0.0,
+        4.0
+      ],
+      "diagnostic_yield_bins": [
+        {
+          "yield": "< 33%",
+          "points": 0.0
+        },
+        {
+          "yield": "33-50%",
+          "points": 1.0
+        },
+        {
+          "yield": "~51-67%",
+          "points": 2.0
+        },
+        {
+          "yield": "68-81%",
+          "points": 3.0
+        },
+        {
+          "yield": "> 82%",
+          "points": 4.0
+        }
+      ],
+      "ultra_rare_disorders": "prevalence < 1/1,000,000: up to +2.0 from phenotype semantic-similarity algorithms",
+      "proband_rule": "use single most specifically-phenotyped proband; biallelic compound-het applies to both variants; homozygote applies to the single variant"
+    },
+    "LOC_SEG": {
+      "range": [
+        0.0,
+        4.0
+      ],
+      "per_affected_individual": "+1.0 to +2.0 (informative meioses)",
+      "per_cosegregation": {
+        "provenance": "SM5 Figure 2, which exists in the supplement only as an image; read from the transcription svcv4-docs/code-specific-workflow-guidance/tables/SM5-segregation-points.md, its affected rows (:59-:71), at the revision meta.cited_documents pins. Its unaffected rows are per_unaffected, not here.",
+        "autosomal_dominant": {
+          "heterozygous_affected": 1.0
+        },
+        "autosomal_recessive": {
+          "homozygous_or_compound_het_affected": 2.0
+        },
+        "semidominant": {
+          "homozygous_or_compound_het_severely_affected": 2.0,
+          "heterozygous_affected": 1.0
+        },
+        "x_linked": {
+          "hemizygous_severely_affected_male": 1.0,
+          "homozygous_or_compound_het_severely_affected_female": 1.0,
+          "heterozygous_affected_female": 1.0
+        }
+      },
+      "per_unaffected": "up to +1.0 (AR: +0.4 per unaffected VBC carrier, SM5 §28, which scopes the award to carriers where SM5 Figure 2's AR row reads 'heterozygous or wild type'); only if penetrance ~100% and phase established",
+      "non_segregation": {
+        "effect": "zeroes LOC_PHE and LOC_SEG (log-odds -inf at Theta=0)",
+        "benign_points": "-4.0 for AD / AR-homozygous / X-linked (legacy BS4); then re-analyze other loci excluding recombinant locus",
+        "AR_note": "AR non-segregation gives NO benignity evidence"
+      }
+    }
+  },
+  "informative_variants": {
+    "cap": [
+      -8.0,
+      8.0
+    ],
+    "applied": "AFTER mechanism_exon_matrix; NOT reduced by it",
+    "distinctness": "must be DISTINCT from the VBC (identical variants -> CLN_AFF)",
+    "counting": "count distinct variants only; observation count irrelevant",
+    "default_pathogenic_scoring": "+2.0 first distinct P; +1.0 each additional P; if only LP: +1.0 first LP and +1.0 each additional",
+    "benign_scoring": "mirror of pathogenic",
+    "prerequisites": [
+      "informative variant must itself be classified under v4 (do not take ClinVar P/LP at face value unless 3-4 star and circularity excluded; no PP5/BP6 shortcut)",
+      "do NOT award INF when the informative variant carries the SAME codes/weights as the VBC (e.g. both nonsense with only NUL_PRD_+6) - inflates points"
+    ],
+    "mde_scope": "limit to VBC's MDE; allelic MDEs sharing LoF mechanism qualify; paralogous-gene variants may contribute modest expert-judgment evidence"
+  },
+  "functional_assays": {
+    "method": "Brnich et al. OddsPath/likelihood-ratio (PMID 31892348; Tavtigian PMID 29300386)",
+    "requires": "BOTH pathogenic AND benign controls (single WT reference insufficient)",
+    "strength_driver": "# benign controls drives pathogenic strength (SM20 Table 1); # pathogenic controls drives benign strength (SM20 Table 2)",
+    "control_count_lookup": {
+      "lookup": "SM20 Tables 1-2",
+      "scope": "small experiments with NO false positives and NO false negatives, after SM20's two prior gates (functional data exist, and the assay is faithful to the MDE's mechanism). Larger experiments, trichotomised readouts and MAVEs are calibrated mathematically instead (SM20 \u00a722)",
+      "rows": "# of benign control variants, 0-10",
+      "columns": "# of pathogenic control variants, 0-10",
+      "reading": "Table 1 scores a test variant whose result falls in the PATHOGENIC control range, Table 2 one in the BENIGN control range. SM20 \u00a722 cites them by the wrong numbers (its \"Table 2\" and \"Table 3\" are these Tables 1 and 2), and following the citation as written selects the wrong sign of evidence",
+      "maximum": "neither grid reaches \u00b14.0: the small-experiment regime tops out at \u00b13.0 with ten controls of both kinds, and an assay needing Strong-level weight takes the mathematical route instead",
+      "single_control_note": "one benign control is worth nothing for pathogenicity and one pathogenic control nothing for benignity: SM20 \u00a722 holds that a single reference version of the protein does not meet the control standard, and the grids state it only through those all-zero lines",
+      "provenance": {
+        "read_from": "the PNGs embedded in \"Supplementary Material 20. Functional Assay Evidence.docx\" (word/media). Both tables exist in SM20 only as images and appear in no text extraction of it.",
+        "table_to_image": "taken from the r:embed order in word/document.xml; the media filenames do not follow caption order",
+        "read_on": "2026-08-05",
+        "completeness": "all 242 cells in frame and legible; no cell empty, none unreadable; transcribed from the images alone, with no cell computed from the other table",
+        "cross_check": "Table 2 is the exact sign-flipped transpose of Table 1 at all 121 positions, and the two were transcribed separately from separate images"
+      },
+      "tables": [
+        {
+          "number": 1,
+          "caption": "Lookup table for pathogenicity evidence strength for functional assays for small experiments with no false positives or false negatives",
+          "direction": "pathogenic",
+          "applies_to": "a test variant whose result falls in the pathogenic control range",
+          "cells": {
+            "0": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "1": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "2": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            "3": [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            "4": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+            "5": [0.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            "6": [0.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            "7": [0.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            "8": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            "9": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0],
+            "10": [0.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+          },
+          "media_file": "image3.png",
+          "media_pixels": "1634x800",
+          "legibility": "clear"
+        },
+        {
+          "number": 2,
+          "caption": "Lookup table for benignity evidence strength for functional assays for small experiments with no false positives or false negatives",
+          "direction": "benign",
+          "applies_to": "a test variant whose result falls in the benign control range",
+          "cells": {
+            "0": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "1": [0.0, 0.0, 0.0, 0.0, -1.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0],
+            "2": [0.0, 0.0, 0.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0],
+            "3": [0.0, 0.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0],
+            "4": [0.0, 0.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0],
+            "5": [0.0, 0.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0],
+            "6": [0.0, 0.0, -1.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0],
+            "7": [0.0, 0.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0],
+            "8": [0.0, 0.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0],
+            "9": [0.0, 0.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0, -3.0],
+            "10": [0.0, 0.0, -1.0, -1.0, -2.0, -2.0, -2.0, -2.0, -2.0, -3.0, -3.0]
+          },
+          "media_file": "image2.png",
+          "media_pixels": "1634x804",
+          "legibility": "clear"
+        }
+      ]
+    },
+    "mechanism_match_required": true,
+    "no_data": "FXN_ND",
+    "multiple_assays": {
+      "same_readout_same_direction": "count strongest only",
+      "same_readout_opposite": "sum",
+      "distinct_functions": "score most disease-relevant"
+    },
+    "animal_models": {
+      "range": [
+        0.0,
+        4.0
+      ],
+      "knock_in_table": "high phenotype replication + same inheritance + high protein similarity = +4.0; different inheritance = +3.0; key features same/different = +2.0/+1.0; similar phenotype = +1.0; low consistency/similarity = 0.0"
+    },
+    "patient_derived_samples": "usually routed to LOC_PHE, not FXN (narrow exceptions)"
+  },
+  "variant_type_routing": {
+    "missense": {
+      "supplement": 6,
+      "diagram": "Missense Workflow"
+    },
+    "nonsense": {
+      "supplement": 8,
+      "diagram": "Nonsense Workflow"
+    },
+    "frameshift": {
+      "supplement": 9,
+      "diagram": "Frameshift Workflow"
+    },
+    "inframe_indel": {
+      "supplement": 10,
+      "diagram": "Inframe Indel Workflow"
+    },
+    "canonical_splice": {
+      "supplement": 11,
+      "diagram": "Canonical Splice Workflow",
+      "sites": "donor GT +1/+2, acceptor AG -2/-1"
+    },
+    "intronic_synonymous": {
+      "supplement": 12,
+      "diagram": "Intronic and Synonymous Workflow"
+    },
+    "exon_deletion": {
+      "supplement": 13,
+      "diagram": "Single Or Multiexon Del Workflow"
+    },
+    "exon_dup_insertion": {
+      "supplement": 14,
+      "diagram": "Single Or Multiexon Dup Gain Workflow"
+    },
+    "start_lost": {
+      "supplement": 15,
+      "diagram": "Start Lost Workflow"
+    },
+    "stop_lost": {
+      "supplement": 16,
+      "diagram": "Stop Lost Workflow"
+    },
+    "non_coding": {
+      "supplement": 17,
+      "diagram": null,
+      "status": "NOT_YET_RELEASED"
+    },
+    "routing_rules": [
+      "> 1 gene affected -> CNV framework (PMID 31690835), not these trees",
+      "sub-exon length-changing -> InDel (SM10) / Frameshift (SM9)",
+      "single exon-intron boundary deletion -> Canonical Splice (SM11)",
+      "NMD predicted when PTC >= 50 bp upstream of the last exon-exon junction (never in single-exon genes)"
+    ]
+  },
+  "evidence_codes": {
+    "POP_FRQ": {
+      "family": "POP",
+      "concept": "FRQ",
+      "direction": "benign",
+      "range": [
+        -6.0,
+        0.0
+      ],
+      "supplement": 3,
+      "notes": "see population_frequency.POP_FRQ bins"
+    },
+    "POP_HMZ": {
+      "family": "POP",
+      "concept": "HMZ",
+      "direction": "benign",
+      "range": [
+        "sum",
+        0.0
+      ],
+      "supplement": 3,
+      "notes": "per-observation -1.0 (AD hom) or -0.5, summed; from 2nd occurrence; requires age-matched penetrance near 100% and affected individuals not expected in population databases (SM3 Table 7)"
+    },
+    "CLN_CCS": {
+      "family": "CLN",
+      "concept": "CCS",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": 4,
+      "notes": "PS4 case-control -> benign AND pathogenic; OR>5 -> +4.0 (SM4 §23); disables other CLN except CLN_DNV. SM4 §13 states a benign direction with no magnitude, so the range is the ClinGen pilot calculator's EVIDENCE_CODE_CAP, the only executable statement of one; tools/svcv4-oracle holds both sides to it."
+    },
+    "CLN_AFF": {
+      "family": "CLN",
+      "concept": "AFF",
+      "range": [
+        0.0,
+        "sum"
+      ],
+      "supplement": 4,
+      "notes": "mono Table1 (+0..+1 per proband); biallelic Table2 (up to +3.0); summed"
+    },
+    "CLN_DNV": {
+      "family": "CLN",
+      "concept": "DNV",
+      "range": [
+        0.0,
+        "sum"
+      ],
+      "supplement": 4,
+      "notes": "specific+confirmed=+7.0 per proband, summed across probands; SM4 states no cross-proband cap, so the upper side is the sum sentinel; additive with CLN_AFF; only the SPECIFIC row is monoallelic-only"
+    },
+    "CLN_ALT": {
+      "family": "CLN",
+      "concept": "ALT",
+      "direction": "benign",
+      "range": [
+        "sum",
+        0.0
+      ],
+      "supplement": 4,
+      "notes": "not for AR; -0.5/-1.0 per proband (SM4 Table 4), summed"
+    },
+    "CLN_UAF": {
+      "family": "CLN",
+      "concept": "UAF",
+      "direction": "benign",
+      "range": [
+        "sum",
+        0.0
+      ],
+      "supplement": 4,
+      "notes": "requires age-matched penetrance; points per unaffected individual (SM4 Table 5), summed"
+    },
+    "LOC_PHE": {
+      "family": "LOC",
+      "concept": "PHE",
+      "range": [
+        0.0,
+        4.0
+      ],
+      "supplement": 5,
+      "notes": "diagnostic-yield bins; LOC_PHE + LOC_SEG capped JOINTLY at +4.0 (SM5 §5), which no per-code range can state"
+    },
+    "LOC_SEG": {
+      "family": "LOC",
+      "concept": "SEG",
+      "range": [
+        -4.0,
+        4.0
+      ],
+      "supplement": 5,
+      "notes": "+per affected/unaffected; non-seg -> -4.0 (AD/ARhom/XL); LOC_PHE + LOC_SEG capped JOINTLY at +4.0 (SM5 §5), which no per-code range can state. Range [-4,4] kept intentionally: the ClinGen pilot calculator clamps the benign floor to 0 ([0,4]), which drops SM5's non-segregation -4.0; ours is more correct (flag for spec confirmation)."
+    },
+    "MIS_PRD": {
+      "family": "MIS",
+      "concept": "PRD",
+      "range": [
+        -4.0,
+        4.0
+      ],
+      "supplement": 6,
+      "notes": "ONE calibrated predictor chosen in advance (BayesDel/MutPred2/REVEL/VEST4/AlphaMissense/ESM1b/VARITY_R); positive PRD scaled by transcript relevance All=x1/Most=x0.5/Few=x0"
+    },
+    "MIS_FXN": {
+      "family": "MIS",
+      "concept": "FXN",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": 6,
+      "notes": "MIS_PRD + MIS_FXN combined capped [-8.0, 6.0]"
+    },
+    "MIS_INF": {
+      "family": "MIS",
+      "concept": "INF",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": 6,
+      "notes": "four summable sub-rules; see missense_MIS_INF_subrules"
+    },
+    "NUL_PRD": {
+      "family": "NUL",
+      "concept": "PRD",
+      "range": [
+        0.0,
+        6.0
+      ],
+      "supplement": [
+        8,
+        9,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "NMD/loss-of-transcript path; initial +6.0 (+4.0 NSD), scaled by mechanism_exon_matrix. Code cap [0,6], the union of the subgenic ceilings SM8/SM9/SM15 state; the whole-gene-deletion +10.0 tier is admitted by the NUL_PFD category cap [-8,10] in cap_hierarchy, not by this code."
+    },
+    "NUL_FXN": {
+      "family": "NUL",
+      "concept": "FXN",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        8,
+        9,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "must confirm transcript/protein loss"
+    },
+    "NUL_INF": {
+      "family": "NUL",
+      "concept": "INF",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        8,
+        9,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "same-exon NMD PTC variants +2.0 first P/+1.0 LP/+1.0 additional"
+    },
+    "CDS_PRD": {
+      "family": "CDS",
+      "concept": "PRD",
+      "range": [
+        -1.0,
+        6.0
+      ],
+      "supplement": [
+        8,
+        9,
+        10,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "coding/rescue path; by protein-fraction/critical-domain; -1.0 if functional alt-start"
+    },
+    "CDS_FXN": {
+      "family": "CDS",
+      "concept": "FXN",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        8,
+        9,
+        10,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "PRD+FXN cap typically [-8.0, 9.0]"
+    },
+    "CDS_INF": {
+      "family": "CDS",
+      "concept": "INF",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        8,
+        9,
+        10,
+        13,
+        14,
+        15,
+        16
+      ],
+      "notes": "PTC downstream of VBC / between VBC and alt-start, per path"
+    },
+    "SPL_PRD": {
+      "family": "SPL",
+      "concept": "PRD",
+      "range": [
+        -1.0,
+        6.0
+      ],
+      "supplement": [
+        6,
+        11,
+        12
+      ],
+      "notes": "initial by splice prediction; canonical NMD +6.0, intronic/synon NMD +3.0"
+    },
+    "SPL_SPA": {
+      "family": "SPL",
+      "concept": "SPA",
+      "range": [
+        -6.0,
+        3.0
+      ],
+      "supplement": [
+        6,
+        11,
+        12
+      ],
+      "notes": "RNA splice assay; scales PRD in path, or standalone -2.0..+2.0 in uncertain path. Range is the union of the per-colour bounds: 0.0 to +3.0 (SM6 §69, SM12 §42), -2.0 to +2.0 (SM6 §98, SM11 §72), -2.0 to 0.0 (SM6 §119, SM11 §94, SM12 §109), and the -6.0 floor stated only in SM11's figure boxes (Canonical Splice Workflow.decision-tree.md:112 and :143). Nothing scores against the union: builders validate against splice_tree.spa_bounds, which derives the bound of the colour in play."
+    },
+    "SPL_FXN": {
+      "family": "SPL",
+      "concept": "FXN",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        11,
+        12
+      ],
+      "notes": "protein function, distinct from SPA"
+    },
+    "SPL_INF": {
+      "family": "SPL",
+      "concept": "INF",
+      "range": [
+        -8.0,
+        8.0
+      ],
+      "supplement": [
+        6,
+        11,
+        12
+      ],
+      "notes": "+2.0 first P/+1.0 LP/+1.0 additional"
+    }
+  },
+  "missense_MIS_INF_subrules": [
+    {
+      "rule": "same-codon / same-amino-acid change, P/LP",
+      "points": "+4.0 first P; +2.0 LP or each additional"
+    },
+    {
+      "rule": "distinct amino-acid change, P/LP, with Grantham distance < VBC",
+      "points": "+2.0 first; +1.0 each additional"
+    },
+    {
+      "rule": "distinct amino-acid change, B/LB, with Grantham distance > VBC",
+      "points": "-2.0 first; -1.0 each additional"
+    },
+    {
+      "rule": "same-amino-acid change, B/LB",
+      "points": "-4.0 first; -2.0 each additional"
+    },
+    {
+      "rule": "critical-residue motif (collagen Gly-X-Y glycine; C2H2 Cys/His)",
+      "points": "+2.0 once, only when no other P/LP informative variant; voided by any benign informative variant"
+    }
+  ],
+  "critical_amino_acids": {
+    "standalone_code": false,
+    "effect": "up to +2.0 on top of predictor points for well-established critical individual residues (SM7 §5)",
+    "max_points": 2.0,
+    "examples": [
+      "collagen Gly-X-Y glycine",
+      "disulfide-bond cysteines (FBN1/NOTCH3)",
+      "C2H2/C2H4 zinc-finger Cys/His (GLI3)"
+    ],
+    "constraints": [
+      "conserved domain membership alone earns NO points",
+      "immunoglobulin-like / duplicated-redundant domains generally do not qualify",
+      "only add if combined PRD_+INF_ maximum not yet reached (avoid double-counting; PP3+PM1 overlap)"
+    ]
+  },
+  "multiple_disorder_policy": [
+    {
+      "scenario": "single MDE, semidominant by dosage",
+      "action": "aggregate mono/biallelic evidence; classify the one MDE"
+    },
+    {
+      "scenario": "two MDEs, distinct inheritance but consistent mechanism",
+      "action": "aggregate; same final class for both"
+    },
+    {
+      "scenario": "single mechanism, phenotypic spectrum",
+      "action": "aggregate; case-count thresholds scale with phenotype specificity"
+    },
+    {
+      "scenario": "mutually exclusive distinct mechanisms",
+      "action": "do NOT aggregate; classify P only for the relevant MDE; benign/LB only if relevant to ALL MDEs; VUS toward MDE with partial evidence"
+    },
+    {
+      "scenario": "non-mutually-exclusive MDEs",
+      "action": "do NOT aggregate; classify each MDE separately; note lack of evidence for others (avoid ClinVar conflicts)"
+    },
+    {
+      "scenario": "unclear mechanism/distinctness",
+      "action": "judgment; aggregate only if phenotypes close and mechanism similar"
+    },
+    {
+      "scenario": "multigene CNVs",
+      "action": "aggregate all diseases into a list; note genes with unknown MDE associations"
+    }
+  ],
+  "cap_hierarchy": {
+    "provenance": {
+      "what": "the concept-level and category-level combining caps above the per-code caps in evidence_codes, and which codes each parent code sums",
+      "concept_caps": "stated: LOC SM5 §34 (the joint LOC_PHE + LOC_SEG cap, SM5 §5); MIS SM6 §19; MIS_INF SM6 §29; CDS SM8 §34; CDS_INF SM8 §38; NUL SM8 §13; NUL_INF SM8 §17; SPL and SPL_FXN SM11 §25; SPL_INF SM11 §27. SPL_PRD_SPA is stated once per colour, not once: +6.0 is SM12 §42's ceiling and -3.0 the widest of the four floors (SM6 §48 and §69 0.0, SM12 §42 -1.0, SM6 §98 -2.0, SM6 §119 / SM11 §94 / SM12 §109 -3.0). Implied, not stated: POP's 0.0 ceiling, since SM3 §2 and §72 make both POP codes benign-only; CLN's unbounded pair, since SM4 §77 and §143 sum per observation under no stated bound.",
+      "category_caps": "the parent code each supplement caps the total at: MIS_PFD SM6 §31; CDS_PFD SM8 §38; NUL_PFD SM8 §23; SPL_PFD SM11 §31",
+      "concept_to_codes": "where each summed code is introduced: MIS SM6 §15/§19/§29; CDS SM8 §32/§34/§38; NUL SM8 §11/§13/§17; SPL SM11 §17/§19/§25/§27"
+    },
+    "concept_caps": {
+      "POP": ["sum", 0.0],
+      "CLN": ["sum", "sum"],
+      "LOC": [0.0, 4.0],
+      "MIS": [-8.0, 6.0],
+      "MIS_INF": [-8.0, 8.0],
+      "CDS": [-8.0, 9.0],
+      "CDS_INF": [-8.0, 8.0],
+      "NUL": [-8.0, 10.0],
+      "NUL_INF": [-8.0, 8.0],
+      "SPL": [-8.0, 9.0],
+      "SPL_FXN": [-8.0, 9.0],
+      "SPL_INF": [-8.0, 8.0],
+      "SPL_PRD_SPA": [-3.0, 6.0]
+    },
+    "category_caps": {
+      "MIS_PFD": [-8.0, 9.0],
+      "CDS_PFD": [-8.0, 10.0],
+      "NUL_PFD": [-8.0, 10.0],
+      "SPL_PFD": [-8.0, 10.0]
+    },
+    "concept_to_codes": {
+      "MIS": ["MIS_PRD", "MIS_FXN", "MIS_INF"],
+      "CDS": ["CDS_PRD", "CDS_FXN", "CDS_INF"],
+      "NUL": ["NUL_PRD", "NUL_FXN", "NUL_INF"],
+      "SPL": ["SPL_PRD", "SPL_FXN", "SPL_INF", "SPL_SPA"]
+    }
+  }
+}

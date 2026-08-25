@@ -78,7 +78,7 @@ SVCv4 brings its own terms; each is used throughout and defined once here.
 | **MANE Select / Plus Clinical** | The RefSeq/Ensembl-agreed representative transcript of a gene, and the additional clinically-used ones.                                                                                                                                                                                                                                                    |
 | **pext**                        | gnomAD's proportion-expressed-across-transcripts: how much of a gene's expression includes a given base.                                                                                                                                                                                                                                                   |
 | **Splice colour**               | The trichotomy a splice prediction routes on — likely / indeterminate / unlikely disruptive — which each workflow prices per colour.                                                                                                                                                                                                                       |
-| **SVCv4 corpus**                | The pilot's documentation set — supplements, practice variants, and their transcriptions — that the vendored reference and the reference set are drawn from. Distinct from the literature corpus the `literature` interface serves.                                                                                                                        |
+| **SVCv4 corpus**                | Our private checkout of the pilot's documentation set: the supplements as received, the practice variants, and our transcriptions of both. The reference's citations and the reference set point into it. Distinct from the literature corpus the `literature` interface serves.                                                                           |
 | **Reference set**               | The graded evaluation cases the classifier loop scores against ([`analysis-scenarios.md`](analysis-scenarios.md)), drawn from the SVCv4 corpus.                                                                                                                                                                                                            |
 
 ### SVCv4's shape drives the tool set
@@ -298,10 +298,11 @@ absence from gnomAD is the rarity input rather than a failed lookup.
 **What the upstream gives, and what has to be remapped.** gnomAD's GraphQL API serves per-dataset and joint frequency
 blocks, the filtering allele frequencies maximised over genetic-ancestry groups, homozygote counts, the variant-QC
 verdict per dataset, gnomAD's own caveat flags, and coverage and constraint context. Almost none of it is remapped: the
-model reads the payload. What the service owes instead is three guards — the id is held to the stricter of the spellings
-its consumers accept, the dataset is checked against the releases this rpc serves, and every release the answer rests on
-is stamped. Which figure `POP_FRQ` is actually scored against, and what disqualifies one, is a reading of SM3 and of
-ClinGen's gnomAD guidance
+library reads the payload, at the paths `frequency.faf_from_gnomad` and `homozygotes_from_gnomad` name — the constraint
+and coverage context is `Transcript.AssessExonRelevance`'s, and nothing in the library reads it. What the service owes
+instead is three guards — the id is held to the stricter of the spellings its consumers accept, the dataset is checked
+against the releases this rpc serves, and every release the answer rests on is stamped. Which figure `POP_FRQ` is
+actually scored against, and what disqualifies one, is a reading of SM3 and of ClinGen's gnomAD guidance
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#frequency-which-figure-and-what-disqualifies-one)); the rpc
 returns the joint figure *and* each dataset's QC verdict because that reading needs both.
 
@@ -334,7 +335,7 @@ per-transcript dotted strings and are resolved service-side to one value per tra
 error, not a pick). The rpc also pins GRCh38, because MANE and AlphaMissense are GRCh38-only, so a reference that names
 no assembly is refused rather than read at the pinned build.
 
-Which predictor a gene's score comes from is frozen per-gene policy, versioned data vendored in `themis.svcv4` and read
+Which predictor a gene's score comes from is frozen per-gene policy, versioned data shipped in `themis.svcv4` and read
 before the call
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#in-silico-prediction-one-predictor-chosen-in-advance)).
 `Vep.Annotate` will serve any predictor on its allowlist, so **the single-predictor guarantee is the policy plus the
@@ -548,7 +549,9 @@ without a label comparison.
   frequency arithmetic wrong.
 - **The classification-to-gate-level translation is the library's, not the caller's.** Curators publish
   *classifications*, the gate is keyed by *levels*, and several published classifications name no level at all, so one
-  map holds vocabulary, strength rank and gate level together.
+  map holds vocabulary, strength rank and gate level together. The level is a `GateLevel` wherever it appears — what the
+  rpc states per entity, and what `themis.svcv4` takes. The framework partitions validity once; a second spelling inside
+  the library would be one more thing to keep in step with it.
 
 PanelApp asserts panel membership rather than validity, so it contributes no entity to any of this.
 
@@ -771,9 +774,13 @@ deploy for nothing. A library is also reusable by the eval harness and by any se
 
 The model calls it with the evidence plus its own judgement inputs — the mechanism factor, the exon factor, the eligible
 informative variants, the DAFT parameters — and gets back the transparent point tally and class band, then authors the
-verdict reasoning over the claims. The call goes through a **typed builder per variant type**, one for each of the
-framework's ten workflows: the caller supplies the judgement inputs and the builder holds that workflow's caps and path
-structure.
+verdict reasoning over the claims. **The evidence reaches it as the response messages themselves**, since those are what
+the model is holding: a **door** per source reads each one at the paths its own contract documents and returns the code
+it feeds, so which path a figure is read at, which vocabulary a term resolves to and which tier a score bins to are the
+library's steps rather than ones the model writes out. The judgement arrives beside them, typed. The call goes through a
+**typed builder per variant type**, one for each of the framework's ten workflows: the caller supplies the judgement
+inputs and the builder holds that workflow's caps and path structure, and the routing consequence selects the builder so
+that naming one is not a step either.
 
 It holds:
 
@@ -788,13 +795,14 @@ It holds:
 - OddsPath and animal-model calibration tables;
 - and the score-to-bin thresholds with the single-predictor-per-gene enforcement.
 
-Its data is the SVCv4 machine-readable reference, the ten transcribed decision trees (one per workflow), and the
-predictor policy, all vendored. Where the transcription flags a diagram-versus-text numeric conflict, the ClinGen Pilot
-Calculator is the tie-breaking **oracle** (see [Eval](#eval-framework-consistency-then-the-calculator-oracle)).
+Its data is the SVCv4 machine-readable reference and the predictor policy, both shipped in the package; the ten
+workflow-diagram transcriptions its per-variant-type structure is read from stay in the corpus, at the revision the
+reference's citation pin names. Where a transcription flags a diagram-versus-text numeric conflict, the ClinGen Pilot
+Calculator is the tie-breaking **oracle** (see [Eval](#eval-the-contract-the-graded-cases-then-the-calculator-oracle)).
 
 **Two of its numbers are explicit caller inputs rather than derivations**: the stop-lost NSD branch, routed through the
-null path, and the exon-duplication not-tandem cap. No practice variant exercises either, so nothing would check a
-derivation of them; requiring the number keeps it the caller's and visible, where deriving it would fold an invented
+null path, and the exon-duplication not-tandem cap. Neither has a worked case anywhere in the standard to check a
+derivation against; requiring the number keeps it the caller's and visible, where deriving it would fold an invented
 figure into the tally.
 
 ### The library takes categorical judgements and returns derivations
@@ -819,15 +827,15 @@ the exon inventory is tabulated with the **admitted set passed in explicitly**, 
 shown rather than buried. The splice colour splits for a different reason — everything but "does a score above the
 threshold have a certain consequence" is a threshold table plus a truth table. Two framework invariants fold in with the
 lookups: SM4's affected-proband code is unavailable outside two `POP_FRQ` values, and the library refuses a conditioned
-code awarding points outside that gate or with no `POP_FRQ` in the tally at all.
+code awarding points outside that gate, with no `POP_FRQ` in the tally at all, or under one it did not determine.
 
 **Where a reading is unsettled, the library requires the value rather than deriving it.** A helper that resolved an open
 conflict would hide it: a boolean for SM18's waiver would silently permit a double count of the same pathogenic
 variants, and a `bool` for specific-versus-consistent phenotype reads the *absence* of an examination as False. The four
 readings held open this way are in
 [`svcv4-interpretations.md`](svcv4-interpretations.md#clinical-and-locus-observations-the-categorical-readings); the
-mechanism level is a fifth, and Uncertain must never arrive as its default. Vendoring SM5's per-co-segregation row table
-is the one external precondition on any of this; the rest is local.
+mechanism level is a fifth, and Uncertain must never arrive as its default. Transcribing SM5's per-co-segregation row
+table is the one external precondition on any of this; the rest is local.
 
 The same argument reaches past the clinical and locus codes. Each of these is deterministic downstream of stated inputs,
 and belongs in the library on that ground:
@@ -841,51 +849,54 @@ and belongs in the library on that ground:
 
 ### The shipped package carries the rules, not the evidence for them
 
-`themis.svcv4` ships into the sandbox whole, so its docstrings *and its vendored reference data* are text a
-classification run reads while classifying. They must carry the rule a caller needs to apply the framework correctly and
-not the evidence for it: a worked case naming a gene, its parameters and its resulting points hands a run being scored
-on that gene the answer, and the reference set is drawn from the same SVCv4 corpus these arguments were worked against.
-No image copies `docs/`, so the evidence lives in these docs — reachable by every human who needs it, and by no run.
+`themis.svcv4` ships into the sandbox whole, so its docstrings *and its reference data* are text a classification run
+reads while classifying. They must carry the rule a caller needs to apply the framework correctly and not the evidence
+for it: a worked case naming a gene, its parameters and its resulting points hands a run being scored on that gene the
+answer, and the reference set is drawn from the same SVCv4 corpus these arguments were worked against. No image copies
+`docs/`, so the evidence lives in these docs — reachable by every human who needs it, and by no run.
 
 Two authoring rules follow, and **neither can be recorded in the shipped files themselves**: a note there saying an
 example was withheld tells a run it is being evaluated, and turns every gene still named into a signal that that gene is
 not a case.
 
-1. **The vendored scoring reference illustrates no rule with a gene.** Each scenario carries its whole policy in its own
+1. **The shipped scoring reference illustrates no rule with a gene.** Each scenario carries its whole policy in its own
    scenario/action pair, so there is no asymmetry to reason from and no per-gene example to keep screening.
 1. **Elsewhere in the package, a worked example names a gene the reference set does not**, and states the inputs it is
    worked from rather than a bare result.
 
-A tripwire test fails on any reference-set gene symbol reaching the shipped package, and the image excludes the test
-suites themselves. It is a floor under the reading screen, not a substitute: it matches a symbol, so an out-of-set gene
-restating a case's answer passes it, and the test says so.
+Nothing automatic stands behind either rule, because what leaks is an answer and not a string: a gene the reference set
+does not carry can still restate a case's result, so a check matching symbols would let through the text worth catching.
+The screen is a reading, made when the text is written.
+
+The tests are the exception, and not one the screen can close: a test worth running names its subject and states the
+answer it expects. So the requirement falls on packaging rather than on authoring — an image carrying `themis.svcv4`
+leaves the test suites out.
 
 **Screen a supplement against the reference set's subjects before transcribing it.** The standard's own worked examples
 name specific genes and exon ranges, and thereby state an answer for whichever of them a case is graded on. Substituting
-a gene the set does not carry, or dropping the example, is a precondition on vendoring a supplement, not an
-afterthought. What stays, stays for a reason: SM3's DAFT grids are vendored, because an X-linked MDE reaches no DAFT
-without them and the grids name no gene and state no case's answer.
+a gene the set does not carry, or dropping the example, is a precondition on transcribing a supplement, not an
+afterthought. What stays, stays for a reason: SM3's DAFT grids and SM20's control-count grids are carried, because an
+X-linked MDE reaches no DAFT without the first and a small functional experiment reaches no points without the second,
+and neither names a gene or states a case's answer.
 
-> **The vendored copy is deliberately quieter than the corpus copy, and that divergence is load-bearing.** The shipped
-> reference omits several cells and rules that each keep a live case question open, and it carries no marker saying so —
-> the correct state, by the rule above. The corpus copy continues one of those pointers with the path to the
-> transcription that would fill it, and its header claims a completeness its content does not meet, so treating the
-> corpus copy as the source to re-derive from is the likeliest way these omissions get helpfully closed. Guard it at the
-> next re-derivation.
+> **The reference is deliberately quieter than the corpus it is transcribed from, and that silence is load-bearing.** It
+> omits several cells and rules that each keep a live case question open, and carries no marker saying so — the correct
+> state, by the rule above. The corpus holds complete transcriptions of the same tables, so re-reading one of them into
+> the reference is the likeliest way an omission gets helpfully closed. Guard it whenever a value is re-read.
 
-### Eval: framework consistency, then the calculator oracle
+### Eval: the contract, the graded cases, then the calculator oracle
 
 Three layers, each answering a different question.
 
 - **Unit tests** per rpc against recorded upstream fixtures, so CI needs no live network, and per library function and
-  builder against worked micro-cases.
+  builder against worked micro-cases. Each door is driven from the service's own response message and `classify_variant`
+  from a variant's consequence, so the path from a wire message to a scored tally is exercised whole rather than only in
+  pieces.
 
-- **Framework-consistency eval.** The SVCv4 practice variants drive the scoring contract through the typed builders. The
-  corpus ships curation *inputs*, not expected classifications, so the cases that can be encoded are encoded from
-  faithfully-transcribed evidence with each expected class derived from the framework, and the rest are skipped naming
-  the missing input — the dominant gap being the gnomAD FAF, which is exactly what the live service supplies. This
-  proves the library reproduces the framework arithmetic on realistic multi-code inputs; it is not itself a
-  gold-standard diff.
+- **Graded cases against curated ground truth.** Whether a class is *right* for a real variant is not something the
+  library's own tests can settle: an expected class derived from the framework and applied to transcribed inputs is the
+  arithmetic under test, run twice. It has to come from a curation instead — which is the classifier-evaluation loop
+  scoring against the reference set ([`analysis-scenarios.md`](analysis-scenarios.md)), not a test suite.
 
 - **The calculator oracle — the gold-standard diff.** The ClinGen Pilot Calculator computes classifications client-side,
   so the oracle fetches the bundle at runtime and evaluates it in an isolated JavaScript context with no ambient
@@ -896,10 +907,10 @@ Three layers, each answering a different question.
   when someone runs it, and then as a diff a reader can attribute to the wrong side. Each pinned divergence therefore
   also carries a CI test asserting the pin's *our* side against the loaded reference: a library change that silently
   converges on the calculator fails there rather than waiting for the next manual run. What the oracle cannot answer at
-  all: per-code point values, which the bundle does not carry, and the GDV gate, which the calculator does not
-  implement. The combining engine otherwise matches it exactly — every encoded practice case end to end, the banding at
-  every edge, the max-path selection — and the three pinned divergences are readings of the standard rather than defects
-  on either side ([`svcv4-interpretations.md`](svcv4-interpretations.md#where-the-standard-contradicts-itself)).
+  all: per-code point values, which the bundle does not carry — so scoring a case end to end, evidence in and class out,
+  is beyond its reach — and the GDV gate, which the calculator does not implement. Over what it does reach the combining
+  engine matches exactly, and the pinned divergences are readings of the standard rather than defects on either side
+  ([`svcv4-interpretations.md`](svcv4-interpretations.md#where-the-standard-contradicts-itself)).
 
   > **The bundle (© Baylor College of Medicine) is read, not copied.** The oracle fetches it at runtime and evaluates it
   > in memory; nothing from it is vendored, quoted or copied into a tracked file, apart from the calculator-side ranges
@@ -1131,12 +1142,6 @@ Each option weighed, and the reason it was rejected, grouped by what it is an al
 Unresolved points in this design, each needing a decision or an input. The framework's own contradictions, and the
 readings applied to them, are [`svcv4-interpretations.md`](svcv4-interpretations.md)'s.
 
-- **The "no calculator constants in tracked files" rule is not honoured, and the gap is about twenty constants.** The
-  oracle states the rule with its pinned carve-outs, while the vendored scoring reference records roughly twenty concept
-  and category cap constants attributed to the calculator bundle outright, plus a few more elsewhere. Either the rule is
-  wrong or the data is. Deleting them is not available, since the library depends on them and the oracle checks against
-  them, so what is needed is a decision about what the rule should say. It blocks nothing; it is worth settling because
-  every tracked file here mirrors to a public repository.
 - **Absence carries no coverage distinction.** A caller reading `NOT_FOUND` cannot tell "not observed at a well-covered
   position" from "position not covered", which is the distinction rarity evidence rests on. Whether absence becomes a
   typed field on the responses whose absence is scored is undecided.

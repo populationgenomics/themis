@@ -150,11 +150,15 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
-# --strict-markers: an unregistered marker is a collection error, not a warning. A misspelled
-# `sandbox` would otherwise deselect the test from both CI jobs, which reports as a pass.
-addopts = ["--strict-markers"]
+# An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
+# otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —
+# `--strict-markers` only rewrites ini values, and `addopts` is parsed after those are read.
+strict_markers = true
+# An unrecognised key in this table is an error, not a warning: a misspelled option would
+# otherwise leave the guard it was meant to set switched off, silently.
+strict_config = true
 # "." for repo-root packages (themis, tools).
 pythonpath = ["."]
 consider_namespace_packages = true
@@ -204,6 +208,16 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# One block for every tests tree under `themis/`, rather than one per directory: `*` crosses `/` in
+# ruff's patterns, and a per-directory list meant a new interface's tests failed lint until someone
+# remembered to add it. The rules are the same everywhere — pytest's bare `assert`, reaching into
+# module privates, and fixture tokens/keys that are not secrets.
+"themis/**/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "SLF001", # tests legitimately reach into module privates
+    "S105",   # fixture env keys / session tokens are not secrets
+    "S106",   # fixture credentials passed as kwargs are not secrets
+]
 "tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
@@ -213,66 +227,7 @@ ignore = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
 ]
-"themis/common/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/services/auth/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/services/store/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-    "S105",   # fixture session tokens are not secrets
-]
-"themis/services/hello/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-    "S105",   # fixture session tokens are not secrets
-]
-"themis/services/dispatcher/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-    "S105",   # fixture env keys / session tokens are not secrets
-    "S106",   # fixture env keys / session tokens passed as kwargs are not secrets
-]
-"themis/clients/work_queue/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/services/sandbox_worker/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-    "S105",   # fixture env keys / session tokens are not secrets
-    "S106",   # fixture credentials passed as kwargs are not secrets
-]
-"themis/services/convert_worker/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/services/evidence/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/services/evidence/literature/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/document_linter/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/migrate/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-]
-"themis/clients/auth/tests/**" = [
-    "S101",   # asserts are the standard pytest idiom
-    "SLF001", # tests legitimately reach into module privates
-    "S105",   # fixture session tokens are not secrets
-]
-"themis/testing/tests/**" = [
+"tools/svcv4-oracle/test_*.py" = [
     "S101",   # asserts are the standard pytest idiom
 ]
 

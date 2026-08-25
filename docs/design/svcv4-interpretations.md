@@ -59,6 +59,32 @@ genetic disease" and states no test. Those hand-offs are not gaps to be closed b
 shown reasoning, and a curator can override. What is recorded here is the narrower set: where the standard *does* commit
 to something and reading it takes work, and where it commits to two incompatible things.
 
+### What this repository carries of the standard
+
+The SVCv4 pilot specification is public, and this repository is an open-source implementation of it. What an
+implementation needs from a standard is its vocabulary and its numbers — the code names, the point values, the
+thresholds, the matrix multipliers — and that is what it carries:
+[`svcv4_scoring_reference.json`](../../themis/svcv4/data/svcv4_scoring_reference.json), our own machine-readable
+transcription of the specification, cited value by value at the supplement line each is read from. It carries none of
+the supplement texts. Those stay in the team's private corpus checkout, which is what the SM*n* citations here and in
+the reference resolve against, so a reader who needs the passage behind a citation reads it there rather than a copy of
+it here. The reference's `meta.cited_documents` pins the revision they resolve at, because a citation is a line number
+and a moving reference would silently repoint every one of them; advancing it means re-reading the citations against the
+newer revision, not diffing two copies of the reference.
+
+Two things hold the transcription honest. Every cap in it is diffed against the ClinGen pilot calculator by the oracle
+in [`tools/svcv4-oracle`](../../tools/svcv4-oracle/README.md). And the values the supplements state only as images —
+SM3's DAFT grids, SM5's segregation figure, SM20's control-count grids — record at the key itself how they were read:
+which image, at what resolution, on what date, and whether every cell was legible.
+
+The ClinGen Pilot Calculator is a separate artefact and treated as one: its code is never vendored or quoted. The oracle
+fetches its scoring bundle at run time and evaluates it in memory, and where a supplement and the calculator disagree
+the library follows the supplement and pins the disagreement there — so a reading that departs from the calculator stays
+checkable without the bundle ever being in the repository.
+
+The pilot asks that analyses run under it be reported only at abstract level until the framework is published. That
+binds the analyses, not the software that runs them, and this repository publishes no analysis.
+
 ## Non-goals
 
 - **Guidance for human curation.** These readings exist to make an autonomous run reproducible and auditable. They are
@@ -100,8 +126,10 @@ VCEP that specifies its own rule supersedes it.
 The joint figure is not quality-screened, so the variant-QC verdict is a separate gate, read **per dataset**.
 
 > **The asymmetry, which VCEPs state verbatim: a filter-failing dataset counts against rarity, never toward benignity.**
-> Such a FAF scores zero and anchors no DAFT. gnomAD's own caveat flags are caveats rather than QC verdicts, so they
-> ride along unscored, for the analyst to weigh.
+> Such a FAF anchors no DAFT and determines no `POP_FRQ` at all: zero is the score of a variant genuinely rarer than its
+> threshold, and that is the assignment SM4 conditions the clinical codes on, so a frequency nobody could score has to
+> reach them as no determination rather than as rarity. gnomAD's own caveat flags are caveats rather than QC verdicts,
+> so they ride along unscored, for the analyst to weigh.
 
 ### The DAFT method order is SM3's, and it binds strictly
 
@@ -184,8 +212,8 @@ which tier), not the star count.
 SVCv4 requires the missense `MIS_PRD` score to come from **one** calibrated predictor **chosen before the variant is
 scored**: evaluating several and taking the best is multiple testing over metapredictors that are heavily correlated
 (SM6). What SM6 bans is choosing per variant, not choosing per gene — it explicitly encourages distinct predictors for
-specific genes "so long as they are selected in advance of the evaluation of a given VBC", and allows downgrading a
-predictor's evidence strength for a gene it over-calls until a gene-specific calibration exists.
+specific genes, conditioned on the choice being made before any VBC is evaluated, and allows downgrading a predictor's
+evidence strength for a gene it over-calls until a gene-specific calibration exists.
 
 So the choice is exercised once, at policy time, and the policy is **per gene by construction**: a default, per-gene
 overrides, and per-gene downgrade flags. Choosing the entries is expert work done against the calibration literature; a
@@ -302,7 +330,8 @@ readings are stated here because a reasonable analyst lands elsewhere without th
   caveat.
 
 Two framework invariants bind alongside: SM4's affected-proband code is unavailable outside two `POP_FRQ` values, and no
-conditioned code may award points outside its gate or with no `POP_FRQ` in the tally at all.
+conditioned code may award points outside its gate, with no `POP_FRQ` in the tally at all, or under one the framework
+did not determine.
 
 Four readings are **not** settled. Each is a place where a convenience would hide the conflict rather than resolve it:
 
@@ -328,12 +357,12 @@ is no SVCv4 profile in it. Two readings follow.
 
 Each of these changed, or could change, a class. The full inventory of framework inconsistencies found while
 implementing, with the reading applied to each, is the feedback submitted to the SVCv4 working group in July 2026, held
-with the team's pilot-corpus materials rather than in this repository, since the corpus is embargoed to the working
-group. Read that feedback whole before raising anything about a supplement, since a search for one section will miss the
-others that bear on it. Two instances not stated elsewhere here: SM6's figure prints one predictor-threshold cell
-non-monotonically against its neighbours, with only one monotonic reading available; and SM3 carries two unreconciled
-versions of the pathogenic-variants method, differing on whether a small pool means the method "should not be used" or
-"should be reconsidered" and on which frequency statistic to take.
+with the team's pilot-corpus materials rather than in this repository: it quotes the supplements at length, and those
+are the working group's to circulate. Read that feedback whole before raising anything about a supplement, since a
+search for one section will miss the others that bear on it. Two instances not stated elsewhere here: SM6's figure
+prints one predictor-threshold cell non-monotonically against its neighbours, with only one monotonic reading available;
+and SM3 carries two unreconciled versions of the pathogenic-variants method, differing on whether a small pool means the
+method "should not be used" or "should be reconsidered" and on which frequency statistic to take.
 
 The general rule this leads to: **reproduce a class-determinative number rather than trusting it.**
 
@@ -344,13 +373,20 @@ while the code's range is stated as non-negative twice, in the title block and i
 cite SM5. The pilot calculator follows the range; the reading applied follows the recommendation. Neither side moves
 until SM5 is reconciled.
 
+SM5's segregation figure disagrees with SM5's text about the same award a second time, on the unaffected side. The
+figure's autosomal-recessive row awards +0.4 per unaffected individual "heterozygous or wild type", which extends the
+award to relatives who do not carry the variant at all, while §28 scopes it to carriers. The text is applied: an award
+for a non-carrier would score the absence of the variant as evidence about it, and no other inheritance row in the
+figure reaches outside the carriers.
+
 ### De novo observations, and the two per-individual clinical codes
 
 SM4 sums de novo points across probands under no cap, and the weight is stated *per proband*, so an upper bound would be
-an invention and none is applied. The two per-individual clinical codes have the same shape and are read the same way:
-SM4 weights both per individual and states no code-level cap, so clamping either to the largest single tariff reads a
-tariff as a code range and truncates a legitimate multi-observation total in the benign direction. The pilot calculator
-clamps; it is the side expected to move.
+an invention and none is applied. There the pilot calculator does bound the sum, and it is the side expected to move.
+The two per-individual clinical codes have the same shape and are read the same way: SM4 weights both per individual and
+states no code-level cap, so clamping either to the largest single tariff reads a tariff as a code range and truncates a
+legitimate multi-observation total in the benign direction. The calculator caps neither, so on those two no pin is
+needed: the oracle holds both sides to an unbounded benign direction.
 
 ### The validity gate against a benign call
 
@@ -381,9 +417,10 @@ deliberate for the variant-classification context or an unintended tightening is
 
 ### The `Suspected × Most` matrix cell
 
-Every derived document describes this cell wrongly: the vendored scoring reference, its mirror and the corpus summary
-all describe it as deliberately not created, at a non-zero multiplier, where the source matrix shows zero. A fresh
-implementer reading any of them would award that multiplier across every LoF and splice path.
+SM18 states this cell twice and not compatibly. Figure 1 prints 0%; §6 says only that the product of the two axes was
+deliberately not created, which reads as an omission from the table rather than a zero in it. An implementer taking §6
+at face value computes 0.25 × 0.5 and awards 12.5% across every LoF and splice path. The reference carries the figure's
+zero, and `mechanism_exon_matrix.omitted_cell` names that reading at the cell itself.
 
 ### A small pool at the last DAFT method
 
@@ -397,10 +434,6 @@ floor to reach the pool size nor substituting a method whose preconditions were 
 
 ## Open questions
 
-- **Two content gaps in the vendored scoring reference**, found and not yet closed. The homozygote code's preconditions
-  omit SM3's requirement that penetrance be near 100% and affected individuals not be expected in population databases,
-  so a model driving off the encoding applies the negative points at any penetrance. And the affected-proband code's
-  second table is encoded with three of its five rows.
 - **The calculator method's DAFT inputs have no automated source.** Prevalence, penetrance and heterogeneity — and, for
   the binning method, which of SM3's grids applies plus two of the same estimates — stay curator inputs. The grids
   themselves are transcribed and the cell is looked up.
@@ -410,7 +443,7 @@ floor to reach the pool size nor substituting a method whose preconditions were 
   can only be exercised at policy time, over genes.
 - **Mechanism-level evidence.** Whether per-gene curations on the GenCC framework's scale are ever published as a feed —
   none exist today, for any gene, so the level is always the analyst's; how a curator override is recorded; and how
-  often the call lands Uncertain across the practice variants, which needs measurement.
+  often the call lands Uncertain across the reference set, which needs measurement.
 - **Expression outside GTEx's tissue panel.** SM18's abundance limb compares transcripts *within* a tissue, and GTEx
   samples no retina, no megakaryocyte or platelet, and no trabecular meshwork. So for an inherited retinal dystrophy, a
   platelet disorder or a glaucoma entity the limb is unanswerable from the curated sources, and the tier rests on
@@ -437,36 +470,42 @@ Each row is a live measurement or a registry count that decided a reading above.
 
 ## Appendix B: the predictor-policy evidence
 
-Neither source below is SM6's approved list; that list is a precondition on the choice, not a reason for it.
+Neither source below is SM6's approved list; that list is a precondition on the choice, not a reason for it. One of the
+two is unpublished, so what this appendix takes from it is how it ranks the predictors, never its figures — those are
+its authors' to publish.
 
 **Default: BayesDel, no-allele-frequency flavour.** The flavour is forced, not preferred: ClinGen calibrated the
 no-allele-frequency build — SM6's figure labels the row bare "BayesDel" — and there is no GRCh38 build of the
 allele-frequency one at all.
 
-A VCGS/MCRI poster (Ciotta, De Fazio, Lunke, Stark; unpublished, no DOI) scored 14,475 ClinVar missense variants against
-one laboratory's internal classifications:
+A VCGS/MCRI comparison (Ciotta, De Fazio, Lunke, Stark; conference poster, unpublished; no DOI or PMID sighted) scored
+five predictors — BayesDel, REVEL, VARITY_R, AlphaMissense and MutPred2 — over the laboratory's own missense variants
+submitted to ClinVar, judged against its internal classifications. BayesDel ranks first overall, and first on the
+pathogenic/likely-pathogenic side; on the benign/likely-benign side it ranks behind VARITY_R.
 
-| Predictor     | P/LP correct | B/LB correct |
-| ------------- | ------------ | ------------ |
-| BayesDel      | 79%          | 64%          |
-| REVEL         | 76%          | 56%          |
-| VARITY_R      | 76%          | 66%          |
-| AlphaMissense | 65%          | 57%          |
-| MutPred2      | 64%          | 13%          |
+**Override: AlphaMissense for PKD1.** On its PKD1 pathogenic-prediction rate that same comparison ranks BayesDel last of
+its five, below AlphaMissense; and a medRxiv PKD1 preprint, which scored SIFT, PolyPhen-2, CADD, REVEL and AlphaMissense
+against a truth set re-classified under ACMG/AMP, finds AlphaMissense the only one of those five to misclassify no
+truth-set variant. Three tools rank above AlphaMissense on that rate, and none of them is selected:
 
-**Override: AlphaMissense for PKD1.** The same poster's per-gene pathogenic-prediction rates put BayesDel worst on PKD1
-at 38%, against AlphaMissense 46%, REVEL 50%, VARITY_R 62% and MutPred2 66%; and a medRxiv PKD1 preprint finds
-AlphaMissense the only one of five tools to misclassify no truth-set variant. Neither source shows AlphaMissense is
-*good* on PKD1 — only less bad than the default, with errors that are omissions rather than wrong calls — and BayesDel
-is absent from the preprint's comparison, so the two are never measured head to head.
+- **MutPred2** ranks last on benign/likely-benign calls over the whole curated set, so a positive call from it carries
+  little information.
+- **REVEL** is in the preprint's five as well, so that finding is a gene-specific result against it: it misclassified
+  truth-set variants and AlphaMissense did not.
+- **VARITY_R** has no specificity result on this gene in either source.
 
-**What these tables cannot settle.** Every figure above is *threshold-applied* accuracy: a predictor's score run through
+Neither source shows AlphaMissense is *good* on PKD1 — only less bad than the default, with errors that are omissions
+rather than wrong calls — and BayesDel is absent from the preprint's comparison, so the two are never measured head to
+head.
+
+**What the ranking cannot settle.** Both sources rank on *threshold-applied* accuracy: a predictor's score run through
 one cut-point and scored against a label. That conflates two properties SVCv4 keeps apart — how well a score *ranks*
 variants (discrimination) and whether its published thresholds sit where the calibration says (calibration) — so a
 predictor that ranks well can trail a rival here purely on where its cut-point falls, and vice versa. The threshold-free
-comparison is rank agreement, and it is not derivable from these tables: neither source publishes per-variant scores.
-This is part of why the poster's own recommendation is gene-specific threshold calibration, and the PKD1 entry is the
-interim answer until one exists — the shape SM6 sanctions.
+comparison is rank agreement, and neither source publishes the per-variant scores it would be derived from. Every tool
+in the laboratory's comparison did significantly worse on PKD1 than over its full dataset, which is why its own
+recommendation is that groups analysing PKD1 calibrate gene-specific thresholds rather than substitute tools; the PKD1
+entry is the interim answer until such a calibration exists — the shape SM6 sanctions.
 
 ## Appendix C: two derivations, worked
 
