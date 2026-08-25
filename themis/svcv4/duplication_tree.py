@@ -1,10 +1,10 @@
 """The single-/multi-exon duplication/gain (SM14) decision-tree cells: per-path family and bounds.
 
-SM14's six scored paths do not share a code family or a set of caps, and `data/svcv4_scoring_reference.json`
-states neither: its `NUL_`/`CDS_` concept and category caps are the union over every supplement that
+SM14's six scored paths do not share a code family or a set of caps, and the reference data states
+neither: its `NUL_`/`CDS_` concept and category caps are the union over every supplement that
 reaches those families, so a not-tandem duplication passes validation against a parent cap two whole
 bands wider than its own. This module holds what the reference does not encode; the workflow
-transcription `meta.cited_documents` pins (`svcv4-docs/workflow-images/Single Or Multiexon Dup Gain
+transcription `data.meta.CITED_DOCUMENTS` pins (`svcv4-docs/workflow-images/Single Or Multiexon Dup Gain
 Workflow.decision-tree.md`, §9) is its authority.
 
 The three routing decisions the tree makes before any of these — more than one gene affected (out to

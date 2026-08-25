@@ -795,7 +795,7 @@ It holds:
 - OddsPath and animal-model calibration tables;
 - and the score-to-bin thresholds with the single-predictor-per-gene enforcement.
 
-Its data is the SVCv4 machine-readable reference and the predictor policy, both shipped in the package; the ten
+Its data is the SVCv4 reference — typed value modules in the package — and the predictor policy beside them; the ten
 workflow-diagram transcriptions its per-variant-type structure is read from stay in the corpus, at the revision the
 reference's citation pin names. Where a transcription flags a diagram-versus-text numeric conflict, the ClinGen Pilot
 Calculator is the tie-breaking **oracle** (see [Eval](#eval-the-contract-the-graded-cases-then-the-calculator-oracle)).

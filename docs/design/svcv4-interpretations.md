@@ -63,19 +63,22 @@ to something and reading it takes work, and where it commits to two incompatible
 
 The SVCv4 pilot specification is public, and this repository is an open-source implementation of it. What an
 implementation needs from a standard is its vocabulary and its numbers — the code names, the point values, the
-thresholds, the matrix multipliers — and that is what it carries:
-[`svcv4_scoring_reference.json`](../../themis/svcv4/data/svcv4_scoring_reference.json), our own machine-readable
-transcription of the specification, cited value by value at the supplement line each is read from. It carries none of
-the supplement texts. Those stay in the team's private corpus checkout, which is what the SM*n* citations here and in
-the reference resolve against, so a reader who needs the passage behind a citation reads it there rather than a copy of
-it here. The reference's `meta.cited_documents` pins the revision they resolve at, because a citation is a line number
-and a moving reference would silently repoint every one of them; advancing it means re-reading the citations against the
-newer revision, not diffing two copies of the reference.
+thresholds, the matrix multipliers — and that is what it carries: [`themis/svcv4/data`](../../themis/svcv4/data), our
+own transcription of the specification as typed Python values, one module per framework area, cited value by value at
+the supplement line each is read from. It carries none of the supplement texts. Those stay in the team's private corpus
+checkout, which is what the SM*n* citations here and in the reference resolve against, so a reader who needs the passage
+behind a citation reads it there rather than a copy of it here. The transcription pins the revision they resolve at,
+because a citation is a line number and a moving reference would silently repoint every one of them; advancing it means
+re-reading the citations against the newer revision, not diffing two copies of the reference.
 
-Two things hold the transcription honest. Every cap in it is diffed against the ClinGen pilot calculator by the oracle
+Three things hold the transcription honest. Its shape is checked where it is written: the values are typed literals
+against the structures [`themis/svcv4/reference.py`](../../themis/svcv4/reference.py) declares, so a dropped or renamed
+field fails the type check rather than a parser at run time, and the agreements no type can express — the bands tiling
+the point line, a gate row naming a level the contract carries, a matrix axis stating the levels a caller selects by —
+are checked when the modules are imported. Every cap in it is diffed against the ClinGen pilot calculator by the oracle
 in [`tools/svcv4-oracle`](../../tools/svcv4-oracle/README.md). And the values the supplements state only as images —
-SM3's DAFT grids, SM5's segregation figure, SM20's control-count grids — record at the key itself how they were read:
-which image, at what resolution, on what date, and whether every cell was legible.
+SM3's DAFT grids, SM5's segregation figure, SM20's control-count grids — record beside the value itself how they were
+read: which image, at what resolution, on what date, and whether every cell was legible.
 
 The ClinGen Pilot Calculator is a separate artefact and treated as one: its code is never vendored or quoted. The oracle
 fetches its scoring bundle at run time and evaluates it in memory, and where a supplement and the calculator disagree
@@ -420,7 +423,7 @@ deliberate for the variant-classification context or an unintended tightening is
 SM18 states this cell twice and not compatibly. Figure 1 prints 0%; §6 says only that the product of the two axes was
 deliberately not created, which reads as an omission from the table rather than a zero in it. An implementer taking §6
 at face value computes 0.25 × 0.5 and awards 12.5% across every LoF and splice path. The reference carries the figure's
-zero, and `mechanism_exon_matrix.omitted_cell` names that reading at the cell itself.
+zero, and names the cell it reads that way rather than describing it, so nothing applies the axis product there instead.
 
 ### A small pool at the last DAFT method
 

@@ -3,22 +3,46 @@
 from __future__ import annotations
 
 import decimal
+from collections.abc import Iterable
 
 import pytest
 
 from themis.svcv4 import observations, reference
 
 
-@pytest.fixture(scope='module')
-def ref() -> reference.Reference:
-    return reference.load_reference()
+def addressed_grids(ref: reference.Reference) -> tuple[tuple[str, reference.ObservationGrid], ...]:
+    """Each per-observation grid, under the id prefix the expansion addresses its rows below."""
+    tables = ref.per_observation
+    return (
+        ('CLN_UAF.ad.', tables.unaffected),
+        ('CLN_AFF.ad.', tables.affected_monoallelic),
+        ('CLN_AFF.arxl.', tables.affected_biallelic),
+        ('CLN_DNV.', tables.de_novo),
+    )
 
 
-def test_every_cell_prices_to_a_decimal(ref: reference.Reference) -> None:
+def addresses(cells: Iterable[str], prefix: str, row: str) -> bool:
+    """Whether any cell id addresses this row of the grid under `prefix`.
+
+    The match is delimited: a row's fragment is followed by the end of the id or by the separator its
+    columns hang off. Plain containment would pass on another table's id, or on this table's row
+    whose name another row's name is a prefix of.
+    """
+    addressed = prefix + row
+    return any(cell_id.startswith(addressed) and cell_id[len(addressed) :][:1] in ('', '.', '_') for cell_id in cells)
+
+
+def test_every_row_of_every_per_observation_table_is_priced(ref: reference.Reference) -> None:
+    """A row the reference prices that no cell id addresses is an observation nothing can record.
+
+    Both kinds of row: the ones priced per column, and the ones a table prices once for the whole
+    row. Non-empty on both sides rules out a vacuous pass.
+    """
     cells = observations.cell_points(ref)
-    # Non-empty rules out a vacuous pass if a table stops parsing.
+    rows = [(prefix, row.cell) for prefix, grid in addressed_grids(ref) for row in (*grid.rows, *grid.collapsed_rows)]
     assert cells
-    assert all(isinstance(points, decimal.Decimal) for points in cells.values())
+    assert rows
+    assert [(prefix, row) for prefix, row in rows if not addresses(cells, prefix, row)] == []
 
 
 def test_values_come_from_the_reference_tables(ref: reference.Reference) -> None:
@@ -70,8 +94,8 @@ def test_a_total_over_an_unpriced_cell_raises(ref: reference.Reference) -> None:
 
 
 def test_a_total_over_two_codes_is_refused(ref: reference.Reference) -> None:
-    # Summed, these would reach the tally as one line: CLN_DNV at +10.0, which its "sum" bound
-    # clamps nothing of, and no CLN_AFF for SM4's rarity precondition to hold.
+    # Summed, these would reach the tally as one line: CLN_DNV at +10.0, which its unbounded upper
+    # side clamps nothing of, and no CLN_AFF for SM4's rarity precondition to hold.
     counts = {'CLN_DNV.specific.confirmed': 1, 'CLN_AFF.ad.specific_full': 3}
     with pytest.raises(ValueError, match='CLN_AFF, CLN_DNV'):
         observations.total(ref, counts)

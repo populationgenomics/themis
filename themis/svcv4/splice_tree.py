@@ -2,10 +2,10 @@
 
 Three workflows can produce a splice tier — canonical splice (SM11), missense (SM6) and
 intronic/synonymous (SM12) — and each colour path within them bounds `SPL_PRD`, `SPL_SPA` and the
-two combine caps differently. `data/svcv4_scoring_reference.json` carries only the union over all of
-them (`SPL_PRD` [-1.0, 6.0], `SPL_PRD_SPA` [-3.0, 6.0]), so a canonical +6.0 NMD tier passes its
-validation on a predicted-splice path whose NMD tier is +3.0. This module holds the cell structure
-the reference does not encode; the workflow transcriptions `meta.cited_documents` pins are its
+two combine caps differently. The reference data carries only the union over all of them (`SPL_PRD`
+[-1.0, 6.0], `SPL_PRD_SPA` [-3.0, 6.0]), so a canonical +6.0 NMD tier passes its validation on a
+predicted-splice path whose NMD tier is +3.0. This module holds the cell structure
+the reference does not encode; the workflow transcriptions `data.meta.CITED_DOCUMENTS` pins are its
 authority, not the reference.
 
 The flow axis has two members, not three. `CANONICAL` is SM11, entered only where the wild-type

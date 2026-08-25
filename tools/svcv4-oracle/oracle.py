@@ -36,7 +36,7 @@ from typing import NamedTuple
 # directory ruling out the repo's usual `python -m tools.<pkg>` invocation.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
-from themis.svcv4 import reference, scoring
+from themis.svcv4 import data, reference, scoring
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _ORACLE_JS = _HERE / 'reference_oracle.js'
@@ -447,7 +447,7 @@ def _format_row(row: Row) -> str:
 
 
 def main() -> int:
-    ref_lib = reference.load_reference()
+    ref_lib = data.load_reference()
     response = run_reference_oracle()
 
     sections: list[tuple[str, list[Row]]] = [

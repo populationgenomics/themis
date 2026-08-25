@@ -9,7 +9,7 @@ import decimal
 import importlib.util
 import pathlib
 
-from themis.svcv4 import reference
+from themis.svcv4 import data
 
 _SPEC = importlib.util.spec_from_file_location('svcv4_oracle', pathlib.Path(__file__).parent / 'oracle.py')
 assert _SPEC is not None
@@ -84,7 +84,7 @@ def test_pins_state_what_the_library_currently_carries() -> None:
     Reaching the library needs no Node and no network, so this catches a stale pin where CI runs rather
     than on the next by-hand oracle run.
     """
-    ref_lib = reference.load_reference()
+    ref_lib = data.load_reference()
     tables = {
         'evidence code': (
             oracle.EXPECTED_CODE_DIVERGENCES,

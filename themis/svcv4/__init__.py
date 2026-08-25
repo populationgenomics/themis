@@ -18,8 +18,11 @@ exon relevance, eligible informative variants, DAFT parameters, path choices); t
 combines them into a transparent, auditable point total.
 
 Modules:
-    reference: load and validate the SVCv4 machine-readable reference (thresholds, gate, matrix,
-        calibration, per-code ranges, routing).
+    reference: the typed shape of the framework — bands, gate, matrix, calibration, per-code
+        ranges, the tables priced per observed individual — and the checks a transcription of it
+        must satisfy.
+    data: that transcription, one module per framework area; `data.load_reference` assembles and
+        checks the one `Reference` every module below reads.
     scoring: the combining engine (matrix multiplier, INF-after-matrix, caps, missense/splice
         max-path, band mapping, gene-disease-validity gate cap).
     splice_tree: the splice decision tree — the SVI trichotomy a predictor score bins onto, and the
@@ -47,22 +50,22 @@ Modules:
     functional: an assay's result to FXN points by each of SM20's routes — a deposited OddsPath, the
         control-count grids, and the animal-model table.
 
-`data/svcv4_scoring_reference.json` is this repository's machine-readable transcription of the
-public SVCv4 pilot specification: the code names, point values, thresholds, matrix multipliers and
-routing an implementation needs, and none of the supplement texts. Each value cites the supplement
-line it is read from, and `tools/svcv4-oracle` holds every cap in it against the ClinGen pilot
-calculator. `data/predictor_policy.json` beside it is the frozen predictor choice SM6 requires be
-made in advance, and `data/gencc-lof-mechanism-framework.md` is the GenCC framework's four
-confidence terms, which SM18 imports for the mechanism axis, with the evidence-point band that
-yields each.
+`data` is this repository's transcription of the public SVCv4 pilot specification: the code names,
+point values, thresholds, matrix multipliers and routing an implementation needs, and none of the
+supplement texts. The values are typed literals, so a dropped or renamed field is a type error where
+it is written; each cites the supplement line it is read from, and `tools/svcv4-oracle` holds every
+cap in it against the ClinGen pilot calculator. `data/predictor_policy.json` beside those modules is
+the frozen predictor choice SM6 requires be made in advance, and
+`data/gencc-lof-mechanism-framework.md` is the GenCC framework's four confidence terms, which SM18
+imports for the mechanism axis, with the evidence-point band that yields each.
 
 The SM*n* §*m* citations, and the decision-tree citations the modules below make, resolve against
-the document set `meta.cited_documents` pins — supplement text extractions and one transcription per
-workflow diagram, both line-addressed. Diagram and supplement text disagree in known places; where
-one is hit the reference value is authoritative, except where it states only a union over several
-decision-tree paths and so cannot bound any one of them — the splice and duplication/gain cells,
-which `splice_tree` and `duplication_tree` take from the trees instead (see the module docstrings
-for the conflicts each module resolves).
+the document set `data.meta.CITED_DOCUMENTS` pins — supplement text extractions and one
+transcription per workflow diagram, both line-addressed. Diagram and supplement text disagree in
+known places; where one is hit the reference value is authoritative, except where it states only a
+union over several decision-tree paths and so cannot bound any one of them — the splice and
+duplication/gain cells, which `splice_tree` and `duplication_tree` take from the trees instead (see
+the module docstrings for the conflicts each module resolves).
 """
 
 from __future__ import annotations

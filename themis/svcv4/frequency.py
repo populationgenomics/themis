@@ -57,8 +57,8 @@ on the `Daft` it returns.
 
 The DAFT method hierarchy is SM3's own order, and it is not the automatable one. SM3 makes the
 calculator the first choice and the pathogenic-variants method "generally the third choice", usable
-only "if the prior two methods are not appropriate"; the machine-readable reference agrees
-(`DAFT_methods.calculator.preferred_when`). Taking a later method where an earlier one's
+only "if the prior two methods are not appropriate"; the reference data agrees
+(`data.population.CALCULATOR.preferred_when`). Taking a later method where an earlier one's
 preconditions hold changes the score, so the order is not cosmetic. Worked evidence for that and for
 the floor: `docs/design/evidence-interfaces.md` §Worked evidence behind the library's contracts.
 
@@ -1249,23 +1249,11 @@ def pop_hmz(
         return PopHmz(points=None, support=HmzSupport.PRECONDITION_UNMET, observations=eligible, counts=counts)
     if eligible < _HMZ_OBSERVATION_FLOOR:
         return PopHmz(points=None, support=HmzSupport.BELOW_FLOOR, observations=eligible, counts=counts)
-    weights = _hmz_weights(ref)
-    per_observation = weights['AD'] if inheritance is HmzInheritance.AD else weights['other']
+    weights = ref.per_observation.homozygous
+    per_observation = (weights.dominant if inheritance is HmzInheritance.AD else weights.other).points
     return PopHmz(
         points=per_observation * (eligible - 1),
         support=HmzSupport.SCORED,
         observations=eligible,
         counts=counts,
     )
-
-
-def _hmz_weights(ref: reference.Reference) -> dict[str, decimal.Decimal]:
-    pop = ref.raw.get('population_frequency')
-    hmz = pop.get('POP_HMZ') if isinstance(pop, dict) else None
-    weights = hmz.get('per_observation_points') if isinstance(hmz, dict) else None
-    if not isinstance(weights, dict):
-        raise reference.ReferenceDataError('reference missing population_frequency.POP_HMZ.per_observation_points')
-    return {
-        'AD': decimal.Decimal(weights['AD_homozygous']),
-        'other': decimal.Decimal(weights['semidominant_or_AR_or_Xlinked_homo_hemizygous']),
-    }

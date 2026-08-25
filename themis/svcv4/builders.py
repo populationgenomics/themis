@@ -2,7 +2,7 @@
 
 Each `build_<type>` takes the judgement inputs a caller/model supplies for one SVCv4 variant type
 and returns a `classify.ClassificationInput` with the framework structure baked in: the PFD path(s)
-the variant type has (per the workflow transcription `meta.cited_documents` pins,
+the variant type has (per the workflow transcription `data.meta.CITED_DOCUMENTS` pins,
 `svcv4-docs/workflow-images/<type>.decision-tree.md`), the
 scaling axes, and the combine/parent caps.
 
