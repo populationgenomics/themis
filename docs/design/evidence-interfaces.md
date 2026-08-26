@@ -214,7 +214,7 @@ Twelve rpcs across the nine interfaces. This table is the index; each linked pro
 | `Variant.Normalize`              | ClinGen Allele Registry + VariantValidator + VEP        | routing consequence; the canonical join key                           |
 | `Vep.Annotate`                   | Ensembl VEP REST                                        | consequence; `MIS_PRD`; `SPL_PRD`; a ClinVar/gnomAD snapshot          |
 | `Gnomad.DescribeVariant`         | gnomAD GraphQL                                          | `POP_FRQ` / `POP_HMZ` inputs; exon-relevance signals                  |
-| `ClinVar.DescribeVariant`        | NCBI ClinVar + ClinGen Allele Registry                  | the `*_INF` pathogenic arm; P/LP density; expert-panel consensus      |
+| `ClinVar.DescribeVariant`        | NCBI ClinVar                                            | the `*_INF` pathogenic arm; P/LP density; expert-panel consensus      |
 | `ClinVar.SearchCodingSpan`       | VariantValidator + NCBI ClinVar                         | the `*_INF` candidate set at a codon or exon, every classification    |
 | `GeneDisease.DescribeGene`       | ClinGen validity + dosage + GenCC + PanelApp AU + MONDO | the GDV gate and mechanism signals, per MDE                           |
 | `Transcript.GetStructure`        | VariantValidator                                        | exon membership; splice-site distances; per-exon skip frame           |
@@ -669,7 +669,7 @@ the finding the rpc has to let a run report.
 
 ### The contracts are written against the upstreams' failure modes
 
-The hard part of wrapping a public database is not the happy path. Four cross-cutting rules follow, each fixing a way an
+The hard part of wrapping a public database is not the happy path. Five cross-cutting rules follow, each fixing a way an
 upstream's answer is silently wrong. Per-rpc instances of each are in the protos.
 
 #### An upstream's "no record" is a finding, and gets its own status
@@ -704,12 +704,14 @@ as a v4 filtering allele frequency.
 #### An upstream 4xx is placed on that taxonomy, not passed through
 
 Where a 4xx is *about the request*, a non-429 4xx is the source judging the request as issued, so it becomes
-`INVALID_ARGUMENT` — or `NOT_FOUND` where the source spells "no record" that way, as NCBI's fetch endpoint does. **429
-and 5xx stay retryable**, and 429 is the reason the rule is not simply "4xx". Passing every status through unmapped
-makes a deterministic 400 cost four calls and a backoff before failing identically.
+`INVALID_ARGUMENT` — or `NOT_FOUND` where the source spells "no record" that way, as NCBI's nucleotide fetch does for an
+accession it holds no sequence under. **429 and 5xx stay retryable**, and 429 is the reason the rule is not simply
+"4xx". Passing every status through unmapped makes a deterministic 400 cost four calls and a backoff before failing
+identically.
 
 Which reading applies is per **endpoint**, not per source: one endpoint of a source can spell "no such entity" as a 400
-while another answers 200-and-empty for the same question.
+while another answers 200-and-empty for the same question. ClinVar's archive fetch does both, which is what makes it the
+case where "no record" is not `NOT_FOUND` at all.
 
 The qualifier is load-bearing, and **three transports are exempt** under it — mapping their 4xx would be worse than the
 defect the rule fixes.
@@ -730,6 +732,23 @@ The reference-table refresh job is outside the taxonomy for a fourth reason: it 
 > **The test is not "does a caller-chosen value reach this URL".** It does at two of the three. The test is "would a 4xx
 > here be the source's verdict on that value". Where the answer is no, the exemption has to be paid for at the boundary
 > instead — which is why the two rpcs whose absence is scored carry shape preconditions.
+
+#### Two sources disagreeing is neither an absence nor a bad request
+
+`NOT_FOUND` is the vocabulary absence is *scored* in, so it can only carry what a source actually said about a subject
+the caller chose. Where a lookup is keyed on an id that came from *another* source, "no record" says something else
+entirely. ClinVar's archive fetch is keyed on the accession the registry's crosswalk named for the allele, so ClinVar
+answering that it holds nothing under it — as a 400 stating the id resolved to nothing, or as a 200 carrying an empty
+result set — is one source contradicting the other about a record's existence. Reported as an absence it becomes the
+novelty finding, off an answer the crosswalk denies; reported as a bad request it sends an analyst hunting for a typo in
+a field the service filled in itself. The same shape reaches `SearchCodingSpan` through the gene symbol: the exon table
+names it, and where ClinVar indexes nothing under it every span is empty at any coordinates — which is precisely the
+finding "no informative variant at this codon" the rules ask for.
+
+So the sources disagreeing is `FAILED_PRECONDITION` — the status a well-formed request already gets where the sources
+cannot settle what it names, as `GeneDisease` gives it for a disease entity the caller has to restate. Both sources
+answered, and reconciling them is this service's own job rather than anything a reissue or a corrected field can change.
+The message names both sources and what each said, because that is where reconciling them starts.
 
 #### Every handler is bounded, and the bound is a status
 

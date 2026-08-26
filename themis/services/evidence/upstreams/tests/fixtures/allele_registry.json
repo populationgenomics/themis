@@ -1,0 +1,223 @@
+{
+  "@context": "http://reg.genome.network/schema/allele.jsonld",
+  "@id": "http://reg.genome.network/allele/CA000251",
+  "communityStandardTitle": [
+    "NM_000546.6(TP53):c.524G>A (p.Arg175His)"
+  ],
+  "externalRecords": {
+    "dbSNP": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/snp/28934578",
+        "rs": 28934578
+      }
+    ],
+    "gnomAD_2": [
+      {
+        "@id": "http://gnomad.broadinstitute.org/variant/17-7578406-C-T?dataset=gnomad_r2_1",
+        "id": "17-7578406-C-T",
+        "variant": "17:7578406 C / T"
+      }
+    ],
+    "gnomAD_4": [
+      {
+        "@id": "http://gnomad.broadinstitute.org/variant/17-7675088-C-T?dataset=gnomad_r4",
+        "id": "17-7675088-C-T",
+        "variant": "17:7675088 C / T"
+      }
+    ],
+    "ClinVarAlleles": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/clinvar/?term=27413[alleleid]",
+        "alleleId": 27413,
+        "preferredName": "NM_000546.6(TP53):c.524G>A (p.Arg175His)"
+      }
+    ],
+    "ClinVarVariations": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/clinvar/variation/12374",
+        "RCV": [
+          "RCV000013173",
+          "RCV000131301",
+          "RCV000204931",
+          "RCV000239398",
+          "RCV000213054",
+          "RCV000421746",
+          "RCV000428918",
+          "RCV000785352",
+          "RCV001255668",
+          "RCV001270268",
+          "RCV001270269",
+          "RCV001527463",
+          "RCV002476956",
+          "RCV003162247",
+          "RCV003466854"
+        ],
+        "variationId": 12374
+      }
+    ]
+  },
+  "genomicAlleles": [
+    {
+      "chromosome": "17",
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7675088,
+          "referenceAllele": "C",
+          "start": 7675087
+        }
+      ],
+      "hgvs": [
+        "NC_000017.11:g.7675088C>T",
+        "CM000679.2:g.7675088C>T"
+      ],
+      "referenceGenome": "GRCh38",
+      "referenceSequence": "http://reg.genome.network/refseq/RS000065"
+    },
+    {
+      "chromosome": "17",
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7578406,
+          "referenceAllele": "C",
+          "start": 7578405
+        }
+      ],
+      "hgvs": [
+        "NC_000017.10:g.7578406C>T",
+        "CM000679.1:g.7578406C>T"
+      ],
+      "referenceGenome": "GRCh37",
+      "referenceSequence": "http://reg.genome.network/refseq/RS000041"
+    }
+  ],
+  "transcriptAlleles": [
+    {
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 666,
+          "referenceAllele": "G",
+          "start": 665
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN011998",
+      "geneNCBI_id": 7157,
+      "geneSymbol": "TP53",
+      "hgvs": [
+        "ENST00000269305.9:c.524G>A"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000269305.4:p.Arg175His",
+        "hgvsWellDefined": "ENSP00000269305.4:p.Arg175His"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS743105",
+      "MANE": {
+        "maneVersion": "1.3",
+        "maneStatus": "MANE Select",
+        "nucleotide": {
+          "Ensembl": {
+            "hgvs": "ENST00000269305.9:c.524G>A"
+          },
+          "RefSeq": {
+            "hgvs": "NM_000546.6:c.524G>A"
+          }
+        },
+        "protein": {
+          "Ensembl": {
+            "hgvs": "ENSP00000269305.4:p.Arg175His"
+          },
+          "RefSeq": {
+            "hgvs": "NP_000537.3:p.Arg175His"
+          }
+        }
+      }
+    },
+    {
+      "@id": "http://reg.genome.network/allele/PA106629",
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 666,
+          "referenceAllele": "G",
+          "start": 665
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN011998",
+      "geneNCBI_id": 7157,
+      "geneSymbol": "TP53",
+      "hgvs": [
+        "NM_000546.6:c.524G>A"
+      ],
+      "proteinEffect": {
+        "hgvs": "NP_000537.3:p.Arg175His",
+        "hgvsWellDefined": "NP_000537.3:p.Arg175His"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS710844",
+      "MANE": {
+        "maneVersion": "1.3",
+        "maneStatus": "MANE Select",
+        "nucleotide": {
+          "Ensembl": {
+            "hgvs": "ENST00000269305.9:c.524G>A"
+          },
+          "RefSeq": {
+            "hgvs": "NM_000546.6:c.524G>A"
+          }
+        },
+        "protein": {
+          "Ensembl": {
+            "hgvs": "ENSP00000269305.4:p.Arg175His"
+          },
+          "RefSeq": {
+            "hgvs": "NP_000537.3:p.Arg175His"
+          }
+        }
+      }
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 706,
+          "referenceAllele": "G",
+          "start": 705
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN011998",
+      "geneNCBI_id": 7157,
+      "geneSymbol": "TP53",
+      "hgvs": [
+        "ENST00000503591.2:c.524G>A"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000426252.2:p.Arg175His",
+        "hgvsWellDefined": "ENSP00000426252.2:p.Arg175His"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS914179"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 806,
+          "referenceAllele": "G",
+          "start": 805
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN011998",
+      "geneNCBI_id": 7157,
+      "geneSymbol": "TP53",
+      "hgvs": [
+        "ENST00000508793.6:c.524G>A"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000424104.2:p.Arg175His",
+        "hgvsWellDefined": "ENSP00000424104.2:p.Arg175His"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS914191"
+    }
+  ],
+  "type": "nucleotide"
+}

@@ -1,0 +1,11 @@
+gene_curie	gene_symbol	disease_curie	disease_title	classification_title	moi_curie	moi_title	submitter_title	submitted_as_notes	submitted_run_date
+HGNC:1100	BRCA1	MONDO:0011450	breast-ovarian cancer, familial, susceptibility to, 1	Definitive	HP:0000006	Autosomal dominant	Ambry Genetics		2021-03-02
+HGNC:1100	BRCA1	MONDO:0011450	breast-ovarian cancer, familial, susceptibility to, 1	Strong	HP:0000006	Autosomal dominant	Genomics England PanelApp		2021-03-31
+HGNC:1100	BRCA1	MONDO:0700268	BRCA1-related cancer predisposition	Definitive	HP:0000006	Autosomal dominant	ClinGen	"The mechanism of pathogenicity is known to be loss-of-function.
+A defective G2-M checkpoint accompanied by chromosomal abnormalities was observed in BRCA1 mutant cells."	2026-02-22
+HGNC:1100	BRCA1	MONDO:0054748	Fanconi anemia, complementation group S	Moderate	HP:0000007	Autosomal recessive	Ambry Genetics		2021-03-02
+HGNC:16636	KIF1B	MONDO:0007308	Charcot-Marie-Tooth disease type 2A1	Limited	HP:0000006	Autosomal dominant	Ambry Genetics		2025-01-17
+HGNC:16636	KIF1B	MONDO:0008233	pheochromocytoma	Moderate	HP:0000006	Autosomal dominant	Ambry Genetics		2020-12-24
+HGNC:16636	KIF1B	MONDO:0017366	hereditary pheochromocytoma-paraganglioma	Supportive	HP:0000006	Autosomal dominant	Orphanet		2021-09-14
+HGNC:11292	SRI	MONDO:0005045	hypertrophic cardiomyopathy	Refuted Evidence	HP:0000006	Autosomal dominant	Ambry Genetics		2021-09-28
+HGNC:18145	PHF6	MONDO:0010537	Borjeson-Forssman-Lehmann syndrome	Definitive	HP:0001417	X-linked	ClinGen	The mechanism of pathogenicity is loss of function.	2026-02-22

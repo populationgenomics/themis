@@ -7,18 +7,31 @@ import contextlib
 import functools
 import json
 
+import httpx
 import pytest
 
-from themis.rpc import literature_pb2, literature_pb2_grpc
+from themis.rpc import auth_pb2, literature_pb2, literature_pb2_grpc
+from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.literature import interface
 from themis.testing import in_process_grpc
+
+
+def _deps() -> deps_mod.Deps:
+    """Image-level collaborators literature ignores, save for the stack its backend would register on."""
+    return deps_mod.Deps(
+        session_resolver=_unreachable_resolver, http_client=httpx.AsyncClient(), stack=contextlib.AsyncExitStack()
+    )
+
+
+async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
+    raise AssertionError('literature resolves no session')
 
 
 def test_register_serves_the_literature_rpcs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'fixture')
     monkeypatch.setenv('THEMIS_LITERATURE_FIXTURE', json.dumps({'doc-1': {'title': 'A paper'}}))
     # The fixture adapter holds no client, so it registers nothing on the stack to unwind.
-    register = functools.partial(interface.register, stack=contextlib.AsyncExitStack())
+    register = functools.partial(interface.register, deps=_deps())
 
     async def describe() -> literature_pb2.PaperInfo:
         async with in_process_grpc.serving(register) as channel:

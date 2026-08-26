@@ -1,0 +1,2160 @@
+{
+ "gene": {
+  "entContent": {
+   "HGNC": {
+    "hgnc_id": "HGNC:143",
+    "mane_select": [
+     "ENST00000290378.6",
+     "NM_005159.5"
+    ],
+    "name": "actin alpha cardiac muscle 1",
+    "prev_symbol": [
+     "ACTC"
+    ],
+    "symbol": "ACTC1"
+   }
+  },
+  "entId": "ACTC1",
+  "entIri": "https://www.genenames.org/data/gene-symbol-report/#!/hgnc_id/HGNC:143",
+  "entType": "Gene",
+  "ldFor": {
+   "SequenceVariantInterpretation": [
+    {
+     "entContent": {
+      "approvedOn": "2024-04-22T15:45:38.513Z",
+      "description": "",
+      "doi": {
+       "authors": [
+        {
+         "affiliations": [
+          {
+           "name": "National Institutes of Health (NIH)"
+          }
+         ],
+         "person_or_org": {
+          "name": "The Clinical Genome Resource (ClinGen)",
+          "type": "organizational"
+         },
+         "role": {
+          "id": "rightsholder"
+         }
+        },
+        {
+         "affiliations": [
+          {
+           "name": "The Clinical Genome Resource (ClinGen)"
+          }
+         ],
+         "person_or_org": {
+          "name": "Cardiomyopathy Variant Curation Expert Panel",
+          "type": "organizational"
+         },
+         "role": {
+          "id": "researchgroup"
+         }
+        }
+       ],
+       "conceptDoi": "10.5281/zenodo.21434354",
+       "docDoi": "10.5281/zenodo.21434355",
+       "keywords": [
+        {
+         "subject": "human"
+        },
+        {
+         "subject": "biology"
+        },
+        {
+         "subject": "genomics"
+        },
+        {
+         "subject": "variant"
+        },
+        {
+         "subject": "variant classification"
+        },
+        {
+         "subject": "clingen"
+        },
+        {
+         "subject": "disease"
+        },
+        {
+         "subject": "standards"
+        },
+        {
+         "subject": "ACTC1"
+        },
+        {
+         "subject": "NM_005159.5"
+        },
+        {
+         "subject": "Autosomal dominant inheritance"
+        },
+        {
+         "subject": "hypertrophic cardiomyopathy"
+        }
+       ]
+      },
+      "namespace": "GN101",
+      "releaseNotes": "PS4 calculator link added.",
+      "shortTitle": "Cardiomyopathy Specification",
+      "specificationSource": "",
+      "states": [
+       {
+        "current": false,
+        "event": {
+         "name": "cspec-created",
+         "prevState": "START",
+         "timeStamp": "2022-12-05T03:39:23.316Z"
+        },
+        "name": "Pilot Rules In Prep"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-submitted",
+         "prevState": "Pilot Rules In Prep",
+         "timeStamp": "2024-03-25T21:16:04.957Z"
+        },
+        "name": "Pilot Rules Submitted"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-reviewed",
+         "prevState": "Pilot Rules Submitted",
+         "timeStamp": "2024-02-05T15:44:31.446Z"
+        },
+        "name": "Pilot Rules In Prep"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-approved",
+         "prevState": "Pilot Rules Submitted",
+         "timeStamp": "2024-03-27T16:43:33.659Z"
+        },
+        "name": "Approved For Release"
+       },
+       {
+        "current": true,
+        "event": {
+         "name": "cspec-released",
+         "prevState": "Approved For Release",
+         "timeStamp": "2024-04-22T15:45:38.513Z"
+        },
+        "name": "Released"
+       }
+      ],
+      "tagNameSpaces": [
+       "101"
+      ],
+      "title": "ClinGen Cardiomyopathy Expert Panel Specifications to the ACMG/AMP Variant Interpretation Guidelines for ACTC1 Version 1.0",
+      "version": "1.0",
+      "versioned": true
+     },
+     "entId": "GN101",
+     "entType": "SequenceVariantInterpretation",
+     "ldhId": "1535829270",
+     "ldhIri": "https://cspec.genome.network/cspec/SequenceVariantInterpretation/id/1535829270",
+     "modified": "2026-07-20T17:44:35.607Z",
+     "modifier": "cspecAdministrator",
+     "rev": "_l2AfKgG---"
+    }
+   ]
+  },
+  "ldhId": "467816230",
+  "ldhIri": "https://cspec.genome.network/cspec/Gene/id/467816230",
+  "modified": "2021-10-14T11:36:28.259Z",
+  "modifier": "genbadmin",
+  "rev": "_inf5A8a--O"
+ },
+ "rule_set": {
+  "entContent": {
+   "_uniqueProp": "101_nuclear_ACTC1",
+   "geneType": "nuclear",
+   "genes": [
+    {
+     "diseases": [
+      {
+       "preferredModeOfInheritance": "Autosomal dominant inheritance",
+       "preferredMondoId": "MONDO:0005045",
+       "preferredTitle": "hypertrophic cardiomyopathy"
+      }
+     ],
+     "gene": "ACTC1",
+     "preferredTranscript": "NM_005159.5"
+    }
+   ],
+   "ns": "101",
+   "references": [
+    {
+     "auths": [
+      "Richards S",
+      "Aziz N",
+      "et al."
+     ],
+     "doiStr": "10.1038/gim.2015.30",
+     "id": "25741868",
+     "iss": "(5)",
+     "namespace": "pmid",
+     "pages": "p. 405-24.",
+     "source": "Genet Med",
+     "title": "Standards and guidelines for the interpretation of sequence variants: a joint consensus recommendation of the American College of Medical Genetics and Genomics and the Association for Molecular Pathology.",
+     "vol": "17",
+     "year": "2015"
+    },
+    {
+     "id": "c73e109e-b916-5a72-b7b1-1762446f3c11",
+     "namespace": "url",
+     "value": "https://clinicalgenome.org/working-groups/sequence-variant-interpretation/"
+    },
+    {
+     "auths": [
+      "Abou Tayoun AN",
+      "Pesaran T",
+      "et al."
+     ],
+     "doiStr": "10.1002/humu.23626",
+     "id": "30192042",
+     "iss": "(11)",
+     "namespace": "pmid",
+     "pages": "p. 1517-1524.",
+     "source": "Hum Mutat",
+     "title": "Recommendations for interpreting the loss of function PVS1 ACMG/AMP variant criterion.",
+     "vol": "39",
+     "year": "2018"
+    },
+    {
+     "auths": [
+      "Brnich SE",
+      "Abou Tayoun AN",
+      "et al."
+     ],
+     "doiStr": "10.1186/s13073-019-0690-2",
+     "id": "31892348",
+     "iss": "(1)",
+     "namespace": "pmid",
+     "pages": "p. 3.",
+     "source": "Genome Med",
+     "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+     "vol": "12",
+     "year": "2019"
+    },
+    {
+     "auths": [
+      "Walsh R",
+      "Thomson KL",
+      "et al."
+     ],
+     "doiStr": "10.1038/gim.2016.90",
+     "id": "27532257",
+     "iss": "(2)",
+     "namespace": "pmid",
+     "pages": "p. 192-203.",
+     "source": "Genet Med",
+     "title": "Reassessment of Mendelian gene pathogenicity using 7,855 cardiomyopathy cases and 60,706 reference samples.",
+     "vol": "19",
+     "year": "2017"
+    },
+    {
+     "auths": [
+      "Anderson RH",
+      "Jensen B",
+      "et al."
+     ],
+     "doiStr": "10.1016/j.cjca.2017.01.017",
+     "id": "28395867",
+     "iss": "(6)",
+     "namespace": "pmid",
+     "pages": "p. 747-757.",
+     "source": "Can J Cardiol",
+     "title": "Key Questions Relating to Left Ventricular Noncompaction Cardiomyopathy: Is the Emperor Still Wearing Any Clothes?",
+     "vol": "33",
+     "year": "2017"
+    },
+    {
+     "auths": [
+      "Oechslin E",
+      "Jenni R"
+     ],
+     "doiStr": "10.1016/j.cjca.2017.04.003",
+     "id": "28545618",
+     "iss": "(6)",
+     "namespace": "pmid",
+     "pages": "p. 701-704.",
+     "source": "Can J Cardiol",
+     "title": "Nosology of Noncompaction Cardiomyopathy: The Emperor Still Wears Clothes!",
+     "vol": "33",
+     "year": "2017"
+    },
+    {
+     "auths": [
+      "Hershberger RE",
+      "Morales A",
+      "et al."
+     ],
+     "doiStr": "10.1161/CIRCGENETICS.117.001968",
+     "id": "29212902",
+     "iss": "(6)",
+     "namespace": "pmid",
+     "pages": "",
+     "source": "Circ Cardiovasc Genet",
+     "title": "Is Left Ventricular Noncompaction a Trait, Phenotype, or Disease? The Evidence Points to Phenotype.",
+     "vol": "10",
+     "year": "2017"
+    },
+    {
+     "auths": [
+      "Ross SB",
+      "Jones K",
+      "et al."
+     ],
+     "doiStr": "10.1093/eurheartj/ehz317",
+     "id": "31143950",
+     "iss": "(14)",
+     "namespace": "pmid",
+     "pages": "p. 1428-1436.",
+     "source": "Eur Heart J",
+     "title": "A systematic review and meta-analysis of the prevalence of left ventricular non-compaction in adults.",
+     "vol": "41",
+     "year": "2020"
+    },
+    {
+     "auths": [
+      "Kelly MA",
+      "Caleshu C",
+      "et al."
+     ],
+     "doiStr": "10.1038/gim.2017.218",
+     "id": "29300372",
+     "iss": "(3)",
+     "namespace": "pmid",
+     "pages": "p. 351-359.",
+     "source": "Genet Med",
+     "title": "Adaptation and validation of the ACMG/AMP variant classification framework for MYH7-associated inherited cardiomyopathies: recommendations by ClinGen's Inherited Cardiomyopathy Expert Panel.",
+     "vol": "20",
+     "year": "2018"
+    },
+    {
+     "auths": [
+      "Jarvik GP",
+      "Browning BL"
+     ],
+     "doiStr": "10.1016/j.ajhg.2016.04.003",
+     "id": "27236918",
+     "iss": "(6)",
+     "namespace": "pmid",
+     "pages": "p. 1077-1081.",
+     "source": "Am J Hum Genet",
+     "title": "Consideration of Cosegregation in the Pathogenicity Classification of Genomic Variants.",
+     "vol": "98",
+     "year": "2016"
+    },
+    {
+     "auths": [
+      "Ioannidis NM",
+      "Rothstein JH",
+      "et al."
+     ],
+     "doiStr": "10.1016/j.ajhg.2016.08.016",
+     "id": "27666373",
+     "iss": "(4)",
+     "namespace": "pmid",
+     "pages": "p. 877-885.",
+     "source": "Am J Hum Genet",
+     "title": "REVEL: An Ensemble Method for Predicting the Pathogenicity of Rare Missense Variants.",
+     "vol": "99",
+     "year": "2016"
+    },
+    {
+     "auths": [
+      "Jaganathan K",
+      "Kyriazopoulou Panagiotopoulou S",
+      "et al."
+     ],
+     "doiStr": "10.1016/j.cell.2018.12.015",
+     "id": "30661751",
+     "iss": "(3)",
+     "namespace": "pmid",
+     "pages": "p. 535-548.e24.",
+     "source": "Cell",
+     "title": "Predicting Splicing from Primary Sequence with Deep Learning.",
+     "vol": "176",
+     "year": "2019"
+    },
+    {
+     "auths": [
+      "Tavtigian SV",
+      "Greenblatt MS",
+      "et al."
+     ],
+     "doiStr": "10.1038/gim.2017.210",
+     "id": "29300386",
+     "iss": "(9)",
+     "namespace": "pmid",
+     "pages": "p. 1054-1060.",
+     "source": "Genet Med",
+     "title": "Modeling the ACMG/AMP variant classification guidelines as a Bayesian classification framework.",
+     "vol": "20",
+     "year": "2018"
+    },
+    {
+     "auths": [
+      "Tavtigian SV",
+      "Harrison SM",
+      "et al."
+     ],
+     "doiStr": "10.1002/humu.24088",
+     "id": "32720330",
+     "iss": "(10)",
+     "namespace": "pmid",
+     "pages": "p. 1734-1737.",
+     "source": "Hum Mutat",
+     "title": "Fitting a naturally scaled point system to the ACMG/AMP variant classification guidelines.",
+     "vol": "41",
+     "year": "2020"
+    },
+    {
+     "auths": [
+      "Alfares AA",
+      "Kelly MA",
+      "et al."
+     ],
+     "doiStr": "10.1038/gim.2014.205",
+     "id": "25611685",
+     "iss": "(11)",
+     "namespace": "pmid",
+     "pages": "p. 880-8.",
+     "source": "Genet Med",
+     "title": "Results of clinical genetic testing of 2,912 probands with hypertrophic cardiomyopathy: expanded panels offer limited additional sensitivity.",
+     "vol": "17",
+     "year": "2015"
+    }
+   ],
+   "rules": {
+    "mainRules": [
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": ">=2",
+        "label": "Rule5, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       }
+      ],
+      "inference": "Pathogenic",
+      "rule": "Rule5"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule6, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": ">=3",
+        "label": "Rule6, Condition2",
+        "partitionPath": "Pathogenic.Moderate"
+       }
+      ],
+      "inference": "Pathogenic",
+      "rule": "Rule6"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule7, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==2",
+        "label": "Rule7, Condition2",
+        "partitionPath": "Pathogenic.Moderate"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Supporting",
+         "PS4_Supporting",
+         "PM2_Supporting",
+         "PM5_Supporting",
+         "PP1",
+         "PP3"
+        ],
+        "condition": ">=2",
+        "label": "Rule7, Condition3",
+        "partitionPath": "Pathogenic.Supporting"
+       }
+      ],
+      "inference": "Pathogenic",
+      "rule": "Rule7"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule8, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==1",
+        "label": "Rule8, Condition2",
+        "partitionPath": "Pathogenic.Moderate"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Supporting",
+         "PS4_Supporting",
+         "PM2_Supporting",
+         "PM5_Supporting",
+         "PP1",
+         "PP3"
+        ],
+        "condition": ">=4",
+        "label": "Rule8, Condition3",
+        "partitionPath": "Pathogenic.Supporting"
+       }
+      ],
+      "inference": "Pathogenic",
+      "rule": "Rule8"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule11, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==1",
+        "label": "Rule11, Condition2",
+        "partitionPath": "Pathogenic.Moderate"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule11"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule12, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Supporting",
+         "PS4_Supporting",
+         "PM2_Supporting",
+         "PM5_Supporting",
+         "PP1",
+         "PP3"
+        ],
+        "condition": ">=2",
+        "label": "Rule12, Condition2",
+        "partitionPath": "Pathogenic.Supporting"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule12"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": ">=3",
+        "label": "Rule13, Condition1",
+        "partitionPath": "Pathogenic.Moderate"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule13"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==2",
+        "label": "Rule14, Condition1",
+        "partitionPath": "Pathogenic.Moderate"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Supporting",
+         "PS4_Supporting",
+         "PM2_Supporting",
+         "PM5_Supporting",
+         "PP1",
+         "PP3"
+        ],
+        "condition": ">=2",
+        "label": "Rule14, Condition2",
+        "partitionPath": "Pathogenic.Supporting"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule14"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==1",
+        "label": "Rule15, Condition1",
+        "partitionPath": "Pathogenic.Moderate"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Supporting",
+         "PS4_Supporting",
+         "PM2_Supporting",
+         "PM5_Supporting",
+         "PP1",
+         "PP3"
+        ],
+        "condition": ">=4",
+        "label": "Rule15, Condition2",
+        "partitionPath": "Pathogenic.Supporting"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule15"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "PS1",
+         "PS2",
+         "PS3",
+         "PS4",
+         "PP1_Strong"
+        ],
+        "condition": "==1",
+        "label": "Rule20, Condition1",
+        "partitionPath": "Pathogenic.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "PS3_Moderate",
+         "PS4_Moderate",
+         "PM4",
+         "PM5",
+         "PM6",
+         "PP1_Moderate"
+        ],
+        "condition": "==2",
+        "label": "Rule20, Condition2",
+        "partitionPath": "Pathogenic.Moderate"
+       }
+      ],
+      "inference": "Likely Pathogenic",
+      "rule": "Rule20"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "BS1",
+         "BS3",
+         "BS4"
+        ],
+        "condition": ">=2",
+        "label": "Rule16, Condition1",
+        "partitionPath": "Benign.Strong"
+       }
+      ],
+      "inference": "Benign",
+      "rule": "Rule16"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "BA1"
+        ],
+        "condition": "==1",
+        "label": "Rule17, Condition1",
+        "partitionPath": "Benign.Stand Alone"
+       }
+      ],
+      "inference": "Benign",
+      "rule": "Rule17"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "BS1",
+         "BS3",
+         "BS4"
+        ],
+        "condition": "==1",
+        "label": "Rule18, Condition1",
+        "partitionPath": "Benign.Strong"
+       },
+       {
+        "applicableCriteriaCodes": [
+         "BS3_Supporting",
+         "BP2",
+         "BP4",
+         "BP7"
+        ],
+        "condition": "==1",
+        "label": "Rule18, Condition2",
+        "partitionPath": "Benign.Supporting"
+       }
+      ],
+      "inference": "Likely Benign",
+      "rule": "Rule18"
+     },
+     {
+      "conditions": [
+       {
+        "applicableCriteriaCodes": [
+         "BS3_Supporting",
+         "BP2",
+         "BP4",
+         "BP7"
+        ],
+        "condition": ">=2",
+        "label": "Rule19, Condition1",
+        "partitionPath": "Benign.Supporting"
+       }
+      ],
+      "inference": "Likely Benign",
+      "rule": "Rule19"
+     }
+    ]
+   }
+  },
+  "entType": "RuleSet",
+  "ld": {
+   "CriteriaCode": [],
+   "File": [
+    {
+     "created": "2024-04-22T15:45:39.525Z",
+     "creator": "makelly2",
+     "entContent": {
+      "description": "Three example scenarios for application of the new PS4 specification.",
+      "fileLabel": "CM-VCEP PS4 Example Scenarios",
+      "fileName": "CM-VCEP-PS4-Example-Scenarios.pdf",
+      "path": "/data/srvc-files/cspec-reg/organizations/50002/rulesets/1535828674/9dea875f-2467-4e25-8477-5555fbce8e97.pdf",
+      "public": true,
+      "size": 301405,
+      "type": "pdf"
+     },
+     "entId": "9dea875f-2467-4e25-8477-5555fbce8e97",
+     "entType": "File",
+     "ldhId": "1768717797",
+     "ldhIri": "https://cspec.genome.network/cspec/File/id/1768717797",
+     "modified": "2024-04-22T15:45:39.525Z",
+     "modifier": "makelly2",
+     "rev": "_inf5AuG--u"
+    }
+   ]
+  },
+  "ldFor": {
+   "SequenceVariantInterpretation": [
+    {
+     "entContent": {
+      "approvedOn": "2024-04-22T15:45:38.513Z",
+      "description": "",
+      "doi": {
+       "authors": [
+        {
+         "affiliations": [
+          {
+           "name": "National Institutes of Health (NIH)"
+          }
+         ],
+         "person_or_org": {
+          "name": "The Clinical Genome Resource (ClinGen)",
+          "type": "organizational"
+         },
+         "role": {
+          "id": "rightsholder"
+         }
+        },
+        {
+         "affiliations": [
+          {
+           "name": "The Clinical Genome Resource (ClinGen)"
+          }
+         ],
+         "person_or_org": {
+          "name": "Cardiomyopathy Variant Curation Expert Panel",
+          "type": "organizational"
+         },
+         "role": {
+          "id": "researchgroup"
+         }
+        }
+       ],
+       "conceptDoi": "10.5281/zenodo.21434354",
+       "docDoi": "10.5281/zenodo.21434355",
+       "keywords": [
+        {
+         "subject": "human"
+        },
+        {
+         "subject": "biology"
+        },
+        {
+         "subject": "genomics"
+        },
+        {
+         "subject": "variant"
+        },
+        {
+         "subject": "variant classification"
+        },
+        {
+         "subject": "clingen"
+        },
+        {
+         "subject": "disease"
+        },
+        {
+         "subject": "standards"
+        },
+        {
+         "subject": "ACTC1"
+        },
+        {
+         "subject": "NM_005159.5"
+        },
+        {
+         "subject": "Autosomal dominant inheritance"
+        },
+        {
+         "subject": "hypertrophic cardiomyopathy"
+        }
+       ]
+      },
+      "namespace": "GN101",
+      "releaseNotes": "PS4 calculator link added.",
+      "shortTitle": "Cardiomyopathy Specification",
+      "specificationSource": "",
+      "states": [
+       {
+        "current": false,
+        "event": {
+         "name": "cspec-created",
+         "prevState": "START",
+         "timeStamp": "2022-12-05T03:39:23.316Z"
+        },
+        "name": "Pilot Rules In Prep"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-submitted",
+         "prevState": "Pilot Rules In Prep",
+         "timeStamp": "2024-03-25T21:16:04.957Z"
+        },
+        "name": "Pilot Rules Submitted"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-reviewed",
+         "prevState": "Pilot Rules Submitted",
+         "timeStamp": "2024-02-05T15:44:31.446Z"
+        },
+        "name": "Pilot Rules In Prep"
+       },
+       {
+        "current": false,
+        "event": {
+         "name": "pilot-rules-approved",
+         "prevState": "Pilot Rules Submitted",
+         "timeStamp": "2024-03-27T16:43:33.659Z"
+        },
+        "name": "Approved For Release"
+       },
+       {
+        "current": true,
+        "event": {
+         "name": "cspec-released",
+         "prevState": "Approved For Release",
+         "timeStamp": "2024-04-22T15:45:38.513Z"
+        },
+        "name": "Released"
+       }
+      ],
+      "tagNameSpaces": [
+       "101"
+      ],
+      "title": "ClinGen Cardiomyopathy Expert Panel Specifications to the ACMG/AMP Variant Interpretation Guidelines for ACTC1 Version 1.0",
+      "version": "1.0",
+      "versioned": true
+     },
+     "entId": "GN101",
+     "entType": "SequenceVariantInterpretation",
+     "ldhId": "1535829270",
+     "ldhIri": "https://cspec.genome.network/cspec/SequenceVariantInterpretation/id/1535829270",
+     "modified": "2026-07-20T17:44:35.607Z",
+     "modifier": "cspecAdministrator",
+     "rev": "_l2AfKgG---"
+    }
+   ]
+  },
+  "ldhId": "1535829283",
+  "ldhIri": "https://cspec.genome.network/cspec/RuleSet/id/1535829283",
+  "modified": "2024-04-22T15:45:39.102Z",
+  "modifier": "makelly2",
+  "rev": "_inf5BHS--A"
+ },
+ "specification": {
+  "entContent": {
+   "approvedOn": "2024-04-22T15:45:38.513Z",
+   "description": "",
+   "doi": {
+    "authors": [
+     {
+      "affiliations": [
+       {
+        "name": "National Institutes of Health (NIH)"
+       }
+      ],
+      "person_or_org": {
+       "name": "The Clinical Genome Resource (ClinGen)",
+       "type": "organizational"
+      },
+      "role": {
+       "id": "rightsholder"
+      }
+     },
+     {
+      "affiliations": [
+       {
+        "name": "The Clinical Genome Resource (ClinGen)"
+       }
+      ],
+      "person_or_org": {
+       "name": "Cardiomyopathy Variant Curation Expert Panel",
+       "type": "organizational"
+      },
+      "role": {
+       "id": "researchgroup"
+      }
+     }
+    ],
+    "conceptDoi": "10.5281/zenodo.21434354",
+    "docDoi": "10.5281/zenodo.21434355",
+    "keywords": [
+     {
+      "subject": "human"
+     },
+     {
+      "subject": "biology"
+     },
+     {
+      "subject": "genomics"
+     },
+     {
+      "subject": "variant"
+     },
+     {
+      "subject": "variant classification"
+     },
+     {
+      "subject": "clingen"
+     },
+     {
+      "subject": "disease"
+     },
+     {
+      "subject": "standards"
+     },
+     {
+      "subject": "ACTC1"
+     },
+     {
+      "subject": "NM_005159.5"
+     },
+     {
+      "subject": "Autosomal dominant inheritance"
+     },
+     {
+      "subject": "hypertrophic cardiomyopathy"
+     }
+    ]
+   },
+   "namespace": "GN101",
+   "releaseNotes": "PS4 calculator link added.",
+   "shortTitle": "Cardiomyopathy Specification",
+   "specificationSource": "",
+   "states": [
+    {
+     "current": false,
+     "event": {
+      "name": "cspec-created",
+      "prevState": "START",
+      "timeStamp": "2022-12-05T03:39:23.316Z"
+     },
+     "name": "Pilot Rules In Prep"
+    },
+    {
+     "current": false,
+     "event": {
+      "name": "pilot-rules-submitted",
+      "prevState": "Pilot Rules In Prep",
+      "timeStamp": "2024-03-25T21:16:04.957Z"
+     },
+     "name": "Pilot Rules Submitted"
+    },
+    {
+     "current": false,
+     "event": {
+      "name": "pilot-rules-reviewed",
+      "prevState": "Pilot Rules Submitted",
+      "timeStamp": "2024-02-05T15:44:31.446Z"
+     },
+     "name": "Pilot Rules In Prep"
+    },
+    {
+     "current": false,
+     "event": {
+      "name": "pilot-rules-approved",
+      "prevState": "Pilot Rules Submitted",
+      "timeStamp": "2024-03-27T16:43:33.659Z"
+     },
+     "name": "Approved For Release"
+    },
+    {
+     "current": true,
+     "event": {
+      "name": "cspec-released",
+      "prevState": "Approved For Release",
+      "timeStamp": "2024-04-22T15:45:38.513Z"
+     },
+     "name": "Released"
+    }
+   ],
+   "tagNameSpaces": [
+    "101"
+   ],
+   "title": "ClinGen Cardiomyopathy Expert Panel Specifications to the ACMG/AMP Variant Interpretation Guidelines for ACTC1 Version 1.0",
+   "version": "1.0",
+   "versioned": true
+  },
+  "entId": "GN101",
+  "entType": "SequenceVariantInterpretation",
+  "ld": {
+   "CriteriaCode": [
+    {
+     "created": "2024-04-22T15:45:39.193Z",
+     "creator": "makelly2",
+     "entContent": {
+      "_uniqueProp": "101_BA1_nuclear_ACTC1",
+      "additionalComments": "",
+      "applicability": "Applicable",
+      "baseStrength": "Benign",
+      "defaultStrength": "Benign Stand Alone",
+      "evidenceCategory": "Population Data",
+      "gene": [
+       "ACTC1"
+      ],
+      "geneType": "nuclear",
+      "label": "BA1",
+      "ns": "101",
+      "originalACMGSummary": "Allele frequency is above 5% in Exome Sequencing Project, 1000 Genomes or Exome Aggregation Consortium.",
+      "sepioID": "SEPIO-CG:99038",
+      "specificationType": [],
+      "status": {
+       "Pilot Rules In Prep": {
+        "completed": true
+       }
+      },
+      "strengthDescriptor": [
+       {
+        "applicability": "Applicable",
+        "id": "0087",
+        "instructionsToUse": "",
+        "specificationType": [
+         "Disease-specific"
+        ],
+        "status": "approved",
+        "strength": "Stand Alone",
+        "strengthSepioID": "SEPIO:0000325",
+        "text": "Allele frequency is **\u22650.001** based on the **filtering allele frequency (FAF)** in **gnomAD** in the subpopulation with the highest frequency (popmax).\n\nThe values used to calculate the BA1 threshold were derived from studies in Northern European populations that have been relatively well-characterized with regards to disease prevalence and variant spectrum. These thresholds can be applied to any population where disease prevalence is considered comparable (1/300 or lower).\n\nThe threshold is applicable when assessing variants in the context of autosomal dominant cardiomyopathy.\u00a0\n\ngnomAD is the preferred database for this calculation. If a subpopulation specific FAF other than the popmax is needed, this value can be calculated using the AlleleFrequencyApp on the [CardioDB website](https://cardiodb.org/allelefrequencyapp/).\n\n1.  Using the Inverse AF tab, enter in the population size and the number of alleles identified and it will calculate the FAF.\u00a0\u00a0\n2.  Set confidence to 0.95 (95%).\n3.  If the FAF is \u22650.001, this rule can be applied.\n\nThe FAF by platform (e.g., exome vs. genome; v.2.1.1 vs. v.3.1.1) should be considered, the larger population is most likely to have the most accurate representation of \u201ctrue\u201d population allele frequency.\n\nCaution is needed when considering any population cohorts that are smaller than the smallest subpopulations within gnomAD v.2.1.1 (e.g., ~5000 individuals or ~10,000 alleles). Despite this conservative nature of this threshold and approach, in smaller cohorts, the observed allele frequency may less accurately reflect the true allele frequency. Traditionally, once a variant is classified as Benign, it is rarely re-evaluated and so the highest confidence is needed to establish that classification on an allele frequency alone.",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0201",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Very Strong",
+        "strengthSepioID": "",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0202",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Strong",
+        "strengthSepioID": "SEPIO:0000328",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0203",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Moderate",
+        "strengthSepioID": "SEPIO:0000699",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0089",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Supporting",
+        "strengthSepioID": "SEPIO:0000327",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       }
+      ]
+     },
+     "entType": "CriteriaCode",
+     "ldhId": "1768717709",
+     "ldhIri": "https://cspec.genome.network/cspec/CriteriaCode/id/1768717709",
+     "modified": "2024-04-22T15:45:39.193Z",
+     "modifier": "makelly2",
+     "rev": "_inf5Ati--D"
+    },
+    {
+     "created": "2024-04-22T15:45:39.193Z",
+     "creator": "makelly2",
+     "entContent": {
+      "_uniqueProp": "101_PVS1_nuclear_ACTC1",
+      "additionalComments": "Not currently applicable to ACTC1. See PM4 for truncating variants that do NOT undergo NMD.",
+      "applicability": "Not applicable",
+      "baseStrength": "Pathogenic",
+      "defaultStrength": "Pathogenic Very Strong",
+      "evidenceCategory": "Computational And Predictive Data",
+      "gene": [
+       "ACTC1"
+      ],
+      "geneType": "nuclear",
+      "instructionsToUse": "",
+      "label": "PVS1",
+      "ns": "101",
+      "originalACMGSummary": "Null variant (nonsense, frameshift, canonical +/\u22121 or 2 splice sites, initiation codon, single or multi-exon deletion) in a gene where loss of function (LOF) is a known mechanism of disease.\nCaveats:\n * Beware of genes where LOF is not a known disease mechanism (e.g. GFAP, MYH7).\n * Use caution interpreting LOF variants at the extreme 3\u2019 end of a gene.\n * Use caution with splice variants that are predicted to lead to exon skipping but leave the remainder of the protein intact.\n * Use caution in the presence of multiple transcripts.",
+      "sepioID": "SEPIO-CG:99022",
+      "specificationType": [],
+      "status": {
+       "Pilot Rules In Prep": {
+        "completed": true
+       }
+      },
+      "strengthDescriptor": [
+       {
+        "applicability": "Not applicable",
+        "id": "0245",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Stand Alone",
+        "strengthSepioID": "",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "additionalComments": {
+         "Caveats": [
+          "Beware of genes where LOF is not a known disease mechanism (e.g., GFAP, MYH7)",
+          "Use caution interpreting LOF variants at the extreme 3' end of a gene",
+          "Use caution with splice variants that are predicted to lead to exon skipping but leave the remainder of the protein intact",
+          "Use caution in the presence of multiple transcripts"
+         ]
+        },
+        "applicability": "Not applicable",
+        "id": "0017",
+        "instructionsToUse": "",
+        "specificationType": [
+         "Gene-specific"
+        ],
+        "status": "approved",
+        "strength": "Very Strong",
+        "strengthSepioID": "SEPIO:0000220",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0020",
+        "instructionsToUse": "",
+        "specificationType": [],
+        "status": "approved",
+        "strength": "Strong",
+        "strengthSepioID": "SEPIO:0000330",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0026",
+        "instructionsToUse": "",
+        "specificationType": [],
+        "status": "approved",
+        "strength": "Moderate",
+        "strengthSepioID": "SEPIO:0000216",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "001",
+        "instructionsToUse": "",
+        "specificationType": [],
+        "status": "approved",
+        "strength": "Supporting",
+        "strengthSepioID": "SEPIO:0000329",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       }
+      ]
+     },
+     "entType": "CriteriaCode",
+     "ldhId": "1768717708",
+     "ldhIri": "https://cspec.genome.network/cspec/CriteriaCode/id/1768717708",
+     "modified": "2024-04-22T15:45:39.193Z",
+     "modifier": "makelly2",
+     "rev": "_inf5Ate--U"
+    },
+    {
+     "created": "2024-04-22T15:45:39.193Z",
+     "creator": "makelly2",
+     "entContent": {
+      "_uniqueProp": "101_PM2_nuclear_ACTC1",
+      "additionalComments": "",
+      "applicability": "Applicable",
+      "baseStrength": "Pathogenic",
+      "defaultStrength": "Pathogenic Moderate",
+      "evidenceCategory": "Population Data",
+      "gene": [
+       "ACTC1"
+      ],
+      "geneType": "nuclear",
+      "label": "PM2",
+      "ns": "101",
+      "originalACMGSummary": "Absent from controls (or at extremely low frequency if recessive) in Exome Sequencing Project, 1000 Genomes or Exome Aggregation Consortium.\nCaveat: Population data for indels may be poorly called by next generation sequencing.",
+      "sepioID": "SEPIO-CG:99028",
+      "specificationType": [],
+      "status": {
+       "Pilot Rules In Prep": {
+        "completed": true
+       }
+      },
+      "strengthDescriptor": [
+       {
+        "applicability": "Not applicable",
+        "id": "0231",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Stand Alone",
+        "strengthSepioID": "",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0044",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Very Strong",
+        "strengthSepioID": "SEPIO:0000220",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Not applicable",
+        "id": "0013",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Strong",
+        "strengthSepioID": "SEPIO:0000330",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "additionalComments": {
+         "Caveats": [
+          "Population data for insertions/deletions may be poorly called by next-generation sequencing."
+         ]
+        },
+        "applicability": "Not Applicable",
+        "id": "0011",
+        "instructionsToUse": "",
+        "status": "approved",
+        "strength": "Moderate",
+        "strengthSepioID": "SEPIO:0000216",
+        "text": "",
+        "type": "EvidenceLineStrength"
+       },
+       {
+        "applicability": "Applicable",
+        "id": "0030",
+        "instructionsToUse": "",
+        "specificationType": [
+         "Disease-specific"
+        ],
+        "status": "approved",
+        "strength": "Supporting",
+        "strengthSepioID": "SEPIO:0000329",
+        "text": "The values used to calculate the PM2 thresholds were derived from studies in Northern European populations that have been relatively well-characterized with regards to disease prevalence and variant spectrum. These thresholds can be applied to any population where disease prevalence is considered comparable (1/500 or lower), where the most frequent pathogenic variant accounts for no more than 2% of cases (e.g., has an allele frequency of \u22640.02 in cases based on the upper bound of 95% CI), and where the penetrance of a pathogenic variant is expected to be at least 50%\u00a0(Kelly _et al._ 2018[<sup>10</sup>](#pmid_29300372)).\n\nA threshold of **\u22640.00004** in the subpopulation with the highest frequency when using the upper bound of the 95% CI activates this rule.\n\n1.  Alternatively, this is equivalent to the variant NOT being observed more than once (\u22641 allele) in gnomAD v.2.1.1 in one of the non-founder populations (e.g., absence required from the Other and Ashkenazi Jewish subpopulations).\n2.  Applying a threshold of \u22640.00004 (upper bound of 95% CI of the allele frequency in gnomAD) is equivalent to the variant being seen in a single subpopulation and that subpopulation meets any of the following:\n    *   **Allele Count (AC) in Allele Number (AN)**\n    *   \u22641 in \u2265120,000\n    *   \u22642 in \u2265160,000\n    *   \u22643 in \u2265195,000\n    *   \u22644 in \u2265230,000\n\ngnomAD is the preferred database for this calculation, but currently only displays the filtering allele frequency (FAF), which is equivalent to a lower bound estimate of the 95% CI, when the upper bound is what is needed.\n\n*   Confidence interval tools, such as [Confit-de-MAF](https://www.genecalculators.net/confit-de-maf.html), can be used to determine the upper bound of the 95% CI of the observed allele frequency.\n\nDue to current technical limitations of next generation sequencing technologies, minor allele frequencies for complex variants (e.g., large indels) may not be accurately represented in population databases.\n\nCaution should be used when a variant is only identified, or over-represented, in one of the smaller gnomAD populations, as the gnomAD allele frequencies may not accurately represent the true population frequency.\n\nPopulation databases may contain affected or pre-symptomatic individuals for diseases with reduced penetrance/variable onset.",
+        "type": "EvidenceLineStrength"
+       }
+      ]
+     },
+     "entType": "CriteriaCode",
+     "ldhId": "1768717695",
+     "ldhIri": "https://cspec.genome.network/cspec/CriteriaCode/id/1768717695",
+     "modified": "2024-04-22T15:45:39.193Z",
+     "modifier": "makelly2",
+     "rev": "_inf5Ate--O"
+    }
+   ],
+   "RuleSet": [
+    {
+     "entContent": {
+      "_uniqueProp": "101_nuclear_ACTC1",
+      "geneType": "nuclear",
+      "genes": [
+       {
+        "diseases": [
+         {
+          "preferredModeOfInheritance": "Autosomal dominant inheritance",
+          "preferredMondoId": "MONDO:0005045",
+          "preferredTitle": "hypertrophic cardiomyopathy"
+         }
+        ],
+        "gene": "ACTC1",
+        "preferredTranscript": "NM_005159.5"
+       }
+      ],
+      "ns": "101",
+      "references": [
+       {
+        "auths": [
+         "Richards S",
+         "Aziz N",
+         "et al."
+        ],
+        "doiStr": "10.1038/gim.2015.30",
+        "id": "25741868",
+        "iss": "(5)",
+        "namespace": "pmid",
+        "pages": "p. 405-24.",
+        "source": "Genet Med",
+        "title": "Standards and guidelines for the interpretation of sequence variants: a joint consensus recommendation of the American College of Medical Genetics and Genomics and the Association for Molecular Pathology.",
+        "vol": "17",
+        "year": "2015"
+       },
+       {
+        "id": "c73e109e-b916-5a72-b7b1-1762446f3c11",
+        "namespace": "url",
+        "value": "https://clinicalgenome.org/working-groups/sequence-variant-interpretation/"
+       },
+       {
+        "auths": [
+         "Abou Tayoun AN",
+         "Pesaran T",
+         "et al."
+        ],
+        "doiStr": "10.1002/humu.23626",
+        "id": "30192042",
+        "iss": "(11)",
+        "namespace": "pmid",
+        "pages": "p. 1517-1524.",
+        "source": "Hum Mutat",
+        "title": "Recommendations for interpreting the loss of function PVS1 ACMG/AMP variant criterion.",
+        "vol": "39",
+        "year": "2018"
+       },
+       {
+        "auths": [
+         "Brnich SE",
+         "Abou Tayoun AN",
+         "et al."
+        ],
+        "doiStr": "10.1186/s13073-019-0690-2",
+        "id": "31892348",
+        "iss": "(1)",
+        "namespace": "pmid",
+        "pages": "p. 3.",
+        "source": "Genome Med",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "vol": "12",
+        "year": "2019"
+       },
+       {
+        "auths": [
+         "Walsh R",
+         "Thomson KL",
+         "et al."
+        ],
+        "doiStr": "10.1038/gim.2016.90",
+        "id": "27532257",
+        "iss": "(2)",
+        "namespace": "pmid",
+        "pages": "p. 192-203.",
+        "source": "Genet Med",
+        "title": "Reassessment of Mendelian gene pathogenicity using 7,855 cardiomyopathy cases and 60,706 reference samples.",
+        "vol": "19",
+        "year": "2017"
+       },
+       {
+        "auths": [
+         "Anderson RH",
+         "Jensen B",
+         "et al."
+        ],
+        "doiStr": "10.1016/j.cjca.2017.01.017",
+        "id": "28395867",
+        "iss": "(6)",
+        "namespace": "pmid",
+        "pages": "p. 747-757.",
+        "source": "Can J Cardiol",
+        "title": "Key Questions Relating to Left Ventricular Noncompaction Cardiomyopathy: Is the Emperor Still Wearing Any Clothes?",
+        "vol": "33",
+        "year": "2017"
+       },
+       {
+        "auths": [
+         "Oechslin E",
+         "Jenni R"
+        ],
+        "doiStr": "10.1016/j.cjca.2017.04.003",
+        "id": "28545618",
+        "iss": "(6)",
+        "namespace": "pmid",
+        "pages": "p. 701-704.",
+        "source": "Can J Cardiol",
+        "title": "Nosology of Noncompaction Cardiomyopathy: The Emperor Still Wears Clothes!",
+        "vol": "33",
+        "year": "2017"
+       },
+       {
+        "auths": [
+         "Hershberger RE",
+         "Morales A",
+         "et al."
+        ],
+        "doiStr": "10.1161/CIRCGENETICS.117.001968",
+        "id": "29212902",
+        "iss": "(6)",
+        "namespace": "pmid",
+        "pages": "",
+        "source": "Circ Cardiovasc Genet",
+        "title": "Is Left Ventricular Noncompaction a Trait, Phenotype, or Disease? The Evidence Points to Phenotype.",
+        "vol": "10",
+        "year": "2017"
+       },
+       {
+        "auths": [
+         "Ross SB",
+         "Jones K",
+         "et al."
+        ],
+        "doiStr": "10.1093/eurheartj/ehz317",
+        "id": "31143950",
+        "iss": "(14)",
+        "namespace": "pmid",
+        "pages": "p. 1428-1436.",
+        "source": "Eur Heart J",
+        "title": "A systematic review and meta-analysis of the prevalence of left ventricular non-compaction in adults.",
+        "vol": "41",
+        "year": "2020"
+       },
+       {
+        "auths": [
+         "Kelly MA",
+         "Caleshu C",
+         "et al."
+        ],
+        "doiStr": "10.1038/gim.2017.218",
+        "id": "29300372",
+        "iss": "(3)",
+        "namespace": "pmid",
+        "pages": "p. 351-359.",
+        "source": "Genet Med",
+        "title": "Adaptation and validation of the ACMG/AMP variant classification framework for MYH7-associated inherited cardiomyopathies: recommendations by ClinGen's Inherited Cardiomyopathy Expert Panel.",
+        "vol": "20",
+        "year": "2018"
+       },
+       {
+        "auths": [
+         "Jarvik GP",
+         "Browning BL"
+        ],
+        "doiStr": "10.1016/j.ajhg.2016.04.003",
+        "id": "27236918",
+        "iss": "(6)",
+        "namespace": "pmid",
+        "pages": "p. 1077-1081.",
+        "source": "Am J Hum Genet",
+        "title": "Consideration of Cosegregation in the Pathogenicity Classification of Genomic Variants.",
+        "vol": "98",
+        "year": "2016"
+       },
+       {
+        "auths": [
+         "Ioannidis NM",
+         "Rothstein JH",
+         "et al."
+        ],
+        "doiStr": "10.1016/j.ajhg.2016.08.016",
+        "id": "27666373",
+        "iss": "(4)",
+        "namespace": "pmid",
+        "pages": "p. 877-885.",
+        "source": "Am J Hum Genet",
+        "title": "REVEL: An Ensemble Method for Predicting the Pathogenicity of Rare Missense Variants.",
+        "vol": "99",
+        "year": "2016"
+       },
+       {
+        "auths": [
+         "Jaganathan K",
+         "Kyriazopoulou Panagiotopoulou S",
+         "et al."
+        ],
+        "doiStr": "10.1016/j.cell.2018.12.015",
+        "id": "30661751",
+        "iss": "(3)",
+        "namespace": "pmid",
+        "pages": "p. 535-548.e24.",
+        "source": "Cell",
+        "title": "Predicting Splicing from Primary Sequence with Deep Learning.",
+        "vol": "176",
+        "year": "2019"
+       },
+       {
+        "auths": [
+         "Tavtigian SV",
+         "Greenblatt MS",
+         "et al."
+        ],
+        "doiStr": "10.1038/gim.2017.210",
+        "id": "29300386",
+        "iss": "(9)",
+        "namespace": "pmid",
+        "pages": "p. 1054-1060.",
+        "source": "Genet Med",
+        "title": "Modeling the ACMG/AMP variant classification guidelines as a Bayesian classification framework.",
+        "vol": "20",
+        "year": "2018"
+       },
+       {
+        "auths": [
+         "Tavtigian SV",
+         "Harrison SM",
+         "et al."
+        ],
+        "doiStr": "10.1002/humu.24088",
+        "id": "32720330",
+        "iss": "(10)",
+        "namespace": "pmid",
+        "pages": "p. 1734-1737.",
+        "source": "Hum Mutat",
+        "title": "Fitting a naturally scaled point system to the ACMG/AMP variant classification guidelines.",
+        "vol": "41",
+        "year": "2020"
+       },
+       {
+        "auths": [
+         "Alfares AA",
+         "Kelly MA",
+         "et al."
+        ],
+        "doiStr": "10.1038/gim.2014.205",
+        "id": "25611685",
+        "iss": "(11)",
+        "namespace": "pmid",
+        "pages": "p. 880-8.",
+        "source": "Genet Med",
+        "title": "Results of clinical genetic testing of 2,912 probands with hypertrophic cardiomyopathy: expanded panels offer limited additional sensitivity.",
+        "vol": "17",
+        "year": "2015"
+       }
+      ],
+      "rules": {
+       "mainRules": [
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": ">=2",
+           "label": "Rule5, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          }
+         ],
+         "inference": "Pathogenic",
+         "rule": "Rule5"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule6, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": ">=3",
+           "label": "Rule6, Condition2",
+           "partitionPath": "Pathogenic.Moderate"
+          }
+         ],
+         "inference": "Pathogenic",
+         "rule": "Rule6"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule7, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==2",
+           "label": "Rule7, Condition2",
+           "partitionPath": "Pathogenic.Moderate"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Supporting",
+            "PS4_Supporting",
+            "PM2_Supporting",
+            "PM5_Supporting",
+            "PP1",
+            "PP3"
+           ],
+           "condition": ">=2",
+           "label": "Rule7, Condition3",
+           "partitionPath": "Pathogenic.Supporting"
+          }
+         ],
+         "inference": "Pathogenic",
+         "rule": "Rule7"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule8, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==1",
+           "label": "Rule8, Condition2",
+           "partitionPath": "Pathogenic.Moderate"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Supporting",
+            "PS4_Supporting",
+            "PM2_Supporting",
+            "PM5_Supporting",
+            "PP1",
+            "PP3"
+           ],
+           "condition": ">=4",
+           "label": "Rule8, Condition3",
+           "partitionPath": "Pathogenic.Supporting"
+          }
+         ],
+         "inference": "Pathogenic",
+         "rule": "Rule8"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule11, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==1",
+           "label": "Rule11, Condition2",
+           "partitionPath": "Pathogenic.Moderate"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule11"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule12, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Supporting",
+            "PS4_Supporting",
+            "PM2_Supporting",
+            "PM5_Supporting",
+            "PP1",
+            "PP3"
+           ],
+           "condition": ">=2",
+           "label": "Rule12, Condition2",
+           "partitionPath": "Pathogenic.Supporting"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule12"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": ">=3",
+           "label": "Rule13, Condition1",
+           "partitionPath": "Pathogenic.Moderate"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule13"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==2",
+           "label": "Rule14, Condition1",
+           "partitionPath": "Pathogenic.Moderate"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Supporting",
+            "PS4_Supporting",
+            "PM2_Supporting",
+            "PM5_Supporting",
+            "PP1",
+            "PP3"
+           ],
+           "condition": ">=2",
+           "label": "Rule14, Condition2",
+           "partitionPath": "Pathogenic.Supporting"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule14"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==1",
+           "label": "Rule15, Condition1",
+           "partitionPath": "Pathogenic.Moderate"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Supporting",
+            "PS4_Supporting",
+            "PM2_Supporting",
+            "PM5_Supporting",
+            "PP1",
+            "PP3"
+           ],
+           "condition": ">=4",
+           "label": "Rule15, Condition2",
+           "partitionPath": "Pathogenic.Supporting"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule15"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "PS1",
+            "PS2",
+            "PS3",
+            "PS4",
+            "PP1_Strong"
+           ],
+           "condition": "==1",
+           "label": "Rule20, Condition1",
+           "partitionPath": "Pathogenic.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "PS3_Moderate",
+            "PS4_Moderate",
+            "PM4",
+            "PM5",
+            "PM6",
+            "PP1_Moderate"
+           ],
+           "condition": "==2",
+           "label": "Rule20, Condition2",
+           "partitionPath": "Pathogenic.Moderate"
+          }
+         ],
+         "inference": "Likely Pathogenic",
+         "rule": "Rule20"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "BS1",
+            "BS3",
+            "BS4"
+           ],
+           "condition": ">=2",
+           "label": "Rule16, Condition1",
+           "partitionPath": "Benign.Strong"
+          }
+         ],
+         "inference": "Benign",
+         "rule": "Rule16"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "BA1"
+           ],
+           "condition": "==1",
+           "label": "Rule17, Condition1",
+           "partitionPath": "Benign.Stand Alone"
+          }
+         ],
+         "inference": "Benign",
+         "rule": "Rule17"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "BS1",
+            "BS3",
+            "BS4"
+           ],
+           "condition": "==1",
+           "label": "Rule18, Condition1",
+           "partitionPath": "Benign.Strong"
+          },
+          {
+           "applicableCriteriaCodes": [
+            "BS3_Supporting",
+            "BP2",
+            "BP4",
+            "BP7"
+           ],
+           "condition": "==1",
+           "label": "Rule18, Condition2",
+           "partitionPath": "Benign.Supporting"
+          }
+         ],
+         "inference": "Likely Benign",
+         "rule": "Rule18"
+        },
+        {
+         "conditions": [
+          {
+           "applicableCriteriaCodes": [
+            "BS3_Supporting",
+            "BP2",
+            "BP4",
+            "BP7"
+           ],
+           "condition": ">=2",
+           "label": "Rule19, Condition1",
+           "partitionPath": "Benign.Supporting"
+          }
+         ],
+         "inference": "Likely Benign",
+         "rule": "Rule19"
+        }
+       ]
+      }
+     },
+     "entType": "RuleSet",
+     "ldhId": "1535829283",
+     "ldhIri": "https://cspec.genome.network/cspec/RuleSet/id/1535829283",
+     "modified": "2024-04-22T15:45:39.102Z",
+     "modifier": "makelly2",
+     "rev": "_inf5BHS--A"
+    }
+   ]
+  },
+  "ldFor": {
+   "Organization": [
+    {
+     "entContent": {
+      "approval": {
+       "step1": {
+        "approved": true
+       },
+       "step2": {
+        "approved": true
+       },
+       "step3": {
+        "approved": true
+       },
+       "step4": {
+        "approvalDate": "2017-04-29T00:00:00.000Z",
+        "approved": true
+       }
+      },
+      "curationActivity": "Variant Pathogenicity",
+      "fullBaseName": "Cardiomyopathy",
+      "shortBaseName": "CMP",
+      "shortTitle": "Cardiomyopathy VCEP",
+      "title": "Cardiomyopathy Variant Curation Expert Panel",
+      "type": "Variant Curation Expert Panel"
+     },
+     "entId": "50002",
+     "entIri": "http://clinicalgenome.org/affiliation/50002",
+     "entType": "Organization",
+     "ldhId": "135637627",
+     "ldhIri": "https://cspec.genome.network/cspec/Organization/id/135637627",
+     "modified": "2023-04-07T14:55:06.014Z",
+     "modifier": "cspecAdministrator",
+     "rev": "_inf5B-2---"
+    }
+   ],
+   "SequenceVariantInterpretation": [
+    {
+     "entContent": {
+      "approvedOn": "03-05-2015",
+      "description": "ACMG ISV guidelines 2015",
+      "namespace": "GN001",
+      "notes": "",
+      "references": [
+       {
+        "source": "PubMed",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/25741868"
+       }
+      ],
+      "shortTitle": "ACMG 2015-Guidelines",
+      "specificationSource": "https://www.acmg.net/docs/Standards_Guidelines_for_the_Interpretation_of_Sequence_Variants.pdf",
+      "tagNameSpaces": [
+       "001"
+      ],
+      "title": "Standards and guidelines for the interpretation of sequence variants: a joint consensus recommendation of the American College of Medical Genetics and Genomics and the Association for Molecular Pathology",
+      "version": "1.0.0"
+     },
+     "entId": "GN001",
+     "entType": "SequenceVariantInterpretation",
+     "ldhId": "135637585",
+     "ldhIri": "https://cspec.genome.network/cspec/SequenceVariantInterpretation/id/135637585",
+     "modified": "2022-08-18T15:51:43.074Z",
+     "modifier": "cspecAdministrator",
+     "rev": "_inf5BXe---"
+    }
+   ]
+  },
+  "ldhId": "1535829270",
+  "ldhIri": "https://cspec.genome.network/cspec/SequenceVariantInterpretation/id/1535829270",
+  "modified": "2026-07-20T17:44:35.607Z",
+  "modifier": "cspecAdministrator",
+  "rev": "_l2AfKgG---"
+ }
+}

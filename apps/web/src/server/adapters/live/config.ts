@@ -131,6 +131,6 @@ export function loadGcsConfig(env: EnvLike = process.env): GcsConfig {
 export function loadEvidenceConfig(env: EnvLike = process.env): EvidenceConfig {
   return {
     evidenceUrl: required(env, "THEMIS_EVIDENCE_URL"),
-    corpusBucket: required(env, "THEMIS_EVIDENCE_CORPUS_BUCKET"),
+    corpusBucket: required(env, "THEMIS_FULLTEXT_BUCKET"),
   };
 }

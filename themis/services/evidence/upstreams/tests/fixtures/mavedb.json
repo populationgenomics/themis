@@ -1,0 +1,2266 @@
+{
+ "clingen_allele_id": "PA3057692902",
+ "expected_score": 0.053432303,
+ "lookup": [
+  {
+   "clingenAlleleId": "PA3057692902",
+   "equivalentAa": [],
+   "equivalentNt": [],
+   "exactMatch": {
+    "clingenAlleleId": "PA3057692902",
+    "variantEffectMeasurements": [
+     {
+      "data": {
+       "count_data": {},
+       "score_data": {
+        "control_rep1_score": -0.098159951,
+        "control_rep2_score": -0.157513187,
+        "control_rep3_score": -0.817504484,
+        "control_rep4_score": -0.393856028,
+        "control_score": -0.36675841225,
+        "control_std": 0.32651442012729,
+        "control_var": 0.10661166655106,
+        "rep1_score": -0.101466485,
+        "rep2_score": -0.119660447,
+        "rep3_score": -0.21569714,
+        "rep4_score": -0.64759566,
+        "score": -0.271104933,
+        "std": 0.255947863455152,
+        "var": 0.0655093088072574
+       }
+      },
+      "hgvsNt": null,
+      "hgvsPro": "p.Thr5His",
+      "scoreSet": {
+       "numVariants": 1427,
+       "publishedDate": "2025-10-21",
+       "targetGenes": [
+        {
+         "mappedHgncName": "BRCA1",
+         "name": "BRCA1"
+        }
+       ],
+       "urn": "urn:mavedb:00001222-a-2"
+      },
+      "urn": "urn:mavedb:00001222-a-2#47"
+     },
+     {
+      "data": {
+       "count_data": {},
+       "score_data": {
+        "control_rep1_score": -0.487802104,
+        "control_rep2_score": 0.166989134,
+        "control_rep3_score": 0.12224547,
+        "control_rep4_score": 0.065470558,
+        "control_score": -0.03327423575,
+        "control_std": 0.305852858658544,
+        "control_var": 0.0935459711496037,
+        "rep1_score": -0.030578834,
+        "rep2_score": 0.131139554,
+        "rep3_score": 0.541302811,
+        "rep4_score": -0.428134319,
+        "score": 0.053432303,
+        "std": 0.401256498181515,
+        "var": 0.161006777332892
+       }
+      },
+      "hgvsNt": null,
+      "hgvsPro": "p.Thr101His",
+      "scoreSet": {
+       "numVariants": 2271,
+       "publishedDate": "2025-10-22",
+       "targetGenes": [
+        {
+         "mappedHgncName": "BRCA1",
+         "name": "BRCA1"
+        }
+       ],
+       "urn": "urn:mavedb:00001222-b-2"
+      },
+      "urn": "urn:mavedb:00001222-b-2#846"
+     },
+     {
+      "data": {
+       "count_data": {},
+       "score_data": {
+        "score": -0.271104933
+       }
+      },
+      "hgvsNt": null,
+      "hgvsPro": "p.Thr5His",
+      "scoreSet": {
+       "numVariants": 1427,
+       "publishedDate": "2025-05-08",
+       "targetGenes": [
+        {
+         "mappedHgncName": null,
+         "name": "BRCA1"
+        }
+       ],
+       "urn": "urn:mavedb:00001222-a-1"
+      },
+      "urn": "urn:mavedb:00001222-a-1#47"
+     },
+     {
+      "data": {
+       "count_data": {},
+       "score_data": {
+        "score": 0.053432303
+       }
+      },
+      "hgvsNt": null,
+      "hgvsPro": "p.Thr101His",
+      "scoreSet": {
+       "numVariants": 2271,
+       "publishedDate": "2025-05-08",
+       "targetGenes": [
+        {
+         "mappedHgncName": null,
+         "name": "BRCA1"
+        }
+       ],
+       "urn": "urn:mavedb:00001222-b-1"
+      },
+      "urn": "urn:mavedb:00001222-b-1#846"
+     }
+    ]
+   }
+  }
+ ],
+ "variants": {
+  "urn:mavedb:00001222-a-1#47": {
+   "data": {
+    "count_data": {},
+    "score_data": {
+     "score": -0.271104933
+    }
+   },
+   "hgvsPro": "p.Thr5His",
+   "scoreSet": {
+    "numVariants": 1427,
+    "publishedDate": "2025-05-08",
+    "scoreCalibrations": [
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 108,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.078,
+        "range": [
+         -0.503,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 881
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 109,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 12.1,
+        "range": [
+         null,
+         -0.729
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 404
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 110,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.729,
+         -0.503
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 142
+       }
+      ],
+      "id": 679,
+      "investigatorProvided": true,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "primary": true,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4242,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "Investigator-provided functional classes",
+      "urn": "urn:mavedb:calibration-6f485904-6085-4576-af87-f3943ba678c5"
+     },
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 114,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.1082251082,
+        "range": [
+         -0.503,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 881
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 115,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 9.821428571,
+        "range": [
+         null,
+         -0.729
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 404
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 116,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.729,
+         -0.503
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 142
+       }
+      ],
+      "id": 681,
+      "investigatorProvided": false,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "primary": false,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4242,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "IGVF Coding Variant Focus Group -- Controls: Missense Variants Only",
+      "urn": "urn:mavedb:calibration-caba2f89-9b8d-431b-8e9a-98d9dfbb485f"
+     }
+    ],
+    "urn": "urn:mavedb:00001222-a-1"
+   },
+   "urn": "urn:mavedb:00001222-a-1#47"
+  },
+  "urn:mavedb:00001222-a-2#47": {
+   "data": {
+    "count_data": {},
+    "score_data": {
+     "control_rep1_score": -0.098159951,
+     "control_rep2_score": -0.157513187,
+     "control_rep3_score": -0.817504484,
+     "control_rep4_score": -0.393856028,
+     "control_score": -0.36675841225,
+     "control_std": 0.32651442012729,
+     "control_var": 0.10661166655106,
+     "rep1_score": -0.101466485,
+     "rep2_score": -0.119660447,
+     "rep3_score": -0.21569714,
+     "rep4_score": -0.64759566,
+     "score": -0.271104933,
+     "std": 0.255947863455152,
+     "var": 0.0655093088072574
+    }
+   },
+   "hgvsPro": "p.Thr5His",
+   "scoreSet": {
+    "numVariants": 1427,
+    "publishedDate": "2025-10-21",
+    "scoreCalibrations": [
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [],
+      "functionalClassifications": [
+       {
+        "functionalClassification": "not_specified",
+        "id": 162,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.729,
+         -0.503
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 142
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 161,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 9.3103,
+        "range": [
+         null,
+         -0.729
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 404
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 160,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.0383,
+        "range": [
+         -0.503,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 881
+       }
+      ],
+      "id": 684,
+      "investigatorProvided": false,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "primary": true,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4362,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "IGVF Coding Variant Focus Group -- Controls: All Variants",
+      "urn": "urn:mavedb:calibration-a6a9713a-01f6-4c2b-8d62-3ca8e5dec884"
+     },
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 111,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.078,
+        "range": [
+         -0.503,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 881
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 112,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 12.1,
+        "range": [
+         null,
+         -0.729
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 404
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 113,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.729,
+         -0.503
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 142
+       }
+      ],
+      "id": 680,
+      "investigatorProvided": true,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "primary": false,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4362,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "Investigator-provided functional classes",
+      "urn": "urn:mavedb:calibration-11a2e319-d125-4c70-92fa-cc4fd738770f"
+     }
+    ],
+    "urn": "urn:mavedb:00001222-a-2"
+   },
+   "urn": "urn:mavedb:00001222-a-2#47"
+  },
+  "urn:mavedb:00001222-b-1#846": {
+   "data": {
+    "count_data": {},
+    "score_data": {
+     "score": 0.053432303
+    }
+   },
+   "hgvsPro": "p.Thr101His",
+   "scoreSet": {
+    "numVariants": 2271,
+    "publishedDate": "2025-05-08",
+    "scoreCalibrations": [
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 163,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.023,
+        "range": [
+         -0.233,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 1327
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 164,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 7.4,
+        "range": [
+         null,
+         -0.562
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 546
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 165,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.562,
+         -0.233
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 398
+       }
+      ],
+      "id": 685,
+      "investigatorProvided": true,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "primary": true,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4243,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "Investigator-provided functional classes",
+      "urn": "urn:mavedb:calibration-66f16b1d-0d10-4140-8e36-38f2d298629d"
+     },
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 169,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.031830239,
+        "range": [
+         -0.233,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 1327
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 170,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 32.30769231,
+        "range": [
+         null,
+         -0.562
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 546
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 171,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.562,
+         -0.233
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 398
+       }
+      ],
+      "id": 687,
+      "investigatorProvided": false,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "primary": false,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4243,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "IGVF Coding Variant Focus Group -- Controls: Missense Variants Only",
+      "urn": "urn:mavedb:calibration-9bae35c4-c50c-4e7f-8c95-fe2dd0e576d2"
+     }
+    ],
+    "urn": "urn:mavedb:00001222-b-1"
+   },
+   "urn": "urn:mavedb:00001222-b-1#846"
+  },
+  "urn:mavedb:00001222-b-2#846": {
+   "data": {
+    "count_data": {},
+    "score_data": {
+     "control_rep1_score": -0.487802104,
+     "control_rep2_score": 0.166989134,
+     "control_rep3_score": 0.12224547,
+     "control_rep4_score": 0.065470558,
+     "control_score": -0.03327423575,
+     "control_std": 0.305852858658544,
+     "control_var": 0.0935459711496037,
+     "rep1_score": -0.030578834,
+     "rep2_score": 0.131139554,
+     "rep3_score": 0.541302811,
+     "rep4_score": -0.428134319,
+     "score": 0.053432303,
+     "std": 0.401256498181515,
+     "var": 0.161006777332892
+    }
+   },
+   "hgvsPro": "p.Thr101His",
+   "scoreSet": {
+    "numVariants": 2271,
+    "publishedDate": "2025-10-22",
+    "scoreCalibrations": [
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [],
+      "functionalClassifications": [
+       {
+        "functionalClassification": "not_specified",
+        "id": 180,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.562,
+         -0.233
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 398
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 178,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.0381,
+        "range": [
+         -0.233,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 1327
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 179,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 11.7419,
+        "range": [
+         null,
+         -0.562
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 546
+       }
+      ],
+      "id": 690,
+      "investigatorProvided": false,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "orcidId": "AnonymousUser",
+       "recordType": "User"
+      },
+      "primary": true,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4363,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "IGVF Coding Variant Focus Group -- Controls: All Variants",
+      "urn": "urn:mavedb:calibration-6a913e98-454b-4ee0-8252-fb3a883d596e"
+     },
+     {
+      "baselineScore": 0.0,
+      "baselineScoreDescription": "baseline is 0 by definition because it was calculated using Enrich2's default ratio method",
+      "createdBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "creationDate": "2025-11-14",
+      "evidenceSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "functionalClassifications": [
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "BS3",
+         "evidenceStrength": "STRONG",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "normal",
+        "id": 166,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "Functional",
+        "oddspathsRatio": 0.023,
+        "range": [
+         -0.233,
+         null
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 1327
+       },
+       {
+        "acmgClassification": {
+         "creationDate": "2026-02-06",
+         "criterion": "PS3",
+         "evidenceStrength": "MODERATE",
+         "modificationDate": "2026-02-06",
+         "recordType": "ACMGClassification"
+        },
+        "functionalClassification": "abnormal",
+        "id": 167,
+        "inclusiveLowerBound": false,
+        "inclusiveUpperBound": false,
+        "label": "LOF",
+        "oddspathsRatio": 7.4,
+        "range": [
+         null,
+         -0.562
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 546
+       },
+       {
+        "functionalClassification": "not_specified",
+        "id": 168,
+        "inclusiveLowerBound": true,
+        "inclusiveUpperBound": true,
+        "label": "Intermediate",
+        "range": [
+         -0.562,
+         -0.233
+        ],
+        "recordType": "FunctionalClassification",
+        "variantCount": 398
+       }
+      ],
+      "id": 686,
+      "investigatorProvided": true,
+      "methodSources": [
+       {
+        "abstract": "The American College of Medical Genetics and Genomics (ACMG)/Association for Molecular Pathology (AMP) clinical variant interpretation guidelines established criteria for different types of evidence. This includes the strong evidence codes PS3 and BS3 for \"well-established\" functional assays demonstrating a variant has abnormal or normal gene/protein function, respectively. However, they did not provide detailed guidance on how functional evidence should be evaluated, and differences in the application of the PS3/BS3 codes are a contributor to variant interpretation discordance between laboratories. This recommendation seeks to provide a more structured approach to the assessment of functional assays for variant interpretation and guidance on the use of various levels of strength based on assay validation. The Clinical Genome Resource (ClinGen) Sequence Variant Interpretation (SVI) Working Group used curated functional evidence from ClinGen Variant Curation Expert Panel-developed rule specifications and expert opinions to refine the PS3/BS3 criteria over multiple in-person and virtual meetings. We estimated the odds of pathogenicity for assays using various numbers of variant controls to determine the minimum controls required to reach moderate level evidence. Feedback from the ClinGen Steering Committee and outside experts were incorporated into the recommendations at multiple stages of development. The SVI Working Group developed recommendations for evaluators regarding the assessment of the clinical validity of functional data and a four-step provisional framework to determine the appropriate strength of evidence that can be applied in clinical variant interpretation. These steps are as follows: (1) define the disease mechanism, (2) evaluate the applicability of general classes of assays used in the field, (3) evaluate the validity of specific instances of assays, and (4) apply evidence to individual variant interpretation. We found that a minimum of 11 total pathogenic and benign variant controls are required to reach moderate-level evidence in the absence of rigorous statistical analysis. The recommendations and approach to functional evidence evaluation described here should help clarify the clinical variant interpretation process for functional assays. Further, we hope that these recommendations will help develop productive partnerships with basic scientists who have developed functional assays that are useful for interrogating the function of a variety of genes.",
+        "authors": [
+         {
+          "name": "Brnich SE",
+          "primary": true
+         },
+         {
+          "name": "Abou Tayoun AN",
+          "primary": false
+         },
+         {
+          "name": "Couch FJ",
+          "primary": false
+         },
+         {
+          "name": "Cutting GR",
+          "primary": false
+         },
+         {
+          "name": "Greenblatt MS",
+          "primary": false
+         },
+         {
+          "name": "Heinen CD",
+          "primary": false
+         },
+         {
+          "name": "Kanavy DM",
+          "primary": false
+         },
+         {
+          "name": "Luo X",
+          "primary": false
+         },
+         {
+          "name": "McNulty SM",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Tavtigian SV",
+          "primary": false
+         },
+         {
+          "name": "Wright MW",
+          "primary": false
+         },
+         {
+          "name": "Harrison SM",
+          "primary": false
+         },
+         {
+          "name": "Biesecker LG",
+          "primary": false
+         },
+         {
+          "name": "Berg JS",
+          "primary": false
+         },
+         {
+          "name": "Clinical Genome Resource Sequence Variant Interpretation Working Group",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1186/s13073-019-0690-2",
+        "id": 150,
+        "identifier": "31892348",
+        "publicationJournal": "Genome Med",
+        "publicationYear": 2019,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Brnich SE, <i>et al</i>. Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework. Genome Med. 2019; 12:3. 10.1186/s13073-019-0690-2",
+        "title": "Recommendations for application of the functional evidence PS3/BS3 criterion using the ACMG/AMP sequence variant interpretation framework.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/31892348"
+       }
+      ],
+      "modificationDate": "2025-11-14",
+      "modifiedBy": {
+       "firstName": "Jeremy",
+       "lastName": "Stone",
+       "orcidId": "0000-0002-7565-2463",
+       "recordType": "User"
+      },
+      "primary": false,
+      "private": false,
+      "recordType": "ScoreCalibration",
+      "researchUseOnly": false,
+      "scoreSetId": 4363,
+      "thresholdSources": [
+       {
+        "abstract": "Pathogenic variants in BRCA1 are associated with a greatly increased risk of hereditary breast and ovarian cancer (HBOC). With the increased availability and affordability of genetic testing, many individuals have been identified with BRCA1 variants of uncertain significance (VUSs), which are individually detected in the population too infrequently to ascertain a clinical risk. Functional assays can be used to experimentally assess the effects of these variants. In this study, we used multiplexed DNA repair assays of variants in the BRCA1 carboxyl terminus to functionally characterize 2,271 variants for homology-directed repair function (HDR) and 1,427 variants for cisplatin resistance (CR). We found a high level of consistent results (Pearson's r = 0.74) in the two multiplexed functional assays with non-functional variants located within regions of the BRCA1 protein necessary for its tumor suppression activity. In addition, functional categorizations of variants tested in the multiplex HDR and CR assays correlated with known clinical significance and with other functional assays for BRCA1 (Pearson's r = 0.53 to 0.71). The results of the multiplex HDR and CR assays are useful resources for characterizing large numbers of BRCA1 VUSs.",
+        "authors": [
+         {
+          "name": "Adamovich AI",
+          "primary": true
+         },
+         {
+          "name": "Diabate M",
+          "primary": false
+         },
+         {
+          "name": "Banerjee T",
+          "primary": false
+         },
+         {
+          "name": "Nagy G",
+          "primary": false
+         },
+         {
+          "name": "Smith N",
+          "primary": false
+         },
+         {
+          "name": "Duncan K",
+          "primary": false
+         },
+         {
+          "name": "Mendoza Mendoza E",
+          "primary": false
+         },
+         {
+          "name": "Prida G",
+          "primary": false
+         },
+         {
+          "name": "Freitas MA",
+          "primary": false
+         },
+         {
+          "name": "Starita LM",
+          "primary": false
+         },
+         {
+          "name": "Parvin JD",
+          "primary": false
+         }
+        ],
+        "dbName": "PubMed",
+        "doi": "10.1016/j.ajhg.2022.01.019",
+        "id": 112,
+        "identifier": "35196514",
+        "publicationJournal": "Am J Hum Genet",
+        "publicationYear": 2022,
+        "recordType": "PublicationIdentifier",
+        "referenceHtml": "Adamovich AI, <i>et al</i>. The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays. Am J Hum Genet. 2022; 109:618-630. 10.1016/j.ajhg.2022.01.019",
+        "title": "The functional impact of BRCA1 BRCT domain variants using multiplexed DNA double-strand break repair assays.",
+        "url": "http://www.ncbi.nlm.nih.gov/pubmed/35196514"
+       }
+      ],
+      "title": "Investigator-provided functional classes",
+      "urn": "urn:mavedb:calibration-96031bf5-622a-4452-9fc2-d126eac1ad33"
+     }
+    ],
+    "urn": "urn:mavedb:00001222-b-2"
+   },
+   "urn": "urn:mavedb:00001222-b-2#846"
+  }
+ }
+}

@@ -2,9 +2,10 @@
 
 ``THEMIS_LITERATURE_BACKEND`` selects the adapter (required — no silent default): ``fixture``
 (in-memory, seeded from ``THEMIS_LITERATURE_FIXTURE``) or ``live`` (the litcache-reading backend over
-``THEMIS_LITERATURE_FULLTEXT_BUCKET``, plus the Cloud SQL crosswalk named by the three
-``THEMIS_LITERATURE_CROSSWALK_*`` vars). Every value this interface reads is its own; no other
-interface of the evidence image shares one.
+``THEMIS_FULLTEXT_BUCKET``, plus the Cloud SQL crosswalk named by the three
+``THEMIS_LITERATURE_CROSSWALK_*`` vars). The full-text store is one bucket that several services read,
+so it travels under one name rather than an interface-scoped one; every ``THEMIS_LITERATURE_*`` value
+below it is this interface's alone.
 
 The crosswalk vars are all-or-nothing: set together they wire external-id resolution, unset together
 they leave it off and ``MaybeIngestPapers`` answers UNAVAILABLE. A partial set is a ``SystemExit`` —
@@ -30,7 +31,7 @@ from themis.services.evidence.literature import litcache as litcache_backend
 
 _BACKEND_VAR = 'THEMIS_LITERATURE_BACKEND'
 _FIXTURE_VAR = 'THEMIS_LITERATURE_FIXTURE'
-_BUCKET_VAR = 'THEMIS_LITERATURE_FULLTEXT_BUCKET'
+_BUCKET_VAR = 'THEMIS_FULLTEXT_BUCKET'
 _CROSSWALK_INSTANCE_VAR = 'THEMIS_LITERATURE_CROSSWALK_INSTANCE'
 _CROSSWALK_DATABASE_VAR = 'THEMIS_LITERATURE_CROSSWALK_DATABASE'
 _CROSSWALK_DB_USER_VAR = 'THEMIS_LITERATURE_CROSSWALK_DB_USER'
@@ -62,7 +63,7 @@ def backend_from_env(stack: contextlib.AsyncExitStack) -> literature_backend.Lit
 
 
 def _litcache_backend_from_env(stack: contextlib.AsyncExitStack) -> litcache_backend.LitcacheBackend:
-    """Build the litcache-reading backend over the ``THEMIS_LITERATURE_FULLTEXT_BUCKET`` GCS bucket."""
+    """Build the litcache-reading backend over the ``THEMIS_FULLTEXT_BUCKET`` GCS bucket."""
     bucket_name = os.environ.get(_BUCKET_VAR)
     if not bucket_name:
         raise SystemExit(f'{_BUCKET_VAR} is required for the live backend (the litcache bucket)')

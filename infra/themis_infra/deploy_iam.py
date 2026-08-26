@@ -24,6 +24,7 @@ import pulumi_gcp as gcp
 # Roles the deploy SA needs to create/manage the program's resources.
 _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/artifactregistry.admin',
+    'roles/cloudscheduler.admin',
     'roles/cloudsql.admin',
     'roles/cloudtasks.queueAdmin',
     'roles/compute.admin',

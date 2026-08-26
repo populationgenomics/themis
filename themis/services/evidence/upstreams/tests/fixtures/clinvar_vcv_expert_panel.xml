@@ -1,0 +1,469 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ClinVarResult-Set><VariationArchive VariationID="576" VariationName="NM_000277.3(PAH):c.1315+1G&gt;A" VariationType="single nucleotide variant" Accession="VCV000000576" Version="158" RecordType="classified" NumberOfSubmissions="41" NumberOfSubmitters="40" DateLastUpdated="2026-06-20" DateCreated="2014-03-19" MostRecentSubmission="2026-06-20">
+  <RecordStatus>current</RecordStatus>
+  <Species>Homo sapiens</Species>
+  <ClassifiedRecord>
+    <SimpleAllele AlleleID="15615" VariationID="576">
+      <GeneList>
+        <Gene Symbol="PAH" FullName="phenylalanine hydroxylase" GeneID="5053" HGNC_ID="HGNC:8582" Source="submitted" RelationshipType="within single gene">
+          <Location>
+            <CytogeneticLocation>12q23.2</CytogeneticLocation>
+            <SequenceLocation Assembly="GRCh38" AssemblyAccessionVersion="GCF_000001405.38" AssemblyStatus="current" Chr="12" Accession="NC_000012.12" start="102836889" stop="102958441" display_start="102836889" display_stop="102958441" Strand="-" />
+            <SequenceLocation Assembly="GRCh37" AssemblyAccessionVersion="GCF_000001405.25" AssemblyStatus="previous" Chr="12" Accession="NC_000012.11" start="103232103" stop="103311380" display_start="103232103" display_stop="103311380" Strand="-" />
+          </Location>
+          <OMIM>612349</OMIM>
+          <Haploinsufficiency last_evaluated="2014-08-28" ClinGen="https://www.ncbi.nlm.nih.gov/projects/dbvar/ISCA/isca_gene.cgi?sym=PAH">Gene associated with autosomal recessive phenotype</Haploinsufficiency>
+          <Triplosensitivity last_evaluated="2014-08-28" ClinGen="https://www.ncbi.nlm.nih.gov/projects/dbvar/ISCA/isca_gene.cgi?sym=PAH">No evidence available</Triplosensitivity>
+        </Gene>
+      </GeneList>
+      <Name>NM_000277.3(PAH):c.1315+1G&gt;A</Name>
+      <CanonicalSPDI>NC_000012.12:102840398:C:T</CanonicalSPDI>
+      <VariantType>single nucleotide variant</VariantType>
+      <Location>
+        <CytogeneticLocation>12q23.2</CytogeneticLocation>
+        <SequenceLocation Assembly="GRCh38" AssemblyAccessionVersion="GCF_000001405.38" forDisplay="true" AssemblyStatus="current" Chr="12" Accession="NC_000012.12" start="102840399" stop="102840399" display_start="102840399" display_stop="102840399" variantLength="1" positionVCF="102840399" referenceAlleleVCF="C" alternateAlleleVCF="T" />
+        <SequenceLocation Assembly="GRCh37" AssemblyAccessionVersion="GCF_000001405.25" AssemblyStatus="previous" Chr="12" Accession="NC_000012.11" start="103234177" stop="103234177" display_start="103234177" display_stop="103234177" variantLength="1" positionVCF="103234177" referenceAlleleVCF="C" alternateAlleleVCF="T" />
+      </Location>
+      <OtherNameList>
+        <Name>NM_000277.2(PAH):c.1315+1G&gt;A</Name>
+        <Name>IVS12+1G&gt;A</Name>
+        <Name>IVS12DS, G-A, +1</Name>
+      </OtherNameList>
+      <HGVSlist>
+        <HGVS Assembly="GRCh37" Type="genomic, top-level">
+          <NucleotideExpression sequenceAccessionVersion="NC_000012.11" sequenceAccession="NC_000012" sequenceVersion="11" change="g.103234177C&gt;T" Assembly="GRCh37">
+            <Expression>NC_000012.11:g.103234177C&gt;T</Expression>
+          </NucleotideExpression>
+        </HGVS>
+        <HGVS Assembly="GRCh38" Type="genomic, top-level">
+          <NucleotideExpression sequenceAccessionVersion="NC_000012.12" sequenceAccession="NC_000012" sequenceVersion="12" change="g.102840399C&gt;T" Assembly="GRCh38">
+            <Expression>NC_000012.12:g.102840399C&gt;T</Expression>
+          </NucleotideExpression>
+        </HGVS>
+        <HGVS Type="genomic">
+          <NucleotideExpression sequenceAccessionVersion="NG_008690.2" sequenceAccession="NG_008690" sequenceVersion="2" change="g.123012G&gt;A">
+            <Expression>NG_008690.2:g.123012G&gt;A</Expression>
+          </NucleotideExpression>
+        </HGVS>
+        <HGVS Type="coding">
+          <NucleotideExpression sequenceAccessionVersion="NM_001354304.2" sequenceAccession="NM_001354304" sequenceVersion="2" change="c.1315+1G&gt;A">
+            <Expression>NM_001354304.2:c.1315+1G&gt;A</Expression>
+          </NucleotideExpression>
+          <MolecularConsequence ID="SO:0001575" Type="splice donor variant" DB="SO" />
+        </HGVS>
+        <HGVS Type="coding">
+          <NucleotideExpression sequenceAccessionVersion="NM_000277.3" sequenceAccession="NM_000277" sequenceVersion="3" change="c.1315+1G&gt;A" MANESelect="true">
+            <Expression>NM_000277.3:c.1315+1G&gt;A</Expression>
+          </NucleotideExpression>
+          <MolecularConsequence ID="SO:0001575" Type="splice donor variant" DB="SO" />
+        </HGVS>
+        <HGVS Type="coding">
+          <NucleotideExpression sequenceAccessionVersion="NM_000277.2" sequenceAccession="NM_000277" sequenceVersion="2" change="c.1315+1G&gt;A">
+            <Expression>NM_000277.2:c.1315+1G&gt;A</Expression>
+          </NucleotideExpression>
+        </HGVS>
+      </HGVSlist>
+      <XRefList>
+        <XRef ID="CA251522" DB="ClinGen" />
+        <XRef Type="Allelic variant" ID="612349.0001" DB="OMIM" />
+        <XRef Type="rs" ID="5030861" DB="dbSNP" />
+      </XRefList>
+      <AlleleFrequencyList>
+        <AlleleFrequency Value="0.00035" Source="Exome Aggregation Consortium (ExAC)" />
+        <AlleleFrequency Value="0.00038" Source="The Genome Aggregation Database (gnomAD)" />
+        <AlleleFrequency Value="0.00040" Source="The Genome Aggregation Database (gnomAD)" />
+        <AlleleFrequency Value="0.00040" Source="The Genome Aggregation Database (gnomAD), exomes" />
+        <AlleleFrequency Value="0.00051" Source="Trans-Omics for Precision Medicine (TOPMed)" />
+        <AlleleFrequency Value="0.00077" Source="NHLBI Exome Sequencing Project (ESP) Exome Variant Server" />
+        <AlleleFrequency Value="0.00103" Source="The Genome Aggregation Database (gnomAD), exomes" />
+      </AlleleFrequencyList>
+    </SimpleAllele>
+    <RCVList>
+      <RCVAccession Title="NM_000277.3(PAH):c.1315+1G&gt;A AND Phenylketonuria" Accession="RCV000000606" Version="118">
+        <ClassifiedConditionList TraitSetID="159">
+          <ClassifiedCondition DB="MedGen" ID="C0031485">Phenylketonuria</ClassifiedCondition>
+        </ClassifiedConditionList>
+        <RCVClassifications>
+          <GermlineClassification>
+            <ReviewStatus>reviewed by expert panel</ReviewStatus>
+            <Description DateLastEvaluated="2018-08-05" SubmissionCount="25">Pathogenic</Description>
+          </GermlineClassification>
+        </RCVClassifications>
+      </RCVAccession>
+    </RCVList>
+    <Classifications>
+      <GermlineClassification DateLastEvaluated="2018-08-05" NumberOfSubmissions="39" NumberOfSubmitters="39" DateCreated="2014-03-19" MostRecentSubmission="2026-06-20">
+        <ReviewStatus>reviewed by expert panel</ReviewStatus>
+        <Description>Pathogenic</Description>
+        <Explanation DataSource="ClinVar" Type="public">Pathogenic (1)</Explanation>
+        <Citation Type="general">
+          <ID Source="PubMed">12655544</ID>
+        </Citation>
+        <Citation Type="general">
+          <ID Source="PubMed">17935162</ID>
+        </Citation>
+        <Citation Type="general">
+          <URL>http://www.egl-eurofins.com/emvclass/emvclass.php?approved_symbol=PAH</URL>
+        </Citation>
+        <Citation Type="general">
+          <URL>http://www.pahdb.mcgill.ca/</URL>
+        </Citation>
+        <Citation Type="general">
+          <URL>https://erepo.clinicalgenome.org/evrepo/ui/interpretation/a0e84b26-03d1-42c0-a937-859d45d287e0</URL>
+        </Citation>
+        <ConditionList>
+          <TraitSet ID="89067" Type="Disease" ContributesToAggregateClassification="false">
+            <Trait ID="71043" Type="Disease">
+              <Name>
+                <ElementValue Type="Alternate">PAH-related condition</ElementValue>
+              </Name>
+              <Name>
+                <ElementValue Type="Preferred">PAH-related disorder</ElementValue>
+              </Name>
+            </Trait>
+          </TraitSet>
+          <TraitSet ID="25797" Type="Disease" ContributesToAggregateClassification="false">
+            <Trait ID="32761" Type="Disease">
+              <Name>
+                <ElementValue Type="Preferred">Inborn genetic diseases</ElementValue>
+              </Name>
+              <Citation Type="general" Abbrev="Langer et al., 2012">
+                <ID Source="PubMed">22947299</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="SACHDNC, 2013">
+                <ID Source="PubMed">23037933</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="EASAC/FEAM, 2013">
+                <ID Source="PubMed">23169492</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ESHG/P3G/HUGO/PHGF, 2015">
+                <ID Source="PubMed">25626707</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="Alpha-1 Foundation, 2014">
+                <ID Source="PubMed">24121147</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="NBSTRN, 2015">
+                <ID Source="PubMed">24394680</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="EUNENBS, 2014">
+                <ID Source="PubMed">23652378</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="NSGC, 2014">
+                <ID Source="PubMed">23881473</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ACMG/ACOG/NSGC/PQF/SMFM, 2015">
+                <ID Source="PubMed">25730230</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="Skirton et al., 2014">
+                <ID Source="PubMed">24022298</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ACMG, 2013">
+                <ID Source="PubMed">23619275</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ACOG, 2019">
+                <ID Source="PubMed">31022120</ID>
+              </Citation>
+              <XRef ID="C0950123" DB="MedGen" />
+              <XRef ID="D030342" DB="MeSH" />
+            </Trait>
+          </TraitSet>
+          <TraitSet ID="9460" Type="Disease" ContributesToAggregateClassification="false">
+            <Trait ID="17556" Type="Disease">
+              <Name>
+                <ElementValue Type="Preferred">not provided</ElementValue>
+                <XRef ID="13DG0619" DB="Genomic Medicine Center of Excellence, King Faisal Specialist Hospital and Research Centre" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">none provided</ElementValue>
+              </Name>
+              <AttributeSet>
+                <Attribute Type="public definition">The term 'not provided' is registered in MedGen to support identification of submissions to ClinVar for which no condition was named when assessing the variant. 'not provided' differs from 'not specified', which is used when a variant is asserted to be benign, likely benign, or of uncertain significance for conditions that have not been specified.</Attribute>
+              </AttributeSet>
+              <XRef ID="C3661900" DB="MedGen" />
+            </Trait>
+          </TraitSet>
+          <TraitSet ID="2203" Type="Disease" ContributesToAggregateClassification="false">
+            <Trait ID="5766" Type="Disease">
+              <Name>
+                <ElementValue Type="Alternate">HANHART DWARFISM</ElementValue>
+                <XRef Type="MIM" ID="262600" DB="OMIM" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">ATELIOTIC DWARFISM WITH HYPOGONADISM</ElementValue>
+                <XRef Type="MIM" ID="262600" DB="OMIM" />
+              </Name>
+              <Name>
+                <ElementValue Type="Preferred">Pituitary hormone deficiency, combined, 2</ElementValue>
+                <XRef ID="MONDO:0009878" DB="MONDO" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">PITUITARY DWARFISM III</ElementValue>
+                <XRef Type="MIM" ID="262600" DB="OMIM" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">PROP1-Related Combined Pituitary Hormone Deficiency</ElementValue>
+                <XRef ID="NBK1347" DB="GeneReviews" />
+              </Name>
+              <Symbol>
+                <ElementValue Type="Alternate">CPHD2</ElementValue>
+                <XRef Type="MIM" ID="262600" DB="OMIM" />
+              </Symbol>
+              <AttributeSet>
+                <Attribute Type="public definition">PROP1-related combined pituitary hormone deficiency (CPHD) is associated with deficiencies of: growth hormone (GH); thyroid-stimulating hormone (TSH); the two gonadotropins, luteinizing hormone (LH) and follicle-stimulating hormone (FSH); prolactin (PrL); and occasionally adrenocorticotropic hormone (ACTH). At birth, in contrast to individuals with congenital CPHD of other etiologies, neonates with PROP1-related CPHD lack perinatal signs of hypopituitarism. Mean birth weights and lengths are usually within the normal range and neonatal hypoglycemia and prolonged neonatal jaundice are not prevalent findings. Most affected individuals are ascertained because of short stature during childhood. Although TSH deficiency can present shortly after birth, TSH deficiency usually occurs with or after the onset of GH deficiency. Hypothyroidism is usually mild. FSH and LH deficiencies are typically identified at the age of onset of puberty. Affected individuals can have absent or delayed and incomplete secondary sexual development with infertility. Untreated males usually have a small penis and small testes. Some females experience menarche but subsequently require hormone replacement therapy. ACTH deficiency is less common and, when present, usually occurs in adolescence or adulthood. Neuroimaging of hypothalamic-pituitary region usually demonstrates a hypoplastic or normal anterior pituitary lobe and a normal posterior pituitary lobe.</Attribute>
+                <XRef ID="NBK1347" DB="GeneReviews" />
+              </AttributeSet>
+              <AttributeSet>
+                <Attribute Type="GARD id" integerValue="15222" />
+                <XRef ID="15222" DB="Office of Rare Diseases" />
+              </AttributeSet>
+              <Citation Type="review" Abbrev="GeneReviews">
+                <ID Source="PubMed">20301521</ID>
+                <ID Source="BookShelf">NBK1347</ID>
+              </Citation>
+              <XRef ID="C0878683" DB="MedGen" />
+              <XRef ID="MONDO:0009878" DB="MONDO" />
+              <XRef Type="MIM" ID="262600" DB="OMIM" />
+            </Trait>
+          </TraitSet>
+          <TraitSet ID="159" Type="Disease" ContributesToAggregateClassification="true">
+            <Trait ID="3795" Type="Disease">
+              <Name>
+                <ElementValue Type="Alternate">FOLLING DISEASE</ElementValue>
+                <XRef Type="MIM" ID="261600" DB="OMIM" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">Phenylketonurias</ElementValue>
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">Phenylalanine Hydroxylase Deficiency</ElementValue>
+                <XRef ID="NBK1504" DB="GeneReviews" />
+              </Name>
+              <Name>
+                <ElementValue Type="Preferred">Phenylketonuria</ElementValue>
+                <XRef ID="MONDO:0009861" DB="MONDO" />
+              </Name>
+              <Name>
+                <ElementValue Type="Alternate">OLIGOPHRENIA PHENYLPYRUVICA</ElementValue>
+                <XRef Type="MIM" ID="261600" DB="OMIM" />
+              </Name>
+              <Symbol>
+                <ElementValue Type="Preferred">PKU</ElementValue>
+                <XRef Type="MIM" ID="261600" DB="OMIM" />
+              </Symbol>
+              <AttributeSet>
+                <Attribute Type="disease mechanism" integerValue="273">loss of function</Attribute>
+                <XRef ID="GTR000330994" DB="Genetic Testing Registry (GTR)" />
+                <XRef ID="GTR000591289" DB="Genetic Testing Registry (GTR)" />
+                <XRef ID="GTR000522527" DB="Genetic Testing Registry (GTR)" />
+                <XRef ID="GTR000529111" DB="Genetic Testing Registry (GTR)" />
+                <XRef ID="GTR000560957" DB="Genetic Testing Registry (GTR)" />
+              </AttributeSet>
+              <AttributeSet>
+                <Attribute Type="GARD id" integerValue="7383" />
+                <XRef ID="7383" DB="Office of Rare Diseases" />
+              </AttributeSet>
+              <AttributeSet>
+                <Attribute Type="public definition">The phenotypes in individuals with phenylalanine hydroxylase (PAH) deficiency include PAH deficiency treated from birth and late-diagnosed or untreated PAH deficiency. Maternal phenylketonuria (MPKU) syndrome occurs in offspring of mothers with inadequately treated PAH deficiency during pregnancy and results from the toxic effects of elevated blood phenylalanine (Phe) concentrations on the developing fetus. PAH deficiency treated from birth is characterized by the following, even with adherence to a low Phe diet: (1) a modest but measurable decrease in intellectual functioning as well variable impairments in executive function, attention, and fine motor functions; (2) an increased prevalence of mental health concerns including anxiety and depression; and (3) neurologic problems (including hypertonia, paraplegia, movement disorders, and seizures), which may improve or resolve with lowering blood Phe concentration. Late-diagnosed or untreated PAH deficiency is characterized by irreversible neurocognitive impairment (intellectual disability), neurobehavioral/psychological issues, neurologic manifestations (motor disturbances including movement disorders and seizures), and microcephaly. Although lowering blood Phe concentration sometimes improves neurobehavioral/psychological issues and motor disturbances, it does not reduce neurocognitive impairment. MPKU syndrome is characterized by intellectual disability, neurobehavioral/psychiatric manifestations, congenital heart defects, and other birth defects.</Attribute>
+                <XRef ID="NBK1504" DB="GeneReviews" />
+              </AttributeSet>
+              <Citation Type="review" Abbrev="GeneReviews">
+                <ID Source="PubMed">20301677</ID>
+                <ID Source="BookShelf">NBK1504</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="USPSTF, 2008">
+                <ID Source="pmc">2267416</ID>
+              </Citation>
+              <Citation Type="Translational/Evidence-based" Abbrev="EuroGenetest, 2011">
+                <ID Source="PubMed">21915151</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ACMG, 2014">
+                <ID Source="PubMed">24385074</ID>
+              </Citation>
+              <Citation Type="general" Abbrev="ACMG, 2014">
+                <ID Source="pmc">3918542</ID>
+              </Citation>
+              <Citation Type="Suggested Reading" Abbrev="Camp et al., 2014">
+                <ID Source="PubMed">24667081</ID>
+              </Citation>
+              <Citation Type="practice guideline" Abbrev="GMDI/SERN, 2022">
+                <URL>https://managementguidelines.net/guidelines.php/136/PKU%20Nutrition%20Guidelines/Version%202.5</URL>
+                <CitationText>PKU Nutrition Management Guidelines</CitationText>
+              </Citation>
+              <Citation Type="practice guideline" Abbrev="ACMG ACT, 2022">
+                <URL>https://www.acmg.net/PDFLibrary/Phenylalanine.pdf</URL>
+                <CitationText>American College of Medical Genetics and Genomics, Newborn Screening ACT Sheet, Elevated Phenylalanine, Phenylalanine hydroxylase deficiency (PAH), 2022</CitationText>
+              </Citation>
+              <Citation Type="practice guideline" Abbrev="ACMG Algorithm, 2022">
+                <URL>https://www.acmg.net/PDFLibrary/Phenylalanine-Algorithm.pdf</URL>
+                <CitationText>American College of Medical Genetics and Genomics, Algorithm, PAH deficiency: Elevated Phenylalanine, 2022</CitationText>
+              </Citation>
+              <Citation Type="practice guideline" Abbrev="ACMG ACT, 2012">
+                <URL>https://www.acmg.net/PDFLibrary/Adult-PKU.pdf</URL>
+                <CitationText>American College of Medical Genetics and Genomics, Adult Genetics Disease ACT Sheet, Adult Phenylketonuria (PKU), 2012</CitationText>
+              </Citation>
+              <XRef ID="716" DB="Orphanet" />
+              <XRef ID="C0031485" DB="MedGen" />
+              <XRef ID="MONDO:0009861" DB="MONDO" />
+              <XRef Type="MIM" ID="261600" DB="OMIM" />
+            </Trait>
+          </TraitSet>
+        </ConditionList>
+      </GermlineClassification>
+    </Classifications>
+    <ClinicalAssertionList>
+      <ClinicalAssertion ID="192458" SubmissionDate="2018-09-19" ContributesToAggregateClassification="false" DateLastUpdated="2025-04-13" DateCreated="2014-01-17">
+        <ClinVarSubmissionID localKey="1691_000000" localKeyIsSubmitted="1" submittedAssembly="GRCh37" />
+        <ClinVarAccession Accession="SCV000110366" DateUpdated="2025-04-13" DateCreated="2014-01-17" Type="SCV" Version="9" SubmitterName="Eurofins Ntd Llc (ga)" OrgID="500060" OrganizationCategory="laboratory" OrgAbbreviation="EGL" />
+        <RecordStatus>current</RecordStatus>
+        <Classification DateLastEvaluated="2017-05-03">
+          <ReviewStatus>criteria provided, single submitter</ReviewStatus>
+          <GermlineClassification>Pathogenic</GermlineClassification>
+          <Citation>
+            <ID Source="PubMed">11999982</ID>
+          </Citation>
+          <Citation>
+            <ID Source="PubMed">23500595</ID>
+          </Citation>
+          <Citation>
+            <ID Source="PubMed">3008810</ID>
+          </Citation>
+          <Citation>
+            <URL>http://www.pahdb.mcgill.ca/</URL>
+          </Citation>
+        </Classification>
+        <Assertion>variation to disease</Assertion>
+        <AttributeSet>
+          <Attribute Type="AssertionMethod">EGL Classification Definitions 2015</Attribute>
+          <Citation>
+            <URL>https://submit.ncbi.nlm.nih.gov/ft/byid/ahdynye1/egl_classification_definitions_2015.pdf</URL>
+          </Citation>
+        </AttributeSet>
+        <ObservedInList>
+          <ObservedIn>
+            <Sample>
+              <Origin>germline</Origin>
+              <Species TaxonomyId="9606">human</Species>
+              <AffectedStatus>unknown</AffectedStatus>
+              <Sex>mixed</Sex>
+            </Sample>
+            <Method>
+              <MethodType>clinical testing</MethodType>
+            </Method>
+            <ObservedData>
+              <Attribute Type="VariantAlleles" integerValue="71" />
+            </ObservedData>
+            <ObservedData>
+              <Attribute Type="Homozygote" integerValue="4" />
+            </ObservedData>
+            <ObservedData>
+              <Attribute Type="SingleHeterozygote" integerValue="67" />
+            </ObservedData>
+          </ObservedIn>
+        </ObservedInList>
+        <SimpleAllele>
+          <GeneList>
+            <Gene Symbol="PAH" />
+          </GeneList>
+          <VariantType>single nucleotide variant</VariantType>
+          <Location>
+            <SequenceLocation Assembly="GRCh37" Chr="12" alternateAllele="T" referenceAllele="C" start="103234177" stop="103234177" variantLength="1" />
+            <GeneLocation>NM_000277.1:IVS12</GeneLocation>
+          </Location>
+          <XRefList>
+            <XRef DB="HGMD" ID="CS860021" />
+            <XRef DB="dbSNP" ID="5030861" Type="rsNumber" />
+          </XRefList>
+        </SimpleAllele>
+        <TraitSet Type="Disease">
+          <Trait Type="Disease">
+            <Name>
+              <ElementValue Type="Preferred">not provided</ElementValue>
+            </Name>
+          </Trait>
+        </TraitSet>
+        <Citation>
+          <URL>http://www.egl-eurofins.com/emvclass/emvclass.php?approved_symbol=PAH</URL>
+        </Citation>
+        <SubmissionNameList>
+          <SubmissionName>SUB4534263</SubmissionName>
+        </SubmissionNameList>
+      </ClinicalAssertion>
+      <ClinicalAssertion FDARecognizedDatabase="true" ID="1661768" SubmissionDate="2019-02-25" ContributesToAggregateClassification="true" DateLastUpdated="2022-12-11" DateCreated="2018-05-26">
+        <ClinVarSubmissionID localKey="a0e84b26-03d1-42c0-a937-859d45d287e0|Orphanet:ORPHA716" submittedAssembly="GRCh38" />
+        <ClinVarAccession Accession="SCV000852099" DateUpdated="2022-12-11" DateCreated="2018-05-26" Type="SCV" Version="4" SubmitterName="ClinGen PAH Variant Curation Expert Panel" OrgID="506558" OrganizationCategory="consortium" OrgAbbreviation="PAH_EP" />
+        <RecordStatus>current</RecordStatus>
+        <Classification DateLastEvaluated="2018-08-05">
+          <ReviewStatus>reviewed by expert panel</ReviewStatus>
+          <GermlineClassification>Pathogenic</GermlineClassification>
+          <Citation>
+            <ID Source="PubMed">23500595</ID>
+          </Citation>
+          <Citation>
+            <ID Source="PubMed">24941924</ID>
+          </Citation>
+          <Citation>
+            <ID Source="PubMed">3615198</ID>
+          </Citation>
+          <Citation>
+            <URL>https://erepo.clinicalgenome.org/evrepo/ui/interpretation/a0e84b26-03d1-42c0-a937-859d45d287e0</URL>
+          </Citation>
+          <Comment>PAH-specific ACMG/AMP criteria applied: PS3: abolishes PAH activity due to protein instability (PMID:17935162; PMID:3615198); PM3: (PMID:24941924); PP4_Moderate: Reported in Galician PAH deficiency population. BH4 deficiency ruled out. (PMID:23500595); PVS1: Canonical +1 splice site. In summary this variant meets criteria to be classified as pathogenic for phenylketonuria in an autosomal recessive manner based on the ACMG/AMP criteria applied as specified by the PAH Expert Panel: (PS3, PM3, PP4_Moderate, PVS1).</Comment>
+        </Classification>
+        <Assertion>variation to disease</Assertion>
+        <AttributeSet>
+          <Attribute Type="ModeOfInheritance">Autosomal recessive inheritance</Attribute>
+        </AttributeSet>
+        <AttributeSet>
+          <Attribute Type="AssertionMethod">ClinGen PAH ACMG Specifications v1</Attribute>
+          <Citation>
+            <URL>https://submit.ncbi.nlm.nih.gov/ft/byid/blqqhvgi/clingen_pah_acmg_specifications_v1.pdf</URL>
+          </Citation>
+        </AttributeSet>
+        <ObservedInList>
+          <ObservedIn>
+            <Sample>
+              <Origin>germline</Origin>
+              <Species TaxonomyId="9606">human</Species>
+              <AffectedStatus>unknown</AffectedStatus>
+            </Sample>
+            <Method>
+              <MethodType>curation</MethodType>
+            </Method>
+            <ObservedData>
+              <Attribute Type="Description">not provided</Attribute>
+            </ObservedData>
+          </ObservedIn>
+        </ObservedInList>
+        <SimpleAllele>
+          <GeneList>
+            <Gene Symbol="PAH" />
+          </GeneList>
+          <VariantType>Variation</VariantType>
+          <OtherNameList>
+            <Name>NM_000277.2(PAH):c.1315+1G&gt;A</Name>
+          </OtherNameList>
+          <AttributeSet>
+            <Attribute Type="HGVS">NC_000012.12:g.102840399C&gt;T</Attribute>
+          </AttributeSet>
+        </SimpleAllele>
+        <TraitSet Type="Disease">
+          <Trait Type="Disease">
+            <XRef DB="Orphanet" ID="ORPHA716" />
+          </Trait>
+        </TraitSet>
+        <SubmissionNameList>
+          <SubmissionName>SUB5222266</SubmissionName>
+        </SubmissionNameList>
+      </ClinicalAssertion>
+      </ClinicalAssertionList>
+    <TraitMappingList>
+      <TraitMapping ClinicalAssertionID="192458" TraitType="Disease" MappingType="Name" MappingValue="not provided" MappingRef="Preferred">
+        <MedGen CUI="C3661900" Name="not provided" />
+      </TraitMapping>
+      <TraitMapping ClinicalAssertionID="1661768" TraitType="Disease" MappingType="XRef" MappingValue="ORPHA716" MappingRef="Orphanet">
+        <MedGen CUI="C0031485" Name="Phenylketonuria" />
+      </TraitMapping>
+      </TraitMappingList>
+  </ClassifiedRecord>
+</VariationArchive>
+</ClinVarResult-Set>

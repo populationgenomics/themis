@@ -27,6 +27,7 @@ _REQUIRED_SERVICES = (
     'sqladmin.googleapis.com',
     'dataflow.googleapis.com',
     'cloudtasks.googleapis.com',
+    'cloudscheduler.googleapis.com',
 )
 
 

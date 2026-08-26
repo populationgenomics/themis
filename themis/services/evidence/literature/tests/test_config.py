@@ -58,7 +58,7 @@ class _FakeClient:
 
 def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
-    monkeypatch.setenv('THEMIS_LITERATURE_FULLTEXT_BUCKET', _BUCKET)
+    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', _BUCKET)
     for var in _CROSSWALK_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(config.storage, 'Client', lambda: client)
@@ -78,8 +78,8 @@ def test_unknown_backend_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_live_backend_requires_the_fulltext_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
-    monkeypatch.delenv('THEMIS_LITERATURE_FULLTEXT_BUCKET', raising=False)
-    with pytest.raises(SystemExit, match='THEMIS_LITERATURE_FULLTEXT_BUCKET'):
+    monkeypatch.delenv('THEMIS_FULLTEXT_BUCKET', raising=False)
+    with pytest.raises(SystemExit, match='THEMIS_FULLTEXT_BUCKET'):
         _from_env()
 
 

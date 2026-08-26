@@ -1,0 +1,512 @@
+[
+ {
+  "current_name": "neurofibromin 1",
+  "current_symbol": "NF1",
+  "hgnc": "HGNC:7765",
+  "lovd_corrections": null,
+  "lovd_messages": null,
+  "previous_symbol": "",
+  "requested_symbol": "NM_001042492.3",
+  "transcripts": [
+   {
+    "annotations": {
+     "chromosome": "17",
+     "db_xref": {
+      "CCDS": "CCDS42292.1",
+      "ensemblgene": null,
+      "hgnc": "HGNC:7765",
+      "ncbigene": "4763",
+      "select": "MANE"
+     },
+     "ensembl_select": false,
+     "mane_plus_clinical": false,
+     "mane_select": true,
+     "map": "17q11.2",
+     "note": "neurofibromin 1",
+     "refseq_select": true,
+     "variant": "1"
+    },
+    "coding_end": 8853,
+    "coding_start": 334,
+    "description": "Homo sapiens neurofibromin 1 (NF1), transcript variant 1, mRNA",
+    "genomic_spans": {
+     "NC_000017.11": {
+      "end_position": 31377675,
+      "exon_structure": [
+       {
+        "cigar": "393=",
+        "exon_number": 1,
+        "genomic_end": 31095369,
+        "genomic_start": 31094977,
+        "transcript_end": 393,
+        "transcript_start": 1
+       },
+       {
+        "cigar": "144=",
+        "exon_number": 2,
+        "genomic_end": 31156126,
+        "genomic_start": 31155983,
+        "transcript_end": 537,
+        "transcript_start": 394
+       },
+       {
+        "cigar": "84=",
+        "exon_number": 3,
+        "genomic_end": 31159093,
+        "genomic_start": 31159010,
+        "transcript_end": 621,
+        "transcript_start": 538
+       },
+       {
+        "cigar": "191=",
+        "exon_number": 4,
+        "genomic_end": 31163376,
+        "genomic_start": 31163186,
+        "transcript_end": 812,
+        "transcript_start": 622
+       },
+       {
+        "cigar": "107=",
+        "exon_number": 5,
+        "genomic_end": 31169997,
+        "genomic_start": 31169891,
+        "transcript_end": 919,
+        "transcript_start": 813
+       },
+       {
+        "cigar": "68=",
+        "exon_number": 6,
+        "genomic_end": 31181489,
+        "genomic_start": 31181422,
+        "transcript_end": 987,
+        "transcript_start": 920
+       },
+       {
+        "cigar": "76=",
+        "exon_number": 7,
+        "genomic_end": 31181785,
+        "genomic_start": 31181710,
+        "transcript_end": 1063,
+        "transcript_start": 988
+       },
+       {
+        "cigar": "158=",
+        "exon_number": 8,
+        "genomic_end": 31182665,
+        "genomic_start": 31182508,
+        "transcript_end": 1221,
+        "transcript_start": 1064
+       },
+       {
+        "cigar": "174=",
+        "exon_number": 9,
+        "genomic_end": 31200595,
+        "genomic_start": 31200422,
+        "transcript_end": 1395,
+        "transcript_start": 1222
+       },
+       {
+        "cigar": "123=",
+        "exon_number": 10,
+        "genomic_end": 31201159,
+        "genomic_start": 31201037,
+        "transcript_end": 1518,
+        "transcript_start": 1396
+       },
+       {
+        "cigar": "75=",
+        "exon_number": 11,
+        "genomic_end": 31201485,
+        "genomic_start": 31201411,
+        "transcript_end": 1593,
+        "transcript_start": 1519
+       },
+       {
+        "cigar": "132=",
+        "exon_number": 12,
+        "genomic_end": 31206371,
+        "genomic_start": 31206240,
+        "transcript_end": 1725,
+        "transcript_start": 1594
+       },
+       {
+        "cigar": "135=",
+        "exon_number": 13,
+        "genomic_end": 31214585,
+        "genomic_start": 31214451,
+        "transcript_end": 1860,
+        "transcript_start": 1726
+       },
+       {
+        "cigar": "114=",
+        "exon_number": 14,
+        "genomic_end": 31219118,
+        "genomic_start": 31219005,
+        "transcript_end": 1974,
+        "transcript_start": 1861
+       },
+       {
+        "cigar": "80=",
+        "exon_number": 15,
+        "genomic_end": 31221929,
+        "genomic_start": 31221850,
+        "transcript_end": 2054,
+        "transcript_start": 1975
+       },
+       {
+        "cigar": "124=",
+        "exon_number": 16,
+        "genomic_end": 31223567,
+        "genomic_start": 31223444,
+        "transcript_end": 2178,
+        "transcript_start": 2055
+       },
+       {
+        "cigar": "156=",
+        "exon_number": 17,
+        "genomic_end": 31225250,
+        "genomic_start": 31225095,
+        "transcript_end": 2334,
+        "transcript_start": 2179
+       },
+       {
+        "cigar": "250=",
+        "exon_number": 18,
+        "genomic_end": 31226684,
+        "genomic_start": 31226435,
+        "transcript_end": 2584,
+        "transcript_start": 2335
+       },
+       {
+        "cigar": "74=",
+        "exon_number": 19,
+        "genomic_end": 31227291,
+        "genomic_start": 31227218,
+        "transcript_end": 2658,
+        "transcript_start": 2585
+       },
+       {
+        "cigar": "84=",
+        "exon_number": 20,
+        "genomic_end": 31227606,
+        "genomic_start": 31227523,
+        "transcript_end": 2742,
+        "transcript_start": 2659
+       },
+       {
+        "cigar": "441=",
+        "exon_number": 21,
+        "genomic_end": 31229465,
+        "genomic_start": 31229025,
+        "transcript_end": 3183,
+        "transcript_start": 2743
+       },
+       {
+        "cigar": "140=",
+        "exon_number": 22,
+        "genomic_end": 31229974,
+        "genomic_start": 31229835,
+        "transcript_end": 3323,
+        "transcript_start": 3184
+       },
+       {
+        "cigar": "123=",
+        "exon_number": 23,
+        "genomic_end": 31230382,
+        "genomic_start": 31230260,
+        "transcript_end": 3446,
+        "transcript_start": 3324
+       },
+       {
+        "cigar": "84=",
+        "exon_number": 24,
+        "genomic_end": 31230925,
+        "genomic_start": 31230842,
+        "transcript_end": 3530,
+        "transcript_start": 3447
+       },
+       {
+        "cigar": "117=",
+        "exon_number": 25,
+        "genomic_end": 31232189,
+        "genomic_start": 31232073,
+        "transcript_end": 3647,
+        "transcript_start": 3531
+       },
+       {
+        "cigar": "182=",
+        "exon_number": 26,
+        "genomic_end": 31232881,
+        "genomic_start": 31232700,
+        "transcript_end": 3829,
+        "transcript_start": 3648
+       },
+       {
+        "cigar": "212=",
+        "exon_number": 27,
+        "genomic_end": 31233213,
+        "genomic_start": 31233002,
+        "transcript_end": 4041,
+        "transcript_start": 3830
+       },
+       {
+        "cigar": "162=",
+        "exon_number": 28,
+        "genomic_end": 31235772,
+        "genomic_start": 31235611,
+        "transcript_end": 4203,
+        "transcript_start": 4042
+       },
+       {
+        "cigar": "104=",
+        "exon_number": 29,
+        "genomic_end": 31236021,
+        "genomic_start": 31235918,
+        "transcript_end": 4307,
+        "transcript_start": 4204
+       },
+       {
+        "cigar": "136=",
+        "exon_number": 30,
+        "genomic_end": 31249119,
+        "genomic_start": 31248984,
+        "transcript_end": 4443,
+        "transcript_start": 4308
+       },
+       {
+        "cigar": "63=",
+        "exon_number": 31,
+        "genomic_end": 31253000,
+        "genomic_start": 31252938,
+        "transcript_end": 4506,
+        "transcript_start": 4444
+       },
+       {
+        "cigar": "159=",
+        "exon_number": 32,
+        "genomic_end": 31258502,
+        "genomic_start": 31258344,
+        "transcript_end": 4665,
+        "transcript_start": 4507
+       },
+       {
+        "cigar": "98=",
+        "exon_number": 33,
+        "genomic_end": 31259129,
+        "genomic_start": 31259032,
+        "transcript_end": 4763,
+        "transcript_start": 4666
+       },
+       {
+        "cigar": "147=",
+        "exon_number": 34,
+        "genomic_end": 31260515,
+        "genomic_start": 31260369,
+        "transcript_end": 4910,
+        "transcript_start": 4764
+       },
+       {
+        "cigar": "147=",
+        "exon_number": 35,
+        "genomic_end": 31261857,
+        "genomic_start": 31261711,
+        "transcript_end": 5057,
+        "transcript_start": 4911
+       },
+       {
+        "cigar": "111=",
+        "exon_number": 36,
+        "genomic_end": 31265339,
+        "genomic_start": 31265229,
+        "transcript_end": 5168,
+        "transcript_start": 5058
+       },
+       {
+        "cigar": "433=",
+        "exon_number": 37,
+        "genomic_end": 31326252,
+        "genomic_start": 31325820,
+        "transcript_end": 5601,
+        "transcript_start": 5169
+       },
+       {
+        "cigar": "341=",
+        "exon_number": 38,
+        "genomic_end": 31327839,
+        "genomic_start": 31327499,
+        "transcript_end": 5942,
+        "transcript_start": 5602
+       },
+       {
+        "cigar": "203=",
+        "exon_number": 39,
+        "genomic_end": 31330498,
+        "genomic_start": 31330296,
+        "transcript_end": 6145,
+        "transcript_start": 5943
+       },
+       {
+        "cigar": "194=",
+        "exon_number": 40,
+        "genomic_end": 31335031,
+        "genomic_start": 31334838,
+        "transcript_end": 6339,
+        "transcript_start": 6146
+       },
+       {
+        "cigar": "141=",
+        "exon_number": 41,
+        "genomic_end": 31336473,
+        "genomic_start": 31336333,
+        "transcript_end": 6480,
+        "transcript_start": 6340
+       },
+       {
+        "cigar": "280=",
+        "exon_number": 42,
+        "genomic_end": 31336914,
+        "genomic_start": 31336635,
+        "transcript_end": 6760,
+        "transcript_start": 6481
+       },
+       {
+        "cigar": "215=",
+        "exon_number": 43,
+        "genomic_end": 31337582,
+        "genomic_start": 31337368,
+        "transcript_end": 6975,
+        "transcript_start": 6761
+       },
+       {
+        "cigar": "62=",
+        "exon_number": 44,
+        "genomic_end": 31337880,
+        "genomic_start": 31337819,
+        "transcript_end": 7037,
+        "transcript_start": 6976
+       },
+       {
+        "cigar": "115=",
+        "exon_number": 45,
+        "genomic_end": 31338139,
+        "genomic_start": 31338025,
+        "transcript_end": 7152,
+        "transcript_start": 7038
+       },
+       {
+        "cigar": "102=",
+        "exon_number": 46,
+        "genomic_end": 31338805,
+        "genomic_start": 31338704,
+        "transcript_end": 7254,
+        "transcript_start": 7153
+       },
+       {
+        "cigar": "141=",
+        "exon_number": 47,
+        "genomic_end": 31340645,
+        "genomic_start": 31340505,
+        "transcript_end": 7395,
+        "transcript_start": 7255
+       },
+       {
+        "cigar": "127=",
+        "exon_number": 48,
+        "genomic_end": 31343135,
+        "genomic_start": 31343009,
+        "transcript_end": 7522,
+        "transcript_start": 7396
+       },
+       {
+        "cigar": "132=",
+        "exon_number": 49,
+        "genomic_end": 31349251,
+        "genomic_start": 31349120,
+        "transcript_end": 7654,
+        "transcript_start": 7523
+       },
+       {
+        "cigar": "136=",
+        "exon_number": 50,
+        "genomic_end": 31350318,
+        "genomic_start": 31350183,
+        "transcript_end": 7790,
+        "transcript_start": 7655
+       },
+       {
+        "cigar": "158=",
+        "exon_number": 51,
+        "genomic_end": 31352414,
+        "genomic_start": 31352257,
+        "transcript_end": 7948,
+        "transcript_start": 7791
+       },
+       {
+        "cigar": "123=",
+        "exon_number": 52,
+        "genomic_end": 31356582,
+        "genomic_start": 31356460,
+        "transcript_end": 8071,
+        "transcript_start": 7949
+       },
+       {
+        "cigar": "131=",
+        "exon_number": 53,
+        "genomic_end": 31357090,
+        "genomic_start": 31356960,
+        "transcript_end": 8202,
+        "transcript_start": 8072
+       },
+       {
+        "cigar": "101=",
+        "exon_number": 54,
+        "genomic_end": 31357369,
+        "genomic_start": 31357269,
+        "transcript_end": 8303,
+        "transcript_start": 8203
+       },
+       {
+        "cigar": "143=",
+        "exon_number": 55,
+        "genomic_end": 31358622,
+        "genomic_start": 31358480,
+        "transcript_end": 8446,
+        "transcript_start": 8304
+       },
+       {
+        "cigar": "47=",
+        "exon_number": 56,
+        "genomic_end": 31359015,
+        "genomic_start": 31358969,
+        "transcript_end": 8493,
+        "transcript_start": 8447
+       },
+       {
+        "cigar": "217=",
+        "exon_number": 57,
+        "genomic_end": 31360703,
+        "genomic_start": 31360487,
+        "transcript_end": 8710,
+        "transcript_start": 8494
+       },
+       {
+        "cigar": "3663=",
+        "exon_number": 58,
+        "genomic_end": 31377675,
+        "genomic_start": 31374013,
+        "transcript_end": 12373,
+        "transcript_start": 8711
+       }
+      ],
+      "orientation": 1,
+      "start_position": 31094977,
+      "total_exons": 58
+     }
+    },
+    "length": 12373,
+    "reference": "NM_001042492.3",
+    "translation": "NP_001035957.1"
+   }
+  ]
+ }
+]

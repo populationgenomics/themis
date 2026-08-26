@@ -38,6 +38,7 @@ _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
+_GENE_DISEASE_REFRESH_IMAGE_ENV = 'THEMIS_GENE_DISEASE_REFRESH_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
 _SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
 _EVIDENCE_IMAGE_ENV = 'THEMIS_EVIDENCE_IMAGE'
@@ -178,11 +179,43 @@ hello_service = hello.HelloService(
     vpc_subnetwork=services_net.subnetwork.id,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
-# The store and hello services resolve session tokens through auth (§7); grant each SA invoke on the
-# internal auth service — the binding auth left for when they landed.
+# The litcache corpus the literature interface resolves papers in and the BFF serves objects from.
+fulltext = storage.fulltext_bucket(
+    project=project,
+    region=region,
+    # The BFF 302s paper-content reads to signed URLs on this bucket, so the browser fetches its
+    # bytes cross-origin from the workbench; allow that origin (pdf.js / fetch read the body).
+    cors_origins=[f'https://{domain}'],
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+# The re-derivable reference data the Project shares, one dataset per top-level prefix: the
+# `gene-disease/` dumps the gene_disease live backend loads at startup and the weekly refresh job
+# rewrites.
+resources = storage.resources_bucket(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+evidence_service = evidence.EvidenceService(
+    project=project,
+    region=region,
+    image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
+    auth_url=auth_service.url,
+    vpc_network=services_net.network.id,
+    vpc_subnetwork=services_net.subnetwork.id,
+    fulltext_bucket=fulltext.name,
+    resources_bucket=resources.name,
+    sql_instance=database.instance,
+    sql_connection_name=database.instance_connection_name,
+    sql_database=database.database_name,
+    opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, fulltext, resources]),
+)
+# The data-plane services resolve session tokens through auth (§7); grant each SA invoke on the internal
+# auth service — the binding auth left for when they landed.
 for label, invoker_sa_email in (
     ('store', store_service.service_account_email),
     ('hello', hello_service.service_account_email),
+    ('evidence', evidence_service.service_account_email),
 ):
     gcp.cloudrunv2.ServiceIamMember(
         f'themis-{label}-invokes-auth',
@@ -192,6 +225,101 @@ for label, invoker_sa_email in (
         role='roles/run.invoker',
         member=pulumi.Output.concat('serviceAccount:', invoker_sa_email),
     )
+# The weekly reference-refresh job fetches the GenCC / ClinGen / PanelApp upstreams (public) and writes the
+# reference dumps the gene_disease live backend reads. No VPC access — only public upstreams and GCS — and
+# its own SA holds the sole write credential on the resources bucket.
+gene_disease_refresh_sa = gcp.serviceaccount.Account(
+    'themis-gene-disease-refresh-runtime',
+    project=project,
+    account_id='themis-gene-disease-refresh',
+    display_name='Themis gene-disease reference-refresh runtime',
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+gene_disease_refresh_job = gcp.cloudrunv2.Job(
+    'themis-gene-disease-refresh-job',
+    project=project,
+    location=region,
+    name='themis-gene-disease-refresh',
+    deletion_protection=False,
+    template=gcp.cloudrunv2.JobTemplateArgs(
+        template=gcp.cloudrunv2.JobTemplateTemplateArgs(
+            service_account=gene_disease_refresh_sa.email,
+            # The first full-Mendeliome PanelApp crawl is slow; sized well above it, not Cloud Run's short
+            # default.
+            timeout='7200s',
+            max_retries=1,
+            containers=[
+                gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                    name='refresh',
+                    image=_image(
+                        _GENE_DISEASE_REFRESH_IMAGE_ENV,
+                        lambda: _live_job_image('themis-gene-disease-refresh', 'refresh'),
+                    ),
+                    envs=[
+                        gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                            name='THEMIS_RESOURCES_BUCKET', value=resources.name
+                        ),
+                    ],
+                    resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
+                        limits={'cpu': '1', 'memory': '2Gi'}
+                    ),
+                ),
+            ],
+        ),
+    ),
+    opts=pulumi.ResourceOptions(depends_on=[base, resources]),
+)
+# Write credential on the resources bucket, scoped to the refresh SA (the evidence service only reads).
+gcp.storage.BucketIAMMember(
+    'themis-gene-disease-refresh-object-admin',
+    bucket=resources.name,
+    role='roles/storage.objectAdmin',
+    member=pulumi.Output.concat('serviceAccount:', gene_disease_refresh_sa.email),
+)
+# Cloud Scheduler runs the refresh weekly against the Cloud Run Admin API. Its own SA, invoker-only on the
+# Job.
+gene_disease_refresh_scheduler_sa = gcp.serviceaccount.Account(
+    'themis-gene-disease-refresh-scheduler',
+    project=project,
+    account_id='themis-gene-disease-scheduler',
+    display_name='Themis gene-disease reference-refresh scheduler',
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+# roles/run.invoker on a Job carries run.jobs.run (run/docs/execute/jobs-on-schedule "Required roles").
+gcp.cloudrunv2.JobIamMember(
+    'themis-gene-disease-refresh-scheduler-runs-job',
+    project=project,
+    location=region,
+    name=gene_disease_refresh_job.name,
+    role='roles/run.invoker',
+    member=pulumi.Output.concat('serviceAccount:', gene_disease_refresh_scheduler_sa.email),
+)
+gcp.cloudscheduler.Job(
+    'themis-gene-disease-refresh-weekly',
+    project=project,
+    region=region,
+    name='themis-gene-disease-refresh-weekly',
+    schedule='0 3 * * 1',
+    time_zone='Etc/UTC',
+    http_target=gcp.cloudscheduler.JobHttpTargetArgs(
+        # The v2 :run endpoint POST with a cloud-platform-scoped OAuth token (not OIDC — the target is a
+        # Google API) is the form Google documents (run/docs/execute/jobs-on-schedule).
+        # VERIFY-AT-BUILD: confirm the :run URI + OAuth pairing and that Cloud Scheduler is offered in the
+        # deploy region, via `pulumi preview`.
+        uri=pulumi.Output.format(
+            'https://run.googleapis.com/v2/projects/{0}/locations/{1}/jobs/{2}:run',
+            project,
+            region,
+            gene_disease_refresh_job.name,
+        ),
+        http_method='POST',
+        oauth_token=gcp.cloudscheduler.JobHttpTargetOauthTokenArgs(
+            service_account_email=gene_disease_refresh_scheduler_sa.email,
+            scope='https://www.googleapis.com/auth/cloud-platform',
+        ),
+    ),
+    opts=pulumi.ResourceOptions(depends_on=[base, gene_disease_refresh_job]),
+)
 # The KMS MAC key that signs per-session tokens (§7) — a shared substrate: the web BFF derives
 # the bearer at session create, the dispatcher re-derives it at spawn.
 session_token_key = sandbox.session_token_signing_key(
@@ -200,26 +328,6 @@ session_token_key = sandbox.session_token_signing_key(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoKeyVersions/1')
-# The litcache fulltext bucket + the evidence service that reads it — created before the web app so
-# its URL can be passed to the BFF (THEMIS_EVIDENCE_URL).
-fulltext = storage.fulltext_bucket(
-    project=project,
-    region=region,
-    # The BFF 302s paper-content reads to signed URLs on this bucket, so the browser fetches its
-    # bytes cross-origin from the workbench; allow that origin (pdf.js / fetch read the body).
-    cors_origins=[f'https://{domain}'],
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
-evidence_service = evidence.EvidenceService(
-    project=project,
-    region=region,
-    image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
-    fulltext_bucket=fulltext.name,
-    sql_instance=database.instance,
-    sql_connection_name=database.instance_connection_name,
-    sql_database=database.database_name,
-    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, database]),
-)
 # The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
 # request path. Nothing enqueues onto the queue yet — the reconcile sweep is its first producer.
 convert_queue = convert.conversion_queue(
@@ -254,7 +362,7 @@ site = web.WebService(
     session_token_key_version=session_token_key_version,
     working_document_bucket=store_service.working_document_bucket,
     evidence_url=evidence_service.url,
-    evidence_corpus_bucket=fulltext.name,
+    fulltext_bucket=fulltext.name,
     anthropic_environment_id=anthropic_environment_id,
     anthropic_agent_id=anthropic_agent_id,
     anthropic_federation_rule_id=anthropic_federation_rule_id,
@@ -430,6 +538,8 @@ pulumi.export('store_working_document_bucket', store_service.working_document_bu
 pulumi.export('store_workspace_bucket', store_service.workspace_bucket)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
+pulumi.export('resources_bucket', resources.name)
+pulumi.export('gene_disease_refresh_job_name', gene_disease_refresh_job.name)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the
 # session_context SELECT grant.
 pulumi.export('auth_db_user', auth_service.db_user)
@@ -437,6 +547,9 @@ pulumi.export('fulltext_bucket', fulltext.name)
 pulumi.export('fulltext_bucket_url', pulumi.Output.format('gs://{0}', fulltext.name))
 pulumi.export('evidence_url', evidence_service.url)
 pulumi.export('evidence_sa_email', evidence_service.service_account_email)
+# The evidence SA's DB login — the ${EVIDENCE_DB_USER} the migrate step substitutes into the
+# litcache.crosswalk SELECT grant.
+pulumi.export('evidence_db_user', evidence_service.db_user)
 pulumi.export('clu_sa_email', automation_user.service_account_email)
 pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
@@ -452,8 +565,6 @@ pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
-# The migrate runner's EVIDENCE_DB_USER substitution (the crosswalk SELECT grant's subject).
-pulumi.export('evidence_db_user', evidence_service.db_user)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)

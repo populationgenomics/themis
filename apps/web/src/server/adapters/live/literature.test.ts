@@ -57,7 +57,7 @@ describe("loadEvidenceConfig", () => {
     expect(
       loadEvidenceConfig({
         THEMIS_EVIDENCE_URL: "https://evidence.example",
-        THEMIS_EVIDENCE_CORPUS_BUCKET: "cpg-themis-dev-fulltext",
+        THEMIS_FULLTEXT_BUCKET: "cpg-themis-dev-fulltext",
       }),
     ).toEqual({
       evidenceUrl: "https://evidence.example",
@@ -66,14 +66,14 @@ describe("loadEvidenceConfig", () => {
   });
 
   test("fails loud when the URL is unset", () => {
-    expect(() =>
-      loadEvidenceConfig({ THEMIS_EVIDENCE_CORPUS_BUCKET: "b" }),
-    ).toThrow("THEMIS_EVIDENCE_URL");
+    expect(() => loadEvidenceConfig({ THEMIS_FULLTEXT_BUCKET: "b" })).toThrow(
+      "THEMIS_EVIDENCE_URL",
+    );
   });
 
   test("fails loud when the corpus bucket is unset", () => {
     expect(() =>
       loadEvidenceConfig({ THEMIS_EVIDENCE_URL: "https://evidence.example" }),
-    ).toThrow("THEMIS_EVIDENCE_CORPUS_BUCKET");
+    ).toThrow("THEMIS_FULLTEXT_BUCKET");
   });
 });

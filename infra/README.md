@@ -16,7 +16,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/auth.py`        | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                           |
 | `themis_infra/store.py`       | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                          |
 | `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                |
-| `themis_infra/storage.py`     | The literature full-text store bucket (durable GCS).                                                                                                                 |
+| `themis_infra/storage.py`     | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                          |
 | `themis_infra/convert.py`     | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                |
 | `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                             |
 | `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
@@ -61,10 +61,27 @@ a developer's own `gcloud` ADC is the writer. Objects are `<sha256>.png`, kept f
 delete off so a takedown is immediate. A stack only gets a bucket if it sets `themis:enablePrScreenshotBucket` —
 screenshots are of the fixture UI, so no other environment has a reason to expose a public one.
 
-A dedicated bucket per storage concern (not one shared bucket): these are bucket-level policies that can't be
-prefix-scoped, and the parquet/audit consumers the design anticipates need different whole-bucket profiles. The
-ingestion runtime's read/write grant is in `themis_infra/ingest.py`; the reader grant is still deferred. In dev,
-operators use their own IAM-gated `gcloud` ADC.
+**Supplied papers** — records the open-access archive does not serve, obtained through a human's institutional access —
+have no store of their own. A deposit is an ordinary litcache paper in the full-text bucket: the PDF as its source
+(upload kind, institution-captured access), the standard OCR rendering as its markdown, so nothing downstream treats it
+as a special case. Its recovery path is not the version history but the mirror the PDFs live in, outside any repo — the
+deposit tool re-runs over it and rebuilds whatever the bucket lost
+([`supplied-literature.md`](../docs/runbooks/supplied-literature.md)).
+
+The **resources** bucket, `gs://cpg-themis-<env>-resources`, holds the reference data the Project's services and
+pipelines share: public upstream mirrors and the artifacts derived from them. One dataset per top-level prefix
+(`gs://<bucket>/<dataset>/...`) — `gene-disease/` for the dumps the weekly refresh job writes and the evidence service
+loads at startup — each with its own provenance and its own writer, who alone holds `objectAdmin` on the bucket. It is
+unversioned with soft delete at the GCS default: every object is re-derivable from a pinned upstream, so the cost of
+losing one is a re-run. Autoclass tiers to Nearline rather than Archive, because a cold read is on a service cold start
+or a fresh pipeline machine, where Archive retrieval fees would land on the critical path.
+
+A bucket per storage *policy*, not per dataset: the properties above — public access, versioning, retention, storage
+class — are bucket-level and can't be prefix-scoped, so datasets share a bucket exactly when they want the same answers
+to all of them, and the parquet/audit consumers the design anticipates want different ones. The full-text store's
+ingestion runtime holds its read/write grant in `themis_infra/ingest.py`; the readers' are in `themis_infra/evidence.py`
+(the service) and `__main__.py` (the BFF, which serves the objects it 302s to). In dev, operators use their own
+IAM-gated `gcloud` ADC.
 
 ## Deletion guards
 

@@ -1,0 +1,763 @@
+{
+  "_gene": "NF1",
+  "esearch_variant": {
+    "header": {
+      "type": "esearch",
+      "version": "0.3"
+    },
+    "esearchresult": {
+      "count": "1",
+      "retmax": "1",
+      "retstart": "0",
+      "idlist": [
+        "1731988"
+      ],
+      "translationset": [],
+      "translationstack": [
+        {
+          "term": "\"NM0x5f0010424920x2e30x3ac0x2e3496G0x3eC\"[All Fields]",
+          "field": "All Fields",
+          "count": "1",
+          "explode": "N"
+        },
+        "GROUP"
+      ],
+      "querytranslation": "\"NM0x5f0010424920x2e30x3ac0x2e3496G0x3eC\"[All Fields]"
+    }
+  },
+  "esearch_gene": {
+    "header": {
+      "type": "esearch",
+      "version": "0.3"
+    },
+    "esearchresult": {
+      "count": "5866",
+      "retmax": "5",
+      "retstart": "0",
+      "idlist": [
+        "4871708",
+        "4861004",
+        "4860993",
+        "4860985",
+        "4860979"
+      ],
+      "translationset": [],
+      "translationstack": [
+        {
+          "term": "NF1[gene]",
+          "field": "gene",
+          "count": "17650",
+          "explode": "N"
+        },
+        {
+          "term": "\"clinsig pathogenic\"[Properties]",
+          "field": "Properties",
+          "count": "255909",
+          "explode": "N"
+        },
+        {
+          "term": "\"clinsig likely pathogenic\"[Properties]",
+          "field": "Properties",
+          "count": "165036",
+          "explode": "N"
+        },
+        "OR",
+        "GROUP",
+        "AND"
+      ],
+      "querytranslation": "NF1[gene] AND (\"clinsig pathogenic\"[Properties] OR \"clinsig likely pathogenic\"[Properties])"
+    }
+  },
+  "esummary_gene": {
+    "header": {
+      "type": "esummary",
+      "version": "0.3"
+    },
+    "result": {
+      "uids": [
+        "4871708",
+        "4861004",
+        "4860993",
+        "4860985",
+        "4860979"
+      ],
+      "4871708": {
+        "uid": "4871708",
+        "obj_type": "Deletion",
+        "accession": "VCV004871708",
+        "accession_version": "VCV004871708.1",
+        "title": "NM_001042492.3(NF1):c.3957del (p.Phe1319fs)",
+        "variation_set": [
+          {
+            "measure_id": "4982601",
+            "variation_xrefs": [],
+            "variation_name": "NM_001042492.3(NF1):c.3957del (p.Phe1319fs)",
+            "cdna_change": "c.3957del",
+            "aliases": [],
+            "variation_loc": [
+              {
+                "status": "current",
+                "assembly_name": "GRCh38",
+                "chr": "17",
+                "band": "",
+                "start": "31236002",
+                "stop": "31236002",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "31236002",
+                "display_stop": "31236002",
+                "assembly_acc_ver": "GCF_000001405.38",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              },
+              {
+                "status": "previous",
+                "assembly_name": "GRCh37",
+                "chr": "17",
+                "band": "",
+                "start": "29563020",
+                "stop": "29563020",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "29563020",
+                "display_stop": "29563020",
+                "assembly_acc_ver": "GCF_000001405.25",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              }
+            ],
+            "allele_freq_set": [],
+            "variant_type": "Deletion",
+            "canonical_spdi": "NC_000017.11:31236001:TTT:TT",
+            "common_name": ""
+          }
+        ],
+        "supporting_submissions": {
+          "scv": [
+            "SCV007636933"
+          ],
+          "rcv": [
+            "RCV006730054"
+          ]
+        },
+        "germline_classification": {
+          "description": "Pathogenic",
+          "last_evaluated": "2025/06/10 00:00",
+          "review_status": "criteria provided, single submitter",
+          "fda_recognized_database": "",
+          "trait_set": [
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "Orphanet",
+                  "db_id": "636"
+                },
+                {
+                  "db_source": "MedGen",
+                  "db_id": "C0027831"
+                },
+                {
+                  "db_source": "MONDO",
+                  "db_id": "MONDO:0018975"
+                },
+                {
+                  "db_source": "OMIM",
+                  "db_id": "162200"
+                }
+              ],
+              "trait_name": "Neurofibromatosis, type 1"
+            }
+          ]
+        },
+        "clinical_impact_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "oncogenicity_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "record_status": "",
+        "gene_sort": "NF1",
+        "chr_sort": "17",
+        "location_sort": "00000000000031236002",
+        "variation_set_name": "",
+        "variation_set_id": "",
+        "genes": [
+          {
+            "symbol": "NF1",
+            "geneid": "4763",
+            "strand": "+",
+            "source": "submitted"
+          }
+        ],
+        "molecular_consequence_list": [
+          "frameshift variant"
+        ],
+        "protein_change": "F1319fs",
+        "fda_recognized_database": ""
+      },
+      "4861004": {
+        "uid": "4861004",
+        "obj_type": "Microsatellite",
+        "accession": "VCV004861004",
+        "accession_version": "VCV004861004.1",
+        "title": "NM_001042492.3(NF1):c.1656TCA[1] (p.His553del)",
+        "variation_set": [
+          {
+            "measure_id": "4969721",
+            "variation_xrefs": [],
+            "variation_name": "NM_001042492.3(NF1):c.1656TCA[1] (p.His553del)",
+            "cdna_change": "c.1656TCA[1]",
+            "aliases": [],
+            "variation_loc": [
+              {
+                "status": "current",
+                "assembly_name": "GRCh38",
+                "chr": "17",
+                "band": "",
+                "start": "31221864",
+                "stop": "31221866",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "31221864",
+                "display_stop": "31221866",
+                "assembly_acc_ver": "GCF_000001405.38",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              },
+              {
+                "status": "previous",
+                "assembly_name": "GRCh37",
+                "chr": "17",
+                "band": "",
+                "start": "29548882",
+                "stop": "29548884",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "29548882",
+                "display_stop": "29548884",
+                "assembly_acc_ver": "GCF_000001405.25",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              }
+            ],
+            "allele_freq_set": [],
+            "variant_type": "Microsatellite",
+            "canonical_spdi": "NC_000017.11:31221863:TCATCA:TCA",
+            "common_name": ""
+          }
+        ],
+        "supporting_submissions": {
+          "scv": [
+            "SCV007616165"
+          ],
+          "rcv": [
+            "RCV006719106"
+          ]
+        },
+        "germline_classification": {
+          "description": "Likely pathogenic",
+          "last_evaluated": "2026/04/07 00:00",
+          "review_status": "criteria provided, single submitter",
+          "fda_recognized_database": "",
+          "trait_set": [
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "MedGen",
+                  "db_id": "CN230736"
+                }
+              ],
+              "trait_name": "Cardiovascular phenotype"
+            },
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "Orphanet",
+                  "db_id": "140162"
+                },
+                {
+                  "db_source": "MedGen",
+                  "db_id": "C0027672"
+                },
+                {
+                  "db_source": "MeSH",
+                  "db_id": "D009386"
+                },
+                {
+                  "db_source": "MONDO",
+                  "db_id": "MONDO:0015356"
+                }
+              ],
+              "trait_name": "Hereditary cancer-predisposing syndrome"
+            }
+          ]
+        },
+        "clinical_impact_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "oncogenicity_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "record_status": "",
+        "gene_sort": "NF1",
+        "chr_sort": "17",
+        "location_sort": "00000000000031221864",
+        "variation_set_name": "",
+        "variation_set_id": "",
+        "genes": [
+          {
+            "symbol": "NF1",
+            "geneid": "4763",
+            "strand": "+",
+            "source": "submitted"
+          }
+        ],
+        "molecular_consequence_list": [
+          "inframe_indel",
+          "inframe_deletion"
+        ],
+        "protein_change": "H553del",
+        "fda_recognized_database": ""
+      },
+      "4860993": {
+        "uid": "4860993",
+        "obj_type": "Deletion",
+        "accession": "VCV004860993",
+        "accession_version": "VCV004860993.1",
+        "title": "NM_001042492.3(NF1):c.3973_3974del (p.Arg1325fs)",
+        "variation_set": [
+          {
+            "measure_id": "4969710",
+            "variation_xrefs": [],
+            "variation_name": "NM_001042492.3(NF1):c.3973_3974del (p.Arg1325fs)",
+            "cdna_change": "c.3973_3974del",
+            "aliases": [],
+            "variation_loc": [
+              {
+                "status": "current",
+                "assembly_name": "GRCh38",
+                "chr": "17",
+                "band": "",
+                "start": "31236020",
+                "stop": "31236021",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "31236020",
+                "display_stop": "31236021",
+                "assembly_acc_ver": "GCF_000001405.38",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              },
+              {
+                "status": "previous",
+                "assembly_name": "GRCh37",
+                "chr": "17",
+                "band": "",
+                "start": "29563038",
+                "stop": "29563039",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "29563038",
+                "display_stop": "29563039",
+                "assembly_acc_ver": "GCF_000001405.25",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              }
+            ],
+            "allele_freq_set": [],
+            "variant_type": "Deletion",
+            "canonical_spdi": "NC_000017.11:31236019:AG:",
+            "common_name": ""
+          }
+        ],
+        "supporting_submissions": {
+          "scv": [
+            "SCV007616151"
+          ],
+          "rcv": [
+            "RCV006719095"
+          ]
+        },
+        "germline_classification": {
+          "description": "Pathogenic",
+          "last_evaluated": "2026/06/05 00:00",
+          "review_status": "criteria provided, single submitter",
+          "fda_recognized_database": "",
+          "trait_set": [
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "MedGen",
+                  "db_id": "CN230736"
+                }
+              ],
+              "trait_name": "Cardiovascular phenotype"
+            },
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "Orphanet",
+                  "db_id": "140162"
+                },
+                {
+                  "db_source": "MedGen",
+                  "db_id": "C0027672"
+                },
+                {
+                  "db_source": "MeSH",
+                  "db_id": "D009386"
+                },
+                {
+                  "db_source": "MONDO",
+                  "db_id": "MONDO:0015356"
+                }
+              ],
+              "trait_name": "Hereditary cancer-predisposing syndrome"
+            }
+          ]
+        },
+        "clinical_impact_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "oncogenicity_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "record_status": "",
+        "gene_sort": "NF1",
+        "chr_sort": "17",
+        "location_sort": "00000000000031236020",
+        "variation_set_name": "",
+        "variation_set_id": "",
+        "genes": [
+          {
+            "symbol": "NF1",
+            "geneid": "4763",
+            "strand": "+",
+            "source": "submitted"
+          }
+        ],
+        "molecular_consequence_list": [
+          "frameshift variant"
+        ],
+        "protein_change": "R1325fs",
+        "fda_recognized_database": ""
+      },
+      "4860985": {
+        "uid": "4860985",
+        "obj_type": "Duplication",
+        "accession": "VCV004860985",
+        "accession_version": "VCV004860985.1",
+        "title": "NM_001042492.3(NF1):c.2195dup (p.Leu732fs)",
+        "variation_set": [
+          {
+            "measure_id": "4969702",
+            "variation_xrefs": [],
+            "variation_name": "NM_001042492.3(NF1):c.2195dup (p.Leu732fs)",
+            "cdna_change": "c.2195dup",
+            "aliases": [],
+            "variation_loc": [
+              {
+                "status": "current",
+                "assembly_name": "GRCh38",
+                "chr": "17",
+                "band": "",
+                "start": "31226626",
+                "stop": "31226627",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "31226626",
+                "display_stop": "31226627",
+                "assembly_acc_ver": "GCF_000001405.38",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              },
+              {
+                "status": "previous",
+                "assembly_name": "GRCh37",
+                "chr": "17",
+                "band": "",
+                "start": "29553644",
+                "stop": "29553645",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "29553644",
+                "display_stop": "29553645",
+                "assembly_acc_ver": "GCF_000001405.25",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              }
+            ],
+            "allele_freq_set": [],
+            "variant_type": "Duplication",
+            "canonical_spdi": "NC_000017.11:31226626:TT:TTT",
+            "common_name": ""
+          }
+        ],
+        "supporting_submissions": {
+          "scv": [
+            "SCV007616148"
+          ],
+          "rcv": [
+            "RCV006719087"
+          ]
+        },
+        "germline_classification": {
+          "description": "Pathogenic",
+          "last_evaluated": "2026/06/02 00:00",
+          "review_status": "criteria provided, single submitter",
+          "fda_recognized_database": "",
+          "trait_set": [
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "MedGen",
+                  "db_id": "CN230736"
+                }
+              ],
+              "trait_name": "Cardiovascular phenotype"
+            },
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "Orphanet",
+                  "db_id": "140162"
+                },
+                {
+                  "db_source": "MedGen",
+                  "db_id": "C0027672"
+                },
+                {
+                  "db_source": "MeSH",
+                  "db_id": "D009386"
+                },
+                {
+                  "db_source": "MONDO",
+                  "db_id": "MONDO:0015356"
+                }
+              ],
+              "trait_name": "Hereditary cancer-predisposing syndrome"
+            }
+          ]
+        },
+        "clinical_impact_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "oncogenicity_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "record_status": "",
+        "gene_sort": "NF1",
+        "chr_sort": "17",
+        "location_sort": "00000000000031226626",
+        "variation_set_name": "",
+        "variation_set_id": "",
+        "genes": [
+          {
+            "symbol": "NF1",
+            "geneid": "4763",
+            "strand": "+",
+            "source": "submitted"
+          }
+        ],
+        "molecular_consequence_list": [
+          "frameshift variant"
+        ],
+        "protein_change": "L732fs",
+        "fda_recognized_database": ""
+      },
+      "4860979": {
+        "uid": "4860979",
+        "obj_type": "Deletion",
+        "accession": "VCV004860979",
+        "accession_version": "VCV004860979.1",
+        "title": "NM_001042492.3(NF1):c.6919_6921+5del",
+        "variation_set": [
+          {
+            "measure_id": "4969696",
+            "variation_xrefs": [],
+            "variation_name": "NM_001042492.3(NF1):c.6919_6921+5del",
+            "cdna_change": "NM_001042492.3(NF1):c.6919_6921+5del",
+            "aliases": [],
+            "variation_loc": [
+              {
+                "status": "current",
+                "assembly_name": "GRCh38",
+                "chr": "17",
+                "band": "",
+                "start": "31338799",
+                "stop": "31338806",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "31338799",
+                "display_stop": "31338806",
+                "assembly_acc_ver": "GCF_000001405.38",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              },
+              {
+                "status": "previous",
+                "assembly_name": "GRCh37",
+                "chr": "17",
+                "band": "",
+                "start": "29665817",
+                "stop": "29665824",
+                "inner_start": "",
+                "inner_stop": "",
+                "outer_start": "",
+                "outer_stop": "",
+                "display_start": "29665817",
+                "display_stop": "29665824",
+                "assembly_acc_ver": "GCF_000001405.25",
+                "annotation_release": "",
+                "alt": "",
+                "ref": ""
+              }
+            ],
+            "allele_freq_set": [],
+            "variant_type": "Deletion",
+            "canonical_spdi": "NC_000017.11:31338798:TAATAAGGTAAT:TAAT",
+            "common_name": ""
+          }
+        ],
+        "supporting_submissions": {
+          "scv": [
+            "SCV007616074"
+          ],
+          "rcv": [
+            "RCV006719081"
+          ]
+        },
+        "germline_classification": {
+          "description": "Likely pathogenic",
+          "last_evaluated": "2026/06/05 00:00",
+          "review_status": "criteria provided, single submitter",
+          "fda_recognized_database": "",
+          "trait_set": [
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "MedGen",
+                  "db_id": "CN230736"
+                }
+              ],
+              "trait_name": "Cardiovascular phenotype"
+            },
+            {
+              "trait_xrefs": [
+                {
+                  "db_source": "Orphanet",
+                  "db_id": "140162"
+                },
+                {
+                  "db_source": "MedGen",
+                  "db_id": "C0027672"
+                },
+                {
+                  "db_source": "MeSH",
+                  "db_id": "D009386"
+                },
+                {
+                  "db_source": "MONDO",
+                  "db_id": "MONDO:0015356"
+                }
+              ],
+              "trait_name": "Hereditary cancer-predisposing syndrome"
+            }
+          ]
+        },
+        "clinical_impact_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "oncogenicity_classification": {
+          "description": "",
+          "last_evaluated": "1/01/01 00:00",
+          "review_status": "",
+          "fda_recognized_database": "",
+          "trait_set": []
+        },
+        "record_status": "",
+        "gene_sort": "NF1",
+        "chr_sort": "17",
+        "location_sort": "00000000000031338799",
+        "variation_set_name": "",
+        "variation_set_id": "",
+        "genes": [
+          {
+            "symbol": "NF1",
+            "geneid": "4763",
+            "strand": "+",
+            "source": "submitted"
+          }
+        ],
+        "molecular_consequence_list": [
+          "splice donor variant"
+        ],
+        "protein_change": "",
+        "fda_recognized_database": ""
+      }
+    }
+  }
+}

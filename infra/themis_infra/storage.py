@@ -1,8 +1,9 @@
-"""The literature full-text store bucket.
+"""The durable data-plane buckets: literature full text, shared resources.
 
-The durable source of truth for the literature-evidence layer — one GCS
-directory per paper. See `docs/design/literature-evidence-layer.md` §2.1 for the
-storage model and `infra/README.md` (Storage) for the bucket policy and naming.
+The full-text store is the source of truth for the literature-evidence layer —
+one GCS directory per paper (`docs/design/literature-evidence-layer.md` §2.1).
+The resources bucket holds the re-derivable reference data the Project shares.
+See `infra/README.md` (Storage) for each bucket's policy and naming.
 """
 
 from __future__ import annotations
@@ -70,5 +71,36 @@ def fulltext_bucket(
         soft_delete_policy=gcp.storage.BucketSoftDeletePolicyArgs(retention_duration_seconds=0),
         # Delete-only lifecycle keeps Autoclass valid; storage-class transitions don't.
         autoclass=gcp.storage.BucketAutoclassArgs(enabled=True, terminal_storage_class='ARCHIVE'),
+        opts=opts,
+    )
+
+
+def resources_bucket(
+    *,
+    project: str,
+    region: str,
+    opts: pulumi.ResourceOptions | None = None,
+) -> gcp.storage.Bucket:
+    """Create the shared resources bucket, returned for export and IAM grants.
+
+    One bucket for the non-sensitive reference data the Project's services and pipelines share —
+    upstream mirrors and the artifacts derived from them — laid out one dataset per top-level
+    prefix (`gs://<bucket>/<dataset>/...`), each dataset carrying its own provenance. Writes are
+    granted at bucket level — each dataset has one writing job by convention, not by IAM: the
+    writers are this deployment's own automation and every object is re-derivable, so a misdirected
+    write is a bug to fix, not a boundary to defend. Its name carries the deployment's project, so
+    dev and prod never read each other's data. Unversioned: re-derivable objects need no history,
+    and the GCS-default soft delete covers an accidental deletion.
+    """
+    return gcp.storage.Bucket(
+        'themis-resources',
+        project=project,
+        name=f'{project}-resources',
+        location=region,
+        uniform_bucket_level_access=True,
+        public_access_prevention='enforced',
+        # NEARLINE terminal, not ARCHIVE: a cold read — a service cold start, a fresh pipeline
+        # machine seeding — would otherwise pay ARCHIVE retrieval fees.
+        autoclass=gcp.storage.BucketAutoclassArgs(enabled=True, terminal_storage_class='NEARLINE'),
         opts=opts,
     )

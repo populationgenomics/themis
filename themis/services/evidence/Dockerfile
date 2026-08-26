@@ -29,6 +29,7 @@ COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
+COPY themis/evidence/models ./themis/evidence/models
 # The read path reaches into litcache for the manifest stubs, the readiness derivation, the manifest
 # key, and the crosswalk lookup, and litcache reaches themis/common for storage + the Cloud SQL dial —
 # so both packages ship whole rather than as a hand-listed subset that silently rots as the read path
@@ -36,6 +37,13 @@ COPY themis/rpc ./themis/rpc
 COPY buf ./buf
 COPY themis/common ./themis/common
 COPY themis/litcache ./themis/litcache
+# The session client every interface but literature authorizes through. `themis.clients.id_token` is a
+# module of that namespace package, not a package, so it copies as a file.
+COPY themis/clients/auth ./themis/clients/auth
+COPY themis/clients/id_token.py ./themis/clients/id_token.py
+# The interfaces share the library's SVCv4 vocabularies rather than copying them: the 50-nt NMD rule,
+# the P/LP classification terms and gold-star range, the gene-disease validity classes.
+COPY themis/svcv4 ./themis/svcv4
 COPY themis/services/evidence ./themis/services/evidence
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # deployed revision crash-loops, since nothing else imports the image's own tree.

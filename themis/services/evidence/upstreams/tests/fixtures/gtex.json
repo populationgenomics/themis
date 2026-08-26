@@ -1,0 +1,70 @@
+{
+ "data": [
+  {
+   "median": 0.67,
+   "transcriptId": "ENST00000352993.7",
+   "tissueSiteDetailId": "Adipose_Subcutaneous",
+   "ontologyId": "UBERON:0002190",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  },
+  {
+   "median": 0.0,
+   "transcriptId": "ENST00000354071.7",
+   "tissueSiteDetailId": "Adipose_Subcutaneous",
+   "ontologyId": "UBERON:0002190",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  },
+  {
+   "median": 0.54,
+   "transcriptId": "ENST00000352993.7",
+   "tissueSiteDetailId": "Adipose_Visceral_Omentum",
+   "ontologyId": "UBERON:0010414",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  },
+  {
+   "median": 0.0,
+   "transcriptId": "ENST00000354071.7",
+   "tissueSiteDetailId": "Adipose_Visceral_Omentum",
+   "ontologyId": "UBERON:0010414",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  },
+  {
+   "median": 0.5,
+   "transcriptId": "ENST00000352993.7",
+   "tissueSiteDetailId": "Adrenal_Gland",
+   "ontologyId": "UBERON:0002369",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  },
+  {
+   "median": 0.0,
+   "transcriptId": "ENST00000354071.7",
+   "tissueSiteDetailId": "Adrenal_Gland",
+   "ontologyId": "UBERON:0002369",
+   "datasetId": "gtex_v10",
+   "gencodeId": "ENSG00000012048.23",
+   "geneSymbol": "BRCA1",
+   "unit": "TPM"
+  }
+ ],
+ "paging_info": {
+  "numberOfPages": 1,
+  "page": 0,
+  "maxItemsPerPage": 100000,
+  "totalNumberOfItems": 6
+ }
+}

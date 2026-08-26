@@ -1,0 +1,104 @@
+{
+  "dataset_versions": ["2026-07-24"],
+  "panels": {
+    "137": "Mendeliome",
+    "126": "Incidentalome"
+  },
+  "genes": {
+    "HGNC:1100": {
+      "gene_symbol": "BRCA1",
+      "max_confidence": 3,
+      "mode_of_inheritance": "BIALLELIC, autosomal or pseudoautosomal",
+      "mode_of_pathogenicity": "",
+      "entries": [
+        {
+          "entity_type": "gene",
+          "entity_name": "BRCA1",
+          "confidence_level": "3",
+          "penetrance": null,
+          "mode_of_pathogenicity": "",
+          "publications": [
+            "23269703",
+            "29133208",
+            "25472942",
+            "29712865"
+          ],
+          "evidence": [
+            "Expert Review Green",
+            "Expert list"
+          ],
+          "phenotypes": [
+            "Fanconi anemia, complementation group S, MIM# 617883"
+          ],
+          "mode_of_inheritance": "BIALLELIC, autosomal or pseudoautosomal",
+          "tags": [],
+          "gene_data": {
+            "hgnc_id": "HGNC:1100",
+            "gene_symbol": "BRCA1",
+            "gene_name": "BRCA1 DNA repair associated",
+            "omim_gene": ["113705"],
+            "ensembl_genes": {"GRch38": {"115": {"ensembl_id": "ENSG00000012048"}}}
+          }
+        },
+        {
+          "entity_type": "gene",
+          "entity_name": "BRCA1",
+          "confidence_level": "3",
+          "penetrance": null,
+          "mode_of_pathogenicity": "",
+          "publications": [
+            "7545954",
+            "12237281"
+          ],
+          "evidence": [
+            "Expert Review Green"
+          ],
+          "phenotypes": [
+            "Breast-ovarian cancer, familial, 1, MIM# 604370"
+          ],
+          "mode_of_inheritance": "MONOALLELIC, autosomal or pseudoautosomal, NOT imprinted",
+          "tags": [],
+          "gene_data": {
+            "hgnc_id": "HGNC:1100",
+            "gene_symbol": "BRCA1",
+            "gene_name": "BRCA1 DNA repair associated"
+          }
+        }
+      ],
+      "evaluations": [
+        "BRCA1 acts through loss of function; truncating variants abolish homologous-recombination DNA repair.",
+        "Expert review: green on both the Mendeliome and Incidentalome panels."
+      ]
+    },
+    "HGNC:1097": {
+      "gene_symbol": "BRAF",
+      "max_confidence": 2,
+      "mode_of_inheritance": "MONOALLELIC, autosomal or pseudoautosomal, imprinted status unknown",
+      "mode_of_pathogenicity": "gain-of-function",
+      "entries": [
+        {
+          "entity_type": "gene",
+          "entity_name": "BRAF",
+          "confidence_level": "2",
+          "penetrance": null,
+          "mode_of_pathogenicity": "gain-of-function",
+          "publications": [],
+          "evidence": [
+            "Expert Review Amber"
+          ],
+          "phenotypes": [
+            "Cardiofaciocutaneous syndrome, MIM# 115150"
+          ],
+          "mode_of_inheritance": "MONOALLELIC, autosomal or pseudoautosomal, imprinted status unknown",
+          "tags": [],
+          "gene_data": {
+            "hgnc_id": "HGNC:1097",
+            "gene_symbol": "BRAF",
+            "gene_name": "B-Raf proto-oncogene, serine/threonine kinase"
+          }
+        }
+      ],
+      "evaluations": []
+    }
+  }
+}

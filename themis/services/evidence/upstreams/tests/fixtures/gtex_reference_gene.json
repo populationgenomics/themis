@@ -1,0 +1,27 @@
+{
+ "data": [
+  {
+   "chromosome": "chr17",
+   "dataSource": "HAVANA",
+   "description": "BRCA1 DNA repair associated [Source:HGNC Symbol;Acc:HGNC:1100]",
+   "end": 43125483,
+   "entrezGeneId": 672,
+   "gencodeId": "ENSG00000012048.23",
+   "gencodeVersion": "v39",
+   "geneStatus": "",
+   "geneSymbol": "BRCA1",
+   "geneSymbolUpper": "BRCA1",
+   "geneType": "protein coding",
+   "genomeBuild": "GRCh38/hg38",
+   "start": 43044295,
+   "strand": "-",
+   "tss": 43125483
+  }
+ ],
+ "paging_info": {
+  "numberOfPages": 1,
+  "page": 0,
+  "maxItemsPerPage": 250,
+  "totalNumberOfItems": 1
+ }
+}

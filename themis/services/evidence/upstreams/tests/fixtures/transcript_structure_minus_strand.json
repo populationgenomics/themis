@@ -1,0 +1,232 @@
+[
+ {
+  "current_name": "BRCA1 DNA repair associated",
+  "current_symbol": "BRCA1",
+  "hgnc": "HGNC:1100",
+  "lovd_corrections": null,
+  "lovd_messages": null,
+  "previous_symbol": "",
+  "requested_symbol": "NM_007294.4",
+  "transcripts": [
+   {
+    "annotations": {
+     "chromosome": "17",
+     "db_xref": {
+      "CCDS": "CCDS11453.1",
+      "ensemblgene": null,
+      "hgnc": "HGNC:1100",
+      "ncbigene": "672",
+      "select": "MANE"
+     },
+     "ensembl_select": false,
+     "mane_plus_clinical": false,
+     "mane_select": true,
+     "map": "17q21.31",
+     "note": "BRCA1 DNA repair associated",
+     "refseq_select": true,
+     "variant": "1"
+    },
+    "coding_end": 5705,
+    "coding_start": 114,
+    "description": "Homo sapiens BRCA1 DNA repair associated (BRCA1), transcript variant 1, mRNA",
+    "genomic_spans": {
+     "NC_000017.11": {
+      "end_position": 43125364,
+      "exon_structure": [
+       {
+        "cigar": "94=",
+        "exon_number": 1,
+        "genomic_end": 43125364,
+        "genomic_start": 43125271,
+        "transcript_end": 94,
+        "transcript_start": 1
+       },
+       {
+        "cigar": "99=",
+        "exon_number": 2,
+        "genomic_end": 43124115,
+        "genomic_start": 43124017,
+        "transcript_end": 193,
+        "transcript_start": 95
+       },
+       {
+        "cigar": "54=",
+        "exon_number": 3,
+        "genomic_end": 43115779,
+        "genomic_start": 43115726,
+        "transcript_end": 247,
+        "transcript_start": 194
+       },
+       {
+        "cigar": "78=",
+        "exon_number": 4,
+        "genomic_end": 43106533,
+        "genomic_start": 43106456,
+        "transcript_end": 325,
+        "transcript_start": 248
+       },
+       {
+        "cigar": "89=",
+        "exon_number": 5,
+        "genomic_end": 43104956,
+        "genomic_start": 43104868,
+        "transcript_end": 414,
+        "transcript_start": 326
+       },
+       {
+        "cigar": "140=",
+        "exon_number": 6,
+        "genomic_end": 43104261,
+        "genomic_start": 43104122,
+        "transcript_end": 554,
+        "transcript_start": 415
+       },
+       {
+        "cigar": "106=",
+        "exon_number": 7,
+        "genomic_end": 43099880,
+        "genomic_start": 43099775,
+        "transcript_end": 660,
+        "transcript_start": 555
+       },
+       {
+        "cigar": "46=",
+        "exon_number": 8,
+        "genomic_end": 43097289,
+        "genomic_start": 43097244,
+        "transcript_end": 706,
+        "transcript_start": 661
+       },
+       {
+        "cigar": "77=",
+        "exon_number": 9,
+        "genomic_end": 43095922,
+        "genomic_start": 43095846,
+        "transcript_end": 783,
+        "transcript_start": 707
+       },
+       {
+        "cigar": "3426=",
+        "exon_number": 10,
+        "genomic_end": 43094860,
+        "genomic_start": 43091435,
+        "transcript_end": 4209,
+        "transcript_start": 784
+       },
+       {
+        "cigar": "89=",
+        "exon_number": 11,
+        "genomic_end": 43091032,
+        "genomic_start": 43090944,
+        "transcript_end": 4298,
+        "transcript_start": 4210
+       },
+       {
+        "cigar": "172=",
+        "exon_number": 12,
+        "genomic_end": 43082575,
+        "genomic_start": 43082404,
+        "transcript_end": 4470,
+        "transcript_start": 4299
+       },
+       {
+        "cigar": "127=",
+        "exon_number": 13,
+        "genomic_end": 43076614,
+        "genomic_start": 43076488,
+        "transcript_end": 4597,
+        "transcript_start": 4471
+       },
+       {
+        "cigar": "191=",
+        "exon_number": 14,
+        "genomic_end": 43074521,
+        "genomic_start": 43074331,
+        "transcript_end": 4788,
+        "transcript_start": 4598
+       },
+       {
+        "cigar": "311=",
+        "exon_number": 15,
+        "genomic_end": 43071238,
+        "genomic_start": 43070928,
+        "transcript_end": 5099,
+        "transcript_start": 4789
+       },
+       {
+        "cigar": "88=",
+        "exon_number": 16,
+        "genomic_end": 43067695,
+        "genomic_start": 43067608,
+        "transcript_end": 5187,
+        "transcript_start": 5100
+       },
+       {
+        "cigar": "78=",
+        "exon_number": 17,
+        "genomic_end": 43063951,
+        "genomic_start": 43063874,
+        "transcript_end": 5265,
+        "transcript_start": 5188
+       },
+       {
+        "cigar": "41=",
+        "exon_number": 18,
+        "genomic_end": 43063373,
+        "genomic_start": 43063333,
+        "transcript_end": 5306,
+        "transcript_start": 5266
+       },
+       {
+        "cigar": "84=",
+        "exon_number": 19,
+        "genomic_end": 43057135,
+        "genomic_start": 43057052,
+        "transcript_end": 5390,
+        "transcript_start": 5307
+       },
+       {
+        "cigar": "55=",
+        "exon_number": 20,
+        "genomic_end": 43051117,
+        "genomic_start": 43051063,
+        "transcript_end": 5445,
+        "transcript_start": 5391
+       },
+       {
+        "cigar": "74=",
+        "exon_number": 21,
+        "genomic_end": 43049194,
+        "genomic_start": 43049121,
+        "transcript_end": 5519,
+        "transcript_start": 5446
+       },
+       {
+        "cigar": "61=",
+        "exon_number": 22,
+        "genomic_end": 43047703,
+        "genomic_start": 43047643,
+        "transcript_end": 5580,
+        "transcript_start": 5520
+       },
+       {
+        "cigar": "1508=",
+        "exon_number": 23,
+        "genomic_end": 43045802,
+        "genomic_start": 43044295,
+        "transcript_end": 7088,
+        "transcript_start": 5581
+       }
+      ],
+      "orientation": -1,
+      "start_position": 43044295,
+      "total_exons": 23
+     }
+    },
+    "length": 7088,
+    "reference": "NM_007294.4",
+    "translation": "NP_009225.1"
+   }
+  ]
+ }
+]

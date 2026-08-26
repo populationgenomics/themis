@@ -6,5 +6,6 @@
   { "name": "dispatcher", "context": ".", "file": "themis/services/dispatcher/Dockerfile", "env": "THEMIS_DISPATCHER_IMAGE", "runtime": "python" },
   { "name": "worker", "context": ".", "file": "themis/services/sandbox_worker/Dockerfile", "env": "THEMIS_SANDBOX_WORKER_IMAGE", "runtime": "python" },
   { "name": "evidence", "context": ".", "file": "themis/services/evidence/Dockerfile", "env": "THEMIS_EVIDENCE_IMAGE", "runtime": "python" },
-  { "name": "convert-worker", "context": ".", "file": "themis/services/convert_worker/Dockerfile", "env": "THEMIS_CONVERT_WORKER_IMAGE", "runtime": "python" }
+  { "name": "convert-worker", "context": ".", "file": "themis/services/convert_worker/Dockerfile", "env": "THEMIS_CONVERT_WORKER_IMAGE", "runtime": "python" },
+  { "name": "gene-disease-refresh", "context": ".", "file": "themis/services/evidence/gene_disease/refresh.Dockerfile", "env": "THEMIS_GENE_DISEASE_REFRESH_IMAGE", "runtime": "python" }
 ]

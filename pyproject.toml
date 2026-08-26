@@ -93,8 +93,9 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # converts. anchorite locates a verbatim quote to markdown offsets. The cloudsql group (connector +
 # pg8000, IAM auth) reads the litcache crosswalk, which is how a PMID reaches a doc_id. pubmed_proto
 # and anchorite are exact-pinned because they are age-gate-exempt ([tool.uv] above). clinvar_proto, exempt
-# and pinned likewise, owns ClinVar's VCV record type: the clinvar contract's stubs import the wheel's,
-# so the record the DescribeVariant reply carries whole is typed by the wheel rather than by this tree.
+# and pinned likewise, owns ClinVar's VCV record type and the converter that builds one from efetch's
+# XML: the clinvar contract's stubs import the wheel's message and the adapter calls its converter, so
+# the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx", "defusedxml", "google-cloud-storage", "pubmed_proto==0.1.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
@@ -150,7 +151,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
 # otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —
@@ -217,6 +218,13 @@ ignore = [
     "SLF001", # tests legitimately reach into module privates
     "S105",   # fixture env keys / session tokens are not secrets
     "S106",   # fixture credentials passed as kwargs are not secrets
+]
+# Where a test stands in for something the production code calls, it keeps that thing's signature and
+# reads only part of it. Scoped to the evidence tests, which stand in for a port and for the session
+# resolver every interface authorizes through: everywhere else an unused argument is still one.
+"themis/services/evidence/**/tests/**" = [
+    "ARG001", # a stand-in session resolver takes the token whether or not the case turns on it
+    "ARG002", # a fake backend keeps the port's signature even where a param is unused
 ]
 "tests/**" = [
     "S101",   # asserts are the standard pytest idiom
