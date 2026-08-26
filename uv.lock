@@ -2449,11 +2449,11 @@ wheels = [
 
 [[package]]
 name = "postern"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/78/56/d1c179e59becdb734f99107afcbda080d117328e6b6655863fb8ed04eb37/postern-0.3.0.tar.gz", hash = "sha256:7d219793b943e034d53a40c489f3db664cfcf8b95103c21620ddba8a2eef40df", size = 49286, upload-time = "2026-07-24T05:02:08.275Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/86/94/c69797023887fd337476adc4be7cecbfb49e3a21a5fe5943c8688e047a34/postern-0.4.0.tar.gz", hash = "sha256:512e6a6439c944e947cbd247845dfcc23d458702ddca3771213d04b05c761c6e", size = 99176, upload-time = "2026-08-26T03:47:55.012Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/0a/498494d4fa8b47027709ee93cfa99a0bc1311f8b223fdf9caa7fb9b65377/postern-0.3.0-py3-none-any.whl", hash = "sha256:23abfa680d7d369804f7829ac350d895d7daf2ec6255c437544d32dfaadbfd4c", size = 35664, upload-time = "2026-07-24T05:02:07.053Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/88/edf34e90b8cf34173dde3b62902351a2b75d18c7df22c75d4c0c94238114/postern-0.4.0-py3-none-any.whl", hash = "sha256:66e425786c3a065b7bb4ecd1ec07e93abf8b6d1a7602ec762e4067521b202ce4", size = 59756, upload-time = "2026-08-26T03:47:53.266Z" },
 ]
 
 [package.optional-dependencies]
@@ -3764,7 +3764,7 @@ lint = [
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
@@ -3804,7 +3804,7 @@ sandbox-worker = [
     { name = "anyio" },
     { name = "google-auth" },
     { name = "grpcio" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -3844,7 +3844,7 @@ test = [
     { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.2.0" },
     { name = "pg8000" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.3.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.1.0" },

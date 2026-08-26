@@ -122,7 +122,7 @@ dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "goog
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
 # id_token + the store stubs (the worker's own checkpoint client).
-sandbox_worker = ["postern[grpc]==0.3.0", "anthropic", "anyio", { include-group = "session" }]
+sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", { include-group = "session" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
 # protobuf backs the shipped hello stubs. Locked rather than a floating pip install so the guest inherits the
