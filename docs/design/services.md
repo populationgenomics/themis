@@ -41,8 +41,12 @@ A service is `themis/services/<name>/`, the package `themis.services.<name>`:
 - **`servicer.py`** — the servicer class subclassing the generated `<Service>Servicer`, one method per rpc taking and
   returning the generated proto messages. It takes its backend as a constructor argument — it depends on the abstract
   port base, never a concrete backend.
-- **`<port>.py`** — the backend port as an `abc.ABC` (auth's is `backend.SessionBackend`), plus its implementations: an
-  in-memory **fixture** for offline runs, and the real adapter later.
+- **`<port>.py`** — the backend port as an `abc.ABC` (auth's is `backend.SessionBackend`), and only that: one port per
+  interface, its methods the rpcs the servicer serves ([below](#one-port-per-interface)).
+- **`fixture.py`** — the in-memory backend for offline runs, with the vocabulary and the parser of its seed document
+  ([below](#the-fixture-lives-in-its-own-module)).
+- **`<adapter>.py`** — the live backend the deploy selects (auth's is `cloudsql.CloudSqlBackend`), one module per source
+  it reads.
 - **`__main__.py`** — the server entrypoint. Builds the backend from the environment (selected by a required env var —
   fail loud, no silent default), registers the servicer and a `grpc.health.v1` health servicer on a `grpc.aio` server,
   and serves on Cloud Run's `$PORT`.
@@ -156,26 +160,55 @@ rather than stalling the `grpc.aio` event loop:
 - **Selection** — one required env var per interface, `THEMIS_<INTERFACE>_BACKEND`; an unset or unknown value is a
   `SystemExit`, never a silent fallback. Where a deployment serves one interface, that interface's name is the
   service's, so `<INTERFACE>` and the service's own name are the same string; only a var scoped to the whole image
-  carries the service name in its own right. One var however many ports sit behind it: literature reads stored full
-  texts through one port and the public indexes through another, and the one var wires both at once. The split is how
-  the interface is factored — a seam for testing, and for swapping a source later — not a knob an operator has any
+  carries the service name in its own right. One var however many sources sit behind the interface: literature's live
+  backend reads stored full texts from a bucket and resolves external identifiers against a crosswalk database, and the
+  one var wires both at once. Which sources an adapter composes is how it is built, not a knob an operator has any
   reason to turn. Half an interface offline against half live is a state nobody deploys on purpose and everybody
-  debugging one has to rule out. One var per interface also keeps the vocabulary honest: a var selecting a single
-  adapter can name the technology (`gcs`, `cloudsql`), while one standing for several names the mode — `live` against
+  debugging one has to rule out. One var per interface also keeps the vocabulary honest: a var whose adapter is one
+  technology can name it (`gcs`, `cloudsql`), while one whose adapter composes several names the mode — `live` against
   the real world, `fixture` against memory. `store` and `auth` are the outliers, `THEMIS_STORAGE_BACKEND` naming the
   port and `THEMIS_BACKEND` naming nothing; rename them when something else takes you into those files, rather than
   reading them as a second convention. The shared session resolver keeps its own image-wide selector,
   [above](#one-deployment-several-interfaces).
 - **Fixture backend** — in-memory, for tests and a first deploy. Seed it *explicitly* from the environment, as one JSON
-  document per interface with a named section per port where it has several, so the seed is as single a thing as the
-  switch that selects it. The code never defaults to an empty or placeholder store: the caller (image, deploy, test)
-  supplies the value, and `{}` is how it says "deliberately empty". An absent section is an error rather than an empty
-  one — an empty list inside the document says "nothing here" deliberately, where a missing section says only that
-  someone forgot. This is the fail-loud rule ([`../style/general.md`](../style/general.md)): a missing input raises, it
-  does not limp along on a default.
+  document per interface with a named section per port method, so the seed is as single a thing as the switch that
+  selects it. The code never defaults to an empty or placeholder store: the caller (image, deploy, test) supplies the
+  value, and `{}` is how it says "deliberately empty". An absent section is an error rather than an empty one — an empty
+  list inside the document says "nothing here" deliberately, where a missing section says only that someone forgot. This
+  is the fail-loud rule ([`../style/general.md`](../style/general.md)): a missing input raises, it does not limp along
+  on a default.
 - **Real backend** — the adapter the deploy selects; it arrives with the deploy PR, not before. A DB-backed backend
   additionally needs its tables and the migrate runner, which are cross-service and not the service PR's to define
   unilaterally (see deploy, below).
+
+### One port per interface
+
+A port mirrors the interface it stands behind: one `abc.ABC` whose methods are the rpcs the servicer serves. Where the
+live backend reads several sources — a bucket of stored documents, a public index over HTTP, a lookup table in Postgres
+— it composes them itself, behind that one port, keeping a module per source; only the port layer is singular.
+
+Splitting the port along those sources buys an abstraction with no independent consumer. The interface's servicer is the
+only caller, so each half exists to be assembled back into the whole before anything can use it: two seams to hold in
+step, two fixtures to seed, and a surface a reader has to reconstruct from both halves before they can see what the
+interface promises. An abstraction earns its place when something can vary behind it on its own — a second interface, a
+batch job, a caller outside the service. Absent one of those, which sources an adapter reads is the adapter's business,
+and the port is the interface.
+
+### The fixture lives in its own module
+
+The fixture backend, the vocabulary of its seed document — which keys a seeded record may carry, which strings stand for
+which enum values — and the parser that reads it live in one module of the service package, `fixture.py`. Fixture mode
+is a deployable mode rather than test scaffolding, so that module ships in the image like any other; what it does not do
+is spread. The port module declares the port and nothing else, and the live backend names none of the seed's vocabulary.
+
+That vocabulary is a test surface: it exists so a corpus can be written by hand, and it grows with every rpc the port
+gains. In the port module it is read by everyone who opens the interface to see what it promises — a caller, an adapter
+author, a reviewer of the contract — none of whom will ever seed anything. Apart, the port stays readable in one screen
+and the seed format concerns only whoever writes a seed. The interface's `config.py`, which is what wires fixture mode,
+is its only importer in production; tests import it freely.
+
+A service that does not yet have this shape — one port, the fixture apart — is brought to it when next substantially
+edited, rather than in a sweep of its own.
 
 ## Who calls a service
 

@@ -40,7 +40,10 @@ or TypeScript — fails CI.
   backend (the abstract port) and a `themis.clients.auth.session.SessionResolver` as constructor arguments. Authorize
   inbound at the top of each method — `session = await session.require_session(context, self._session_resolver)` before
   touching scoped state; it aborts `UNAUTHENTICATED`/`PERMISSION_DENIED` and never returns `None`.
-- **`<port>.py`** — the backend port as an `abc.ABC`, plus an in-memory **fixture** implementation for offline runs.
+- **`<port>.py`** — the backend port as an `abc.ABC`, and nothing else in the module: one port for the interface, its
+  methods the rpcs ([`services.md`](../design/services.md) §"One port per interface").
+- **`fixture.py`** — the in-memory **fixture** backend for offline runs, with its seed vocabulary and parser
+  ([`services.md`](../design/services.md) §"The fixture lives in its own module").
 - **`__main__.py`** — builds its backends from one **required** env var (`THEMIS_<INTERFACE>_BACKEND`; unset/unknown ⇒
   `SystemExit`, never a silent default), registers the servicer + a `grpc.health.v1` health servicer on a `grpc.aio`
   server, serves on `$PORT`.
