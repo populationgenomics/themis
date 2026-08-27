@@ -7,7 +7,7 @@ path:
 - **OA XML** off the litfetch ladder, converted with litdown (`add_source_and_rendering` — the fetched
   XML is a source the paper lacked). Seconds.
 - **PDF LLM-OCR** when the ladder serves no usable XML but the manifest already carries a PDF source:
-  the PDF is transcribed to markdown by an Anthropic vision model (`ocr.convert_pdf`) and committed
+  the PDF is transcribed to markdown by the injected converter and committed
   with `add_rendering` (rendering-only — the PDF source is already in the manifest). Minutes; this is
   why the async worker exists.
 
@@ -53,7 +53,6 @@ _LITDOWN_VERSION = importlib.metadata.version('litdown')
 _ID_FIELDS = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
-PdfConverter = Callable[[bytes], Awaitable[ocr.OcrRendering]]
 
 
 class UnknownPaperError(Exception):
@@ -145,7 +144,10 @@ def _pdf_source(manifest: litcache_pb2.Manifest) -> litcache_pb2.Source | None:
 
 
 def _ocr_rendering(
-    source: litcache_pb2.Source, revision: litcache_pb2.Revision, model: str, created_at: datetime.datetime
+    source: litcache_pb2.Source,
+    revision: litcache_pb2.Revision,
+    result: ocr.OcrRendering,
+    created_at: datetime.datetime,
 ) -> litcache_pb2.Rendering:
     created = timestamp_pb2.Timestamp()
     created.FromDatetime(created_at)
@@ -153,8 +155,8 @@ def _ocr_rendering(
         from_source=source.handle,
         from_revision=revision.hash,
         converter=litcache_pb2.Converter.CONVERTER_LLM_OCR,
-        converter_version=ocr.HARNESS_VERSION,
-        model=model,
+        converter_version=result.converter_version,
+        model=result.model,
         created_at=created,
     )
 
@@ -202,7 +204,7 @@ async def _produce_from_pdf(
     bucket: gcs.Bucket,
     doc_id: str,
     manifest: litcache_pb2.Manifest,
-    convert_pdf: PdfConverter,
+    convert_pdf: ocr.PdfConverter,
     now: Callable[[], datetime.datetime],
 ) -> bool:
     """OCR the manifest's PDF source to markdown and commit it; return whether one was committed."""
@@ -219,9 +221,7 @@ async def _produce_from_pdf(
     writer.add_rendering(
         bucket,
         doc_id,
-        writer.RenderingInput(
-            rendering=_ocr_rendering(source, revision, result.model, now()), markdown=result.markdown
-        ),
+        writer.RenderingInput(rendering=_ocr_rendering(source, revision, result, now()), markdown=result.markdown),
     )
     return True
 
@@ -232,7 +232,7 @@ async def produce_full_text(
     *,
     resolver: resolvers.Resolver | None = None,
     fetch: Fetcher = oa.fetch_oa_source,
-    convert_pdf: PdfConverter = ocr.convert_pdf,
+    convert_pdf: ocr.PdfConverter,
     now: Callable[[], datetime.datetime] = _utcnow,
 ) -> outcome.Readiness:
     """Produce a paper's full text — OA XML if the ladder serves it, else the PDF via LLM-OCR.
@@ -249,7 +249,7 @@ async def produce_full_text(
         resolver: The litfetch id resolver `fetch` uses to fill missing ids; defaults to
             `oa.default_resolver` (doi/pmid → pmcid).
         fetch: The OA body fetcher; defaults to `oa.fetch_oa_source`. Injected so tests run offline.
-        convert_pdf: The PDF → markdown LLM-OCR converter; defaults to `ocr.convert_pdf`. Injected so
+        convert_pdf: The PDF → markdown LLM-OCR converter. Injected so
             tests run offline (the real one calls Anthropic).
         now: The clock for captured/created/marker timestamps. Injected for determinism.
 
@@ -264,8 +264,8 @@ async def produce_full_text(
         UnknownPaperError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
         google.api_core.exceptions.NotFound: If an object the manifest names is absent (a seed
             revision blob, say). Operational, so it propagates and stays retryable.
-        anthropic.APIError: A transient Claude API error during OCR (rate limit, overload, connection),
-            or another transient fetch error, propagates so the worker returns 5xx and Cloud Tasks
+        Exception: A transient failure from the converter's provider (rate limit, overload,
+            connection) or from the OA fetch propagates, so the worker returns 5xx and Cloud Tasks
             retries; permanent OA and OCR failures are caught and recorded FAILED, not raised.
         writer.ConcurrentWriteError: The manifest write lost its generation race the whole retry budget
             (contention — retryable).

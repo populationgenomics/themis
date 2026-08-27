@@ -175,8 +175,11 @@ GCS object generations give this atomicity with no lock and no database.
    to rewrite the same marker.
 1. **OA XML** off the litfetch ladder (`oa.fetch_oa_source`, driven by `Manifest.external_ids`), converted with
    `litdown`; committed as a new source + rendering.
-1. else **PDF LLM-OCR**: the newest PDF lineage (by `captured_at`, never array order) is transcribed by an Anthropic
-   vision model (`ocr.convert_pdf`) and committed rendering-only.
+1. else **PDF LLM-OCR**: the newest PDF lineage (by `captured_at`, never array order) is transcribed by a vision model
+   and committed rendering-only. The producer takes the converter as an input rather than choosing one, so which
+   provider transcribes a paper is the caller's decision; the model that produced the bytes is recorded on the
+   rendering. The prompt is shared across providers, which is what makes a transcription difference attributable to the
+   model rather than to the instructions.
 1. else the terminal `NO_FULL_TEXT` marker.
 
 A **transient** fetch/convert error (a litfetch body-fetch that could not reach upstream, a transient Claude API error)

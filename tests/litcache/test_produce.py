@@ -115,12 +115,16 @@ async def _boom(*_args: object, **_kwargs: object) -> oa.OaSource | None:
 
 
 def _ocr_returning(
-    markdown: str, *, model: str = 'claude-sonnet-5', captured: dict[str, bytes] | None = None
-) -> produce.PdfConverter:
+    markdown: str,
+    *,
+    model: str = 'claude-sonnet-5',
+    converter_version: str = '1.1',
+    captured: dict[str, bytes] | None = None,
+) -> ocr.PdfConverter:
     async def convert(pdf_bytes: bytes) -> ocr.OcrRendering:
         if captured is not None:
             captured['pdf'] = pdf_bytes
-        return ocr.OcrRendering(markdown=markdown, model=model)
+        return ocr.OcrRendering(markdown=markdown, model=model, converter_version=converter_version)
 
     return convert
 

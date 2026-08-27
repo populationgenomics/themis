@@ -166,7 +166,7 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
         return None  # no OA XML: force the PDF LLM-OCR branch
 
     async def convert(_pdf_bytes: bytes) -> ocr.OcrRendering:
-        return ocr.OcrRendering(markdown='# OCR full text\n', model='claude-sonnet-5')
+        return ocr.OcrRendering(markdown='# OCR full text\n', model='claude-sonnet-5', converter_version='1.1')
 
     produce = functools.partial(
         produce_mod.produce_full_text, fetch=fetch, convert_pdf=convert, now=lambda: _CAPTURED_AT

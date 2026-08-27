@@ -34,15 +34,13 @@ _logger = logging.getLogger(__name__)
 Producer = Callable[[gcs.Bucket, str], Awaitable[outcome_mod.Readiness]]
 
 
-async def process_conversion(
-    bucket: gcs.Bucket, body: bytes, *, produce: Producer = produce_mod.produce_full_text
-) -> int:
+async def process_conversion(bucket: gcs.Bucket, body: bytes, *, produce: Producer) -> int:
     """Produce full text for the `doc_id` in the task body; return the HTTP status Cloud Tasks reads.
 
     Args:
         bucket: The litcache bucket the paper lives in.
         body: The raw task body — JSON `{"doc_id": <non-empty string>}`.
-        produce: The producer to run; defaults to `litcache.produce.produce_full_text`.
+        produce: The producer to run, with its converter already bound.
 
     Returns:
         200 once the paper has settled — a rendering produced, a terminal marker written, or no such
