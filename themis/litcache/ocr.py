@@ -14,6 +14,10 @@ changed something substantive", which is what a re-render sweep selects on. Bump
 a changed prompt, which supersedes every provider's renderings at once; bump a provider's own for its
 model or request shape. The minor is a per-provider counter, so it orders only within a provider —
 selecting one provider's renderings means filtering on `Rendering.model` too.
+
+A bump's whole effect is on renderings already recorded, so the question it answers is whether those
+should be re-made — not whether the converter changed. A converter with none behind it starts at the
+version it first records, however much it changed on the way there.
 """
 
 from __future__ import annotations

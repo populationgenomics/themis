@@ -1,4 +1,4 @@
-"""Probe a pdf source: recoverable text layer, and any embedded DOI.
+"""Read a pdf source: page rasters, a recoverable text layer, and any embedded DOI.
 
 A `pdf-derived` rendering reconstructs structure from the pdf, but recovering a
 source quote's bounding box in that rendering needs the pdf's character layer:
@@ -16,14 +16,19 @@ text (a body match is as likely to be a cited reference as the work's own id).
 XML-backed papers map a quote to the XML, so the text-layer probe does not apply to
 them; the caller omits it when XML is the source of truth (`Source.has_text_layer`
 stays unset).
+
+`render_pages` rasterizes for the vision models. The size to render a page at is the
+provider's to choose, not this module's, so it comes in as a `PageFit`.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+import io
 import re
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 import pypdfium2
 
@@ -38,6 +43,87 @@ _PDFIUM_LOCK = threading.RLock()
 # across its pages. Image-only pdfs (text drawn as pixels, no text operators)
 # yield zero; any genuine text layer yields a positive count.
 _MIN_TEXT_CHARS = 1
+
+
+PageFit = Callable[[float, float], tuple[int, int]]
+"""Maps a page's `(width, height)` in points to the pixel size to rasterize it at.
+
+A model that shrinks an oversized image reads the shrunken one, so the size it would have chosen is
+the size at which a page is read as rendered."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PageImage:
+    """One rasterized pdf page.
+
+    Attributes:
+        number: The 1-based page number, as printed in a citation rather than an array index.
+        width: The page area's width in pixels.
+        height: The page area's height in pixels.
+        png: The encoded image.
+    """
+
+    number: int
+    width: int
+    height: int
+    png: bytes
+
+
+def page_count(pdf_bytes: bytes) -> int:
+    """How many pages a pdf has.
+
+    Read before rasterizing: a provider's page size can depend on how many images the request will
+    carry, which it cannot know from one page's dimensions.
+
+    Raises:
+        pypdfium2.PdfiumError: If the bytes are not a loadable pdf.
+    """
+    with _document(pdf_bytes) as doc:
+        return len(doc)
+
+
+# pdfium is not thread-safe and pypdfium2 takes no lock on its behalf, so every call below has to
+# reach it from one thread. Nothing here offloads, and the convert worker serves one request per
+# instance (`max_instance_request_concurrency=1`), so the rasterizing runs on the event loop it
+# blocks. Moving it to a thread to stop that blocking is the change this note exists to catch.
+def render_pages(pdf_bytes: bytes, *, fit: PageFit) -> list[PageImage]:
+    """Rasterize every page of a pdf at the size its reader wants.
+
+    Args:
+        pdf_bytes: The raw pdf source bytes.
+        fit: Maps a page's size in points to the pixel size to render it at (`PageFit`).
+
+    Returns:
+        One `PageImage` per page, in page order.
+
+    Raises:
+        pypdfium2.PdfiumError: If the bytes are not a loadable pdf.
+        ValueError: If a page has a non-positive size, or `fit` returns a non-positive dimension.
+    """
+    pages: list[PageImage] = []
+    with _document(pdf_bytes) as doc:
+        for index, page in enumerate(doc, start=1):
+            with contextlib.closing(page):
+                pages.append(_render_page(page, index, fit))
+    return pages
+
+
+def _render_page(page: pypdfium2.PdfPage, number: int, fit: PageFit) -> PageImage:
+    """Rasterize one open page to a png at the size `fit` asks for."""
+    width_pt, height_pt = page.get_size()
+    if width_pt <= 0 or height_pt <= 0:
+        raise ValueError(f'page {number} is {width_pt}x{height_pt} points')
+    width_px, height_px = fit(width_pt, height_pt)
+    if width_px <= 0 or height_px <= 0:
+        raise ValueError(f'fit returned a {width_px}x{height_px} raster for page {number}')
+    # Rendered at the target rather than rendered large and downsampled: page content is mostly
+    # vector, which re-renders sharp at any size. pdfium rounds the height its own way, so the
+    # result is snapped to the fitted size — a resample of a pixel or two, not of a scale factor.
+    image = page.render(scale=width_px / width_pt).to_pil().resize((width_px, height_px))
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    return PageImage(number=number, width=width_px, height=height_px, png=buffer.getvalue())
+
 
 # A DOI in a document-info string (e.g. an Elsevier `Subject`: "…doi:10.1016/j.scr.2025.103712").
 _DOI_RE = re.compile(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+')

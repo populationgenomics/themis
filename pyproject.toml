@@ -41,10 +41,11 @@ screenshot = ["google-cloud-storage"]
 # bytes (the OA branch calls it directly on the fetched bytes, added in 0.4);
 # pubmed_proto — bibliographic metadata.pb; httpx — async HTTP client for the efetch
 # and Crossref metadata-resolution calls; anthropic — the PDF LLM-OCR converter
-# (produce.py's pdf-without-xml branch). litfetch/litdown/pubmed_proto are exact-pinned
+# (produce.py's pdf-without-xml branch); pillow — pdf.py encodes its page rasters
+# through it. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "protovalidate", "anthropic", "litfetch==0.2.0", "litdown==0.5.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "litfetch==0.2.0", "litdown==0.5.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -101,8 +102,9 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx", "defusedxml
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
 # XML, anthropic transcribes a PDF, and the storage/protobuf pair reads and commits the manifest.
-# Deliberately not the `litcache` group: docling-core and the cloudsql connector belong to paths this
-# worker never takes, and carry pandas/numpy/pillow behind them.
+# pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
+# renders into a Pillow image). Deliberately not the `litcache` group: docling-core and the cloudsql
+# connector belong to paths this worker never takes, and carry pandas and numpy behind them.
 convert_worker = [
     "aiohttp",
     "google-cloud-storage",
@@ -111,6 +113,8 @@ convert_worker = [
     "litdown==0.5.0",
     "pubmed_proto==0.1.0",
     "anthropic",
+    "pypdfium2",
+    "pillow",
 ]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
