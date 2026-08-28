@@ -12,7 +12,7 @@ The lane is provisioned ahead of that consumer; an empty queue costs nothing.
   dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper
   rather than re-OCR it forever.
 - `ConvertWorker` — the worker Cloud Run service (IAM-gated, require-auth) and its runtime SA
-  (object read/write on the litcache bucket).
+  (object read/write on the litcache bucket; the Claude API by workload identity federation).
 - `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
   and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
 """
@@ -71,9 +71,10 @@ class ConvertWorker(pulumi.ComponentResource):
     """The convert worker Cloud Run service (IAM-gated ingress) and its runtime SA.
 
     Attributes:
-        service_account_email: The runtime SA's email — object read/write on the litcache bucket.
-        service_account_unique_id: The runtime SA's numeric unique id — the stable identity a model
-            provider's federation rule pins, when one is wired.
+        service_account_email: The runtime SA's email — object read/write on the litcache bucket, and
+            the `email` claim the Anthropic federation rule matches (Path B, claude-api-wif.md).
+        service_account_unique_id: The runtime SA's numeric unique id — the stable `sub` claim that
+            rule pins. Never reissued, so a replacement account cannot inherit the pin.
         service_name: The Cloud Run service name, for the invoker's `run.invoker` binding.
         url: The service's `run.app` URL — the `/convert` target the enqueuer POSTs to.
     """
@@ -85,14 +86,19 @@ class ConvertWorker(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         fulltext_bucket: pulumi.Input[str],
+        anthropic_federation_rule_id: str,
+        anthropic_organization_id: str,
+        anthropic_service_account_id: str,
+        anthropic_workspace_id: str,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:ConvertWorker', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
-        # Dedicated runtime identity: the worker reads seed PDFs and writes back renderings/markers.
-        # protect + retain_on_delete because a model provider's federation rule will pin the unique_id,
-        # which is never reissued — a delete/replace would strand it.
+        # Dedicated runtime identity: the worker reads seed PDFs and writes back renderings/markers,
+        # and is the Claude API's federation client. protect + retain_on_delete because the registered
+        # federation rule pins this SA's unique_id, which is never reissued — a delete/replace would
+        # strand it.
         service_account = gcp.serviceaccount.Account(
             'themis-convert-worker-runtime',
             project=project,
@@ -140,6 +146,12 @@ class ConvertWorker(pulumi.ComponentResource):
                         image=image,
                         envs=[
                             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
+                            # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
+                            # (../../docs/runbooks/claude-api-wif.md).
+                            _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),
+                            _env('ANTHROPIC_ORGANIZATION_ID', anthropic_organization_id),
+                            _env('ANTHROPIC_SERVICE_ACCOUNT_ID', anthropic_service_account_id),
+                            _env('ANTHROPIC_WORKSPACE_ID', anthropic_workspace_id),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
                         # A whole PDF in memory alongside the model request drives this; tune from

@@ -76,6 +76,10 @@ anthropic_federation_rule_id = config.require('anthropicFederationRuleId')
 anthropic_organization_id = config.require('anthropicOrganizationId')
 anthropic_service_account_id = config.require('anthropicServiceAccountId')
 anthropic_workspace_id = config.require('anthropicWorkspaceId')
+# The convert worker's own Path B identifiers — its own svac + rule, pinned to the worker's runtime
+# SA; the org and workspace above are shared.
+anthropic_worker_federation_rule_id = config.require('anthropicWorkerFederationRuleId')
+anthropic_worker_service_account_id = config.require('anthropicWorkerServiceAccountId')
 # IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
 # lookup) and the backend service's numeric id — this stack's own web_backend_service_id
 # output, fed back as config (docs/runbooks/fresh-environment.md §3).
@@ -340,6 +344,10 @@ convert_worker = convert.ConvertWorker(
     region=region,
     image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
     fulltext_bucket=fulltext.name,
+    anthropic_federation_rule_id=anthropic_worker_federation_rule_id,
+    anthropic_organization_id=anthropic_organization_id,
+    anthropic_service_account_id=anthropic_worker_service_account_id,
+    anthropic_workspace_id=anthropic_workspace_id,
     opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
 )
 convert_invoker = convert.ConversionInvoker(
@@ -568,3 +576,4 @@ pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
+pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)

@@ -23,6 +23,7 @@ from collections.abc import Iterator
 import anthropic
 import pypdfium2
 import pytest
+from anthropic.lib import credentials as anthropic_credentials
 
 from themis.litcache import anthropic_ocr, claude_images, ocr, pdf
 
@@ -113,8 +114,14 @@ class _FakeClient:
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, message: _Message) -> dict[str, object]:
+    """Fake the client; the returned dict collects both its constructor and its stream kwargs."""
     captured: dict[str, object] = {}
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(message, captured))
+
+    def client(**kwargs: object) -> _FakeClient:
+        captured.update(kwargs)
+        return _FakeClient(message, captured)
+
+    monkeypatch.setattr(anthropic, 'AsyncAnthropic', client)
     return captured
 
 
@@ -313,6 +320,38 @@ def test_a_short_paper_is_rendered_larger_than_that_limit_allows() -> None:
 
 
 # --- the request ---
+
+
+def test_the_supplied_credential_is_the_one_the_client_authenticates_with(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The credential has to reach the client, and be built per call: an explicit one is total (the
+    # client then reads no credential env var), and the client closes the provider it is handed.
+    built: list[anthropic_credentials.AccessTokenProvider] = []
+
+    def token(*, force_refresh: bool = False) -> anthropic_credentials.AccessToken:
+        del force_refresh
+        raise AssertionError('unreachable: the faked client never authenticates')
+
+    def credentials() -> anthropic_credentials.AccessTokenProvider:
+        built.append(token)
+        return token
+
+    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), credentials=credentials))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), credentials=credentials))
+
+    assert captured['credentials'] is token
+    assert len(built) == 2  # built per call, not shared
+
+
+def test_no_factory_leaves_the_client_without_an_explicit_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No explicit credential is what makes the SDK consult the environment; anything else would pin
+    # the call to a provider the caller never chose.
+    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1)))
+
+    assert captured['credentials'] is None
 
 
 def test_convert_pdf_joins_text_blocks_and_reads_back_the_response_model(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,15 +21,24 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import anthropic
 import anthropic.types
 import pypdfium2
+from anthropic.lib import credentials as anthropic_credentials
 
 from themis.litcache import claude_images, ocr, pdf
 
 _LOG = logging.getLogger(__name__)
+
+CredentialsFactory = Callable[[], anthropic_credentials.AccessTokenProvider]
+"""Builds the access-token provider one call authenticates with.
+
+A factory rather than a provider because the client closes the provider it was handed, so a single
+instance would be spent after one transcription. The caller that supplies it decides how the call
+authenticates — the convert worker binds workload identity federation
+(`themis/services/convert_worker/__main__.py`)."""
 
 # This provider's half of `Rendering.converter_version`: its model and request shape, not the shared
 # prompt. Bump when either changes enough that renderings already recorded should be re-made.
@@ -182,12 +191,14 @@ def _page_blocks(
     return blocks
 
 
-async def convert_pdf(pdf_bytes: bytes) -> ocr.OcrRendering:
+async def convert_pdf(pdf_bytes: bytes, *, credentials: CredentialsFactory | None = None) -> ocr.OcrRendering:
     """Transcribe a research-paper PDF to markdown via an Anthropic vision model.
 
     Args:
         pdf_bytes: Raw PDF bytes. Rasterized here, so what bounds a paper is the image-block and
             size limits on one request rather than the document limits (`render`).
+        credentials: Builds the access-token provider for this call. `None` leaves the SDK to
+            resolve credentials from the environment its own way.
 
     Returns:
         The transcription and the model id that produced it.
@@ -202,14 +213,21 @@ async def convert_pdf(pdf_bytes: bytes) -> ocr.OcrRendering:
             a paper needing longer needs a different runner.
         anthropic.APITimeoutError: The connection could not be made, or the stream went silent for
             `_STALL_SECONDS`. Transient, so it propagates to be retried rather than settling the paper.
+        anthropic.lib.credentials.WorkloadIdentityError: `credentials` could not be exchanged for an
+            access token. Not an `OcrError`, so it propagates and the paper is retried rather than
+            written off over our own credential.
     """
     pages = render(pdf_bytes)
-    # AsyncAnthropic() reads its credentials from the environment (in the deployed worker, the
-    # workload-identity-federation ids — docs/runbooks/claude-api-wif.md); the client holds an httpx
-    # connection pool, so it is closed with the request rather than left to the GC.
+    # An explicit provider is total: given one, the client reads no credential env var at all. Given
+    # none, it resolves from the environment. The client closes the provider it was given, along with
+    # its own connection pool.
     try:
         async with (
-            anthropic.AsyncAnthropic(timeout=_STALL_SECONDS, max_retries=0) as client,
+            anthropic.AsyncAnthropic(
+                credentials=credentials() if credentials is not None else None,
+                timeout=_STALL_SECONDS,
+                max_retries=0,
+            ) as client,
             asyncio.timeout(_TIMEOUT_SECONDS),
             client.messages.stream(
                 model=_MODEL,

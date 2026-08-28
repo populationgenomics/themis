@@ -255,11 +255,10 @@ Built: `DescribePaper` / `ResolveContent` / `Locate` / `Validate` / `PollFullTex
 directly from a `doc_id`; the `.fetch_outcome` sidecar (`outcome.py`); the generation-matched manifest-RMW write-back
 (`writer.add_rendering`, `writer.add_source_and_rendering`); the producer `produce.produce_full_text`, which walks the
 OA ladder and the PDF-OCR branch off any request path; and the conversion lane — the Cloud Tasks queue, the `/convert`
-worker, and the invoker identity.
+worker whose PDF branch transcribes on Claude, and the invoker identity.
 
 Not yet built: anything that enqueues. The lane is inert until the reconcile sweep lands, so a PENDING id settles only
-when a rendering arrives by another route — today, the ingestion pipeline. The worker's PDF branch has no model backend
-wired: it raises (not an `OcrError`), so the paper stays PENDING rather than being written off.
+when a rendering arrives by another route — today, the ingestion pipeline.
 
 ## Open questions
 

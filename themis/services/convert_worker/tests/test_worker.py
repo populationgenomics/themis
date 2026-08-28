@@ -4,6 +4,10 @@ The status mapping runs offline against a fake producer (no GCS, no network). On
 drives the real producer through the handler over a fake-gcs bucket (Docker-gated) with the fetch and
 PDF converter injected, proving the handler→producer→GCS path writes a rendering end to end; another
 drives the assembled aiohttp app to pin the routing and the load-bearing producer-raise→500 mapping.
+
+The Claude converter is never called: the tests assert what the entrypoint binds and what it hands
+the producer, and the transcription itself is `tests/litcache/test_anthropic_ocr.py`'s. Building the
+federation credential touches no network, so binding it needs no fake.
 """
 
 from __future__ import annotations
@@ -17,22 +21,36 @@ import uuid
 import aiohttp.test_utils
 import aiohttp.web
 import pytest
+from anthropic.lib import credentials as anthropic_credentials
 from google.api_core import exceptions as api_exceptions
 from google.auth import credentials
 from google.cloud import storage
 from pubmed_proto import pubmed_pb2
 
-from themis.litcache import ocr, writer
+from themis.litcache import anthropic_ocr, ocr, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
-from themis.services.convert_worker import pdf as pdf_mod
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
 _PDF_BYTES = b'%PDF-1.7 seed'
+
+# The worker's Anthropic federation identity: plaintext ids, not credentials, so the deployed values
+# differ only in being real (docs/runbooks/claude-api-wif.md).
+_FEDERATION_ENV = {
+    'ANTHROPIC_FEDERATION_RULE_ID': 'fdrl_test',
+    'ANTHROPIC_ORGANIZATION_ID': '00000000-0000-4000-8000-000000000000',
+    'ANTHROPIC_SERVICE_ACCOUNT_ID': 'svac_test',
+    'ANTHROPIC_WORKSPACE_ID': 'wrkspc_test',
+}
+
+
+def _set_federation_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in _FEDERATION_ENV.items():
+        monkeypatch.setenv(name, value)
 
 
 def _lazy_bucket() -> storage.Bucket:
@@ -181,12 +199,14 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
     assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
 
 
-def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(gcs_bucket: storage.Bucket) -> None:
+def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
+    gcs_bucket: storage.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Drives the app `main` actually builds, startup included, so the wiring between build_app and
     # _on_startup is covered: a revision that never binds the bucket passes its startup probe and
     # then 500s every task, because /healthz answers without touching it.
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(main_mod, '_bucket_from_env', lambda: gcs_bucket)
+    _set_federation_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_bucket_from_env', lambda: gcs_bucket)
     app = main_mod.build_app()
 
     async def drive() -> tuple[int, int, int]:
@@ -196,10 +216,7 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(gcs_bucket:
             unknown = await client.post('/convert', data=json.dumps({'doc_id': _DOC_ID}).encode())
             return healthz.status, malformed.status, unknown.status
 
-    try:
-        healthz_status, malformed_status, unknown_status = asyncio.run(drive())
-    finally:
-        monkey.undo()
+    healthz_status, malformed_status, unknown_status = asyncio.run(drive())
 
     assert healthz_status == 200
     assert malformed_status == 400
@@ -233,6 +250,7 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
 
 
 def test_startup_requires_the_fulltext_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_federation_env(monkeypatch)  # valid, so startup reaches the bucket read
     monkeypatch.delenv('THEMIS_FULLTEXT_BUCKET', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_FULLTEXT_BUCKET'):
         asyncio.run(main_mod._on_startup(main_mod.build_app()))
@@ -243,41 +261,121 @@ def test_startup_refuses_a_bucket_that_does_not_exist(
 ) -> None:
     # A named-but-absent bucket has to fail the startup probe: /healthz never touches the bucket, so a
     # revision that starts anyway goes live and 500s every task until the queue drops it.
+    _set_federation_env(monkeypatch)
     monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', f'themis-absent-{uuid.uuid4().hex}')
     monkeypatch.setattr(main_mod.storage, 'Client', lambda: gcs_client)
     with pytest.raises(SystemExit, match='does not exist or is not readable'):
         asyncio.run(main_mod._on_startup(main_mod.build_app()))
 
 
-# --- the unwired PDF branch ---
+@pytest.mark.parametrize('missing', sorted(_FEDERATION_ENV))
+def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The property the deleted unconfigured-converter stub used to hold, moved a stage earlier: a
+    # worker that cannot authenticate must never serve, rather than burning a retry budget per paper.
+    # Checked before the bucket read, so the missing identifier is what the operator is told.
+    _set_federation_env(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+    with pytest.raises(SystemExit, match=missing):
+        asyncio.run(main_mod._on_startup(main_mod.build_app()))
 
 
-def test_the_unwired_converter_raises_a_non_terminal_error() -> None:
-    # Not an OcrError: the producer settles the paper terminally for that class alone, and a missing
-    # backend is our configuration, not a property of the paper.
-    with pytest.raises(pdf_mod.ConverterUnconfiguredError):
-        asyncio.run(pdf_mod.unconfigured_convert_pdf(b'%PDF-1.7 ...'))
-    assert not issubclass(pdf_mod.ConverterUnconfiguredError, ocr.OcrError)
+# --- the Claude converter the entrypoint binds ---
 
 
-def test_a_pdf_only_paper_stays_pending_and_writes_no_marker(gcs_bucket: storage.Bucket) -> None:
-    # The error propagates so the worker returns 5xx and Cloud Tasks retries. Nothing terminal is
-    # written: a marker would short-circuit produce_full_text before it re-walks the OA ladder, and
-    # litfetch reports a transient fetch failure and an absent body identically — so a paper whose XML
-    # was always available would be written off on the strength of our own missing configuration.
+def _bound_converter(monkeypatch: pytest.MonkeyPatch) -> functools.partial[object]:
+    """The converter `_on_startup` binds, with the bucket read stubbed out."""
+    _set_federation_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    app = main_mod.build_app()
+    asyncio.run(main_mod._on_startup(app))
+    converter = app[main_mod._CONVERT_PDF]
+    assert isinstance(converter, functools.partial)
+    return converter
+
+
+def test_startup_binds_the_claude_converter_on_a_federation_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    converter = _bound_converter(monkeypatch)
+    assert converter.func is anthropic_ocr.convert_pdf
+
+    # A provider per call, not one shared: the client closes the provider it is handed, so a shared
+    # one would be spent after the first transcription.
+    with converter.keywords['credentials']() as first, converter.keywords['credentials']() as second:
+        assert isinstance(first, anthropic_credentials.WorkloadIdentityCredentials)
+        assert first is not second
+
+
+def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Two of the four transposed is the worst failure this wiring has: every id is present and
+    # well-formed, the revision deploys healthy, and only the first token exchange fails.
+    federation = _bound_converter(monkeypatch).keywords['credentials']
+    assert isinstance(federation, functools.partial)
+    assert federation.keywords == {
+        'identity_token_provider': main_mod._identity_token,
+        'federation_rule_id': _FEDERATION_ENV['ANTHROPIC_FEDERATION_RULE_ID'],
+        'organization_id': _FEDERATION_ENV['ANTHROPIC_ORGANIZATION_ID'],
+        'service_account_id': _FEDERATION_ENV['ANTHROPIC_SERVICE_ACCOUNT_ID'],
+        'workspace_id': _FEDERATION_ENV['ANTHROPIC_WORKSPACE_ID'],
+    }
+
+
+def test_the_identity_token_is_minted_for_the_claude_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The audience is half of what the federation rule matches on, and the only input to the exchange
+    # that no environment variable carries — a wrong one is refused at the exchange, not at deploy.
+    seen: list[str] = []
+
+    def fetch_id_token(_request: object, audience: str) -> str:
+        seen.append(audience)
+        return 'header.payload.signature'
+
+    monkeypatch.setattr(main_mod.id_token, 'fetch_id_token', fetch_id_token)
+
+    assert main_mod._identity_token() == 'header.payload.signature'
+    assert seen == ['https://api.anthropic.com']
+
+
+def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The binding is only worth anything if it reaches the producer: /convert has to pass the app's
+    # converter as produce_full_text's `convert_pdf`, not fall back to a default.
+    _set_federation_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    app = main_mod.build_app()
+    seen: list[ocr.PdfConverter] = []
+
+    async def produce(_bucket: storage.Bucket, _doc_id: str, *, convert_pdf: ocr.PdfConverter, **_kw: object) -> None:
+        seen.append(convert_pdf)
+        raise produce_mod.UnknownPaperError(_doc_id)
+
+    monkeypatch.setattr(produce_mod, 'produce_full_text', produce)
+
+    async def drive() -> int:
+        async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
+            response = await client.post('/convert', data=json.dumps({'doc_id': _DOC_ID}).encode())
+            return response.status
+
+    assert asyncio.run(drive()) == 200
+    assert seen == [app[main_mod._CONVERT_PDF]]
+
+
+def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_bucket: storage.Bucket) -> None:
+    # A revoked or misconfigured federation rule fails the token exchange, which is not an OcrError:
+    # it propagates, the worker returns 5xx, Cloud Tasks retries, and the paper stays PENDING. The
+    # producer settles a paper terminally for OcrError alone, and a marker would short-circuit
+    # produce_full_text before it re-walks the OA ladder — litfetch reports a transient fetch failure
+    # and an absent body identically, so a paper whose XML was always available would be written off
+    # on the strength of our own misconfiguration.
     _write_pdf_paper(gcs_bucket)
 
     async def no_oa(_article_ids: object, **_kwargs: object) -> None:
         return None  # no OA XML: reach the PDF branch
 
-    with pytest.raises(pdf_mod.ConverterUnconfiguredError):
+    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise anthropic_credentials.WorkloadIdentityError('invalid_grant', status_code=400)
+
+    assert not issubclass(anthropic_credentials.WorkloadIdentityError, ocr.OcrError)
+    with pytest.raises(anthropic_credentials.WorkloadIdentityError):
         asyncio.run(
             produce_mod.produce_full_text(
-                gcs_bucket,
-                _DOC_ID,
-                fetch=no_oa,
-                convert_pdf=pdf_mod.unconfigured_convert_pdf,
-                now=lambda: _CAPTURED_AT,
+                gcs_bucket, _DOC_ID, fetch=no_oa, convert_pdf=refused, now=lambda: _CAPTURED_AT
             )
         )
 

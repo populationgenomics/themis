@@ -85,8 +85,10 @@ the edge is still serving the placeholder image.
 | `themis:anthropicFederationRuleId` | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B | The BFF cannot mint a Managed-Agents token.                                                            |
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
-remaining `themis:anthropic*` ids are Anthropic-side entities that exist before the GCP service account does, so they
-are set for real from the start.
+remaining `themis:anthropic*` ids are set for real from the start: the svacs, org and workspace are Anthropic-side
+entities that exist before any GCP service account does, and `themis:anthropicWorkerFederationRuleId` pins a service
+account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so its rule can
+be registered before the first `up`.
 
 ```sh
 pulumi config set themis:iapBackendServiceId "$(pulumi stack output web_backend_service_id)"

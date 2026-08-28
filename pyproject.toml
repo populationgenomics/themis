@@ -103,12 +103,16 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx", "defusedxml
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
 # XML, anthropic transcribes a PDF, and the storage/protobuf pair reads and commits the manifest.
 # pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
-# renders into a Pillow image). Deliberately not the `litcache` group: docling-core and the cloudsql
-# connector belong to paths this worker never takes, and carry pandas and numpy behind them.
+# renders into a Pillow image). google-auth mints the Google identity token the Anthropic SDK
+# exchanges for a federation token, and requests is its transport. Deliberately not the `litcache`
+# group: docling-core and the cloudsql connector belong to paths this worker never takes, and carry
+# pandas and numpy behind them.
 convert_worker = [
     "aiohttp",
+    "google-auth",
     "google-cloud-storage",
     "protobuf",
+    "requests",
     "litfetch==0.2.0",
     "litdown==0.5.0",
     "pubmed_proto==0.1.0",

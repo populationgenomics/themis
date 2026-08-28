@@ -86,9 +86,8 @@ IAM-gated `gcloud` ADC.
 ## Deletion guards
 
 Guarded only where loss is unrecoverable or externally bound: the reserved load-balancer IP (DNS points at it), the
-Cloud SQL instance and its database, and the web runtime SA whose never-reissued `unique_id` the Anthropic WIF rule
-pins, and the convert-worker SA a rule will pin (`protect`, plus `retain_on_delete` on the SA). Buckets rely on the
-non-empty refusal above.
+Cloud SQL instance and its database, and the web runtime and convert-worker SAs whose never-reissued `unique_id`s their
+Anthropic WIF rules pin (`protect`, plus `retain_on_delete` on the SAs). Buckets rely on the non-empty refusal above.
 
 Cloud Run services and jobs set `deletion_protection=False` explicitly: the provider defaults it to true, and it is a
 state-side flag rather than a GCP setting, so only a program that still declares the resource can clear it. A service
@@ -146,9 +145,11 @@ stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.ya
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
 each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId` and
 `themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
-copied one breaks loudly. One is quiet instead, deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`,
-because a copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one. No
-program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+copied one breaks loudly. Two are quiet instead, deploying clean onto a wrong outcome:
+`themis:enablePrScreenshotBucket`, because a copied `true` creates a world-readable bucket in an environment that has no
+review workflow to justify one; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another
+environment's service account, so the convert worker deploys healthy and fails only when it first tries to transcribe.
+No program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 
