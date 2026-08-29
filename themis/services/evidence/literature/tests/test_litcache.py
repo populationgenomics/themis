@@ -10,18 +10,21 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
-from collections.abc import Awaitable, Callable, Sequence
+import time
+import typing
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import grpc
 import grpc.aio
 import pytest
-from google.cloud import storage
+from google.api_core import exceptions as api_exceptions
+from google.cloud import storage, tasks_v2
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
-from themis.litcache import outcome
+from themis.litcache import enqueue, outcome
 from themis.litcache.models import litcache_pb2
-from themis.rpc import literature_pb2, literature_pb2_grpc
+from themis.rpc import auth_pb2, literature_pb2, literature_pb2_grpc
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import litcache as litcache_backend
 from themis.services.evidence.literature import servicer as servicer_mod
@@ -308,11 +311,17 @@ def test_select_rendering_breaks_a_converter_tie_toward_the_newer() -> None:
     assert selected[0] == 'newer-hash'
 
 
+async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
+    raise AssertionError('a literature read resolves no session; only the conversion enqueue does')
+
+
 def _run_over_grpc[T](
     bucket: storage.Bucket, call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[T]]
 ) -> T:
+    """Drive one read against a real in-process server, over a resolver the read may not reach."""
+
     async def run() -> T:
-        servicer = servicer_mod.Servicer(_backend(bucket))
+        servicer = servicer_mod.Servicer(_backend(bucket), _unreachable_resolver)
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
         ) as channel:
@@ -436,3 +445,185 @@ def test_readiness_collapses_duplicate_doc_ids(gcs_bucket: storage.Bucket) -> No
     _seed_paper(gcs_bucket, sources=[_xml_source()])
     states = asyncio.run(_backend(gcs_bucket).full_text_readiness([_DOC, _DOC]))
     assert states == {_DOC: literature_pb2.FULL_TEXT_STATE_READY}
+
+
+# --- Conversion requests: what a failed enqueue is reported as ------------------------------------
+
+_CONVERT_TARGET = enqueue.ConversionTarget(
+    queue_path='projects/p/locations/r/queues/themis-convert',
+    worker_url='https://themis-convert-worker-abc-ts.a.run.app',
+    invoker_service_account_email='themis-convert-invoker@p.iam.gserviceaccount.com',
+)
+
+
+class _FakeTasksClient:
+    """A ``CloudTasksClient`` stand-in: records each create, or fails it per doc_id.
+
+    ``delays`` makes one create finish later than another, so a test can decide which failure a
+    concurrent batch would otherwise have surfaced first.
+    """
+
+    def __init__(
+        self,
+        *,
+        raises: Exception | None = None,
+        per_doc: Mapping[str, Exception] | None = None,
+        delays: Mapping[str, float] | None = None,
+    ) -> None:
+        self.names: list[str] = []
+        self._raises = raises
+        self._per_doc = dict(per_doc or {})
+        self._delays = dict(delays or {})
+
+    def create_task(self, *, parent: str, task: object) -> object:
+        del parent
+        name = str(getattr(task, 'name', ''))
+        doc_id = name.rpartition('/')[2]
+        time.sleep(self._delays.get(doc_id, 0.0))
+        error = self._per_doc.get(doc_id, self._raises)
+        if error is not None:
+            raise error
+        self.names.append(name)
+        return task
+
+
+def _conversion_backend(client: _FakeTasksClient) -> litcache_backend.LitcacheBackend:
+    """A backend whose only reachable collaborator is the tasks client — the bucket is never touched."""
+    enqueuer = enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', client), _CONVERT_TARGET)
+    return litcache_backend.LitcacheBackend(typing.cast('storage.Bucket', None), enqueuer=enqueuer)
+
+
+def test_a_conversion_request_names_a_task_per_distinct_paper() -> None:
+    client = _FakeTasksClient()
+    asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING, _DOC]))
+    assert sorted(client.names) == sorted(
+        f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}' for doc_id in (_DOC, _DOC_PENDING)
+    )
+
+
+def test_an_empty_batch_reaches_no_queue() -> None:
+    # Nothing to convert must not be an error even where no queue is wired, or a deployment without
+    # the lane could not answer for a corpus that happens to be entirely settled.
+    backend = litcache_backend.LitcacheBackend(typing.cast('storage.Bucket', None))
+    asyncio.run(backend.request_conversions([]))
+
+
+def test_an_unwired_lane_is_a_permanent_condition() -> None:
+    backend = litcache_backend.LitcacheBackend(typing.cast('storage.Bucket', None))
+    with pytest.raises(literature_backend.ConversionNotConfiguredError):
+        asyncio.run(backend.request_conversions([_DOC]))
+
+
+def test_a_deduped_task_is_not_a_failure() -> None:
+    client = _FakeTasksClient(raises=api_exceptions.AlreadyExists('task exists'))
+    asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        api_exceptions.ServiceUnavailable('cloud tasks is down'),
+        api_exceptions.ResourceExhausted('queue create rate'),
+        api_exceptions.TooManyRequests('queue create rate'),
+        api_exceptions.DeadlineExceeded('create timed out'),
+        api_exceptions.InternalServerError('backend error'),
+        api_exceptions.Unknown('unknown'),
+        api_exceptions.Aborted('conflict'),
+        api_exceptions.RetryError('gave up', cause=None),
+    ],
+)
+def test_a_failure_worth_repeating_is_reported_as_transient(error: Exception) -> None:
+    # Reported as permanent, the caller would stop asking and the paper would sit PENDING until a
+    # corpus scan that does not exist yet found it.
+    client = _FakeTasksClient(raises=error)
+    with pytest.raises(literature_backend.ConversionUnavailableError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        api_exceptions.PermissionDenied('no cloudtasks.enqueuer on the queue'),
+        api_exceptions.Unauthenticated('no credentials'),
+        api_exceptions.NotFound('no such queue'),
+        api_exceptions.InvalidArgument('dispatch deadline out of range'),
+        api_exceptions.FailedPrecondition('the queue is disabled'),
+        api_exceptions.BadRequest('malformed task'),
+    ],
+)
+def test_a_failure_no_retry_repairs_is_reported_as_permanent(error: Exception) -> None:
+    # UNAVAILABLE is retried by gRPC's default policy, so misreporting a missing grant as transient
+    # spends the caller's whole retry budget and buries the deploy that caused it.
+    client = _FakeTasksClient(raises=error)
+    with pytest.raises(literature_backend.ConversionEnqueueFailedError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+
+
+def test_a_permanent_refusal_outranks_a_transient_one_in_the_same_batch() -> None:
+    # Whichever create finished first must not decide the answer: reported transient, the caller
+    # retries forever against a missing grant, and the refusal is never seen again.
+    client = _FakeTasksClient(
+        per_doc={
+            _DOC: api_exceptions.ServiceUnavailable('cloud tasks is down'),
+            _DOC_PENDING: api_exceptions.PermissionDenied('no cloudtasks.enqueuer on the queue'),
+        },
+        delays={_DOC_PENDING: 0.05},
+    )
+    with pytest.raises(literature_backend.ConversionEnqueueFailedError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
+
+
+def test_every_failure_in_a_batch_is_logged_not_only_the_one_raised(caplog: pytest.LogCaptureFixture) -> None:
+    # The unraised failures are the ones that would otherwise vanish: nothing downstream sees them,
+    # and the papers they belong to stay PENDING with no record of why.
+    client = _FakeTasksClient(
+        per_doc={
+            _DOC: api_exceptions.ServiceUnavailable('cloud tasks is down'),
+            _DOC_PENDING: api_exceptions.PermissionDenied('no cloudtasks.enqueuer on the queue'),
+        }
+    )
+    with (
+        caplog.at_level('INFO', logger=litcache_backend.__name__),
+        pytest.raises(literature_backend.ConversionEnqueueFailedError),
+    ):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
+    assert _DOC in caplog.text
+    assert _DOC_PENDING in caplog.text
+
+
+def test_a_dedup_is_countable_in_the_batch_log(caplog: pytest.LogCaptureFixture) -> None:
+    # An enqueue that did not happen has to be countable above the enqueuer, not only inferable from
+    # a paper that never advances.
+    client = _FakeTasksClient(raises=api_exceptions.AlreadyExists('task exists'))
+    with caplog.at_level('INFO', logger=litcache_backend.__name__):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+    assert 'already queued' in caplog.text
+    assert _DOC in caplog.text
+
+
+def test_a_partly_failed_batch_still_places_the_tasks_it_could() -> None:
+    # Repeating the call is the caller's remedy, and it must not have undone the creates that worked.
+    client = _FakeTasksClient(per_doc={_DOC: api_exceptions.ServiceUnavailable('down')})
+    with pytest.raises(literature_backend.ConversionUnavailableError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
+    assert client.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{_DOC_PENDING}']
+
+
+def test_a_failure_that_is_not_the_apis_is_still_classified() -> None:
+    # A credential refresh or a bug must not escape the port unmapped, which the servicer answers
+    # UNKNOWN to.
+    client = _FakeTasksClient(raises=RuntimeError('token refresh failed'))
+    with pytest.raises(literature_backend.ConversionEnqueueFailedError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+
+
+@pytest.mark.parametrize(
+    'error',
+    [api_exceptions.MethodNotImplemented('not implemented'), api_exceptions.DataLoss('data loss')],
+)
+def test_a_server_error_no_retry_repairs_is_permanent(error: Exception) -> None:
+    # Both arrive as 5xx and both are facts about the service rather than its load, so the transient
+    # base they sit under must not sweep them up.
+    client = _FakeTasksClient(raises=error)
+    with pytest.raises(literature_backend.ConversionEnqueueFailedError):
+        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))

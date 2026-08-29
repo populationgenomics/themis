@@ -4,9 +4,10 @@ Architecture B (`docs/design/evidence-fulltext.md`): all fetch/convert work live
 so the evidence read image stays lean. A Cloud Task pushes `POST /convert {"doc_id"}` to the worker,
 which runs the litcache producer (OA XML → markdown, else PDF LLM-OCR) off any request path.
 
-No producer creates tasks on this queue: readiness is READY the moment a paper exists (the writer
-commits the manifest last, with its renderings in it), so the reconcile sweep is what will drive it.
-The lane is provisioned ahead of that consumer; an empty queue costs nothing.
+The evidence service is the producer: `MaybeIngestPapers` creates one `doc_id`-named task per paper it
+resolved to PENDING. Its two grants on this lane are the program's, since neither the queue nor the
+invoker knows its caller. The bulk ingestion pipeline puts nothing here — it commits the manifest last
+with its renderings in it, so a paper it ingested is READY the moment it exists.
 
 - `conversion_queue` — the Cloud Tasks queue. Its concurrency cap is the load-bearing knob (each
   dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper
@@ -29,7 +30,7 @@ _MAX_CONCURRENT_DISPATCHES = 5
 # Bounded retries: a raise → 500 → retry re-runs the (model-cost-bearing) conversion, so a
 # permanently-unconvertible paper stops after this many attempts rather than re-OCRing forever. Cloud
 # Tasks has no dead-letter destination — an exhausted task is simply deleted, leaving the paper PENDING
-# with no marker and no record, which the reconcile sweep is what re-finds. 1 attempt + 4 retries at a
+# with no marker and no record, which only a scan over corpus state re-finds. 1 attempt + 4 retries at a
 # doubling 30s spreads a transient failure (model-API overload, a fetch blip) over ~7.5 minutes; the
 # ceiling binds only if the attempt count is raised.
 _MAX_ATTEMPTS = 5
@@ -47,7 +48,7 @@ def conversion_queue(
     region: str,
     opts: pulumi.ResourceOptions | None = None,
 ) -> gcp.cloudtasks.Queue:
-    """Create the conversion Cloud Tasks queue, returned so a future sweep's enqueuer grant can name it."""
+    """Create the conversion Cloud Tasks queue, returned so the producer's enqueuer grant can name it."""
     return gcp.cloudtasks.Queue(
         'themis-convert',
         project=project,

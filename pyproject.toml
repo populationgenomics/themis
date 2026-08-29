@@ -42,10 +42,11 @@ screenshot = ["google-cloud-storage"]
 # pubmed_proto — bibliographic metadata.pb; httpx — async HTTP client for the efetch
 # and Crossref metadata-resolution calls; anthropic — the PDF LLM-OCR converter
 # (produce.py's pdf-without-xml branch); pillow — pdf.py encodes its page rasters
-# through it. litfetch/litdown/pubmed_proto are exact-pinned
+# through it; google-cloud-tasks — enqueue.py creates the convert worker's
+# task. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "httpx", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "litfetch==0.2.0", "litdown==0.5.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "litfetch==0.2.0", "litdown==0.5.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -83,8 +84,8 @@ store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage",
 hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "session" }]
 # evidence service (themis/services/evidence): one image serving every data-plane evidence interface —
 # literature (litcache resolution + quote location) and the database-backed interfaces SVCv4 classification reaches.
-# grpc.aio server + generated stubs. Includes the session client: every interface but literature
-# authorizes its request through auth, and the shared corpus literature serves is not session-scoped.
+# grpc.aio server + generated stubs. Includes the session client: every interface authorizes through
+# auth — literature only where it enqueues a conversion, the shared corpus it reads being unscoped.
 # httpx is the shared async transport for every live upstream call, Europe PMC + LitVar2 among them;
 # defusedxml parses ClinVar's VCV XML (stdlib ElementTree stays exposed to entity expansion, and the
 # payload comes off an unauthenticated public endpoint). google-cloud-storage reaches the litcache
@@ -97,7 +98,9 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # and pinned likewise, owns ClinVar's VCV record type and the converter that builds one from efetch's
 # XML: the clinvar contract's stubs import the wheel's message and the adapter calls its converter, so
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx", "defusedxml", "google-cloud-storage", "pubmed_proto==0.1.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+# google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
+# paper it resolved, through litcache/enqueue.py behind the literature backend port.
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "pubmed_proto==0.1.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts

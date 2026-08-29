@@ -11,6 +11,11 @@ read-only) to resolve a paper's rendering / PDF / associated-file object and loc
 `THEMIS_LITERATURE_BACKEND=live`. It holds one Cloud SQL login, `SELECT` on `litcache.crosswalk` alone,
 to resolve an external id to a `doc_id`; the table grant is the migration's, keyed on this login.
 
+It is also the conversion lane's producer (docs/design/evidence-fulltext.md), so it carries the
+`THEMIS_LITERATURE_CONVERT_*` trio and needs two grants the lane's own component cannot make: enqueue
+on the queue, and `actAs` on the invoker service account. Both are the program's, beside the queue and
+the invoker themselves.
+
 Its caller is the web BFF — quote location for the document pane, plus some paper management. The BFF
 has no Direct VPC egress (it reaches GCS / Cloud SQL / Anthropic over Google APIs, not the services
 VPC), so an internal-ingress service would be unreachable from it. Ingress is therefore `ALL`, gated
@@ -62,6 +67,9 @@ class EvidenceService(pulumi.ComponentResource):
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
+        convert_queue_path: pulumi.Input[str],
+        convert_worker_url: pulumi.Input[str],
+        convert_invoker_sa_email: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
@@ -155,10 +163,14 @@ class EvidenceService(pulumi.ComponentResource):
                             _env('THEMIS_LITERATURE_BACKEND', 'live'),
                             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
                             # The crosswalk trio, all-or-nothing: the interface fails startup on a
-                            # partial set rather than answering UNAVAILABLE per request.
+                            # partial set rather than per request.
                             _env('THEMIS_LITERATURE_CROSSWALK_INSTANCE', sql_connection_name),
                             _env('THEMIS_LITERATURE_CROSSWALK_DATABASE', sql_database),
                             _env('THEMIS_LITERATURE_CROSSWALK_DB_USER', db_user.name),
+                            # The conversion trio, all-or-nothing on the same terms.
+                            _env('THEMIS_LITERATURE_CONVERT_QUEUE', convert_queue_path),
+                            _env('THEMIS_LITERATURE_CONVERT_WORKER_URL', convert_worker_url),
+                            _env('THEMIS_LITERATURE_CONVERT_INVOKER_SA', convert_invoker_sa_email),
                             _env('THEMIS_VARIANT_BACKEND', 'live'),
                             _env('THEMIS_VEP_BACKEND', 'live'),
                             _env('THEMIS_GNOMAD_BACKEND', 'live'),

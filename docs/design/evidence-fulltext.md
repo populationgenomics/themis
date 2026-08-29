@@ -87,7 +87,7 @@ outcome supersedes an earlier one. The two terminal kinds:
 
 - **Readiness** — `PollFullTexts([doc_ids]) → [{doc_id, state}]` (batch, pure: it produces nothing and enqueues nothing)
   and `MaybeIngestPapers([external_ids]) → [{external_id, doc_id, state}]`, the same readiness for a caller holding a
-  DOI or a PMID rather than a `doc_id`.
+  DOI or a PMID rather than a `doc_id` — and, for whatever comes back unsettled, the one call that starts production.
 - **Content** — `ResolveContent` / `Locate` (by `doc_id`, doc pane: a GCS location the BFF streams), and a
   `FetchFullText` (by external id, agent: the markdown) that is not yet built. These read a rendering the readiness
   plane made present.
@@ -99,16 +99,39 @@ streaming content path.
 
 A conversion is a Cloud Task keyed by `doc_id`. The task, not a request, walks the OA ladder and picks the converter for
 whatever source it finds; which source served a paper is then an outcome recorded in the manifest, not a branch the
-caller sees. Re-enqueueing is safe to repeat — the task name is the `doc_id`, so a duplicate is an `AlreadyExists`
-no-op.
+caller sees.
 
-Nothing enqueues today, and that is why a readiness query has nothing to trigger. The bulk ingestion pipeline commits
-each manifest last, with its renderings already in it, so a paper it ingested is READY the moment it exists — never
-PENDING for want of a conversion. PENDING is left for the papers that pipeline cannot finish: a PDF source with no
-markdown rendering, awaiting the OCR route. Those are real, and a caller must handle the state; what does not exist yet
-is anything that would advance them on demand. The reconcile sweep is the first producer: corpus state *is* the queue —
-a paper with no rendering and no marker is the work item — so no outbox is needed, which is the direct payoff of GCS as
-the only durable store.
+`MaybeIngestPapers` is the producer, and it is the only rpc whose contract names that shape. It already resolves each
+external id to a `doc_id` and reads that paper's readiness, so starting production is one appended step over the ids
+that came back PENDING. `PollFullTexts` stays pure, and the ingestion writer stays out of it — enqueueing there would
+pair the task with a commit it cannot be atomic with: the manifest write is one create-only put, so a task placed ahead
+of it can name a paper a crashed run never wrote.
+
+**What is PENDING, and by whose hand.** The bulk pipeline commits each manifest last with a rendering already in it, so
+a paper it ingested is READY the moment it exists; it leaves this lane no work at all. A paper is PENDING only where
+something committed a manifest without a rendering, which means a paper deposited by hand — a PDF placed in the corpus
+ahead of any conversion. That is the case the lane exists for, and it is why its concurrency cap has never been under
+load: hand-deposited papers arrive one at a time.
+
+**The task name outlives the task.** Naming it for the `doc_id` makes a repeated request an `AlreadyExists` rather than
+a second conversion, but Cloud Tasks holds the name after the task is gone — for at least an hour, and by its own
+reference possibly up to a day. So a paper whose conversion ran and failed inside that window cannot be re-driven under
+this name, and a caller cannot tell that from a conversion in flight. Asking twice is safe but not always effective, and
+what the corpus actually rests on is the producer's own short-circuit: a rendering or a terminal marker already present
+returns that readiness without re-walking the ladder, so a duplicate delivery costs two GCS reads.
+
+**The enqueue is the only gated step.** Every other rpc here reads a corpus shared across analyses, so none resolves a
+session; a conversion spends Anthropic tokens, and that is not a cost a caller who cannot name a session may incur. So
+the gate sits on the enqueue rather than on the rpc around it: a batch that resolves its ids and finds nothing to
+produce is answered without a token, and one with something to produce is refused whole. Answering readiness while
+quietly skipping the enqueue would be the dead end below, reached by a different road.
+
+**A failed enqueue fails the call.** A conversion nobody placed leaves a paper PENDING, indistinguishable from one being
+converted, so a caller told PENDING would have no reason to ask again. Repeating the call is the remedy, and the task
+name makes it free for the papers already queued. Which failures are worth repeating is then a distinction to draw
+rather than guess at: a create refused because a grant is missing can never succeed, and answering that as an outage
+spends a caller's retry budget on a deployment fault. Where one batch hits both kinds the permanent one is the answer —
+the transient one costs a retry, the permanent one would otherwise be retried indefinitely and never read.
 
 ### Resolving an external id is a lookup, never a mint
 
@@ -118,10 +141,10 @@ give any paper litcache has never ingested a fresh `doc_id` naming no manifest �
 crosswalk claim on that DOI. Minting belongs to ingestion. A miss is therefore an empty `doc_id` with `UNKNOWN_PAPER`,
 and the service holds `SELECT` on `litcache.crosswalk` and nothing more.
 
-The name reserves a shape the call does not yet have. Today it only reads. What it grows into is resolving ids against
-upstream sources litcache has not ingested, and starting production for whatever comes back unsettled — at which point
-`Maybe` is load-bearing twice over, since such a call may resolve nothing and produce nothing. Naming it for the read
-alone would have to be renamed then, and a renamed rpc is a broken one for every deployed caller.
+The name still covers more than the call does. It reads the crosswalk and starts production for whatever came back
+unsettled; what it does not do is resolve an id against upstream sources litcache has never ingested. `Maybe` is
+load-bearing in both directions, since a call may resolve nothing and produce nothing. Naming it for the read alone
+would have forced a rename, and a renamed rpc is a broken one for every deployed caller.
 
 This is the first thing to put Cloud SQL on the evidence service's request path; it read only GCS before.
 
@@ -146,12 +169,13 @@ rendering (or a `.fetch_outcome` marker). It runs **in the request** — legitim
 (awaiting Anthropic), so CPU stays allocated for its duration. The Cloud-Run-has-no-background-CPU constraint does not
 bite, because the conversion *is* the request, not work spawned after it.
 
-That holds only if the handler's service declares a request timeout long enough for a conversion. Cloud Run's default is
-300s and no service in `infra/` overrides it, so whichever service hosts `/convert` has to set one — the platform allows
-up to 60 minutes — and the Cloud Tasks dispatch deadline has to agree with it.
+That holds only if the handler's service declares a request timeout long enough for a conversion: Cloud Run's default is
+300s. The worker sets 30 minutes, which is also the longest dispatch deadline Cloud Tasks accepts, and the enqueuer sets
+that same deadline on every task — a shorter one abandons a conversion still running and dispatches a second attempt
+beside it.
 
-Cloud Tasks owns dispatch, retry + backoff, dedup (task name = `doc_id`, enqueue-once), and the concurrency cap
-(`maxConcurrentDispatches` — the knob that matters, since each conversion is Anthropic-cost-bearing). A preempted
+Cloud Tasks owns dispatch, retry + backoff, dedup (task name = `doc_id`, one live task per paper), and the concurrency
+cap (`maxConcurrentDispatches` — the knob that matters, since each conversion is Anthropic-cost-bearing). A preempted
 conversion is re-delivered; the content-addressed rendering write is idempotent, so a double-delivery is harmless.
 
 ### Write-back is a generation-matched manifest RMW
@@ -255,19 +279,28 @@ Built: `DescribePaper` / `ResolveContent` / `Locate` / `Validate` / `PollFullTex
 directly from a `doc_id`; the `.fetch_outcome` sidecar (`outcome.py`); the generation-matched manifest-RMW write-back
 (`writer.add_rendering`, `writer.add_source_and_rendering`); the producer `produce.produce_full_text`, which walks the
 OA ladder and the PDF-OCR branch off any request path; and the conversion lane — the Cloud Tasks queue, the `/convert`
-worker whose PDF branch transcribes on Claude, and the invoker identity.
+worker whose PDF branch transcribes on Claude, the invoker identity, and the enqueuer `MaybeIngestPapers` drives for
+every id it resolved to PENDING.
 
-Not yet built: anything that enqueues. The lane is inert until the reconcile sweep lands, so a PENDING id settles only
-when a rendering arrives by another route — today, the ingestion pipeline.
+Not yet built: the scan that re-finds a paper whose task exhausted its retries or was never created. Its only trace is
+in the worker's logs.
 
 ## Open questions
 
 - **Where `/convert` runs** — a handler on the evidence service (co-located, simplest) vs. a separate convert service
   (isolates the Anthropic-heavy path). Request concurrency and per-instance memory (N in-flight PDFs) argue both ways.
-- **Orphan on enqueue failure** — a PDF written to GCS but whose Cloud Task was never created is a PENDING nobody
-  retries. Make the enqueue fail loud (so the caller retries), or accept a rare backstop scan. The scan's predicate is
-  no-rendering-without-marker-without-task — not PDF-specific, since a paper with no source at all is PENDING too.
-- **Conversions beyond the 60-min request ceiling** — a pathological PDF exceeds the in-request timeout and would need a
-  Job after all; handle now or defer until it occurs.
+- **The papers nothing re-finds.** A failed enqueue is loud, so a caller that retries is covered; a caller that does
+  not, and a task whose retries were exhausted (deleted, with no dead-letter record and no marker), are not. Only a scan
+  over corpus state finds either, and corpus state *is* the queue it would read — a paper with no rendering and no
+  marker is the work item — so no outbox is needed, the direct payoff of GCS as the only durable store. Its predicate is
+  no-rendering-without-marker-without-task, not PDF-specific, since a paper with no source at all is PENDING too.
+- **The enqueue gate has one arm, and wants two.** A session token names an agent session, and the sandbox worker
+  injects one on every rpc it forwards, so exposing this rpc to the agent would cost the agent nothing. A user-initiated
+  ingest arrives through the BFF holding a logged-in user's identity and no agent session — two callers, two principals
+  — so admitting it means adding an arm to the gate, not swapping out the one that is there. Reads stay ungated under
+  either: the corpus is shared, and only the conversion costs anything. What neither arm settles is how much a caller
+  may spend: the resolved binding is discarded, so any caller the gate admits can convert any paper, without a ceiling.
+- **Conversions beyond the 30-minute dispatch deadline** — a pathological PDF exceeds the deadline Cloud Tasks caps a
+  push at, and would need a Job after all; handle now or defer until it occurs.
 - **The upload entry door** — the submit-side path for `SOURCE_KIND_UPLOAD`, the escape hatch for a paper the OA ladder
   cannot serve.

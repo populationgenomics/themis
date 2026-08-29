@@ -30,10 +30,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
 COPY themis/evidence/models ./themis/evidence/models
-# The read path reaches into litcache for the manifest stubs, the readiness derivation, the manifest
-# key, and the crosswalk lookup, and litcache reaches themis/common for storage + the Cloud SQL dial —
-# so both packages ship whole rather than as a hand-listed subset that silently rots as the read path
-# grows. buf carries the vendored validate stubs litcache_pb2 imports.
+# The image reaches into litcache for the manifest stubs, the readiness derivation, the manifest key,
+# the crosswalk lookup, and the conversion enqueue, and litcache reaches themis/common for storage +
+# the Cloud SQL dial — so both packages ship whole rather than as a hand-listed subset that silently
+# rots as the interfaces grow. buf carries the vendored validate stubs litcache_pb2 imports.
 COPY buf ./buf
 COPY themis/common ./themis/common
 COPY themis/litcache ./themis/litcache

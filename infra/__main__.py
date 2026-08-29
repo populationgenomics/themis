@@ -200,6 +200,32 @@ resources = storage.resources_bucket(
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+# The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
+# request path. The queue path, the worker URL and the invoker's email are inputs to the evidence
+# service's env, so the lane is declared above it.
+convert_queue = convert.conversion_queue(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+convert_queue_path = pulumi.Output.concat('projects/', project, '/locations/', region, '/queues/', convert_queue.name)
+convert_worker = convert.ConvertWorker(
+    project=project,
+    region=region,
+    image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
+    fulltext_bucket=fulltext.name,
+    anthropic_federation_rule_id=anthropic_worker_federation_rule_id,
+    anthropic_organization_id=anthropic_organization_id,
+    anthropic_service_account_id=anthropic_worker_service_account_id,
+    anthropic_workspace_id=anthropic_workspace_id,
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+)
+convert_invoker = convert.ConversionInvoker(
+    project=project,
+    region=region,
+    worker_service_name=convert_worker.service_name,
+    opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
+)
 evidence_service = evidence.EvidenceService(
     project=project,
     region=region,
@@ -212,7 +238,28 @@ evidence_service = evidence.EvidenceService(
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
-    opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, fulltext, resources]),
+    convert_queue_path=convert_queue_path,
+    convert_worker_url=convert_worker.url,
+    convert_invoker_sa_email=convert_invoker.service_account_email,
+    opts=pulumi.ResourceOptions(
+        depends_on=[base, database, services_net, fulltext, resources, convert_queue, convert_worker, convert_invoker]
+    ),
+)
+# What the evidence service needs to put a task on the lane: enqueue on the queue, and actAs on the
+# identity whose OIDC token the task carries into the worker.
+gcp.cloudtasks.QueueIamMember(
+    'themis-evidence-enqueues-conversions',
+    project=project,
+    location=region,
+    name=convert_queue.name,
+    role='roles/cloudtasks.enqueuer',
+    member=pulumi.Output.concat('serviceAccount:', evidence_service.service_account_email),
+)
+gcp.serviceaccount.IAMMember(
+    'themis-evidence-acts-as-convert-invoker',
+    service_account_id=convert_invoker.service_account_id,
+    role='roles/iam.serviceAccountUser',
+    member=pulumi.Output.concat('serviceAccount:', evidence_service.service_account_email),
 )
 # The data-plane services resolve session tokens through auth (§7); grant each SA invoke on the internal
 # auth service — the binding auth left for when they landed.
@@ -332,30 +379,6 @@ session_token_key = sandbox.session_token_signing_key(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoKeyVersions/1')
-# The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
-# request path. Nothing enqueues onto the queue yet — the reconcile sweep is its first producer.
-convert_queue = convert.conversion_queue(
-    project=project,
-    region=region,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
-convert_worker = convert.ConvertWorker(
-    project=project,
-    region=region,
-    image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
-    fulltext_bucket=fulltext.name,
-    anthropic_federation_rule_id=anthropic_worker_federation_rule_id,
-    anthropic_organization_id=anthropic_organization_id,
-    anthropic_service_account_id=anthropic_worker_service_account_id,
-    anthropic_workspace_id=anthropic_workspace_id,
-    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
-)
-convert_invoker = convert.ConversionInvoker(
-    project=project,
-    region=region,
-    worker_service_name=convert_worker.service_name,
-    opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
-)
 site = web.WebService(
     project=project,
     region=region,
@@ -577,3 +600,5 @@ pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
 pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)
+# The identity a conversion task's OIDC token names — the subject of the producer's actAs grant.
+pulumi.export('convert_invoker_sa_email', convert_invoker.service_account_email)

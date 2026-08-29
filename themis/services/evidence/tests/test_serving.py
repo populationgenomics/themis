@@ -1,7 +1,8 @@
 """What `serving.EvidenceServicer` gives every interface that mixes it in: the gate, then the bounds.
 
 Driven over gnomad's servicer on a real server, and gnomad stands for all of them: the base class is
-what is under test, and every interface but `literature` subclasses it unchanged.
+what is under test, and every interface but `literature` takes the whole of it — `literature` mixes in
+the gate alone, and pins its own use of it beside its other rpcs.
 """
 
 from __future__ import annotations

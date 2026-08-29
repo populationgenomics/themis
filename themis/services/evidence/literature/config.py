@@ -7,9 +7,12 @@
 so it travels under one name rather than an interface-scoped one; every ``THEMIS_LITERATURE_*`` value
 below it is this interface's alone.
 
-The crosswalk vars are all-or-nothing: set together they wire external-id resolution, unset together
-they leave it off and ``MaybeIngestPapers`` answers UNAVAILABLE. A partial set is a ``SystemExit`` —
-a half-configured lookup would fail per request instead of at deploy.
+Two trios are all-or-nothing, and for the same reason: a half-configured capability fails per request
+instead of at deploy, so a partial set is a ``SystemExit``. Set together, the
+``THEMIS_LITERATURE_CROSSWALK_*`` vars wire external-id resolution and the
+``THEMIS_LITERATURE_CONVERT_*`` vars wire the conversion lane ``MaybeIngestPapers`` enqueues onto;
+unset together, each leaves its capability off and the rpc answers FAILED_PRECONDITION to a call that
+would have needed it.
 
 Malformed input is a ``SystemExit`` at startup, never a backend that serves an empty corpus: "no such
 paper" from an unseeded store is indistinguishable from a paper genuinely absent from the corpus.
@@ -22,10 +25,11 @@ import os
 from collections.abc import Callable
 
 from google.api_core import exceptions as api_exceptions
-from google.cloud import storage
+from google.cloud import storage, tasks_v2
 from google.cloud.sql import connector as sql_connector
 
 from themis.common import sql
+from themis.litcache import enqueue
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import litcache as litcache_backend
 
@@ -36,6 +40,10 @@ _CROSSWALK_INSTANCE_VAR = 'THEMIS_LITERATURE_CROSSWALK_INSTANCE'
 _CROSSWALK_DATABASE_VAR = 'THEMIS_LITERATURE_CROSSWALK_DATABASE'
 _CROSSWALK_DB_USER_VAR = 'THEMIS_LITERATURE_CROSSWALK_DB_USER'
 _CROSSWALK_VARS = (_CROSSWALK_INSTANCE_VAR, _CROSSWALK_DATABASE_VAR, _CROSSWALK_DB_USER_VAR)
+_CONVERT_QUEUE_VAR = 'THEMIS_LITERATURE_CONVERT_QUEUE'
+_CONVERT_WORKER_URL_VAR = 'THEMIS_LITERATURE_CONVERT_WORKER_URL'
+_CONVERT_INVOKER_SA_VAR = 'THEMIS_LITERATURE_CONVERT_INVOKER_SA'
+_CONVERT_VARS = (_CONVERT_QUEUE_VAR, _CONVERT_WORKER_URL_VAR, _CONVERT_INVOKER_SA_VAR)
 
 
 def backend_from_env(stack: contextlib.AsyncExitStack) -> literature_backend.LiteratureBackend:
@@ -80,7 +88,11 @@ def _litcache_backend_from_env(stack: contextlib.AsyncExitStack) -> litcache_bac
         next(iter(bucket.list_blobs(prefix='papers/', max_results=1)), None)
     except api_exceptions.NotFound as e:
         raise SystemExit(f'{_BUCKET_VAR} {bucket_name!r} does not exist or is not readable') from e
-    return litcache_backend.LitcacheBackend(bucket, connect=_crosswalk_connect_from_env(stack))
+    return litcache_backend.LitcacheBackend(
+        bucket,
+        connect=_crosswalk_connect_from_env(stack),
+        enqueuer=_enqueuer_from_env(stack),
+    )
 
 
 def _crosswalk_connect_from_env(stack: contextlib.AsyncExitStack) -> Callable[[], sql.Connection] | None:
@@ -101,3 +113,22 @@ def _crosswalk_connect_from_env(stack: contextlib.AsyncExitStack) -> Callable[[]
         return sql.iam_connect(dialer, connection_name=instance, database=database, db_user=db_user)
 
     return connect
+
+
+def _enqueuer_from_env(stack: contextlib.AsyncExitStack) -> enqueue.Enqueuer | None:
+    """A conversion enqueuer from the ``THEMIS_LITERATURE_CONVERT_*`` trio, or None."""
+    values = {var: os.environ.get(var, '') for var in _CONVERT_VARS}
+    set_vars = {var for var, value in values.items() if value}
+    if not set_vars:
+        return None
+    if set_vars != set(_CONVERT_VARS):
+        raise SystemExit(f'{sorted(_CONVERT_VARS)} must all be set or all unset; got {sorted(set_vars)}')
+    target = enqueue.ConversionTarget(
+        queue_path=values[_CONVERT_QUEUE_VAR],
+        worker_url=values[_CONVERT_WORKER_URL_VAR],
+        invoker_service_account_email=values[_CONVERT_INVOKER_SA_VAR],
+    )
+    # No startup probe of the queue: `cloudtasks.enqueuer` grants creates and no read, so every call
+    # that would confirm the queue exists is one the runtime SA is denied. A wrong queue path surfaces
+    # instead as a permanent refusal on the first paper that needs converting.
+    return enqueue.Enqueuer(stack.enter_context(tasks_v2.CloudTasksClient()), target)  # closes on exit

@@ -5,16 +5,24 @@ delegating to the injected backend and mapping its typed failures to transport s
 an unknown doc_id is NOT_FOUND, a missing selected object is NOT_FOUND, a requested representation
 the paper lacks is FAILED_PRECONDITION, and an unset selector / unspecified representation is
 INVALID_ARGUMENT. A quote that does not locate is a modelled ``not_located`` result, not an error.
+
+``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: the papers it resolves
+to PENDING get a conversion requested through the backend, so its failures split three ways — retry
+(UNAVAILABLE), fix the deployment (FAILED_PRECONDITION), or page someone (INTERNAL). It is also the
+only rpc here that authorizes, and only over its enqueue step — see ``_request_conversions``.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import override
 
 import grpc
 
+from themis.clients.auth import session as session_mod
 from themis.rpc import literature_pb2, literature_pb2_grpc
+from themis.services.evidence import serving
 from themis.services.evidence.literature import backend as literature_backend
 
 _logger = logging.getLogger(__name__)
@@ -30,8 +38,11 @@ _MAX_EXTERNAL_IDS = 100
 _ID_SCHEMES = frozenset({'doi', 'pmid', 'pmcid'})
 
 
-class Servicer(literature_pb2_grpc.LiteratureServicer):
-    def __init__(self, backend: literature_backend.LiteratureBackend) -> None:
+class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer):
+    def __init__(
+        self, backend: literature_backend.LiteratureBackend, session_resolver: session_mod.SessionResolver
+    ) -> None:
+        super().__init__(session_resolver)
         self._backend = backend
 
     @override
@@ -124,6 +135,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         # Two external ids can name one paper (a DOI and its PMID), so collapse after resolution —
         # where the reads are — and report both ids against the doc_id they share.
         states = await self._backend.full_text_readiness(list(dict.fromkeys(doc_ids.values())))
+        await self._request_conversions(states, context)
         return literature_pb2.MaybeIngestPapersResponse(
             readiness=[
                 literature_pb2.PaperReadiness(
@@ -134,6 +146,39 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
                 for external_id in external_ids
             ]
         )
+
+    async def _request_conversions(
+        self, states: Mapping[str, literature_pb2.FullTextState], context: grpc.aio.ServicerContext
+    ) -> None:
+        """Start a conversion for every PENDING paper, aborting the call if one could not be asked for.
+
+        Resolving a session is this step's, not the rpc's: the enqueue is what costs money, the reads
+        around it are not. So a batch with nothing to produce is answered without a token, and one with
+        something to produce is refused whole (``evidence-fulltext.md``).
+
+        The whole call fails rather than answering readiness anyway: an enqueue that did not happen
+        leaves the paper PENDING, which is indistinguishable from one whose conversion is under way, so
+        a caller told "PENDING" would have no reason to ask again. Repeating the call is the remedy, and
+        the ``doc_id``-keyed task name makes it free for the papers already queued.
+        """
+        # READY and the two terminal states need nothing; UNKNOWN_PAPER has no manifest, so there is
+        # nothing for the producer to read and no task to name.
+        pending = [doc_id for doc_id, state in states.items() if state == literature_pb2.FULL_TEXT_STATE_PENDING]
+        if not pending:
+            return
+        await self._require_session(context)
+        try:
+            await self._backend.request_conversions(pending)
+        except literature_backend.ConversionNotConfiguredError as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, f'conversion is not configured: {e}')
+        except literature_backend.ConversionUnavailableError:
+            # The detail names the queue and the runtime identity, so it goes to the log rather than to
+            # a caller that reaches the browser and the sandbox agent.
+            _logger.exception('conversion enqueue failed transiently')
+            await context.abort(grpc.StatusCode.UNAVAILABLE, 'the conversion queue is unavailable')
+        except literature_backend.ConversionEnqueueFailedError:
+            _logger.exception('conversion enqueue was refused')
+            await context.abort(grpc.StatusCode.INTERNAL, 'the conversion could not be enqueued')
 
 
 def _is_scheme_qualified(external_id: str) -> bool:

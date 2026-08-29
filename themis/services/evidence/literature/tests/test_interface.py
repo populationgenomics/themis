@@ -17,14 +17,14 @@ from themis.testing import in_process_grpc
 
 
 def _deps() -> deps_mod.Deps:
-    """Image-level collaborators literature ignores, save for the stack its backend would register on."""
+    """Image-level collaborators, with a resolver no read here may reach."""
     return deps_mod.Deps(
         session_resolver=_unreachable_resolver, http_client=httpx.AsyncClient(), stack=contextlib.AsyncExitStack()
     )
 
 
 async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('literature resolves no session')
+    raise AssertionError('a literature read resolves no session; only the conversion enqueue does')
 
 
 def test_register_serves_the_literature_rpcs(monkeypatch: pytest.MonkeyPatch) -> None:

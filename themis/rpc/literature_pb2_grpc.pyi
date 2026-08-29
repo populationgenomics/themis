@@ -11,7 +11,8 @@ subclasses the servicer base, a caller uses the stub.
 Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and serves
 the named object itself; the sandbox agent calls Validate at authoring time. The corpus is shared
 (litcache is not session-scoped yet — entitlement is a deferred non-goal, literature-evidence-layer.md),
-so requests carry no session binding this slice.
+so the read rpcs carry no session binding. MaybeIngestPapers is the exception, stated where it is
+declared rather than here: auth is per-rpc on this service, not uniform across it.
 """
 
 from collections import abc as _abc
@@ -67,12 +68,18 @@ class LiteratureStub:
     serving slot for the whole wait.
     """
     MaybeIngestPapers: _grpc.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]
-    """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
-    crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
-    one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
-    so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-    The name is the shape it grows into: resolving ids upstream and starting production for what is
-    unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    """Resolve external ids to papers, report each one's full-text readiness, and start production for
+    the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
+    not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
+    unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+    Resolving ids against upstream sources litcache has never seen is the shape the name still grows
+    into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+
+    Auth departs from the read rpcs because this one spends money: a call with a paper to produce
+    resolves a session first — the token arrives as x-themis-session-token metadata and resolves via
+    themis.clients.auth, never as a message field. UNAUTHENTICATED with no token, PERMISSION_DENIED
+    on one that does not resolve. A call whose ids are all settled produces nothing and needs none.
+
     A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
     outage affects the batch, and a caller reading it per-id would write papers off permanently.
     """
@@ -105,12 +112,18 @@ class LiteratureAsyncStub(LiteratureStub):
     serving slot for the whole wait.
     """
     MaybeIngestPapers: _aio.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]  # type: ignore[assignment]
-    """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
-    crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
-    one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
-    so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-    The name is the shape it grows into: resolving ids upstream and starting production for what is
-    unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    """Resolve external ids to papers, report each one's full-text readiness, and start production for
+    the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
+    not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
+    unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+    Resolving ids against upstream sources litcache has never seen is the shape the name still grows
+    into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+
+    Auth departs from the read rpcs because this one spends money: a call with a paper to produce
+    resolves a session first — the token arrives as x-themis-session-token metadata and resolves via
+    themis.clients.auth, never as a message field. UNAUTHENTICATED with no token, PERMISSION_DENIED
+    on one that does not resolve. A call whose ids are all settled produces nothing and needs none.
+
     A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
     outage affects the batch, and a caller reading it per-id would write papers off permanently.
     """
@@ -176,12 +189,18 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         request: _literature_pb2.MaybeIngestPapersRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_literature_pb2.MaybeIngestPapersResponse, _abc.Awaitable[_literature_pb2.MaybeIngestPapersResponse]]:
-        """Resolve external ids to papers and report each one's full-text readiness. Today it looks the
-        crosswalk up and nothing more: an id litcache has already ingested resolves to its doc_id, and
-        one it has not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims,
-        so an unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-        The name is the shape it grows into: resolving ids upstream and starting production for what is
-        unsettled. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+        """Resolve external ids to papers, report each one's full-text readiness, and start production for
+        the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
+        not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
+        unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
+        Resolving ids against upstream sources litcache has never seen is the shape the name still grows
+        into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+
+        Auth departs from the read rpcs because this one spends money: a call with a paper to produce
+        resolves a session first — the token arrives as x-themis-session-token metadata and resolves via
+        themis.clients.auth, never as a message field. UNAUTHENTICATED with no token, PERMISSION_DENIED
+        on one that does not resolve. A call whose ids are all settled produces nothing and needs none.
+
         A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
         outage affects the batch, and a caller reading it per-id would write papers off permanently.
         """

@@ -1,9 +1,10 @@
 """The literature interface backend: litcache resolution + quote location (docs/design/document-pane.md).
 
 The backend owns everything litcache-specific: naming the GCS object for a paper's rendering, PDF, or
-associated file, and locating a citation's quote within a representation. The servicer depends on the
-abstract ``LiteratureBackend`` port, so the same server runs offline (``FixtureBackend``, in-memory) and
-deployed (``litcache.LitcacheBackend``, which locates quotes with anchorite).
+associated file, locating a citation's quote within a representation, and asking for a full text the
+corpus does not hold yet. The servicer depends on the abstract ``LiteratureBackend`` port, so the same
+server runs offline (``FixtureBackend``, in-memory) and deployed (``litcache.LitcacheBackend``, which
+locates quotes with anchorite and enqueues conversions on Cloud Tasks).
 
 Port methods are ``async``: the servicer runs on ``grpc.aio``, so a real adapter (GCS, anchorite)
 offloads its blocking I/O rather than stalling the single event loop.
@@ -17,11 +18,14 @@ from __future__ import annotations
 import abc
 import dataclasses
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from typing import override
 
 from themis.litcache import crosswalk
 from themis.rpc import literature_pb2
+
+_logger = logging.getLogger(__name__)
 
 
 class UnknownPaperError(Exception):
@@ -50,6 +54,34 @@ class CrosswalkUnavailableError(Exception):
 
     Whole-batch by construction, never a per-id miss. A caller that read an outage as "this id is
     not in the corpus" would write papers off permanently on a transient failure.
+    """
+
+
+class ConversionNotConfiguredError(Exception):
+    """This deployment wires no conversion lane — the servicer maps this to FAILED_PRECONDITION.
+
+    A permanent property of the deployment, like ``CrosswalkNotConfiguredError``: retrying does not
+    provision a queue. Raised only when there is something to enqueue, so a deployment that never
+    reaches a PENDING paper never sees it.
+    """
+
+
+class ConversionUnavailableError(Exception):
+    """The conversion request could not be placed, and repeating it might succeed — UNAVAILABLE.
+
+    UNAVAILABLE because the caller's remedy is to repeat the call, which the ``doc_id``-keyed task
+    name makes free for the papers whose tasks did get created. The adapter decides which failures
+    qualify.
+    """
+
+
+class ConversionEnqueueFailedError(Exception):
+    """The lane is wired and refused the request — the servicer maps this to INTERNAL.
+
+    The distinction from ``ConversionNotConfiguredError`` is what the answer tells the caller. A
+    deployment with no conversion lane cannot do this at all, which is a precondition of the call
+    here; a deployment whose lane is wired and broken can, and is faulty. Neither is UNAVAILABLE:
+    gRPC retries that by default, and no retry repairs either one.
     """
 
 
@@ -139,6 +171,25 @@ class LiteratureBackend(abc.ABC):
 
         Never raises for an unknown doc_id — it is ``FULL_TEXT_STATE_UNKNOWN_PAPER`` in the result, so
         one bad id never fails the batch.
+        """
+        ...
+
+    @abc.abstractmethod
+    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+        """Ask for a full text for each of these papers, at most one conversion in flight per paper.
+
+        Idempotent: the request is keyed on the ``doc_id``, so repeating it for a paper already in
+        flight adds nothing. Callers pass the PENDING ids only — a paper with no manifest has nothing
+        for a producer to read, and a settled one needs nothing.
+
+        Whole-batch failures, never per-id: a caller cannot act on "three of these ten were placed",
+        and repeating the whole call costs nothing for the ones that were.
+
+        Raises:
+            ConversionNotConfiguredError: this deployment wires no conversion lane (permanent).
+            ConversionUnavailableError: the request could not be placed, and repeating it might
+                succeed (transient).
+            ConversionEnqueueFailedError: the request was refused on its own terms (permanent).
         """
         ...
 
@@ -284,6 +335,14 @@ class FixtureBackend(LiteratureBackend):
             else:
                 result[doc_id] = literature_pb2.FULL_TEXT_STATE_PENDING
         return result
+
+    @override
+    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+        # The seed has no queue and no worker, so a PENDING paper stays PENDING however often it is
+        # asked for. Logged rather than passed over in silence: an offline caller watching a paper
+        # never advance has to be able to see that nothing was ever going to convert it.
+        if doc_ids:
+            _logger.info('fixture backend converts nothing; %d paper(s) stay PENDING: %s', len(doc_ids), list(doc_ids))
 
 
 def default_representation(has_markdown: bool, markdown_from_xml: bool, has_pdf: bool) -> literature_pb2.Representation:

@@ -4,9 +4,10 @@ Each rpc authorizes first, then bounds its upstream work and maps a raised `erro
 status code the proto states for it. Both are identical across interfaces, so they live here and each
 servicer subclasses `EvidenceServicer` alongside its generated base.
 
-`literature` subclasses nothing here: its corpus is not session-scoped (entitlement is a deferred
-non-goal), so it resolves no session. The deadline is the image's rather than the mixin's, so it
-takes that from `within_deadline` directly.
+`literature` mixes in the gate and not the error mapping: its corpus is not session-scoped
+(entitlement is a deferred non-goal), so its reads resolve no session and only the conversion its
+producer rpc enqueues does. Its own failures map per rpc, and the deadline is the image's rather than
+the mixin's, so it takes that from `within_deadline` directly.
 """
 
 from __future__ import annotations

@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from typing import Self
 
 import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud.sql import connector as sql_connector
 
+from themis.litcache import enqueue
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import config
@@ -22,6 +24,22 @@ _CROSSWALK_VARS = (
     'THEMIS_LITERATURE_CROSSWALK_DB_USER',
 )
 _CROSSWALK_ENV = dict(zip(_CROSSWALK_VARS, ('p:r:i', 'themis', 'themis-evidence@p.iam'), strict=True))
+_CONVERT_VARS = (
+    'THEMIS_LITERATURE_CONVERT_QUEUE',
+    'THEMIS_LITERATURE_CONVERT_WORKER_URL',
+    'THEMIS_LITERATURE_CONVERT_INVOKER_SA',
+)
+_CONVERT_ENV = dict(
+    zip(
+        _CONVERT_VARS,
+        (
+            'projects/p/locations/r/queues/themis-convert',
+            'https://themis-convert-worker-abc-ts.a.run.app',
+            'themis-convert-invoker@p.iam.gserviceaccount.com',
+        ),
+        strict=True,
+    )
+)
 
 
 def _from_env() -> literature_backend.LiteratureBackend:
@@ -59,7 +77,7 @@ class _FakeClient:
 def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
     monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', _BUCKET)
-    for var in _CROSSWALK_VARS:
+    for var in (*_CROSSWALK_VARS, *_CONVERT_VARS):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(config.storage, 'Client', lambda: client)
 
@@ -196,3 +214,64 @@ def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeyp
     assert asyncio.run(build()) == {'doi:10.1/x': 'doc-1'}
     instance, database, db_user = _CROSSWALK_ENV.values()
     assert dialled == [(instance, database, db_user)]
+
+
+class _FakeTasksClient:
+    """A ``CloudTasksClient`` stand-in: a context manager that records its own exit and never dials."""
+
+    def __init__(self, closed: list[bool]) -> None:
+        self._closed = closed
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        del exc
+        self._closed.append(True)
+
+
+def test_live_selector_without_the_convert_trio_leaves_conversion_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Absent config is a legitimate deployment (every read path works without a queue), so it must not
+    # fail startup. The rpc that would enqueue reports a permanent condition instead, distinct from an
+    # outage: no number of retries provisions a queue.
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    backend = _from_env()
+    with pytest.raises(literature_backend.ConversionNotConfiguredError):
+        asyncio.run(backend.request_conversions(['doc-1']))
+
+
+@pytest.mark.parametrize('omitted', _CONVERT_VARS)
+def test_a_partial_convert_config_fails_at_startup(monkeypatch: pytest.MonkeyPatch, omitted: str) -> None:
+    # Half-configured would fail per request instead of at deploy — a queue path with no worker URL
+    # builds tasks that dispatch nowhere.
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    for var, value in _CONVERT_ENV.items():
+        if var != omitted:
+            monkeypatch.setenv(var, value)
+    with pytest.raises(SystemExit, match='all be set or all unset'):
+        _from_env()
+
+
+def test_a_complete_convert_config_targets_the_named_queue_and_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed: list[bool] = []
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    for var, value in _CONVERT_ENV.items():
+        monkeypatch.setenv(var, value)
+    monkeypatch.setattr(config.tasks_v2, 'CloudTasksClient', lambda: _FakeTasksClient(closed))
+
+    async def build() -> enqueue.ConversionTarget:
+        async with contextlib.AsyncExitStack() as stack:
+            backend = config.backend_from_env(stack)
+            assert isinstance(backend, litcache_backend.LitcacheBackend)
+            enqueuer = backend._enqueuer
+            assert enqueuer is not None
+            assert not closed, 'the client is held open for as long as the server runs'
+            target = enqueuer._target
+        assert closed, 'the stack closed the client on unwind'
+        return target
+
+    queue, worker_url, invoker = _CONVERT_ENV.values()
+    target = asyncio.run(build())
+    assert target == enqueue.ConversionTarget(
+        queue_path=queue, worker_url=worker_url, invoker_service_account_email=invoker
+    )

@@ -89,8 +89,9 @@ The resolver is the exception to the per-interface env rule: the vars selecting 
 image-wide. A per-interface copy would be the same value written once per interface, with as many ways to set it
 inconsistently. Its fixture seed is one var per *image* for the same reason, each image seeding the bindings its own
 callers present; the shared factory is told which var the JSON came from, so it names that var when it rejects it.
-(`literature` is the one interface that resolves no session: the corpus it serves is shared across analyses, not scoped
-to one.)
+(`literature` is the one interface whose *reads* resolve no session: the corpus it serves is shared across analyses, not
+scoped to one. It resolves one where it enqueues a conversion, which costs money — see
+[`evidence-fulltext.md`](evidence-fulltext.md).)
 
 Nothing in the data plane handles SIGTERM, so the exit stack unwinds on a startup failure, not on a Cloud Run stop — do
 not register work there that has to run before the process dies until graceful drain exists.

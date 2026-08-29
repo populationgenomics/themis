@@ -8,7 +8,10 @@ rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper`
 absence falls back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-only
 paper is reported unknown-not-checked, never a false "not located".
 
-Read-only: the backend never writes to the bucket (the cache warms via the ingestion pipeline). An
+The bucket is read-only: the backend never writes to it (the cache warms via the ingestion pipeline
+and the convert worker). Its one write of any kind is ``request_conversions``, which asks
+``litcache.enqueue`` for a conversion task per paper; what this adapter adds is deciding which of the
+Cloud Tasks failures the servicer should offer a caller a retry for. An
 associated file the manifest lists without a ``path`` is not yet fetched; resolving it raises
 ``MissingContentError`` rather than fetching-and-writing (deferred — the seed corpus has every file
 fetched). PDF quote location (anchorite page regions) is not implemented; ``locate`` for a PDF raises
@@ -22,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import logging
 import mimetypes
 from collections.abc import Callable, Sequence
 from typing import override
@@ -33,10 +37,12 @@ from google.protobuf import message as _message
 from pubmed_proto import pubmed_pb2
 
 from themis.common import sql
-from themis.litcache import crosswalk, outcome, writer
+from themis.litcache import crosswalk, enqueue, outcome, writer
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
+
+_logger = logging.getLogger(__name__)
 
 # outcome.Readiness -> the wire state; None (no manifest) is an unknown paper.
 _READINESS_STATE: dict[outcome.Readiness | None, literature_pb2.FullTextState] = {
@@ -48,6 +54,17 @@ _READINESS_STATE: dict[outcome.Readiness | None, literature_pb2.FullTextState] =
 }
 
 _METADATA = 'metadata.pb'
+
+# Server errors that are facts about the service rather than its load, so they are checked ahead of
+# the transient base they sit under.
+_PERMANENT_SERVER_ERRORS = (api_exceptions.MethodNotImplemented, api_exceptions.DataLoss)
+# A failed create repeating could place: refused on load or reachability, not on what it asked for.
+_TRANSIENT_ENQUEUE_ERRORS = (
+    api_exceptions.ServerError,  # every 5xx and gRPC UNKNOWN: the API's side, not the request's
+    api_exceptions.TooManyRequests,  # 429, and `ResourceExhausted` beneath it — the queue's own ceiling
+    api_exceptions.Aborted,  # a concurrent write to the same queue lost
+    api_exceptions.RetryError,  # api-core gave up on a retryable code
+)
 
 # Canonical-rendering preference: an xml-faithful litdown rendering over a pdf-derived one, and
 # llm-ocr over the legacy docling route (litcache-manifest.md — fidelity is a read-path policy).
@@ -76,9 +93,16 @@ class _Paper:
 class LitcacheBackend(literature_backend.LiteratureBackend):
     """Serve the literature rpcs by reading the litcache directory for each ``doc_id``."""
 
-    def __init__(self, bucket: storage.Bucket, *, connect: Callable[[], sql.Connection] | None = None) -> None:
+    def __init__(
+        self,
+        bucket: storage.Bucket,
+        *,
+        connect: Callable[[], sql.Connection] | None = None,
+        enqueuer: enqueue.Enqueuer | None = None,
+    ) -> None:
         self._bucket = bucket
         self._connect = connect
+        self._enqueuer = enqueuer
 
     @override
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
@@ -183,6 +207,20 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
         states = await asyncio.gather(*(asyncio.to_thread(self._readiness, doc_id) for doc_id in distinct))
         return dict(zip(distinct, states, strict=True))
 
+    @override
+    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+        if not doc_ids:
+            return
+        if self._enqueuer is None:
+            raise literature_backend.ConversionNotConfiguredError('no conversion queue is configured')
+        # A named create pays a duplicate lookup, so the batch runs concurrently rather than serially.
+        enqueuer = self._enqueuer
+        distinct = list(dict.fromkeys(doc_ids))
+        outcomes = await asyncio.gather(
+            *(asyncio.to_thread(enqueuer.enqueue, doc_id) for doc_id in distinct), return_exceptions=True
+        )
+        _report(distinct, outcomes)
+
     # --- GCS reads (synchronous; called via asyncio.to_thread) -----------------------------------
 
     def _lookup(self, external_ids: Sequence[str]) -> dict[str, str]:
@@ -239,6 +277,59 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
     def _location(self, doc_id: str, rel_path: str, media_type: str) -> literature_pb2.ContentLocation:
         uri = f'gs://{self._bucket.name}/{writer.paper_dir(doc_id)}/{rel_path}'
         return literature_pb2.ContentLocation(gcs_uri=uri, media_type=media_type)
+
+
+def _report(doc_ids: Sequence[str], outcomes: Sequence[bool | BaseException]) -> None:
+    """Log what the batch did and raise the worst failure in it, or nothing if there was none.
+
+    Every failure is logged before one is raised. Gathering with ``return_exceptions`` and choosing
+    here rather than letting the first exception win is what makes the choice severity's rather than
+    thread scheduling's: a permanent refusal in a batch that also hit an outage would otherwise be
+    discarded unlogged, and the call would report a transient condition the caller retries forever.
+
+    Args:
+        doc_ids: The papers a task was attempted for, in the order the outcomes are in.
+        outcomes: Per paper, whether a task was created, or the exception the create raised.
+
+    Raises:
+        ConversionUnavailableError: some create failed and none failed permanently.
+        ConversionEnqueueFailedError: some create failed permanently.
+    """
+    created = [doc_id for doc_id, outcome in zip(doc_ids, outcomes, strict=True) if outcome is True]
+    deduped = [doc_id for doc_id, outcome in zip(doc_ids, outcomes, strict=True) if outcome is False]
+    failed = [
+        (doc_id, outcome)
+        for doc_id, outcome in zip(doc_ids, outcomes, strict=True)
+        if isinstance(outcome, BaseException)
+    ]
+    _logger.info(
+        'conversion requests: %d enqueued, %d already queued %s, %d failed',
+        len(created),
+        len(deduped),
+        deduped,
+        len(failed),
+    )
+    worst: Exception | None = None
+    for doc_id, error in failed:
+        _logger.error('enqueueing a conversion of %s failed', doc_id, exc_info=error)
+        candidate = _conversion_error(error)
+        if worst is None or isinstance(candidate, literature_backend.ConversionEnqueueFailedError):
+            worst = candidate
+    if worst is not None:
+        raise worst
+
+
+def _conversion_error(error: BaseException) -> Exception:
+    """The port error a create failure is: transient only where repeating the create could place it."""
+    if isinstance(error, _PERMANENT_SERVER_ERRORS):
+        return literature_backend.ConversionEnqueueFailedError(str(error))
+    if isinstance(error, _TRANSIENT_ENQUEUE_ERRORS):
+        return literature_backend.ConversionUnavailableError(str(error))
+    if isinstance(error, api_exceptions.GoogleAPIError):
+        return literature_backend.ConversionEnqueueFailedError(str(error))
+    # Not the Cloud Tasks API's error at all — a credential refresh, a bug. Permanent for the same
+    # reason: nothing about repeating the create addresses it.
+    return literature_backend.ConversionEnqueueFailedError(f'{type(error).__name__}: {error}')
 
 
 def _parse[M: _message.Message](target: M, data: bytes) -> M:
