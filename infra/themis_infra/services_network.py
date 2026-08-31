@@ -11,8 +11,9 @@ Access keeps their Google-API traffic (GCS, logging) on the private path.
 This VPC is deliberately not sealed. The egress boundary is the sandbox guest's empty network namespace
 (postern) — the untrusted code reaches the outside world only through the hatch, never directly. The
 trusted services on this network may reach the public internet: the sandbox worker calls Anthropic
-directly (postern-sandbox-swap.md), so a Cloud NAT gives it a SNAT route out. Internal-ingress services
-stay on the private path (subnet PGA); only non-Google public egress uses the NAT.
+directly (sandbox-worker.md §"One trusted process, not two containers"), so a Cloud NAT gives it a
+SNAT route out. Internal-ingress services stay on the private path (subnet PGA); only non-Google
+public egress uses the NAT.
 """
 
 from __future__ import annotations

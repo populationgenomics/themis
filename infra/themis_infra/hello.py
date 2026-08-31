@@ -1,9 +1,9 @@
 """The hello service: an internal Cloud Run gRPC service (docs/design/services.md).
 
-A session-token-authed internal test consumer (postern-sandbox-swap.md §2). A runtime SA and an
-internal-ingress HTTP/2 service, resolving each request's session through the auth service at
-``THEMIS_AUTH_URL``. Reached over Direct VPC egress at its ``run.app`` URL (the default ID-token
-audience), never publicly; no load balancer.
+A session-token-authed internal test consumer (sandbox-worker.md §"The hatch is the capability
+boundary"). A runtime SA and an internal-ingress HTTP/2 service, resolving each request's session
+through the auth service at ``THEMIS_AUTH_URL``. Reached over Direct VPC egress at its ``run.app``
+URL (the default ID-token audience), never publicly; no load balancer.
 """
 
 from __future__ import annotations

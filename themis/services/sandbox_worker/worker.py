@@ -1,4 +1,4 @@
-"""Worker entrypoint: verify isolation, restore /workspace, serve one session through postern, checkpoint (§4).
+"""Worker entrypoint: verify isolation, restore /workspace, serve one session, checkpoint (sandbox-worker.md).
 
 One trusted process per Job execution. The dispatcher claims a work item and injects its per-execution env
 (``ANTHROPIC_WORK_ID`` / ``_ENVIRONMENT_ID`` / ``_SESSION_ID`` / ``_ENVIRONMENT_KEY``, plus the minted

@@ -18,11 +18,11 @@ service pattern, and how several interfaces share one deployment),
 [`literature-evidence-layer.md`](literature-evidence-layer.md) (the sibling literature interface — the *other* evidence
 source), [`proto.md`](proto.md) (schema and serialisation posture), [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)
 (how an rpc becomes agent-callable), [`security.md`](security.md) (the default-on chokepoint rule the tool surface
-follows), [`../plans/postern-sandbox-swap.md`](../plans/postern-sandbox-swap.md) (the bubblewrap guest, its empty
-network namespace, and the gRPC hatch), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (the
-sandbox architecture around that guest), [`analysis-scenarios.md`](analysis-scenarios.md) (the reference set the eval
-scores against), [`../PRODUCT.md`](../PRODUCT.md) (the product frame: §4 tool layer, §6 facts + judgement, §12 the
-Spike); terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
+follows), [`sandbox-worker.md`](sandbox-worker.md) (the bubblewrap guest, its empty network namespace, and the gRPC
+hatch), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (the sandbox architecture around that
+guest), [`analysis-scenarios.md`](analysis-scenarios.md) (the reference set the eval scores against),
+[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §4 tool layer, §6 facts + judgement, §12 the Spike); terms in
+[`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview
 
@@ -93,8 +93,8 @@ by molecular consequence. These interfaces realise the public, non-literature, n
 ### The sandbox boundary fixes where retrieval and arithmetic can live
 
 Untrusted agent code runs bubblewrapped with an empty network namespace, fail-closed, and reaches trusted services only
-through a method-allowlisted gRPC hatch ([`../plans/postern-sandbox-swap.md`](../plans/postern-sandbox-swap.md)).
-Trusted services egress normally. Two consequences fix the architecture:
+through a method-allowlisted gRPC hatch ([`sandbox-worker.md`](sandbox-worker.md) §"The hatch is the capability
+boundary"). Trusted services egress normally. Two consequences fix the architecture:
 
 - retrieval that needs the open internet **must** be service-side, because the agent cannot egress at all; and
 - the deterministic arithmetic **must** be shippable into the image, because it has to run offline inside the sandbox.

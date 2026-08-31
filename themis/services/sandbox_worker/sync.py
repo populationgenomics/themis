@@ -1,19 +1,19 @@
-"""Restore and checkpoint ``/workspace`` through the store (postern-sandbox-swap.md §4).
+"""Restore and checkpoint ``/workspace`` (sandbox-worker.md §"The data path is the trusted worker's").
 
-Restore runs before the first ``run_python``; checkpoint runs on each turn boundary and at session end. The working
-document is fail-closed (any store error but a positive ``NOT_FOUND`` fails the spawn, so a served turn never mints a
-version over a blank restore); the ephemeral scratch is fail-open (empty on any error — the next checkpoint overwrites
-it). The checkpoint writes the document first, then the scratch.
+Restore runs before the first ``run_python``; a checkpoint runs when a sandboxed command returns, and once more after
+the session loop returns. The working document is fail-closed (any store error but a positive ``NOT_FOUND`` fails the
+spawn, so a served turn never mints a version over a blank restore); the ephemeral scratch is fail-open (empty on any
+error — the next checkpoint overwrites it). The checkpoint writes the document first, then the scratch.
 
 All ``/workspace`` access goes through a postern :class:`~postern.Workspace`, the reference-closed accessor: every
 read, write, pack, and extract resolves one component at a time under ``O_NOFOLLOW``, so a symlink/``..``/special the
 guest planted (e.g. ``working_document.md`` → ``/proc/self/environ``) is never followed out of the tree in the
 trusted worker.
 
-Concurrent checkpoints are serialized, and a document unchanged since its last write mints no new version — so a no-op
-turn does not inflate the version history. ``exclude`` names top-level entries pruned from the scratch snapshot: the
-working document (persisted separately) and paths re-materialised each spawn — the SDK re-downloads its skills into
-``/workspace/skills`` every session, so a stale copy must not persist in a checkpoint.
+Concurrent checkpoints are serialized, and a document unchanged since its last write mints no new version — so a
+command that touched nothing does not inflate the version history. ``exclude`` names top-level entries pruned from
+the scratch snapshot: the working document (persisted separately) and paths re-materialised each spawn — the SDK
+re-downloads its skills into ``/workspace/skills`` every session, so a stale copy must not persist in a checkpoint.
 """
 
 from __future__ import annotations

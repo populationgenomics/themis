@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# The self-hosted sandbox worker image (postern-sandbox-swap.md §4). Build context is the repo ROOT
-# (`docker build -f themis/services/sandbox_worker/Dockerfile .`). One trusted process: it holds the
-# Anthropic environment key and the session token, runs the EnvironmentWorker loop, and marshals every
-# `shell` command into a bubblewrap sandbox whose only exit is the store/hello-forwarding hatch.
+# The self-hosted sandbox worker image (sandbox-worker.md §"The guest's world is assembled at build
+# time"). Build context is the repo ROOT (`docker build -f themis/services/sandbox_worker/Dockerfile .`).
+# One trusted process: it holds the Anthropic environment key and the session token, runs the
+# EnvironmentWorker loop, and marshals every `shell` command into a bubblewrap sandbox whose only exit
+# is the store/hello-forwarding hatch.
 #
 # Four stages: worker deps (uv), the curated guest rootfs, then assemble. The guest rootfs is bound
 # read-only at runtime by postern (SandboxProfile(rootfs='/opt/guest-root')) — no runtime container

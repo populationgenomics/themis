@@ -219,12 +219,12 @@ Two consumers, different shapes — know which a service is for:
   agent writes code that calls the API and runs it under `bash` — full code mode, no CLIs, no discrete tool calls
   ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)). It holds **no credential and no service URL**.
   The sandbox's only exit is a method-allowlisted gRPC hatch served by the trusted worker process outside it
-  ([`../plans/postern-sandbox-swap.md`](../plans/postern-sandbox-swap.md)), which injects the session token as request
-  metadata and forwards over a channel carrying the worker SA's ID token; the token lives only in the worker, so the
-  agent can never present a valid one. The agent-facing client is therefore the **generated gRPC stub** pointed at the
-  hatch — typed, one call per rpc, **fail-loud** (a `grpc.RpcError` surfaces, never a silent empty result). Which rpcs
-  it reaches at all is decided by the `agent_exposed` option on the `.proto`, from which `regen` emits the hatch's
-  allowlist ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)); absent the option, nothing.
+  ([`sandbox-worker.md`](sandbox-worker.md)), which injects the session token as request metadata and forwards over a
+  channel carrying the worker SA's ID token; the token lives only in the worker, so the agent can never present a valid
+  one. The agent-facing client is therefore the **generated gRPC stub** pointed at the hatch — typed, one call per rpc,
+  **fail-loud** (a `grpc.RpcError` surfaces, never a silent empty result). Which rpcs it reaches at all is decided by
+  the `agent_exposed` option on the `.proto`, from which `regen` emits the hatch's allowlist
+  ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)); absent the option, nothing.
 - **The platform, service-to-service** — `auth` (called by every service to authorize a request) and `store` (the
   sandbox worker checkpoints `/workspace` to it) are consumed this way, never by the agent. The caller holds its own SA
   identity and presents its ID token: the generated stub over a channel built with `themis.clients.id_token`, wrapped

@@ -4,8 +4,8 @@
 endpoint with ``containerOverrides`` (spike-validated). The Job is a single trusted worker container:
 the claimed session's ids, the environment key, and the per-session token are all injected into it — it
 holds the credentials and runs untrusted code only inside the postern sandbox, so there is no
-co-resident untrusted container to keep them from (postern-sandbox-swap.md §4). The container is
-targeted by ``name``, which must match the Job manifest's container name.
+co-resident untrusted container to keep them from (sandbox-worker.md §"One trusted process, not two
+containers"). The container is targeted by ``name``, which must match the Job manifest's container name.
 
 ``JobRunner`` is the port; ``CloudRunJobRunner`` the adapter (dispatcher-SA access token). The
 spawn-recording double the orchestration tests drive lives in the test scaffolding.

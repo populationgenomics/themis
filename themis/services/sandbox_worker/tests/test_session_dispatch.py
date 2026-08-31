@@ -1,4 +1,4 @@
-"""Drive the real SessionToolRunner over a faked event stream (postern-sandbox-swap.md §6).
+"""Drive the real SessionToolRunner over a faked event stream (sandbox-worker.md §"The design is verifiable offline").
 
 Mocks Anthropic at the narrowest seam — ``client.beta.sessions.events`` — and runs the *real*
 ``anthropic.lib.environments.SessionToolRunner`` against our ``shell`` tool, so the dispatch contract is exercised end

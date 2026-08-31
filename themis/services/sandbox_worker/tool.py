@@ -1,4 +1,4 @@
-"""The ``shell`` tool the worker exposes to the agent (postern-sandbox-swap.md §4).
+"""The ``shell`` tool the worker exposes to the agent (sandbox-worker.md §"Only arbitrary execution is sandboxed").
 
 ``EnvironmentWorker`` dispatches each ``custom_tool_use`` to this ``@beta_async_tool``; its inferred name/schema is
 ``shell(command, intent)``. Every call runs ``command`` inside the postern sandbox and checkpoints ``/workspace`` on

@@ -1,4 +1,4 @@
-"""Self-hosted sandbox: credentials, dispatcher, and the postern Cloud Run Job (postern-sandbox-swap.md).
+"""Self-hosted sandbox: credentials, dispatcher, and the postern Cloud Run Job (sandbox-worker.md).
 
 The self-hosted execution sandbox after the postern swap. It provisions:
 
@@ -311,9 +311,10 @@ class SandboxJob(pulumi.ComponentResource):
                     max_retries=0,
                     # ALL_TRAFFIC so the internal-ingress store is reachable at its (public) run.app IP over
                     # the VPC — private-ranges-only would send that straight to the internet and the store
-                    # would refuse it. Trade-off (postern-sandbox-swap.md §2): the trusted worker then has
-                    # unrestricted public egress, so post-compromise exfil containment rests on the worker
-                    # being trusted-only code and the guest having zero network.
+                    # would refuse it. Trade-off (sandbox-worker.md §"One trusted process, not two
+                    # containers"): the trusted worker then has unrestricted public egress, so
+                    # post-compromise exfil containment rests on the worker being trusted-only code
+                    # and the guest having zero network.
                     vpc_access=gcp.cloudrunv2.JobTemplateTemplateVpcAccessArgs(
                         egress='ALL_TRAFFIC',
                         network_interfaces=[

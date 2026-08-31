@@ -1,9 +1,9 @@
 # Plan: Self-hosted sandbox on Cloud Run
 
-> **Execution + isolation model superseded** by [`postern-sandbox-swap.md`](postern-sandbox-swap.md): the two-container
-> Job + credential proxy + the §8 network subsystem (architecture §3–§4, sandbox job/proxy §6, egress §8, `/workspace`
-> sync §9) are replaced by a single trusted `EnvironmentWorker` over the `postern` sandbox. The why (§1–§2), the
-> dispatcher (§5), the credential model (§7), and the operations framing still stand.
+> **Execution + isolation model superseded** by [`../design/sandbox-worker.md`](../design/sandbox-worker.md): the
+> two-container Job + credential proxy + the §8 network subsystem (architecture §3–§4, sandbox job/proxy §6, egress §8,
+> `/workspace` sync §9) are replaced by a single trusted `EnvironmentWorker` over the `postern` sandbox. The why
+> (§1–§2), the dispatcher (§5), the credential model (§7), and the operations framing still stand.
 
 This plan decides the **self-hosted execution sandbox**: where the agent's tool execution runs, and how the credentials
 involved stay out of the agent's reach. It is the **execution model the wiring builds on**
@@ -145,12 +145,12 @@ worker upgrades.
 
 ## 3. Architecture — superseded
 
-Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1–§2 — a single trusted `EnvironmentWorker` over a
-`postern` sandbox replaces the two-container Job + credential proxy.
+Superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"One trusted process, not two containers" —
+a single trusted `EnvironmentWorker` over a `postern` sandbox replaces the two-container Job + credential proxy.
 
 ## 4. The end-to-end flow — superseded
 
-The execution and isolation legs are superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1, §4. The
+The execution and isolation legs are superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md). The
 dispatch → credential-derivation → persistence flow it described still stands — see §5, §7, and §9 below.
 
 ## 5. Dispatcher
@@ -215,9 +215,9 @@ clean up (§7).
 
 ## 6. Sandbox job & the credential proxy — superseded
 
-Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1, §3–§4 — the credential proxy is gone: the trusted
-worker calls Anthropic directly and marshals each command into the postern guest behind the method-allowlisted gRPC
-hatch.
+Superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"One trusted process, not two containers"
+and §"The hatch is the capability boundary" — the credential proxy is gone: the trusted worker calls Anthropic directly
+and marshals each command into the postern guest behind the method-allowlisted gRPC hatch.
 
 ## 7. Credentials & identities
 
@@ -294,9 +294,9 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
 
 ## 8. Egress & instance hardening — superseded
 
-Superseded by [`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1–§2 — egress containment is the guest's empty
-network namespace, with the trusted worker on normal egress. No egress firewall, DNS sinkhole, or internal load
-balancer.
+Superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"One trusted process, not two containers" —
+egress containment is the guest's empty network namespace, with the trusted worker on normal egress. No egress firewall,
+DNS sinkhole, or internal load balancer.
 
 ## 9. Persistence — the working document and `/workspace`
 
@@ -381,7 +381,7 @@ That is a property of the shared network namespace, not of GCS-FUSE. Untrusted c
 namespace has no route to the link-local metadata address at all, and cannot re-point the filesystem view it is handed
 (`mount`, `umount2`, `unshare`, `setns`, `pivot_root` are denied by seccomp), so a host-side mount bound in read-only
 holds the credential on the host side of the boundary and satisfies all three properties — the bypass is absent, not
-mitigated ([`postern-sandbox-swap.md`](postern-sandbox-swap.md) §1).
+mitigated ([`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"One trusted process, not two containers").
 
 We route scratch through the same store under the same session token, so the proxy holds no GCS credential: it is just
 another authorized `workspace put`/`get`, using the per-session token that also carries the document (§7). `/workspace`

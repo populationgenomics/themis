@@ -16,6 +16,14 @@ def bubblewrap() -> None:
     place these run. GitHub Actions sets ``CI``, so one fixture serves both: skip where bwrap cannot
     exist, fail where it was meant to.
 
+    To run the gated tests from a machine without bubblewrap (macOS, say), give them a privileged
+    Linux container — bubblewrap needs unprivileged user namespaces, which some kernels restrict::
+
+        docker run --rm -it --privileged -v "$PWD":/w -w /w python:3.13-slim bash -c '
+          apt-get update && apt-get install -y bubblewrap && pip install uv &&
+          sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true &&
+          uv run --group test pytest themis/services/sandbox_worker/tests'
+
     Raises:
         RuntimeError: If bubblewrap is absent under CI.
     """

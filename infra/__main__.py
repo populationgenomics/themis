@@ -465,9 +465,9 @@ ingestion = ingest.IngestionRuntime(
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar, ingest_net]),
 )
 # Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
-# (postern-sandbox-swap.md). No dedicated VPC / egress firewall / internal load balancer — the guest has
-# zero network, and the trusted worker reaches the internal store over Direct VPC egress. (The
-# session-token KMS key is the shared substrate created above.)
+# (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
+# internal load balancer — the guest has zero network, and the trusted worker reaches the internal store
+# over Direct VPC egress. (The session-token KMS key is the shared substrate created above.)
 anthropic_environment_key_secret = sandbox.environment_key_secret(
     project=project,
     region=region,

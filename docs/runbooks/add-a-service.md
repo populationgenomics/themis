@@ -51,7 +51,7 @@ or TypeScript — fails CI.
 Fail-loud seeding: the fixture is seeded explicitly from the environment (JSON env var), never a code default — `{}` is
 a deliberate empty store ([`general.md`](../style/general.md)).
 
-Adding an **interface to an existing deployment** instead of a new service — a fact source under `evidence` — scaffolds
+Adding an **interface to an existing deployment** instead of a new service — a source under `evidence` — scaffolds
 `themis/services/<name>/<domain>/` with a `config.py` + `interface.py`, its own nested `tests/`, and one entry in the
 entrypoint's `INTERFACES`. It writes no `__main__.py`, and adds no `Dockerfile` or `.github/images.json` entry (step 4),
 but it does edit the existing image's: a `COPY` for any tree it reads, and its deps into that image's dependency group.

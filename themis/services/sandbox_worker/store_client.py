@@ -1,10 +1,10 @@
-"""The store client: the worker syncs ``/workspace`` to the store service (postern-sandbox-swap.md §4).
+"""The store client: the worker syncs ``/workspace`` to the store service.
 
-The trusted worker is the store's client for checkpoint/restore, injecting the session token as
-``x-themis-session-token`` metadata on its own put/get calls; the channel carries the job SA's ID
-token. ``Store`` is the port so the sync orchestration tests offline against a fixture. A ``NOT_FOUND``
-(the genuine first spawn) maps to ``None``; every other gRPC failure propagates so restore can fail
-closed.
+The trusted worker is the store's client for checkpoint/restore (sandbox-worker.md §"The data path is
+the trusted worker's"), injecting the session token as ``x-themis-session-token`` metadata on its own
+put/get calls; the channel carries the job SA's ID token. ``Store`` is the port so the sync
+orchestration tests offline against a fixture. A ``NOT_FOUND`` (the genuine first spawn) maps to
+``None``; every other gRPC failure propagates so restore can fail closed.
 """
 
 from __future__ import annotations

@@ -1,9 +1,8 @@
 # Design: sandbox RPC exposure — one proto option, generated forwarding
 
 **Status:** draft **Related:** [`proto.md`](proto.md) (the proto-is-source-of-truth codegen pipeline this extends),
-[`services.md`](services.md) (the service pattern whose RPCs get exposed),
-[`../plans/postern-sandbox-swap.md`](../plans/postern-sandbox-swap.md) (the hatch the guest reaches services through),
-[`security.md`](security.md) (the trust boundary).
+[`services.md`](services.md) (the service pattern whose RPCs get exposed), [`sandbox-worker.md`](sandbox-worker.md) (the
+hatch the guest reaches services through), [`security.md`](security.md) (the trust boundary).
 
 ## Purpose
 

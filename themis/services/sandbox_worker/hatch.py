@@ -1,9 +1,9 @@
-"""The gRPC hatch's hello forwarder: the guest's allowlisted door to the hello service (postern-sandbox-swap.md §4).
+"""The gRPC hatch's hello forwarder: the guest's allowlisted door to the hello service.
 
-The forwarding servicer runs in the trusted worker process: it injects the per-session token and forwards an
-allowlisted call to the real service, so the guest never holds a credential and never names an upstream. The hatch
-server is synchronous (postern's ``grpc.server``), so the forward stub dials over a synchronous channel — distinct from
-the worker's own async checkpoint channel.
+The forwarding servicer runs in the trusted worker process (sandbox-worker.md §"The hatch is the capability boundary"):
+it injects the per-session token and forwards an allowlisted call to the real service, so the guest never holds a
+credential and never names an upstream. The hatch server is synchronous (postern's ``grpc.server``), so the forward
+stub dials over a synchronous channel — distinct from the worker's own async checkpoint channel.
 """
 
 from __future__ import annotations

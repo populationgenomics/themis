@@ -4,8 +4,9 @@ Provisions the store data-plane service for one environment — a runtime SA, th
 working-document and ephemeral-workspace buckets, the SA's object-admin on both, and
 an internal-ingress Cloud Run service. The container runs the `gcs` storage backend and
 resolves each request's session through the auth service at `THEMIS_AUTH_URL`
-(postern-sandbox-swap.md §2). The sandbox worker reaches it over Direct VPC egress at its
-`run.app` URL (the default ID-token audience), never publicly; no load balancer.
+(sandbox-worker.md §"One trusted process, not two containers"). The sandbox worker
+reaches it over Direct VPC egress at its `run.app` URL (the default ID-token audience),
+never publicly; no load balancer.
 """
 
 from __future__ import annotations

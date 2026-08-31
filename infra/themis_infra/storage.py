@@ -11,7 +11,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-# Days a noncurrent version is kept before the lifecycle rule below GCs it.
+# Days a noncurrent version is kept before a lifecycle rule GCs it.
 _NONCURRENT_RETENTION_DAYS = 30
 
 
