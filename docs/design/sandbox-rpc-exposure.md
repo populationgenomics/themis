@@ -89,47 +89,72 @@ identity; duplicating it in the shim would only add a second copy to drift. Code
 The upstream channel per exposed service is the one thing the proto cannot carry — it is worker deploy config. The
 worker holds a `service → channel` map and fails loud at startup if an exposed service has no channel.
 
+A forwarded call is bounded by the caller's own remaining time, capped below the harness's per-shell-call limit. The cap
+is what matters: the hatch server is synchronous, so nothing cancels a forwarded call when the guest that asked for it
+exits, and an answer that arrives after the guest is gone is a serving thread and an upstream instance held for nothing.
+Because anything in the guest can dial the hatch and name its own deadline, that bound cannot be a default a caller
+overrides.
+
+A forwarded failure crosses as its status code; its text crosses only where the upstream servicer wrote it. The
+forwarder cannot ask who wrote a message, so it goes by the code: those the evidence contract maps a domain error onto
+carry the servicer's own words, which the agent needs in order to correct its request. Under any other code the words
+are gRPC's, or the infrastructure's in between — and a channel-level failure's name the upstream it resolved — so the
+guest gets the code alone.
+
 A generic byte-forwarding proxy (zero generated forwarder code) was considered and rejected — see Alternatives.
 
 ## In practice: adding an agent-exposed service
 
-Building on `services.md`'s checklist for a service, exposing it to the sandbox agent is two authoring edits plus one
-deploy-config entry; `regen` produces everything else:
+Building on `services.md`'s checklist for a service, exposing it will be one authoring edit plus one deploy-config entry
+once the generator above is whole. Today the correlated artifacts are still hand-written, and the checks under
+Implementation state are what tell you which of them you owe:
 
+1. **Satisfy the condition first** — read Security. Marking a file is the assertion that every RPC in it survives a
+   hostile caller; the rest of this list is mechanical by comparison.
 1. **Proto** — mark the service's `.proto` file `option (themis.rpc.agent_exposed) = true;` (import
    `themis/rpc/sandbox_options.proto`). Every service in that file is now agent-callable; split the file if some
    services must stay worker-only.
-1. **Servicer** — carry the `@agent_exposed` decorator on the hand-written servicer class (the co-signature CI
-   cross-checks against the descriptor; see Security).
-1. **`regen`** — regenerates the hatch allowlist, per-service forwarders + `build_hatch` wiring, `guest/services.py`
-   accessors, the guest-stub manifest, and the agent prompt fragment. Commit the diff; `regen-is-fresh` gates it.
+1. **`regen`** — regenerates the hatch allowlist. Commit the diff; `regen-is-fresh` gates it.
+1. **The artifacts the allowlist now outruns** — a forwarder and its `build_hatch` wiring, a `guest/services.py`
+   accessor, and the guest rootfs stub selection. Run the sandbox-worker tests: with the allowlist grown and none of
+   these written, each missing one is named by a failure.
 1. **Worker deploy config** — add the service's upstream channel to the worker's `service → channel` map. A missing
    entry for an exposed service fails the worker loudly at startup.
-
-Nothing about the hatch, the Dockerfile stub selection, or the prompt is hand-edited — the two annotations and the
-channel entry are the whole surface.
 
 ## Security
 
 Exposure is a security assertion — "this RPC is safe against an adversarial caller" — not a convenience. The forwarder
 is cheap; the exposed *service* is what carries the risk: the untrusted agent can now invoke that RPC as the session, so
-every exposed RPC must be written to assume a hostile caller. `store` and `auth` stay worker-only because they are not
-hardened for that, not because forwarding them is hard. Never share one RPC across the trust boundary (a shared RPC that
-returns trusted-only fields would force response-filtering back into the forwarder) — design distinct agent-facing RPCs.
+every exposed RPC must be written to assume a hostile caller.
+
+The condition a file has to meet, and go on meeting, is that **every RPC it defines admits only a verified session
+before it does any of the caller's work, and nothing it then does on the caller's behalf is unbounded in cost.** The
+token is not always a scope — the evidence corpus is public, so there the check is authorization alone — but it is
+always the gate. `store` and `auth` fail the condition plainly: they are not written against a hostile caller at all.
+
+`literature` fails it for a sharper reason worth naming, because its proto and servicer sit in the same deployment the
+hatch already dials, so nothing but the condition keeps it out. Most of its RPCs resolve no session at all. The one that
+does, `MaybeIngestPapers`, resolves one only at its enqueue step — by which point it has already run the caller's
+crosswalk lookups and readiness reads. That placement is right for a trusted caller, where the question is who pays for
+the conversion; it is the wrong shape for a hostile one, who is answered work for free and needs no enqueue to be worth
+their while. What would qualify the file is its RPCs coming to gate at the door rather than at the expensive step — not
+a rework landing.
+
+Sharing an RPC with a trusted caller is fine while its *response* does not differ by caller trust; the evidence RPCs
+answer the web tier's backend and the agent identically. What is barred is an RPC whose response would have to be
+filtered per caller — that pushes policy back into the forwarder, which is the one place it must not live. Where the
+agent needs a narrower view of something a trusted caller also reads, that is a distinct agent-facing RPC.
 
 The ceremony that keeps the option from being a rubber-stamp:
 
 - **Fail-closed default.** No option ⇒ not exposed. Absence is a definite "no", not a "forgot".
-- **Decorator co-signature.** The hand-written backend servicer *class* implementing an agent-exposed service must carry
-  an `@agent_exposed` decorator (the forwarder is generated, so the co-signature belongs on the impl that owns the
-  hostile-caller hardening, not on the shim). CI cross-references the descriptor against the imported servicers and
-  fails if a service in an `agent_exposed` file lacks the decorated class, or a decorated class has no matching exposed
-  service. Exposure therefore takes a deliberate edit in two independent places — the proto file and the service code —
-  so it cannot happen by a schema-only edit the service owner never sees. The decorator's value is the forced
-  acknowledgement and the second agreeing place, not runtime behavior.
+- **A schema-only edit cannot land an exposure.** Marking a file grows the generated allowlist, and three committed
+  checks then fail until a forwarder, a guest stub accessor and a shipped stub exist for it — the allowlist is asserted
+  *equal* to the set of services with forwarders, not merely covered by it. So exposure still takes a deliberate second
+  edit by someone who sees the service, which is the property that matters. The intended form of this is a co-signature
+  the service owner writes rather than a test they satisfy: an `@agent_exposed` decorator on the hand-written servicer
+  class that owns the hostile-caller hardening, cross-checked against the descriptor in CI.
 - **Visible allowlist diff.** The generated `GUEST_METHODS` is committed, so widening the boundary shows up in review.
-- **`CLAUDE.md` rule.** A working directive stating the threat model — exposing an RPC hands it to untrusted code; the
-  service must defend itself — so an agent proposing an exposure states the justification unprompted.
 
 ## Alternatives considered
 
@@ -162,16 +187,22 @@ The ceremony that keeps the option from being a rubber-stamp:
 
 ## Implementation state
 
-Not yet shipped; #235 tracks the implementation, sliced:
+The generator above is the target, not yet the whole of what runs. Shipped: the option, `regen`'s descriptor read, and
+the generated `GUEST_METHODS` the hatch consumes.
 
-- **Allowlist generation** (#269, in review) — the `agent_exposed` option, the `regen` descriptor read, and the
-  generated `GUEST_METHODS` the hatch consumes.
-- **Planned** — per-service forwarders + `build_hatch` wiring; `guest/services.py` accessors + guest-stub manifest + the
-  Dockerfile stub selection; the `@agent_exposed` decorator + descriptor⟺decorator cross-check + the `PERMISSION_DENIED`
-  boundary test + the closure validation; the agent prompt fragment.
+Hand-authored, each held to the exposed set by a check rather than by generation — the per-service forwarders and
+`build_hatch`'s wiring, and the guest stub accessors, by
+[`test_hatch.py`](../../themis/services/sandbox_worker/tests/test_hatch.py) (descriptor-derived and closed-world, one
+case per rpc, plus a dial of every allowlisted method against a live hatch); the Dockerfile's stub selection, by
+[`test_guest_rootfs.py`](../../themis/services/sandbox_worker/tests/test_guest_rootfs.py) (a stub per exposed service,
+and the import closure of everything the stage lands).
+
+Not built: the guest-stub manifest, the agent prompt fragment, the `@agent_exposed` decorator and its
+descriptor⟺decorator cross-check, the closure validation, and the `CLAUDE.md` directive that would make an agent
+proposing an exposure argue the condition above unprompted. So the prompt's account of the callable surface is still
+hand-maintained, and the drift the fragment exists to close stays open.
 
 ## Open questions
 
-- The `agent_exposed` extension field number (pick and document one in the option range).
 - The decorator's name and module, and where the cross-check test imports the servicers from.
 - The manifest format the Dockerfile consumes.

@@ -191,10 +191,10 @@ them.
 Sharing a deployment has two consequences here, both of them the general ones ([`services.md`](services.md)) landing on
 this surface.
 
-- **The sandbox agent is the one caller that does not reach every rpc.** IAM is granted per deployment, so any invoker —
-  the web application's backend included — can call all twelve rpcs. The agent is the exception, and by a different
-  mechanism: the hatch's method allowlist ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)) exposes rpcs to it one
-  at a time.
+- **The sandbox agent reaches these rpcs through a different gate than every other caller.** IAM is granted per
+  deployment, so any invoker — the web application's backend included — can call all twelve rpcs. The agent instead
+  reaches whatever the hatch's method allowlist covers, and that is decided per proto *file* by the `agent_exposed`
+  option ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): a marked file's whole service surface, or nothing.
 - **`gene_disease` is a startup dependency of every other interface.** Failure isolates per rpc, but startup is shared:
   an interface that cannot build its backend takes the process down. `GeneDisease.DescribeGene` loads four reference
   tables before it serves, so a bucket it cannot read keeps the whole image down — which is the intended behaviour, not
