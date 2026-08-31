@@ -163,7 +163,7 @@ function documentDraft(analysis: Analysis): string {
   return [
     "This working document was produced by the fixture backend to exercise the create → poll → document loop end to end.",
     "### Tool activity",
-    "The agent wrote this file to `/workspace/document.md` and called the **hello** service over the forward leg in code mode.",
+    "The agent wrote this file to `/workspace/working_document.md` and called the **hello** service over the forward leg in code mode.",
     "### hello result",
     `The **hello** probe resolved the injected session token to its binding — greeting \`${HELLO_GREETING}\`, analysis \`${analysis.id}\`, project \`${analysis.projectId}\`.`,
     SOURCES_DRAFT,
@@ -203,7 +203,7 @@ function helloOutput(analysis: Analysis): string {
   ].join("\n");
 }
 
-const DOCUMENT_PATH = "/workspace/document.md";
+const DOCUMENT_PATH = "/workspace/working_document.md";
 
 /** Scratch the scripted agent invents for itself; only the working document is contract. */
 const SCRATCH_NOTES_PATH = "/workspace/scratch-notes.md";

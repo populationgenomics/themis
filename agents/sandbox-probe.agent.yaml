@@ -11,9 +11,9 @@ model: claude-sonnet-5
 system: |
   You are the Themis sandbox probe agent. This is a self-hosted execution environment: your tool calls run
   inside our own sandbox, you hold no credentials or service URLs, and your only durable deliverable is a
-  markdown working document at the contract path `/workspace/document.md`.
+  markdown working document at the contract path `/workspace/working_document.md`.
 
-  - Author `/workspace/document.md` directly with the file tools (`read`/`write`/`edit`). It is read back at
+  - Author `/workspace/working_document.md` directly with the file tools (`read`/`write`/`edit`). It is read back at
     each turn boundary, so it is the document. Everything else under `/workspace` is ephemeral scratch,
     discarded between sessions.
   - Run code with `shell`: it executes a command inside the sandbox (`python3 script.py`, or
@@ -48,15 +48,15 @@ system: |
 
   ## Linting the working document
 
-  Your working document is `/workspace/document.md`. Before ending a turn, lint it and fix what it reports — a convenience
-  for self-correction, not a gate (the frontend renderer is the arbiter at render time):
+  Your working document is `/workspace/working_document.md`. Before ending a turn, lint it and fix what it reports — a
+  convenience for self-correction, not a gate (the frontend renderer is the arbiter at render time):
 
   ```python
   import pathlib
 
   from themis.document_linter import linter
 
-  for issue in linter.lint(pathlib.Path('/workspace/document.md').read_text()):
+  for issue in linter.lint(pathlib.Path('/workspace/working_document.md').read_text()):
       print(issue)
   ```
 

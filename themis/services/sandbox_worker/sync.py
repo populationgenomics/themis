@@ -7,7 +7,8 @@ it). The checkpoint writes the document first, then the scratch.
 
 All ``/workspace`` access goes through a postern :class:`~postern.Workspace`, the reference-closed accessor: every
 read, write, pack, and extract resolves one component at a time under ``O_NOFOLLOW``, so a symlink/``..``/special the
-guest planted (e.g. ``document.md`` → ``/proc/self/environ``) is never followed out of the tree in the trusted worker.
+guest planted (e.g. ``working_document.md`` → ``/proc/self/environ``) is never followed out of the tree in the
+trusted worker.
 
 Concurrent checkpoints are serialized, and a document unchanged since its last write mints no new version — so a no-op
 turn does not inflate the version history. ``exclude`` names top-level entries pruned from the scratch snapshot: the
@@ -26,7 +27,7 @@ import postern
 
 from themis.services.sandbox_worker import store_client
 
-_DOCUMENT_NAME = 'document.md'
+_WORKING_DOCUMENT_NAME = 'working_document.md'
 _MAX_ENTRIES = 20_000
 _MAX_TOTAL_BYTES = 512 * 1024 * 1024  # 512 MiB
 
@@ -41,7 +42,7 @@ class WorkspaceSync:
         store: store_client.Store,
         *,
         accessor: postern.Workspace,
-        document_name: str = _DOCUMENT_NAME,
+        document_name: str = _WORKING_DOCUMENT_NAME,
         exclude: Iterable[str] = (),
     ) -> None:
         self._store = store

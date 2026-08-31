@@ -16,7 +16,7 @@ import { WarningChip } from "./warning-chip";
 // type, so both the F4 document pane and the F5 group render them unchanged. A paper's markdown/PDF
 // choice and highlight are resolved server-side (`Locate`); the client only applies the result.
 
-const DOCUMENT_PATH = "/workspace/document.md";
+const DOCUMENT_PATH = "/workspace/working_document.md";
 
 // pdf.js touches DOM APIs at import, so the PDF view loads only in the browser.
 export const PaperPdfView = dynamic(() => import("./paper-pdf-view"), {

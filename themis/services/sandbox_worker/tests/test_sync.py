@@ -35,13 +35,13 @@ def _restore(archive: bytes, dest: pathlib.Path) -> None:
 def test_restore_writes_document_and_scratch(tmp_path: pathlib.Path) -> None:
     store = store_client.FixtureStore(document='hello doc', workspace=_scratch_tar('note.txt', b'note'))
     asyncio.run(_sync(store, tmp_path).restore())
-    assert (tmp_path / 'document.md').read_text() == 'hello doc'
+    assert (tmp_path / 'working_document.md').read_text() == 'hello doc'
     assert (tmp_path / 'note.txt').read_bytes() == b'note'
 
 
 def test_restore_first_spawn_boots_empty(tmp_path: pathlib.Path) -> None:
     asyncio.run(_sync(store_client.FixtureStore(document=None, workspace=None), tmp_path).restore())
-    assert not (tmp_path / 'document.md').exists()
+    assert not (tmp_path / 'working_document.md').exists()
 
 
 def test_restore_fails_closed_on_a_document_store_error(tmp_path: pathlib.Path) -> None:
@@ -61,11 +61,11 @@ def test_scratch_fails_open_leaving_the_document(tmp_path: pathlib.Path) -> None
             raise RuntimeError('store down')
 
     asyncio.run(_sync(_BadScratch(document='d'), tmp_path).restore())
-    assert (tmp_path / 'document.md').read_text() == 'd'  # the document restored; scratch silently empty
+    assert (tmp_path / 'working_document.md').read_text() == 'd'  # the document restored; scratch silently empty
 
 
 def test_checkpoint_puts_document_then_scratch_excluding_the_document(tmp_path: pathlib.Path) -> None:
-    (tmp_path / 'document.md').write_text('v1')
+    (tmp_path / 'working_document.md').write_text('v1')
     (tmp_path / 'note.txt').write_bytes(b'note')
     store = store_client.FixtureStore()
     asyncio.run(_sync(store, tmp_path).checkpoint())
@@ -76,11 +76,11 @@ def test_checkpoint_puts_document_then_scratch_excluding_the_document(tmp_path: 
     restored.mkdir()
     _restore(store.put_workspaces[0], restored)
     assert (restored / 'note.txt').read_bytes() == b'note'
-    assert not (restored / 'document.md').exists()  # the durable document is excluded from scratch
+    assert not (restored / 'working_document.md').exists()  # the durable document is excluded from scratch
 
 
 def test_checkpoint_skips_an_unchanged_document(tmp_path: pathlib.Path) -> None:
-    (tmp_path / 'document.md').write_text('v1')
+    (tmp_path / 'working_document.md').write_text('v1')
     store = store_client.FixtureStore()
     workspace_sync = _sync(store, tmp_path)
     asyncio.run(workspace_sync.checkpoint())
@@ -103,7 +103,7 @@ def test_checkpoint_after_an_edit_mints_a_version(tmp_path: pathlib.Path) -> Non
     store = store_client.FixtureStore(document='restored')
     workspace_sync = _sync(store, tmp_path)
     asyncio.run(workspace_sync.restore())
-    (tmp_path / 'document.md').write_text('edited')
+    (tmp_path / 'working_document.md').write_text('edited')
     asyncio.run(workspace_sync.checkpoint())
 
     assert store.put_documents == ['edited']
@@ -124,11 +124,11 @@ def test_checkpoint_excludes_the_skills_tree(tmp_path: pathlib.Path) -> None:
 
 
 def test_checkpoint_does_not_dereference_a_symlinked_document(tmp_path: pathlib.Path) -> None:
-    # A guest that replaces document.md with a symlink to an out-of-workspace path must not have it read
+    # A guest that replaces working_document.md with a symlink to an out-of-workspace path must not have it read
     # (the confined accessor would ELOOP); the checkpoint skips it and mints no version.
     secret = tmp_path.parent / 'secret'
     secret.write_text('SECRET')
-    (tmp_path / 'document.md').symlink_to(secret)
+    (tmp_path / 'working_document.md').symlink_to(secret)
     store = store_client.FixtureStore()
     asyncio.run(_sync(store, tmp_path).checkpoint())
 
