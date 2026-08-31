@@ -55,12 +55,12 @@ _ID_FIELDS = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
 
 
-class UnknownPaperError(Exception):
+class PaperNotInCorpusError(Exception):
     """The corpus holds no manifest for the doc_id.
 
     Distinguishes the one `NotFound` a retry cannot clear from every other missing object — a seed
-    revision blob, a manifest that vanished mid-write — which are operational faults, not unknown
-    papers, and must stay retryable.
+    revision blob, a manifest that vanished mid-write — which are operational faults rather than a
+    paper the corpus does not hold, and must stay retryable.
     """
 
 
@@ -261,7 +261,7 @@ async def produce_full_text(
         truncation.
 
     Raises:
-        UnknownPaperError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
+        PaperNotInCorpusError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
         google.api_core.exceptions.NotFound: If an object the manifest names is absent (a seed
             revision blob, say). Operational, so it propagates and stays retryable.
         Exception: A transient failure from the converter's provider (rate limit, overload,
@@ -273,7 +273,7 @@ async def produce_full_text(
     try:
         manifest_bytes = bucket.blob(writer.manifest_path(doc_id)).download_as_bytes()
     except api_exceptions.NotFound as e:
-        raise UnknownPaperError(doc_id) from e
+        raise PaperNotInCorpusError(doc_id) from e
     manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
     if manifest.renderings:
         return outcome.Readiness.READY

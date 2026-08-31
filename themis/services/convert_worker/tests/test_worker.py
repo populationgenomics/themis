@@ -125,9 +125,9 @@ def test_producer_failure_propagates_for_cloud_tasks_to_retry() -> None:
         _run(json.dumps({'doc_id': _DOC_ID}).encode(), _raising())
 
 
-def test_an_unknown_paper_is_settled_at_2xx() -> None:
+def test_a_paper_not_in_the_corpus_is_settled_at_2xx() -> None:
     async def produce(_bucket: storage.Bucket, doc_id: str) -> outcome_mod.Readiness:
-        raise produce_mod.UnknownPaperError(doc_id)
+        raise produce_mod.PaperNotInCorpusError(doc_id)
 
     assert _run(json.dumps({'doc_id': _DOC_ID}).encode(), produce) == 200
 
@@ -343,7 +343,7 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
 
     async def produce(_bucket: storage.Bucket, _doc_id: str, *, convert_pdf: ocr.PdfConverter, **_kw: object) -> None:
         seen.append(convert_pdf)
-        raise produce_mod.UnknownPaperError(_doc_id)
+        raise produce_mod.PaperNotInCorpusError(_doc_id)
 
     monkeypatch.setattr(produce_mod, 'produce_full_text', produce)
 

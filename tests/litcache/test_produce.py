@@ -481,8 +481,8 @@ def test_pdf_source_picks_the_lineage_with_the_newest_revision() -> None:
     assert produce._pdf_source(litcache_pb2.Manifest(sources=[empty])) is None
 
 
-def test_produce_raises_unknown_paper_on_a_missing_manifest(gcs_bucket: gcs.Bucket) -> None:
-    with pytest.raises(produce.UnknownPaperError):
+def test_produce_raises_when_the_paper_is_not_in_the_corpus(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(produce.PaperNotInCorpusError):
         asyncio.run(produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom))
 
 

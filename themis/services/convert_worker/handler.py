@@ -62,12 +62,12 @@ async def process_conversion(bucket: gcs.Bucket, body: bytes, *, produce: Produc
         return _BAD_REQUEST
     try:
         readiness = await produce(bucket, doc_id)
-    except produce_mod.UnknownPaperError:
+    except produce_mod.PaperNotInCorpusError:
         # The corpus holds no such paper, and object reads are strongly consistent, so retrying spends
         # the whole budget on a task that cannot succeed. Settled, like the enqueuer's other bugs.
         # Every other NotFound — a seed blob the manifest names but the bucket lacks — is operational
         # and propagates as a 500, so the task retries rather than being dropped undiagnosed.
-        _logger.error('dropping a /convert task for unknown doc_id %s', doc_id)
+        _logger.error('dropping a /convert task for %s: no such paper in the corpus', doc_id)
         return _OK
     _logger.info('converted %s -> %s', doc_id, readiness.value)
     return _OK
