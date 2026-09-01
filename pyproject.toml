@@ -129,6 +129,11 @@ convert_worker = [
 # (google-crc32c verifies its response integrity); google-auth mints the Cloud Run Admin API token for
 # the jobs.run spawn. Also covers the shared themis/clients/work_queue and themis/clients/auth.
 dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
+# sheaf (themis/sheaf): git over object storage — an append-only pack store plus one
+# compare-and-swap ref document. google-cloud-storage is the GCS backend, whose
+# `ifGenerationMatch` on the ref document is the whole concurrency control. The one dep: sheaf
+# shells out to a stock `git` binary, so its other requirement is `git` on PATH, not a wheel.
+sheaf = ["google-cloud-storage"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
@@ -154,7 +159,7 @@ classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -162,11 +167,11 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
 # pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
 # otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —
@@ -240,6 +245,17 @@ ignore = [
 "themis/services/evidence/**/tests/**" = [
     "ARG001", # a stand-in session resolver takes the token whether or not the case turns on it
     "ARG002", # a fake backend keeps the port's signature even where a param is unused
+]
+# The error names in themis/sheaf are the storage protocol's vocabulary: a caller reads
+# `except RaceLost` and knows what happened, which N818's `Error` suffix would obscure for no gain,
+# since every one of them derives from SheafError.
+"themis/sheaf/errors.py" = ["N818"]
+# The sheaf wire layer serves git's own protocol by invoking the git binary, so its tests drive a
+# real client the same way. Scoped to those tests: the two sheaf modules that shell out suppress
+# inline instead, at their one call site each.
+"themis/sheaf/tests/**" = [
+    "S603",   # running git as a subprocess is what the wire tests exist to exercise
+    "S607",   # ... found by name on PATH, as any git client does
 ]
 "tests/**" = [
     "S101",   # asserts are the standard pytest idiom

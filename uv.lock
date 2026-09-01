@@ -3661,6 +3661,9 @@ session = [
     { name = "protobuf" },
     { name = "requests" },
 ]
+sheaf = [
+    { name = "google-cloud-storage" },
+]
 store = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
@@ -3881,6 +3884,7 @@ session = [
     { name = "protobuf" },
     { name = "requests" },
 ]
+sheaf = [{ name = "google-cloud-storage" }]
 store = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
