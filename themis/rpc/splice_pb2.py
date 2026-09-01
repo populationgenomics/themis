@@ -24,27 +24,29 @@ _sym_db = _symbol_database.Default()
 
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_models_dot_evidence__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/splice.proto\x12\x11themis.rpc.splice\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\"\'\n\x14PredictDeltasRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\"\xad\x02\n\x15PredictDeltasResponse\x12\x1a\n\rspliceai_gain\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x1a\n\rspliceai_loss\x18\x02 \x01(\x01H\x01\x88\x01\x01\x12\x1a\n\rpangolin_gain\x18\x03 \x01(\x01H\x02\x88\x01\x01\x12\x1a\n\rpangolin_loss\x18\x04 \x01(\x01H\x03\x88\x01\x01\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.ProvenanceB\x10\n\x0e_spliceai_gainB\x10\n\x0e_spliceai_lossB\x10\n\x0e_pangolin_gainB\x10\n\x0e_pangolin_loss\"y\n\x19PredictSkipOutcomeRequest\x12\x12\n\ntranscript\x18\x01 \x01(\t\x12\x14\n\x0cgenome_build\x18\x02 \x01(\t\x12\x0e\n\x04\x65xon\x18\x03 \x01(\x05H\x00\x12\x16\n\x0c\x63\x64s_position\x18\x04 \x01(\x05H\x00\x42\n\n\x08\x61\x66\x66\x65\x63ted\"\xc6\x02\n\rPredictedSkip\x12\x15\n\rskipped_exons\x18\x01 \x03(\x05\x12\x19\n\x11\x63oding_nt_removed\x18\x02 \x01(\x05\x12\x13\n\x0b\x66rame_shift\x18\x03 \x01(\x05\x12\x31\n\x07product\x18\x04 \x01(\x0e\x32 .themis.rpc.splice.SpliceProduct\x12\x1d\n\x10ptc_cds_position\x18\x05 \x01(\x05H\x00\x88\x01\x01\x12\x16\n\tptc_codon\x18\x06 \x01(\x05H\x01\x88\x01\x01\x12)\n\x1cnt_upstream_of_last_junction\x18\x07 \x01(\x05H\x02\x88\x01\x01\x12\x15\n\rnmd_predicted\x18\x08 \x01(\x08\x42\x13\n\x11_ptc_cds_positionB\x0c\n\n_ptc_codonB\x1f\n\x1d_nt_upstream_of_last_junction\"\xfa\x01\n\x1aPredictSkipOutcomeResponse\x12\x12\n\ntranscript\x18\x01 \x01(\t\x12\x15\n\raffected_exon\x18\x02 \x01(\x05\x12\x0c\n\x04gene\x18\x04 \x01(\t\x12\x14\n\x0cgenome_build\x18\x05 \x01(\t\x12/\n\x05skips\x18\x03 \x03(\x0b\x32 .themis.rpc.splice.PredictedSkip\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance*\xe2\x01\n\rSpliceProduct\x12\x1e\n\x1aSPLICE_PRODUCT_UNSPECIFIED\x10\x00\x12#\n\x1fSPLICE_PRODUCT_INFRAME_DELETION\x10\x01\x12!\n\x1dSPLICE_PRODUCT_PREMATURE_STOP\x10\x02\x12\'\n#SPLICE_PRODUCT_EXTENDED_TERMINATION\x10\x03\x12!\n\x1dSPLICE_PRODUCT_NO_TERMINATION\x10\x04\x12\x1d\n\x19SPLICE_PRODUCT_START_LOST\x10\x05\x32\xdf\x01\n\x06Splice\x12\x62\n\rPredictDeltas\x12\'.themis.rpc.splice.PredictDeltasRequest\x1a(.themis.rpc.splice.PredictDeltasResponse\x12q\n\x12PredictSkipOutcome\x12,.themis.rpc.splice.PredictSkipOutcomeRequest\x1a-.themis.rpc.splice.PredictSkipOutcomeResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/splice.proto\x12\x11themis.rpc.splice\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"\'\n\x14PredictDeltasRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\"\xad\x02\n\x15PredictDeltasResponse\x12\x1a\n\rspliceai_gain\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x1a\n\rspliceai_loss\x18\x02 \x01(\x01H\x01\x88\x01\x01\x12\x1a\n\rpangolin_gain\x18\x03 \x01(\x01H\x02\x88\x01\x01\x12\x1a\n\rpangolin_loss\x18\x04 \x01(\x01H\x03\x88\x01\x01\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.ProvenanceB\x10\n\x0e_spliceai_gainB\x10\n\x0e_spliceai_lossB\x10\n\x0e_pangolin_gainB\x10\n\x0e_pangolin_loss\"y\n\x19PredictSkipOutcomeRequest\x12\x12\n\ntranscript\x18\x01 \x01(\t\x12\x14\n\x0cgenome_build\x18\x02 \x01(\t\x12\x0e\n\x04\x65xon\x18\x03 \x01(\x05H\x00\x12\x16\n\x0c\x63\x64s_position\x18\x04 \x01(\x05H\x00\x42\n\n\x08\x61\x66\x66\x65\x63ted\"\xc6\x02\n\rPredictedSkip\x12\x15\n\rskipped_exons\x18\x01 \x03(\x05\x12\x19\n\x11\x63oding_nt_removed\x18\x02 \x01(\x05\x12\x13\n\x0b\x66rame_shift\x18\x03 \x01(\x05\x12\x31\n\x07product\x18\x04 \x01(\x0e\x32 .themis.rpc.splice.SpliceProduct\x12\x1d\n\x10ptc_cds_position\x18\x05 \x01(\x05H\x00\x88\x01\x01\x12\x16\n\tptc_codon\x18\x06 \x01(\x05H\x01\x88\x01\x01\x12)\n\x1cnt_upstream_of_last_junction\x18\x07 \x01(\x05H\x02\x88\x01\x01\x12\x15\n\rnmd_predicted\x18\x08 \x01(\x08\x42\x13\n\x11_ptc_cds_positionB\x0c\n\n_ptc_codonB\x1f\n\x1d_nt_upstream_of_last_junction\"\xfa\x01\n\x1aPredictSkipOutcomeResponse\x12\x12\n\ntranscript\x18\x01 \x01(\t\x12\x15\n\raffected_exon\x18\x02 \x01(\x05\x12\x0c\n\x04gene\x18\x04 \x01(\t\x12\x14\n\x0cgenome_build\x18\x05 \x01(\t\x12/\n\x05skips\x18\x03 \x03(\x0b\x32 .themis.rpc.splice.PredictedSkip\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance*\xe2\x01\n\rSpliceProduct\x12\x1e\n\x1aSPLICE_PRODUCT_UNSPECIFIED\x10\x00\x12#\n\x1fSPLICE_PRODUCT_INFRAME_DELETION\x10\x01\x12!\n\x1dSPLICE_PRODUCT_PREMATURE_STOP\x10\x02\x12\'\n#SPLICE_PRODUCT_EXTENDED_TERMINATION\x10\x03\x12!\n\x1dSPLICE_PRODUCT_NO_TERMINATION\x10\x04\x12\x1d\n\x19SPLICE_PRODUCT_START_LOST\x10\x05\x32\xdf\x01\n\x06Splice\x12\x62\n\rPredictDeltas\x12\'.themis.rpc.splice.PredictDeltasRequest\x1a(.themis.rpc.splice.PredictDeltasResponse\x12q\n\x12PredictSkipOutcome\x12,.themis.rpc.splice.PredictSkipOutcomeRequest\x1a-.themis.rpc.splice.PredictSkipOutcomeResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.splice_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_SPLICEPRODUCT']._serialized_start=1166
-  _globals['_SPLICEPRODUCT']._serialized_end=1392
-  _globals['_PREDICTDELTASREQUEST']._serialized_start=115
-  _globals['_PREDICTDELTASREQUEST']._serialized_end=154
-  _globals['_PREDICTDELTASRESPONSE']._serialized_start=157
-  _globals['_PREDICTDELTASRESPONSE']._serialized_end=458
-  _globals['_PREDICTSKIPOUTCOMEREQUEST']._serialized_start=460
-  _globals['_PREDICTSKIPOUTCOMEREQUEST']._serialized_end=581
-  _globals['_PREDICTEDSKIP']._serialized_start=584
-  _globals['_PREDICTEDSKIP']._serialized_end=910
-  _globals['_PREDICTSKIPOUTCOMERESPONSE']._serialized_start=913
-  _globals['_PREDICTSKIPOUTCOMERESPONSE']._serialized_end=1163
-  _globals['_SPLICE']._serialized_start=1395
-  _globals['_SPLICE']._serialized_end=1618
+  _globals['DESCRIPTOR']._loaded_options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  _globals['_SPLICEPRODUCT']._serialized_start=1200
+  _globals['_SPLICEPRODUCT']._serialized_end=1426
+  _globals['_PREDICTDELTASREQUEST']._serialized_start=149
+  _globals['_PREDICTDELTASREQUEST']._serialized_end=188
+  _globals['_PREDICTDELTASRESPONSE']._serialized_start=191
+  _globals['_PREDICTDELTASRESPONSE']._serialized_end=492
+  _globals['_PREDICTSKIPOUTCOMEREQUEST']._serialized_start=494
+  _globals['_PREDICTSKIPOUTCOMEREQUEST']._serialized_end=615
+  _globals['_PREDICTEDSKIP']._serialized_start=618
+  _globals['_PREDICTEDSKIP']._serialized_end=944
+  _globals['_PREDICTSKIPOUTCOMERESPONSE']._serialized_start=947
+  _globals['_PREDICTSKIPOUTCOMERESPONSE']._serialized_end=1197
+  _globals['_SPLICE']._serialized_start=1429
+  _globals['_SPLICE']._serialized_end=1652
 # @@protoc_insertion_point(module_scope)

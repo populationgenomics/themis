@@ -26,6 +26,7 @@ import asyncio
 import dataclasses
 import itertools
 import re
+import urllib.parse
 from collections.abc import Mapping, Sequence
 
 import httpx
@@ -503,7 +504,8 @@ async def fetch_transcript_structure(
             carries no caller input, so its failure is never a refusal — returns any non-2xx.
         ValueError: If a response is structurally malformed.
     """
-    url = f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{transcript}/{transcript}/refseq/{genome_build}'
+    quoted = urllib.parse.quote(transcript, safe='')
+    url = f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{quoted}/{quoted}/refseq/{genome_build}'
     params = {'content-type': 'application/json', 'show_exon_info': 'true'}
     structure, metadata = await asyncio.gather(
         http_client.get(url, params=params, headers={'Accept': 'application/json'}, timeout=_TIMEOUT_SECONDS),
@@ -749,8 +751,9 @@ async def fetch_gene_transcripts(
         ValueError: If a response is structurally malformed.
     """
     params = {'content-type': 'application/json', 'show_exon_info': 'true'}
+    quoted = urllib.parse.quote(gene, safe='')
     urls = [
-        f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{gene}/all/{annotation_set}/{genome_build}'
+        f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{quoted}/all/{annotation_set}/{genome_build}'
         for annotation_set in _ANNOTATION_SETS
     ]
     metadata, *responses = await asyncio.gather(

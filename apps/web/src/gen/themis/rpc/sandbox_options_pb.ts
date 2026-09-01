@@ -21,8 +21,10 @@ export const file_themis_rpc_sandbox_options: GenFile = /*@__PURE__*/
 
 /**
  * When true, every service defined in this file is agent-callable through the hatch; absent means
- * false, so the default is fail-closed. 50002 is in descriptor.proto's 50000–99999 range reserved
- * for organization-internal extensions.
+ * false, so the default is fail-closed. Marking a file asserts that every rpc it defines is
+ * written to survive a hostile caller: untrusted model code invokes them as the session, so a
+ * service that is not hardened for that stays unmarked. 50002 is in descriptor.proto's
+ * 50000–99999 range reserved for organization-internal extensions.
  *
  * @generated from extension: bool agent_exposed = 50002;
  */

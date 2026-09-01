@@ -24,19 +24,21 @@ _sym_db = _symbol_database.Default()
 
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_models_dot_evidence__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14themis/rpc/vep.proto\x12\x0ethemis.rpc.vep\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\"6\n\x0f\x41nnotateRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\x12\x12\n\npredictors\x18\x02 \x03(\t\"\xb6\x01\n\x10\x41nnotateResponse\x12\x44\n\x17most_severe_consequence\x18\x01 \x01(\x0e\x32#.themis.evidence.models.Consequence\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2T\n\x03Vep\x12M\n\x08\x41nnotate\x12\x1f.themis.rpc.vep.AnnotateRequest\x1a .themis.rpc.vep.AnnotateResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14themis/rpc/vep.proto\x12\x0ethemis.rpc.vep\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"6\n\x0f\x41nnotateRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\x12\x12\n\npredictors\x18\x02 \x03(\t\"\xb6\x01\n\x10\x41nnotateResponse\x12\x44\n\x17most_severe_consequence\x18\x01 \x01(\x0e\x32#.themis.evidence.models.Consequence\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2T\n\x03Vep\x12M\n\x08\x41nnotate\x12\x1f.themis.rpc.vep.AnnotateRequest\x1a .themis.rpc.vep.AnnotateResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.vep_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_ANNOTATEREQUEST']._serialized_start=109
-  _globals['_ANNOTATEREQUEST']._serialized_end=163
-  _globals['_ANNOTATERESPONSE']._serialized_start=166
-  _globals['_ANNOTATERESPONSE']._serialized_end=348
-  _globals['_VEP']._serialized_start=350
-  _globals['_VEP']._serialized_end=434
+  _globals['DESCRIPTOR']._loaded_options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  _globals['_ANNOTATEREQUEST']._serialized_start=143
+  _globals['_ANNOTATEREQUEST']._serialized_end=197
+  _globals['_ANNOTATERESPONSE']._serialized_start=200
+  _globals['_ANNOTATERESPONSE']._serialized_end=382
+  _globals['_VEP']._serialized_start=384
+  _globals['_VEP']._serialized_end=468
 # @@protoc_insertion_point(module_scope)

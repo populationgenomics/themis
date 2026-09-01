@@ -33,7 +33,10 @@ package themis.rpc.clinvar;
 import "clinvar_proto/clinvar.proto";
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // ---- DescribeVariant: the queried allele's record + the gene's classified P/LP variants ---------
 // Resolves ClinVar's aggregate classification and review status so the model judges

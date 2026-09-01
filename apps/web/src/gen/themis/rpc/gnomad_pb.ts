@@ -29,13 +29,14 @@ import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2
 import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
 import type { Provenance } from "../evidence/models/evidence_pb";
 import { file_themis_evidence_models_evidence } from "../evidence/models/evidence_pb";
+import { file_themis_rpc_sandbox_options } from "./sandbox_options_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/gnomad.proto.
  */
 export const file_themis_rpc_gnomad: GenFile = /*@__PURE__*/
-  fileDesc("Chd0aGVtaXMvcnBjL2dub21hZC5wcm90bxIRdGhlbWlzLnJwYy5nbm9tYWQiVwoWRGVzY3JpYmVWYXJpYW50UmVxdWVzdBIRCglnbm9tYWRfaWQYASABKAkSDwoHZGF0YXNldBgCIAEoCRIZChFjb29jY3VycmVuY2Vfd2l0aBgDIAEoCSJ3ChdEZXNjcmliZVZhcmlhbnRSZXNwb25zZRIkCgNyYXcYDyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjYKCnByb3ZlbmFuY2UYECADKAsyIi50aGVtaXMuZXZpZGVuY2UubW9kZWxzLlByb3ZlbmFuY2UycgoGR25vbWFkEmgKD0Rlc2NyaWJlVmFyaWFudBIpLnRoZW1pcy5ycGMuZ25vbWFkLkRlc2NyaWJlVmFyaWFudFJlcXVlc3QaKi50aGVtaXMucnBjLmdub21hZC5EZXNjcmliZVZhcmlhbnRSZXNwb25zZWIGcHJvdG8z", [file_google_protobuf_struct, file_themis_evidence_models_evidence]);
+  fileDesc("Chd0aGVtaXMvcnBjL2dub21hZC5wcm90bxIRdGhlbWlzLnJwYy5nbm9tYWQiVwoWRGVzY3JpYmVWYXJpYW50UmVxdWVzdBIRCglnbm9tYWRfaWQYASABKAkSDwoHZGF0YXNldBgCIAEoCRIZChFjb29jY3VycmVuY2Vfd2l0aBgDIAEoCSJ3ChdEZXNjcmliZVZhcmlhbnRSZXNwb25zZRIkCgNyYXcYDyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjYKCnByb3ZlbmFuY2UYECADKAsyIi50aGVtaXMuZXZpZGVuY2UubW9kZWxzLlByb3ZlbmFuY2UycgoGR25vbWFkEmgKD0Rlc2NyaWJlVmFyaWFudBIpLnRoZW1pcy5ycGMuZ25vbWFkLkRlc2NyaWJlVmFyaWFudFJlcXVlc3QaKi50aGVtaXMucnBjLmdub21hZC5EZXNjcmliZVZhcmlhbnRSZXNwb25zZUIEkLUYAWIGcHJvdG8z", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
 
 /**
  * Doc maps fields to codes:

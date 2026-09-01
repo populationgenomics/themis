@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import itertools
 import json
@@ -578,3 +579,44 @@ def test_a_c_position_past_the_termination_codon_is_refused() -> None:
 def test_a_c_position_before_the_transcript_is_refused() -> None:
     with pytest.raises(errors.InvalidRequestError, match='outside'):
         transcript_structure.genomic_span_of_cds_range(_nf1(), -10_000_000, 100)
+
+
+def _requested_paths(accession: str, gene: str) -> list[str]:
+    """The wire-form URL paths both fetches build, for identifiers that would restructure an unencoded path.
+
+    `url.path` is percent-decoded, so it reads the same whether or not the segment was encoded; `raw_path`
+    is what actually goes on the wire.
+    """
+    seen: list[str] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path.decode().split('?')[0])
+        if request.url.path == '/hello/':
+            return httpx.Response(200, json=_METADATA)
+        return httpx.Response(200, json=_NF1 if accession in request.url.path else _GENE_REFSEQ)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as client:
+            for call in (
+                transcript_structure.fetch_transcript_structure(accession, 'GRCh38', http_client=client),
+                transcript_structure.fetch_gene_transcripts(gene, 'GRCh38', http_client=client),
+            ):
+                with contextlib.suppress(errors.UnknownVariantError, ValueError):
+                    await call
+
+    asyncio.run(run())
+    return seen
+
+
+def test_an_identifier_cannot_restructure_the_request_path() -> None:
+    """Both identifiers reach here as the caller wrote them, and the sandbox agent is one of the callers.
+
+    A `/` or a `..` left unencoded moves the query to a different endpoint of the same host, so the segment
+    has to survive as one segment whatever it contains.
+    """
+    paths = _requested_paths('NM_1.1/../../hello', 'PCSK9/..%2f..')
+    assert paths, 'no request was issued'
+    for path in paths:
+        assert '/..' not in path, f'an identifier escaped its path segment: {path}'
+    # The endpoint each query names is still gene2transcripts_v2 (or the unparameterised /hello/ metadata call).
+    assert all(path == '/hello/' or 'gene2transcripts_v2' in path for path in paths), paths

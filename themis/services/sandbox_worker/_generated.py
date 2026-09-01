@@ -7,6 +7,18 @@ from __future__ import annotations
 
 GUEST_METHODS = frozenset(
     {
+        '/themis.rpc.clinvar.ClinVar/DescribeVariant',
+        '/themis.rpc.clinvar.ClinVar/SearchCodingSpan',
+        '/themis.rpc.cspec.Cspec/ListSpecifications',
+        '/themis.rpc.gene_disease.GeneDisease/DescribeGene',
+        '/themis.rpc.gnomad.Gnomad/DescribeVariant',
         '/themis.rpc.hello.Hello/SayHello',
+        '/themis.rpc.mavedb.MaveDb/DescribeVariant',
+        '/themis.rpc.splice.Splice/PredictDeltas',
+        '/themis.rpc.splice.Splice/PredictSkipOutcome',
+        '/themis.rpc.transcript.Transcript/AssessExonRelevance',
+        '/themis.rpc.transcript.Transcript/GetStructure',
+        '/themis.rpc.variant.Variant/Normalize',
+        '/themis.rpc.vep.Vep/Annotate',
     }
 )

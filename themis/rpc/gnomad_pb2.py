@@ -24,19 +24,21 @@ _sym_db = _symbol_database.Default()
 
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_models_dot_evidence__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/gnomad.proto\x12\x11themis.rpc.gnomad\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\"W\n\x16\x44\x65scribeVariantRequest\x12\x11\n\tgnomad_id\x18\x01 \x01(\t\x12\x0f\n\x07\x64\x61taset\x18\x02 \x01(\t\x12\x19\n\x11\x63ooccurrence_with\x18\x03 \x01(\t\"w\n\x17\x44\x65scribeVariantResponse\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2r\n\x06Gnomad\x12h\n\x0f\x44\x65scribeVariant\x12).themis.rpc.gnomad.DescribeVariantRequest\x1a*.themis.rpc.gnomad.DescribeVariantResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/gnomad.proto\x12\x11themis.rpc.gnomad\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"W\n\x16\x44\x65scribeVariantRequest\x12\x11\n\tgnomad_id\x18\x01 \x01(\t\x12\x0f\n\x07\x64\x61taset\x18\x02 \x01(\t\x12\x19\n\x11\x63ooccurrence_with\x18\x03 \x01(\t\"w\n\x17\x44\x65scribeVariantResponse\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2r\n\x06Gnomad\x12h\n\x0f\x44\x65scribeVariant\x12).themis.rpc.gnomad.DescribeVariantRequest\x1a*.themis.rpc.gnomad.DescribeVariantResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.gnomad_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_DESCRIBEVARIANTREQUEST']._serialized_start=115
-  _globals['_DESCRIBEVARIANTREQUEST']._serialized_end=202
-  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_start=204
-  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_end=323
-  _globals['_GNOMAD']._serialized_start=325
-  _globals['_GNOMAD']._serialized_end=439
+  _globals['DESCRIPTOR']._loaded_options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  _globals['_DESCRIBEVARIANTREQUEST']._serialized_start=149
+  _globals['_DESCRIBEVARIANTREQUEST']._serialized_end=236
+  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_start=238
+  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_end=357
+  _globals['_GNOMAD']._serialized_start=359
+  _globals['_GNOMAD']._serialized_end=473
 # @@protoc_insertion_point(module_scope)

@@ -132,13 +132,17 @@ dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "goog
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
-# id_token + the store stubs (the worker's own checkpoint client).
-sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", { include-group = "session" }]
+# id_token + the store stubs (the worker's own checkpoint client). clinvar_proto: the clinvar contract
+# embeds the upstream record schema, so the hatch's forwarder imports the wheel's message module through
+# the generated stub.
+sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", { include-group = "session" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
-# protobuf backs the shipped hello stubs. Locked rather than a floating pip install so the guest inherits the
-# age gate and stays version-aligned with the worker's own grpcio/protobuf.
-guest = ["grpcio", "protobuf"]
+# protobuf backs the shipped stubs, and clinvar_proto the upstream record schema the clinvar stub imports —
+# its package `__init__` is eager, so pydantic comes into the rootfs behind it. Locked rather than a floating
+# pip install so the guest inherits the age gate and stays version-aligned with the worker's own
+# grpcio/protobuf.
+guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0"]
 # classifier evaluation CLI (themis/classifier_eval): anthropic reads the session event logs and the
 # resolved agent each case ran; google-cloud-storage reads the store's working-document and workspace
 # buckets; google-auth is the ADC preflight resolves; pyyaml reads the checked-out agent config

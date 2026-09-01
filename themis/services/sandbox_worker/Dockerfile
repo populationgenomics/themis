@@ -4,7 +4,7 @@
 # time"). Build context is the repo ROOT (`docker build -f themis/services/sandbox_worker/Dockerfile .`).
 # One trusted process: it holds the Anthropic environment key and the session token, runs the
 # EnvironmentWorker loop, and marshals every `shell` command into a bubblewrap sandbox whose only exit
-# is the store/hello-forwarding hatch.
+# is the hello/evidence-forwarding hatch.
 #
 # Four stages: worker deps (uv), the curated guest rootfs, then assemble. The guest rootfs is bound
 # read-only at runtime by postern (SandboxProfile(rootfs='/opt/guest-root')) — no runtime container
@@ -36,13 +36,29 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
     --mount=from=ghcr.io/astral-sh/uv:0.11.16,source=/uv,target=/usr/local/bin/uv \
     uv export --frozen --no-emit-project --only-group guest --no-hashes --project /tmp/uvproj \
     | pip install --no-cache-dir --no-deps -r /dev/stdin
-# The guest SDK: the generated hello stubs the model dials the hatch with (`from themis.rpc import
-# hello_pb2_grpc`), the code-mode `services` helper (shipped as `themis.agent.services` — the stable name
-# the agent's prompt imports), and the stdlib-only working-document linter. Only the hello stubs ship — the
-# store stubs would be an unused capability, since the guest reaches the store through no hatch method.
-# `hello_pb2` imports `sandbox_options_pb2` at module load: hello.proto carries the `agent_exposed` option.
-COPY themis/rpc/hello_pb2.py themis/rpc/hello_pb2_grpc.py themis/rpc/sandbox_options_pb2.py \
+# The guest SDK: the generated stubs the model dials the hatch with (`from themis.rpc import
+# hello_pb2_grpc` and the per-source equivalents), the code-mode `services` helper (shipped as
+# `themis.agent.services` — the stable name the agent's prompt imports), and the stdlib-only
+# working-document linter. Only the hatch-reachable services' stubs ship; the store stubs would be an
+# unused capability, since the guest reaches the store through no hatch method. `test_guest_rootfs.py`
+# holds this set to the generated allowlist, and to the import closure of everything it lands.
+# Each service `_pb2` reaches `sandbox_options_pb2` (its proto carries the `agent_exposed` option) and the
+# evidence ones reach `themis/evidence/models/evidence_pb2`, the shared value types; neither `themis/rpc`
+# nor `themis/evidence/models` takes an `__init__.py`, so both resolve as namespace packages under the
+# `themis` package this stage touches into place.
+COPY themis/rpc/sandbox_options_pb2.py \
+    themis/rpc/hello_pb2.py themis/rpc/hello_pb2_grpc.py \
+    themis/rpc/variant_pb2.py themis/rpc/variant_pb2_grpc.py \
+    themis/rpc/vep_pb2.py themis/rpc/vep_pb2_grpc.py \
+    themis/rpc/gnomad_pb2.py themis/rpc/gnomad_pb2_grpc.py \
+    themis/rpc/clinvar_pb2.py themis/rpc/clinvar_pb2_grpc.py \
+    themis/rpc/gene_disease_pb2.py themis/rpc/gene_disease_pb2_grpc.py \
+    themis/rpc/transcript_pb2.py themis/rpc/transcript_pb2_grpc.py \
+    themis/rpc/splice_pb2.py themis/rpc/splice_pb2_grpc.py \
+    themis/rpc/mavedb_pb2.py themis/rpc/mavedb_pb2_grpc.py \
+    themis/rpc/cspec_pb2.py themis/rpc/cspec_pb2_grpc.py \
     /usr/local/lib/python3.13/site-packages/themis/rpc/
+COPY themis/evidence/models/evidence_pb2.py /usr/local/lib/python3.13/site-packages/themis/evidence/models/
 COPY themis/document_linter /usr/local/lib/python3.13/site-packages/themis/document_linter
 COPY themis/services/sandbox_worker/guest/services.py /usr/local/lib/python3.13/site-packages/themis/agent/services.py
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
@@ -58,6 +74,7 @@ COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
+COPY themis/evidence/models ./themis/evidence/models
 COPY themis/clients/id_token.py ./themis/clients/id_token.py
 COPY themis/clients/work_queue/__init__.py themis/clients/work_queue/client.py ./themis/clients/work_queue/
 COPY themis/services/sandbox_worker ./themis/services/sandbox_worker

@@ -28,7 +28,10 @@ package themis.rpc.splice;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // ---- PredictDeltas: SpliceAI + Pangolin deltas for SPL_PRD -------------------------------------
 // Every variant type checks a splice effect. Each predictor reports gain apart from loss, because

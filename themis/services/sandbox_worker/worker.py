@@ -14,7 +14,7 @@ One trusted process per Job execution. The dispatcher claims a work item and inj
 4. Run ``EnvironmentWorker.handle_item()`` — the SDK loop for the one claimed session. Its tools are the
    ``agent_toolset_20260401`` file tools (read/write/edit/glob/grep), which the SDK confines to ``workdir``
    (=/workspace) and so run in the trusted worker, plus ``shell`` — the sandboxed replacement for ``bash``
-   that marshals every command into the guest behind the store/hello-forwarding hatch.
+   that marshals every command into the guest behind the hello/evidence-forwarding hatch.
 5. Checkpoint a final snapshot and exit (one execution per spawn — scale-to-zero preserved).
 """
 
@@ -126,6 +126,7 @@ async def _serve() -> None:
     environment_key = _require('ANTHROPIC_ENVIRONMENT_KEY')
     store_url = _require('THEMIS_STORE_URL')
     hello_url = _require('THEMIS_HELLO_URL')
+    evidence_url = _require('THEMIS_EVIDENCE_URL')
     for name in _SDK_ITEM_ENV:
         _require(name)
     session_id = os.environ['ANTHROPIC_SESSION_ID']
@@ -141,8 +142,9 @@ async def _serve() -> None:
 
     store_credentials = id_token.channel_credentials(store_url)
     hello_credentials = id_token.channel_credentials(hello_url)
+    evidence_credentials = id_token.channel_credentials(evidence_url)
     # The worker's own async channel to the store drives checkpoint/restore. The hatch runs a synchronous
-    # grpc.server, so its hello forwarder dials over a synchronous channel.
+    # grpc.server, so its forwarders dial over synchronous channels.
     async with (
         anthropic.AsyncAnthropic(
             auth_token=environment_key,
@@ -152,7 +154,10 @@ async def _serve() -> None:
     ):
         work_queue = work_queue_mod.AnthropicWorkQueue(client, environment_id=environment_id)
         hello_sync = grpc.secure_channel(_grpc_target(hello_url), hello_credentials)
-        hatch = hatch_mod.build_hatch(hello_sync, session_token=session_token)
+        evidence_sync = grpc.secure_channel(_grpc_target(evidence_url), evidence_credentials)
+        hatch = hatch_mod.build_hatch(
+            hello_channel=hello_sync, evidence_channel=evidence_sync, session_token=session_token
+        )
         sandbox = postern.Sandbox(profile, hatch=hatch)
         accessor = sandbox.accessor()
         workspace_sync = sync_mod.WorkspaceSync(
@@ -173,6 +178,7 @@ async def _serve() -> None:
         finally:
             hatch.close()
             hello_sync.close()
+            evidence_sync.close()
             accessor.close()
             sandbox.close()
 

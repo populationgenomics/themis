@@ -25,7 +25,10 @@ package themis.rpc.vep;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // One VEP call carries several SVCv4 lines at once. Doc maps each to its code so the agent knows
 // what it is holding:

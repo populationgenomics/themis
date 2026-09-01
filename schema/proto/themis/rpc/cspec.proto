@@ -29,7 +29,10 @@ package themis.rpc.cspec;
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // The ClinGen Criteria Specification Registry (CSpec) specification(s) covering a gene: the VCEP's
 // criterion-by-criterion wording, its per-strength gene-specific thresholds, and the attribution a

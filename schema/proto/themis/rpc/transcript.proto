@@ -30,7 +30,10 @@ package themis.rpc.transcript;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // ---- AssessExonRelevance: the exon axis of the mechanism x exon-relevance matrix ----------------
 // Surfaces the signals for the All / Most / Few exon-relevance call (the matrix multiplier's exon

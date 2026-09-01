@@ -261,13 +261,13 @@ class SandboxJob(pulumi.ComponentResource):
     session token (injected per-execution by the dispatcher's ``jobs.run``, never baked) — and runs every
     ``shell`` command inside a postern bubblewrap sandbox, so no untrusted code shares the container.
 
-    Direct VPC egress on the shared services network reaches the internal-ingress store and hello services;
-    egress is private-ranges-only, so those go over the VPC while Anthropic (public) uses Cloud Run's
-    managed egress — no NAT, no egress firewall (the guest has zero network regardless).
+    Direct VPC egress on the shared services network reaches the internal-ingress store, hello and evidence
+    services. There is no dedicated sandbox VPC and no egress firewall — the guest has zero network
+    regardless, so containment rests on that rather than on shaping the trusted worker's egress.
 
     Attributes:
-        service_account_email: The job's runtime SA — ``run.invoker`` on the store and hello services (the
-            hatch's forward targets); inert without the session token the worker holds.
+        service_account_email: The job's runtime SA — ``run.invoker`` on the store it checkpoints to and on
+            the hatch's forward targets; inert without the session token the worker holds.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
     """
 
@@ -281,6 +281,7 @@ class SandboxJob(pulumi.ComponentResource):
         subnetwork: pulumi.Input[str],
         store_url: pulumi.Input[str],
         hello_url: pulumi.Input[str],
+        evidence_url: pulumi.Input[str],
         task_timeout_seconds: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
@@ -330,6 +331,7 @@ class SandboxJob(pulumi.ComponentResource):
                             envs=[
                                 _job_env('THEMIS_STORE_URL', store_url),
                                 _job_env('THEMIS_HELLO_URL', hello_url),
+                                _job_env('THEMIS_EVIDENCE_URL', evidence_url),
                             ],
                             # Bounds the trusted worker + the co-located guest together (the one-session
                             # blast radius review L3 accepts): a guest memory bomb OOMs only this execution.

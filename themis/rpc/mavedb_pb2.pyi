@@ -1,5 +1,6 @@
 from google.protobuf import struct_pb2 as _struct_pb2
 from themis.evidence.models import evidence_pb2 as _evidence_pb2
+from themis.rpc import sandbox_options_pb2 as _sandbox_options_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message

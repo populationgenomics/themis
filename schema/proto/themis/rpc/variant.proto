@@ -26,7 +26,10 @@ package themis.rpc.variant;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // Canonicalise a transcript HGVS onto the MANE Select transcript and project it, so every
 // downstream fact joins on a shared key and the right decision tree is selected. Wraps ClinGen

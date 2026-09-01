@@ -33,6 +33,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
         'ANTHROPIC_ENVIRONMENT_KEY',
         'THEMIS_STORE_URL',
         'THEMIS_HELLO_URL',
+        'THEMIS_EVIDENCE_URL',
         'ANTHROPIC_WORK_ID',
         'ANTHROPIC_ENVIRONMENT_ID',
         'ANTHROPIC_SESSION_ID',
@@ -65,7 +66,7 @@ def _patch_serve_collaborators(
     work ids passed to ``ack`` / ``stop``, so a test can assert the *work* item (not the session) is acked.
     """
     acked: dict[str, list[str]] = {'ack': [], 'stop': []}
-    sync_tags = iter(('hello_sync.close',))
+    sync_tags = iter(('hello_sync.close', 'evidence_sync.close'))
 
     class _Accessor:
         def close(self) -> None:
@@ -151,7 +152,13 @@ def test_serve_orders_verify_restore_ack_serve_checkpoint_then_cleanup(
     asyncio.run(worker._serve())
 
     assert log[:5] == ['verify', 'restore', 'ack', 'serve', 'checkpoint']
-    assert set(log[5:]) == {'hatch.close', 'hello_sync.close', 'accessor.close', 'sandbox.close'}
+    assert set(log[5:]) == {
+        'hatch.close',
+        'hello_sync.close',
+        'evidence_sync.close',
+        'accessor.close',
+        'sandbox.close',
+    }
     # the WORK item is acked (not the session) — acking the wrong id leaves the real item reclaimable.
     assert acked['ack'] == ['value-for-ANTHROPIC_WORK_ID']
     assert acked['stop'] == []
@@ -172,7 +179,13 @@ def test_serve_acks_and_stops_the_item_on_store_restore_error_without_serving(
     assert log[:4] == ['verify', 'restore', 'ack', 'stop']
     assert 'serve' not in log
     assert 'checkpoint' not in log
-    assert set(log[4:]) == {'hatch.close', 'hello_sync.close', 'accessor.close', 'sandbox.close'}
+    assert set(log[4:]) == {
+        'hatch.close',
+        'hello_sync.close',
+        'evidence_sync.close',
+        'accessor.close',
+        'sandbox.close',
+    }
     assert acked['ack'] == ['value-for-ANTHROPIC_WORK_ID']
     assert acked['stop'] == ['value-for-ANTHROPIC_WORK_ID']
 
@@ -185,6 +198,7 @@ def test_serve_acks_and_stops_the_item_on_store_restore_error_without_serving(
         'ANTHROPIC_ENVIRONMENT_KEY',
         'THEMIS_STORE_URL',
         'THEMIS_HELLO_URL',
+        'THEMIS_EVIDENCE_URL',
         'ANTHROPIC_WORK_ID',
         'ANTHROPIC_ENVIRONMENT_ID',
         'ANTHROPIC_SESSION_ID',

@@ -28,13 +28,14 @@ import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2
 import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
 import type { Consequence, Provenance } from "../evidence/models/evidence_pb";
 import { file_themis_evidence_models_evidence } from "../evidence/models/evidence_pb";
+import { file_themis_rpc_sandbox_options } from "./sandbox_options_pb";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/vep.proto.
  */
 export const file_themis_rpc_vep: GenFile = /*@__PURE__*/
-  fileDesc("ChR0aGVtaXMvcnBjL3ZlcC5wcm90bxIOdGhlbWlzLnJwYy52ZXAiNgoPQW5ub3RhdGVSZXF1ZXN0Eg8KB3ZhcmlhbnQYASABKAkSEgoKcHJlZGljdG9ycxgCIAMoCSK2AQoQQW5ub3RhdGVSZXNwb25zZRJEChdtb3N0X3NldmVyZV9jb25zZXF1ZW5jZRgBIAEoDjIjLnRoZW1pcy5ldmlkZW5jZS5tb2RlbHMuQ29uc2VxdWVuY2USJAoDcmF3GA8gASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBI2Cgpwcm92ZW5hbmNlGBAgAygLMiIudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Qcm92ZW5hbmNlMlQKA1ZlcBJNCghBbm5vdGF0ZRIfLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVxdWVzdBogLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVzcG9uc2ViBnByb3RvMw", [file_google_protobuf_struct, file_themis_evidence_models_evidence]);
+  fileDesc("ChR0aGVtaXMvcnBjL3ZlcC5wcm90bxIOdGhlbWlzLnJwYy52ZXAiNgoPQW5ub3RhdGVSZXF1ZXN0Eg8KB3ZhcmlhbnQYASABKAkSEgoKcHJlZGljdG9ycxgCIAMoCSK2AQoQQW5ub3RhdGVSZXNwb25zZRJEChdtb3N0X3NldmVyZV9jb25zZXF1ZW5jZRgBIAEoDjIjLnRoZW1pcy5ldmlkZW5jZS5tb2RlbHMuQ29uc2VxdWVuY2USJAoDcmF3GA8gASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBI2Cgpwcm92ZW5hbmNlGBAgAygLMiIudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Qcm92ZW5hbmNlMlQKA1ZlcBJNCghBbm5vdGF0ZRIfLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVxdWVzdBogLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVzcG9uc2VCBJC1GAFiBnByb3RvMw", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
 
 /**
  * One VEP call carries several SVCv4 lines at once. Doc maps each to its code so the agent knows

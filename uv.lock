@@ -3541,6 +3541,7 @@ evidence = [
     { name = "requests" },
 ]
 guest = [
+    { name = "clinvar-proto" },
     { name = "grpcio" },
     { name = "protobuf" },
 ]
@@ -3621,6 +3622,7 @@ protoc = [
 sandbox-worker = [
     { name = "anthropic" },
     { name = "anyio" },
+    { name = "clinvar-proto" },
     { name = "google-auth" },
     { name = "grpcio" },
     { name = "postern", extra = ["grpc"] },
@@ -3765,6 +3767,7 @@ evidence = [
     { name = "requests" },
 ]
 guest = [
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "grpcio" },
     { name = "protobuf" },
 ]
@@ -3843,6 +3846,7 @@ protoc = [{ name = "grpcio-tools" }]
 sandbox-worker = [
     { name = "anthropic" },
     { name = "anyio" },
+    { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "google-auth" },
     { name = "grpcio" },
     { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },

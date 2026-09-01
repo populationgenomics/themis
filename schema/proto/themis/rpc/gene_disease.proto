@@ -31,7 +31,10 @@ package themis.rpc.gene_disease;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // The unit SVCv4 classifies is the MDE — gene x phenotype x inheritance x mechanism — and SM18
 // states the gate and the mechanism precondition per MDE, never per gene. So the message keeps the

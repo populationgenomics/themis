@@ -25,7 +25,10 @@ package themis.rpc.mavedb;
 
 import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
+import "themis/rpc/sandbox_options.proto";
 
+// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
+option (themis.rpc.agent_exposed) = true;
 
 // Finds the variant's deposited MAVE row through the ClinGen allele it registers, and returns the
 // calibration bin the row's score falls in, when the depositor deposited one (often absent). Doc

@@ -25,41 +25,43 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_models_dot_evidence__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/cspec.proto\x12\x10themis.rpc.cspec\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%themis/evidence/models/evidence.proto\")\n\x19ListSpecificationsRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\"\x81\x01\n\x0fSpecifiedEntity\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x1c\n\x14preferred_transcript\x18\x02 \x01(\t\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x15\n\rdisease_label\x18\x04 \x01(\t\x12\x19\n\x11inheritance_terms\x18\x05 \x03(\t\"\xf6\x01\n\x15SpecificationCitation\x12\x14\n\x0c\x64ocument_doi\x18\x01 \x01(\t\x12\x13\n\x0b\x63oncept_doi\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t\x12/\n\x0b\x61pproved_on\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12,\n\x08modified\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x15\n\rrelease_notes\x18\x06 \x01(\t\x12\x14\n\x0cregistry_url\x18\x07 \x01(\t\x12\x15\n\rpublisher_url\x18\x08 \x01(\t\"\x90\x01\n\x16SpecificationReference\x12\x11\n\tnamespace\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\r\n\x05title\x18\x04 \x01(\t\x12\x0f\n\x07\x61uthors\x18\x05 \x01(\t\x12\x0f\n\x07journal\x18\x06 \x01(\t\x12\x0c\n\x04year\x18\x07 \x01(\t\x12\x0b\n\x03\x64oi\x18\x08 \x01(\t\"/\n\rCriterionNote\x12\x0f\n\x07heading\x18\x01 \x01(\t\x12\r\n\x05lines\x18\x02 \x03(\t\"\x96\x02\n\x15StrengthSpecification\x12\x10\n\x08strength\x18\x01 \x01(\t\x12\x36\n\rapplicability\x18\x02 \x01(\x0e\x32\x1f.themis.rpc.cspec.Applicability\x12\x1a\n\x12\x61pplicability_term\x18\x03 \x01(\t\x12\x0c\n\x04text\x18\x04 \x01(\t\x12\x14\n\x0cinstructions\x18\x05 \x03(\t\x12.\n\x05notes\x18\x06 \x03(\x0b\x32\x1f.themis.rpc.cspec.CriterionNote\x12\x1b\n\x13specification_types\x18\x07 \x03(\t\x12\x0e\n\x06status\x18\x08 \x01(\t\x12\x16\n\x0e\x64\x65\x66\x61ult_points\x18\t \x01(\t\"\xd0\x03\n\x16\x43riterionSpecification\x12\x0c\n\x04\x63ode\x18\x01 \x01(\t\x12\r\n\x05genes\x18\x02 \x03(\t\x12\x10\n\x08\x64iseases\x18\x03 \x03(\t\x12\x36\n\rapplicability\x18\x04 \x01(\x0e\x32\x1f.themis.rpc.cspec.Applicability\x12\x1a\n\x12\x61pplicability_term\x18\x05 \x01(\t\x12\x15\n\rbase_strength\x18\x06 \x01(\t\x12\x18\n\x10\x64\x65\x66\x61ult_strength\x18\x07 \x01(\t\x12\x19\n\x11\x65vidence_category\x18\x08 \x01(\t\x12\x1d\n\x15original_acmg_summary\x18\t \x01(\t\x12\x14\n\x0cinstructions\x18\n \x03(\t\x12\x1b\n\x13\x61\x64\x64itional_comments\x18\x0b \x01(\t\x12<\n\nreferences\x18\x0c \x03(\x0b\x32(.themis.rpc.cspec.SpecificationReference\x12\x1b\n\x13specification_types\x18\x0e \x03(\t\x12:\n\tstrengths\x18\r \x03(\x0b\x32\'.themis.rpc.cspec.StrengthSpecification\"\x8e\x01\n\x17SpecificationAttachment\x12\r\n\x05label\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x11\n\tfile_name\x18\x03 \x01(\t\x12\x12\n\nmedia_type\x18\x04 \x01(\t\x12\x12\n\nsize_bytes\x18\x05 \x01(\x03\x12\x14\n\x0cregistry_url\x18\x06 \x01(\t\"\x86\x04\n\x11VcepSpecification\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0bshort_title\x18\x03 \x01(\t\x12\x35\n\x06status\x18\x04 \x01(\x0e\x32%.themis.rpc.cspec.SpecificationStatus\x12\r\n\x05state\x18\x05 \x01(\t\x12\x14\n\x0c\x65xpert_panel\x18\x06 \x01(\t\x12!\n\x19\x65xpert_panel_abbreviation\x18\x07 \x01(\t\x12\x39\n\x08\x63itation\x18\x08 \x01(\x0b\x32\'.themis.rpc.cspec.SpecificationCitation\x12\x33\n\x08\x65ntities\x18\t \x03(\x0b\x32!.themis.rpc.cspec.SpecifiedEntity\x12\x18\n\x10general_comments\x18\n \x01(\t\x12<\n\nreferences\x18\x0b \x03(\x0b\x32(.themis.rpc.cspec.SpecificationReference\x12:\n\x08\x63riteria\x18\x0c \x03(\x0b\x32(.themis.rpc.cspec.CriterionSpecification\x12>\n\x0b\x61ttachments\x18\r \x03(\x0b\x32).themis.rpc.cspec.SpecificationAttachment\"\xf2\x01\n\x1aListSpecificationsResponse\x12;\n\x0especifications\x18\x01 \x03(\x0b\x32#.themis.rpc.cspec.VcepSpecification\x12\x39\n\x08\x63overage\x18\x02 \x01(\x0e\x32\'.themis.rpc.cspec.SpecificationCoverage\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance*\xba\x01\n\x15SpecificationCoverage\x12&\n\"SPECIFICATION_COVERAGE_UNSPECIFIED\x10\x00\x12$\n SPECIFICATION_COVERAGE_SPECIFIED\x10\x01\x12+\n\'SPECIFICATION_COVERAGE_NO_SPECIFICATION\x10\x02\x12&\n\"SPECIFICATION_COVERAGE_GENE_ABSENT\x10\x03*\x84\x02\n\x13SpecificationStatus\x12$\n SPECIFICATION_STATUS_UNSPECIFIED\x10\x00\x12!\n\x1dSPECIFICATION_STATUS_IN_FORCE\x10\x01\x12!\n\x1dSPECIFICATION_STATUS_REPLACED\x10\x02\x12*\n&SPECIFICATION_STATUS_NOT_YET_EFFECTIVE\x10\x03\x12#\n\x1fSPECIFICATION_STATUS_UNRELEASED\x10\x04\x12\x30\n,SPECIFICATION_STATUS_RELEASED_UNDER_REVISION\x10\x05*\xda\x01\n\rApplicability\x12\x1d\n\x19\x41PPLICABILITY_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x41PPLICABILITY_APPLICABLE\x10\x01\x12 \n\x1c\x41PPLICABILITY_NOT_APPLICABLE\x10\x02\x12\x34\n0APPLICABILITY_APPLICABLE_WITH_VCEP_SPECIFICATION\x10\x03\x12\x34\n0APPLICABILITY_APPLICABLE_AS_ORIGINALLY_DESCRIBED\x10\x04\x32x\n\x05\x43spec\x12o\n\x12ListSpecifications\x12+.themis.rpc.cspec.ListSpecificationsRequest\x1a,.themis.rpc.cspec.ListSpecificationsResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/cspec.proto\x12\x10themis.rpc.cspec\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\")\n\x19ListSpecificationsRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\"\x81\x01\n\x0fSpecifiedEntity\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x1c\n\x14preferred_transcript\x18\x02 \x01(\t\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x15\n\rdisease_label\x18\x04 \x01(\t\x12\x19\n\x11inheritance_terms\x18\x05 \x03(\t\"\xf6\x01\n\x15SpecificationCitation\x12\x14\n\x0c\x64ocument_doi\x18\x01 \x01(\t\x12\x13\n\x0b\x63oncept_doi\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t\x12/\n\x0b\x61pproved_on\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12,\n\x08modified\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x15\n\rrelease_notes\x18\x06 \x01(\t\x12\x14\n\x0cregistry_url\x18\x07 \x01(\t\x12\x15\n\rpublisher_url\x18\x08 \x01(\t\"\x90\x01\n\x16SpecificationReference\x12\x11\n\tnamespace\x18\x01 \x01(\t\x12\n\n\x02id\x18\x02 \x01(\t\x12\x0b\n\x03url\x18\x03 \x01(\t\x12\r\n\x05title\x18\x04 \x01(\t\x12\x0f\n\x07\x61uthors\x18\x05 \x01(\t\x12\x0f\n\x07journal\x18\x06 \x01(\t\x12\x0c\n\x04year\x18\x07 \x01(\t\x12\x0b\n\x03\x64oi\x18\x08 \x01(\t\"/\n\rCriterionNote\x12\x0f\n\x07heading\x18\x01 \x01(\t\x12\r\n\x05lines\x18\x02 \x03(\t\"\x96\x02\n\x15StrengthSpecification\x12\x10\n\x08strength\x18\x01 \x01(\t\x12\x36\n\rapplicability\x18\x02 \x01(\x0e\x32\x1f.themis.rpc.cspec.Applicability\x12\x1a\n\x12\x61pplicability_term\x18\x03 \x01(\t\x12\x0c\n\x04text\x18\x04 \x01(\t\x12\x14\n\x0cinstructions\x18\x05 \x03(\t\x12.\n\x05notes\x18\x06 \x03(\x0b\x32\x1f.themis.rpc.cspec.CriterionNote\x12\x1b\n\x13specification_types\x18\x07 \x03(\t\x12\x0e\n\x06status\x18\x08 \x01(\t\x12\x16\n\x0e\x64\x65\x66\x61ult_points\x18\t \x01(\t\"\xd0\x03\n\x16\x43riterionSpecification\x12\x0c\n\x04\x63ode\x18\x01 \x01(\t\x12\r\n\x05genes\x18\x02 \x03(\t\x12\x10\n\x08\x64iseases\x18\x03 \x03(\t\x12\x36\n\rapplicability\x18\x04 \x01(\x0e\x32\x1f.themis.rpc.cspec.Applicability\x12\x1a\n\x12\x61pplicability_term\x18\x05 \x01(\t\x12\x15\n\rbase_strength\x18\x06 \x01(\t\x12\x18\n\x10\x64\x65\x66\x61ult_strength\x18\x07 \x01(\t\x12\x19\n\x11\x65vidence_category\x18\x08 \x01(\t\x12\x1d\n\x15original_acmg_summary\x18\t \x01(\t\x12\x14\n\x0cinstructions\x18\n \x03(\t\x12\x1b\n\x13\x61\x64\x64itional_comments\x18\x0b \x01(\t\x12<\n\nreferences\x18\x0c \x03(\x0b\x32(.themis.rpc.cspec.SpecificationReference\x12\x1b\n\x13specification_types\x18\x0e \x03(\t\x12:\n\tstrengths\x18\r \x03(\x0b\x32\'.themis.rpc.cspec.StrengthSpecification\"\x8e\x01\n\x17SpecificationAttachment\x12\r\n\x05label\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x11\n\tfile_name\x18\x03 \x01(\t\x12\x12\n\nmedia_type\x18\x04 \x01(\t\x12\x12\n\nsize_bytes\x18\x05 \x01(\x03\x12\x14\n\x0cregistry_url\x18\x06 \x01(\t\"\x86\x04\n\x11VcepSpecification\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0bshort_title\x18\x03 \x01(\t\x12\x35\n\x06status\x18\x04 \x01(\x0e\x32%.themis.rpc.cspec.SpecificationStatus\x12\r\n\x05state\x18\x05 \x01(\t\x12\x14\n\x0c\x65xpert_panel\x18\x06 \x01(\t\x12!\n\x19\x65xpert_panel_abbreviation\x18\x07 \x01(\t\x12\x39\n\x08\x63itation\x18\x08 \x01(\x0b\x32\'.themis.rpc.cspec.SpecificationCitation\x12\x33\n\x08\x65ntities\x18\t \x03(\x0b\x32!.themis.rpc.cspec.SpecifiedEntity\x12\x18\n\x10general_comments\x18\n \x01(\t\x12<\n\nreferences\x18\x0b \x03(\x0b\x32(.themis.rpc.cspec.SpecificationReference\x12:\n\x08\x63riteria\x18\x0c \x03(\x0b\x32(.themis.rpc.cspec.CriterionSpecification\x12>\n\x0b\x61ttachments\x18\r \x03(\x0b\x32).themis.rpc.cspec.SpecificationAttachment\"\xf2\x01\n\x1aListSpecificationsResponse\x12;\n\x0especifications\x18\x01 \x03(\x0b\x32#.themis.rpc.cspec.VcepSpecification\x12\x39\n\x08\x63overage\x18\x02 \x01(\x0e\x32\'.themis.rpc.cspec.SpecificationCoverage\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance*\xba\x01\n\x15SpecificationCoverage\x12&\n\"SPECIFICATION_COVERAGE_UNSPECIFIED\x10\x00\x12$\n SPECIFICATION_COVERAGE_SPECIFIED\x10\x01\x12+\n\'SPECIFICATION_COVERAGE_NO_SPECIFICATION\x10\x02\x12&\n\"SPECIFICATION_COVERAGE_GENE_ABSENT\x10\x03*\x84\x02\n\x13SpecificationStatus\x12$\n SPECIFICATION_STATUS_UNSPECIFIED\x10\x00\x12!\n\x1dSPECIFICATION_STATUS_IN_FORCE\x10\x01\x12!\n\x1dSPECIFICATION_STATUS_REPLACED\x10\x02\x12*\n&SPECIFICATION_STATUS_NOT_YET_EFFECTIVE\x10\x03\x12#\n\x1fSPECIFICATION_STATUS_UNRELEASED\x10\x04\x12\x30\n,SPECIFICATION_STATUS_RELEASED_UNDER_REVISION\x10\x05*\xda\x01\n\rApplicability\x12\x1d\n\x19\x41PPLICABILITY_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x41PPLICABILITY_APPLICABLE\x10\x01\x12 \n\x1c\x41PPLICABILITY_NOT_APPLICABLE\x10\x02\x12\x34\n0APPLICABILITY_APPLICABLE_WITH_VCEP_SPECIFICATION\x10\x03\x12\x34\n0APPLICABILITY_APPLICABLE_AS_ORIGINALLY_DESCRIBED\x10\x04\x32x\n\x05\x43spec\x12o\n\x12ListSpecifications\x12+.themis.rpc.cspec.ListSpecificationsRequest\x1a,.themis.rpc.cspec.ListSpecificationsResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.cspec_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_SPECIFICATIONCOVERAGE']._serialized_start=2426
-  _globals['_SPECIFICATIONCOVERAGE']._serialized_end=2612
-  _globals['_SPECIFICATIONSTATUS']._serialized_start=2615
-  _globals['_SPECIFICATIONSTATUS']._serialized_end=2875
-  _globals['_APPLICABILITY']._serialized_start=2878
-  _globals['_APPLICABILITY']._serialized_end=3096
-  _globals['_LISTSPECIFICATIONSREQUEST']._serialized_start=146
-  _globals['_LISTSPECIFICATIONSREQUEST']._serialized_end=187
-  _globals['_SPECIFIEDENTITY']._serialized_start=190
-  _globals['_SPECIFIEDENTITY']._serialized_end=319
-  _globals['_SPECIFICATIONCITATION']._serialized_start=322
-  _globals['_SPECIFICATIONCITATION']._serialized_end=568
-  _globals['_SPECIFICATIONREFERENCE']._serialized_start=571
-  _globals['_SPECIFICATIONREFERENCE']._serialized_end=715
-  _globals['_CRITERIONNOTE']._serialized_start=717
-  _globals['_CRITERIONNOTE']._serialized_end=764
-  _globals['_STRENGTHSPECIFICATION']._serialized_start=767
-  _globals['_STRENGTHSPECIFICATION']._serialized_end=1045
-  _globals['_CRITERIONSPECIFICATION']._serialized_start=1048
-  _globals['_CRITERIONSPECIFICATION']._serialized_end=1512
-  _globals['_SPECIFICATIONATTACHMENT']._serialized_start=1515
-  _globals['_SPECIFICATIONATTACHMENT']._serialized_end=1657
-  _globals['_VCEPSPECIFICATION']._serialized_start=1660
-  _globals['_VCEPSPECIFICATION']._serialized_end=2178
-  _globals['_LISTSPECIFICATIONSRESPONSE']._serialized_start=2181
-  _globals['_LISTSPECIFICATIONSRESPONSE']._serialized_end=2423
-  _globals['_CSPEC']._serialized_start=3098
-  _globals['_CSPEC']._serialized_end=3218
+  _globals['DESCRIPTOR']._loaded_options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  _globals['_SPECIFICATIONCOVERAGE']._serialized_start=2460
+  _globals['_SPECIFICATIONCOVERAGE']._serialized_end=2646
+  _globals['_SPECIFICATIONSTATUS']._serialized_start=2649
+  _globals['_SPECIFICATIONSTATUS']._serialized_end=2909
+  _globals['_APPLICABILITY']._serialized_start=2912
+  _globals['_APPLICABILITY']._serialized_end=3130
+  _globals['_LISTSPECIFICATIONSREQUEST']._serialized_start=180
+  _globals['_LISTSPECIFICATIONSREQUEST']._serialized_end=221
+  _globals['_SPECIFIEDENTITY']._serialized_start=224
+  _globals['_SPECIFIEDENTITY']._serialized_end=353
+  _globals['_SPECIFICATIONCITATION']._serialized_start=356
+  _globals['_SPECIFICATIONCITATION']._serialized_end=602
+  _globals['_SPECIFICATIONREFERENCE']._serialized_start=605
+  _globals['_SPECIFICATIONREFERENCE']._serialized_end=749
+  _globals['_CRITERIONNOTE']._serialized_start=751
+  _globals['_CRITERIONNOTE']._serialized_end=798
+  _globals['_STRENGTHSPECIFICATION']._serialized_start=801
+  _globals['_STRENGTHSPECIFICATION']._serialized_end=1079
+  _globals['_CRITERIONSPECIFICATION']._serialized_start=1082
+  _globals['_CRITERIONSPECIFICATION']._serialized_end=1546
+  _globals['_SPECIFICATIONATTACHMENT']._serialized_start=1549
+  _globals['_SPECIFICATIONATTACHMENT']._serialized_end=1691
+  _globals['_VCEPSPECIFICATION']._serialized_start=1694
+  _globals['_VCEPSPECIFICATION']._serialized_end=2212
+  _globals['_LISTSPECIFICATIONSRESPONSE']._serialized_start=2215
+  _globals['_LISTSPECIFICATIONSRESPONSE']._serialized_end=2457
+  _globals['_CSPEC']._serialized_start=3132
+  _globals['_CSPEC']._serialized_end=3252
 # @@protoc_insertion_point(module_scope)

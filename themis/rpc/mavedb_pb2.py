@@ -24,19 +24,21 @@ _sym_db = _symbol_database.Default()
 
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_models_dot_evidence__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/mavedb.proto\x12\x11themis.rpc.mavedb\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\")\n\x16\x44\x65scribeVariantRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\"\xf4\x01\n\x17\x44\x65scribeVariantResponse\x12\x1b\n\x0eoddspath_ratio\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x16\n\x0e\x61\x63mg_criterion\x18\x02 \x01(\t\x12\x15\n\racmg_strength\x18\x03 \x01(\t\x12\x12\n\x05score\x18\x04 \x01(\x01H\x01\x88\x01\x01\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.ProvenanceB\x11\n\x0f_oddspath_ratioB\x08\n\x06_score2r\n\x06MaveDb\x12h\n\x0f\x44\x65scribeVariant\x12).themis.rpc.mavedb.DescribeVariantRequest\x1a*.themis.rpc.mavedb.DescribeVariantResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17themis/rpc/mavedb.proto\x12\x11themis.rpc.mavedb\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\")\n\x16\x44\x65scribeVariantRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\"\xf4\x01\n\x17\x44\x65scribeVariantResponse\x12\x1b\n\x0eoddspath_ratio\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x16\n\x0e\x61\x63mg_criterion\x18\x02 \x01(\t\x12\x15\n\racmg_strength\x18\x03 \x01(\t\x12\x12\n\x05score\x18\x04 \x01(\x01H\x01\x88\x01\x01\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.ProvenanceB\x11\n\x0f_oddspath_ratioB\x08\n\x06_score2r\n\x06MaveDb\x12h\n\x0f\x44\x65scribeVariant\x12).themis.rpc.mavedb.DescribeVariantRequest\x1a*.themis.rpc.mavedb.DescribeVariantResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.mavedb_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_DESCRIBEVARIANTREQUEST']._serialized_start=115
-  _globals['_DESCRIBEVARIANTREQUEST']._serialized_end=156
-  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_start=159
-  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_end=403
-  _globals['_MAVEDB']._serialized_start=405
-  _globals['_MAVEDB']._serialized_end=519
+  _globals['DESCRIPTOR']._loaded_options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  _globals['_DESCRIBEVARIANTREQUEST']._serialized_start=149
+  _globals['_DESCRIBEVARIANTREQUEST']._serialized_end=190
+  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_start=193
+  _globals['_DESCRIBEVARIANTRESPONSE']._serialized_end=437
+  _globals['_MAVEDB']._serialized_start=439
+  _globals['_MAVEDB']._serialized_end=553
 # @@protoc_insertion_point(module_scope)
