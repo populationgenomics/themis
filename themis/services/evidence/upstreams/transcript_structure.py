@@ -481,6 +481,16 @@ def genomic_span_of_cds_range(result: TranscriptStructureResult, start: int, end
     return evidence_pb2.GenomicSpan(start=min(projected), end=max(projected))
 
 
+def _gene2transcripts_url(*segments: str) -> str:
+    """The gene2transcripts_v2 route, every segment percent-encoded.
+
+    Unencoded, a `/`, `?`, `#` or `../` in caller text truncates the path or walks it onto another
+    of VariantValidator's endpoints, which answers about something else.
+    """
+    path = '/'.join(urllib.parse.quote(segment, safe='') for segment in segments)
+    return f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{path}'
+
+
 async def fetch_transcript_structure(
     transcript: str, genome_build: str, *, http_client: httpx2.AsyncClient
 ) -> TranscriptStructureResult:
@@ -504,8 +514,7 @@ async def fetch_transcript_structure(
             carries no caller input, so its failure is never a refusal — returns any non-2xx.
         ValueError: If a response is structurally malformed.
     """
-    quoted = urllib.parse.quote(transcript, safe='')
-    url = f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{quoted}/{quoted}/refseq/{genome_build}'
+    url = _gene2transcripts_url(transcript, transcript, 'refseq', genome_build)
     params = {'content-type': 'application/json', 'show_exon_info': 'true'}
     structure, metadata = await asyncio.gather(
         http_client.get(url, params=params, headers={'Accept': 'application/json'}, timeout=_TIMEOUT_SECONDS),
@@ -751,11 +760,7 @@ async def fetch_gene_transcripts(
         ValueError: If a response is structurally malformed.
     """
     params = {'content-type': 'application/json', 'show_exon_info': 'true'}
-    quoted = urllib.parse.quote(gene, safe='')
-    urls = [
-        f'{_BASE_URL}/VariantValidator/tools/gene2transcripts_v2/{quoted}/all/{annotation_set}/{genome_build}'
-        for annotation_set in _ANNOTATION_SETS
-    ]
+    urls = [_gene2transcripts_url(gene, 'all', annotation_set, genome_build) for annotation_set in _ANNOTATION_SETS]
     metadata, *responses = await asyncio.gather(
         http_client.get(f'{_BASE_URL}/hello/', headers={'Accept': 'application/json'}, timeout=_TIMEOUT_SECONDS),
         *(

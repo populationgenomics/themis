@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 from collections.abc import Awaitable, Callable
 
@@ -67,6 +68,12 @@ async def _serve() -> None:
 
 
 def main() -> None:
+    # `httpx2` at INFO is the record of every upstream call: method, full URL, status. Root stays at
+    # WARNING so google.auth, grpc and urllib3 do not come with it.
+    logging.basicConfig(level=logging.WARNING)
+    level = os.environ.get('THEMIS_LOG', 'INFO')
+    logging.getLogger('themis').setLevel(level)
+    logging.getLogger('httpx2').setLevel(level)
     asyncio.run(_serve())
 
 

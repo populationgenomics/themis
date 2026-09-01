@@ -193,8 +193,8 @@ async def fetch_variant_validator(
         errors.UnknownVariantError: If the response carries no transcript variant.
         ValueError: If the response is not a JSON object.
     """
-    quoted = urllib.parse.quote(variant, safe='')
-    url = f'{_BASE_URL}/{genome_build}/{quoted}/{select_transcripts}'
+    path = '/'.join(urllib.parse.quote(segment, safe='') for segment in (genome_build, variant, select_transcripts))
+    url = f'{_BASE_URL}/{path}'
     response = await http_client.get(url, headers={'Accept': 'application/json'}, timeout=_TIMEOUT_SECONDS)
     errors.raise_for_status(response, upstream=_SOURCE, subject=f'{variant!r} on {genome_build}')
     payload = response.json()

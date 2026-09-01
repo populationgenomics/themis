@@ -128,17 +128,27 @@ is cheap; the exposed *service* is what carries the risk: the untrusted agent ca
 every exposed RPC must be written to assume a hostile caller.
 
 The condition a file has to meet, and go on meeting, is that **every RPC it defines admits only a verified session
-before it does any of the caller's work, and nothing it then does on the caller's behalf is unbounded in cost.** The
-token is not always a scope — the evidence corpus is public, so there the check is authorization alone — but it is
-always the gate. `store` and `auth` fail the condition plainly: they are not written against a hostile caller at all.
+before it does any of the caller's work; nothing it then does on the caller's behalf is unbounded in cost; and every
+outbound request it makes carrying the caller's text is destination-fixed and query-only.** The token is not always a
+scope — the evidence corpus is public, so there the check is authorization alone — but it is always the gate. `store`
+and `auth` fail the condition plainly: they are not written against a hostile caller at all.
 
-`literature` fails it for a sharper reason worth naming, because its proto and servicer sit in the same deployment the
-hatch already dials, so nothing but the condition keeps it out. Most of its RPCs resolve no session at all. The one that
-does, `MaybeIngestPapers`, resolves one only at its enqueue step — by which point it has already run the caller's
-crosswalk lookups and readiness reads. That placement is right for a trusted caller, where the question is who pays for
-the conversion; it is the wrong shape for a hostile one, who is answered work for free and needs no enqueue to be worth
-their while. What would qualify the file is its RPCs coming to gate at the door rather than at the expensive step — not
-a rework landing.
+The third clause is where the agent's one path to a third party is decided, and it is worth being explicit about why it
+sits here rather than at the hatch. The guest process has no network of its own; an exposed RPC reaching a public
+database is the only way anything the agent composes leaves the perimeter. What keeps that from being an exfiltration
+channel is a property of the RPC's own code — the destination comes from constants and the caller's text is a
+percent-encoded parameter selecting the response, never a host, a route, or content the upstream stores for someone else
+to read. The forwarder cannot check any of this, and the criterion, the shapes that violate it and the residuals it
+leaves are [`security.md`](security.md) §What counts as an exfiltration channel. An RPC whose reach is a URL built from
+data rather than from a constant does not qualify for exposure.
+
+`literature` fails the condition for a sharper reason worth naming, because its proto and servicer sit in the same
+deployment the hatch already dials, so nothing but the condition keeps it out. Most of its RPCs resolve no session at
+all. The one that does, `MaybeIngestPapers`, resolves one only at its enqueue step — by which point it has already run
+the caller's crosswalk lookups and readiness reads. That placement is right for a trusted caller, where the question is
+who pays for the conversion; it is the wrong shape for a hostile one, who is answered work for free and needs no enqueue
+to be worth their while. What would qualify the file is its RPCs coming to gate at the door rather than at the expensive
+step — not a rework landing.
 
 Sharing an RPC with a trusted caller is fine while its *response* does not differ by caller trust; the evidence RPCs
 answer the web tier's backend and the agent identically. What is barred is an RPC whose response would have to be

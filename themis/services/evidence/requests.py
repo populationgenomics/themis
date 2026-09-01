@@ -15,8 +15,7 @@ import re
 from themis.services.evidence import errors
 
 # Coding accessions only: the exon table is reported in c. coordinates and the splice outcome is
-# translated from the CDS, neither of which an NR_ transcript has. The digit run is bounded so a
-# pathological accession cannot pass the check and go on to fill an upstream URL.
+# translated from the CDS, neither of which an NR_ transcript has.
 _TRANSCRIPT_ACCESSION = re.compile(r'NM_\d{1,15}\.\d{1,5}')
 _GENOME_BUILDS = ('GRCh38', 'GRCh37')
 

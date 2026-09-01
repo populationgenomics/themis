@@ -8,6 +8,7 @@ import copy
 import itertools
 import json
 import pathlib
+import urllib.parse
 from collections.abc import Callable
 
 import httpx2
@@ -581,18 +582,20 @@ def test_a_c_position_before_the_transcript_is_refused() -> None:
         transcript_structure.genomic_span_of_cds_range(_nf1(), -10_000_000, 100)
 
 
-def _requested_paths(accession: str, gene: str) -> list[str]:
-    """The wire-form URL paths both fetches build, for identifiers that would restructure an unencoded path.
+def _requested_paths(accession: str, gene: str) -> list[list[str]]:
+    """The path segments both fetches put on the wire, split first and decoded after.
 
-    `url.path` is percent-decoded, so it reads the same whether or not the segment was encoded; `raw_path`
-    is what actually goes on the wire.
+    `url.path` is percent-decoded, so it reads the same whether or not the segment was encoded, and
+    splitting it cannot tell a segment that contains a `/` from one that ended at it; `raw_path` is
+    what actually goes on the wire. `/hello/` carries no caller input, so it is left out.
     """
-    seen: list[str] = []
+    seen: list[list[str]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(request.url.raw_path.decode().split('?')[0])
         if request.url.path == '/hello/':
             return httpx2.Response(200, json=_METADATA)
+        path = request.url.raw_path.split(b'?', 1)[0].decode()
+        seen.append([urllib.parse.unquote(segment) for segment in path.lstrip('/').split('/')])
         return httpx2.Response(200, json=_NF1 if accession in request.url.path else _GENE_REFSEQ)
 
     async def run() -> None:
@@ -611,12 +614,16 @@ def _requested_paths(accession: str, gene: str) -> list[str]:
 def test_an_identifier_cannot_restructure_the_request_path() -> None:
     """Both identifiers reach here as the caller wrote them, and the sandbox agent is one of the callers.
 
-    A `/` or a `..` left unencoded moves the query to a different endpoint of the same host, so the segment
-    has to survive as one segment whatever it contains.
+    Unencoded, a `/` or a `..` moves the query onto another endpoint of the same host and a `#` or a
+    `?` cuts the path back to a prefix — either way the upstream answers a question the caller did
+    not ask, on a route we no longer chose.
     """
-    paths = _requested_paths('NM_1.1/../../hello', 'PCSK9/..%2f..')
-    assert paths, 'no request was issued'
-    for path in paths:
-        assert '/..' not in path, f'an identifier escaped its path segment: {path}'
-    # The endpoint each query names is still gene2transcripts_v2 (or the unparameterised /hello/ metadata call).
-    assert all(path == '/hello/' or 'gene2transcripts_v2' in path for path in paths), paths
+    accession, gene = 'NM_1.1/../../hello', 'PCSK9#x/..%2f..'
+    route = ['VariantValidator', 'tools', 'gene2transcripts_v2']
+    assert sorted(_requested_paths(accession, gene)) == sorted(
+        [
+            [*route, accession, accession, 'refseq', 'GRCh38'],
+            [*route, gene, 'all', 'refseq', 'GRCh38'],
+            [*route, gene, 'all', 'ensembl', 'GRCh38'],
+        ]
+    )

@@ -1,10 +1,16 @@
-"""Per-environment baseline: enabled GCP services and the image registry.
+"""Per-environment baseline: enabled GCP services, the image registry, log retention.
 
 What every Themis service in an environment needs before it can be created —
 the GCP APIs the program calls, and the Artifact Registry repository its images
 are pushed to and deployed from. Standing this up first lets later concern
 modules (`web`, and database/storage/audit as they land) depend on a single
 `Baseline` rather than each re-enabling services.
+
+Log retention is here for the same reason: it is a property of the environment,
+not of any one service. The window is set to match the audit-log bucket rather
+than the 30-day default, so a question asked months later about what a service
+sent upstream (`docs/design/security.md`, the timing residual) can still be
+answered from the record.
 """
 
 from __future__ import annotations
@@ -28,7 +34,11 @@ _REQUIRED_SERVICES = (
     'dataflow.googleapis.com',
     'cloudtasks.googleapis.com',
     'cloudscheduler.googleapis.com',
+    'logging.googleapis.com',
 )
+
+# What `_Required` holds admin-activity audit logs for; no reason to keep the rest for less.
+_LOG_RETENTION_DAYS = 400
 
 
 class Baseline(pulumi.ComponentResource):
@@ -79,6 +89,15 @@ class Baseline(pulumi.ComponentResource):
             region,
             project,
             self.image_registry.repository_id,
+        )
+
+        gcp.logging.ProjectBucketConfig(
+            'themis-default-logs',
+            project=project,
+            location='global',  # `_Default` is a global bucket; a regional location would not address it
+            bucket_id='_Default',
+            retention_days=_LOG_RETENTION_DAYS,
+            opts=services_ready,
         )
 
         self.register_outputs({'image_prefix': self.image_prefix})

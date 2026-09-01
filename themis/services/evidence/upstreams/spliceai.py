@@ -23,8 +23,10 @@ import httpx2
 from themis.services.evidence import errors
 
 _SOURCE = 'Broad SpliceAI + Pangolin'
-_SPLICEAI_HOST = 'https://spliceai-{hg}-xwkwwwxdwq-uc.a.run.app/spliceai/'
-_PANGOLIN_HOST = 'https://pangolin-{hg}-xwkwwwxdwq-uc.a.run.app/pangolin/'
+_SPLICEAI_GRCH38_URL = 'https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/'
+_SPLICEAI_GRCH37_URL = 'https://spliceai-37-xwkwwwxdwq-uc.a.run.app/spliceai/'
+_PANGOLIN_GRCH38_URL = 'https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/'
+_PANGOLIN_GRCH37_URL = 'https://pangolin-37-xwkwwwxdwq-uc.a.run.app/pangolin/'
 _SPLICEAI_GAIN_KEYS = ('DS_AG', 'DS_DG')
 _SPLICEAI_LOSS_KEYS = ('DS_AL', 'DS_DL')
 _PANGOLIN_GAIN_KEYS = ('DS_SG',)
@@ -70,11 +72,12 @@ class SpliceResult:
     query: str
 
 
-def _hg(genome_build: str) -> str:
+def _endpoints(genome_build: str) -> tuple[str, str, str]:
+    """The assembly tag both services take, and their two endpoints for it."""
     if genome_build == 'GRCh38':
-        return '38'
+        return '38', _SPLICEAI_GRCH38_URL, _PANGOLIN_GRCH38_URL
     if genome_build == 'GRCh37':
-        return '37'
+        return '37', _SPLICEAI_GRCH37_URL, _PANGOLIN_GRCH37_URL
     raise ValueError(f'unsupported genome build {genome_build!r}; expected GRCh38 or GRCh37')
 
 
@@ -193,18 +196,12 @@ async def fetch_splice(variant: str, genome_build: str, *, http_client: httpx2.A
         errors.InvalidRequestError: If either service could not parse `variant`.
         errors.UnknownVariantError: If either scored nothing at a position it did parse.
     """
-    hg = _hg(genome_build)
+    hg, spliceai_url, pangolin_url = _endpoints(genome_build)
     normalized = variant if variant.startswith('chr') else f'chr{variant}'
     spliceai_payload, spliceai_query = await _fetch(
-        http_client,
-        _SPLICEAI_HOST.format(hg=hg),
-        {'variant': normalized, 'hg': hg, 'distance': 50, 'mask': 0},
+        http_client, spliceai_url, {'variant': normalized, 'hg': hg, 'distance': 50, 'mask': 0}
     )
-    pangolin_payload, pangolin_query = await _fetch(
-        http_client,
-        _PANGOLIN_HOST.format(hg=hg),
-        {'variant': normalized, 'hg': hg},
-    )
+    pangolin_payload, pangolin_query = await _fetch(http_client, pangolin_url, {'variant': normalized, 'hg': hg})
     spliceai_scores = _scores(spliceai_payload, predictor='SpliceAI', variant=normalized)
     pangolin_scores = _scores(pangolin_payload, predictor='Pangolin', variant=normalized)
     return SpliceResult(

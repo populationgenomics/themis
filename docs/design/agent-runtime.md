@@ -119,13 +119,15 @@ third-party text that can carry instructions injected to steer the model's tool 
 runtime treats that text as data, not instructions; it adds no separate instruction/data filter and relies on two
 properties the rest of the design already buys:
 
-- **Typed tool surface** — tools take constrained arguments (enums, not free-form strings — PRODUCT §9,
+- **Typed tool surface** — tools take constrained arguments (enums where the domain is finite, per PRODUCT §9,
   [`tool-surface.md`](tool-surface.md)), so an injected instruction cannot widen what a tool reads or what
-  `record_claim` / `record_gap` / `record_verdict` persists; at most it supplies in-vocabulary values, which the trace
-  still attributes to their source.
-- **Nothing to exfiltrate to** — the sandbox holds no GCP identity and runs under the egress policy (data-plane
-  mediation, [`spike-infrastructure.md`](spike-infrastructure.md) §8), so a steered call reaches neither private data
-  nor an open channel.
+  `record_claim` / `record_gap` / `record_verdict` persists; at most it supplies values the contract admits, which the
+  trace still attributes to their source. An identifier with no finite domain — an HGVS descriptor, a gene symbol —
+  stays a string, and what bounds it is where the service may put it, not what it looks like.
+- **No attacker-chosen destination** — the sandbox holds no GCP identity and no network of its own, so every outbound
+  hop is one of our services making the request on the agent's behalf. A steered call therefore reaches neither private
+  data nor a destination of the attacker's choosing: what an exposed rpc may dial comes from its own code, which is the
+  criterion in [`security.md`](security.md) §What counts as an exfiltration channel.
 
 The fresh-context reviewer is a partial backstop: it can reject a verdict the evidence does not support, but not an
 injected tool call mid-gather. Hardening the injection leg beyond this is tool-surface design, owned by

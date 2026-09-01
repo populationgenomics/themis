@@ -170,7 +170,9 @@ The worker registers one forwarding servicer per exposed service. Each injects t
 and forwards over a channel carrying the worker's own service identity. So the guest holds no credential it could
 exfiltrate and knows no upstream address it could try to reach directly: it names a method, and the trusted side decides
 what that means. One channel is held per upstream *deployment* rather than per service, since a deployment may serve
-several interfaces ([`services.md`](services.md)).
+several interfaces ([`services.md`](services.md)). What the trusted side then does on the guest's behalf can itself
+reach a third party, which is why an rpc qualifies for exposure only if its own outbound calls are destination-fixed and
+query-only ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security).
 
 ### The data path is the trusted worker's
 

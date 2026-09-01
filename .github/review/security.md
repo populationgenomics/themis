@@ -45,17 +45,35 @@ offending content briefly, and suggest a concrete remediation.
   model treats the content as instructions. Evidence text from the curated upstreams reaching the analysis agent's
   context is not a finding by itself — the agent is curator-steered and its output is a report the curator reads, so
   injected text holds no more power than the curator's own steering. Flag an injection path only where it crosses a
-  capability boundary: an egress or exfiltration channel, a tool call outside the sandbox allowlist, or output that
-  takes effect without the curator reading it.
+  capability boundary: an egress or exfiltration channel by the test in the next bullet, a tool call outside the sandbox
+  allowlist, or output that takes effect without the curator reading it.
+- **Exfiltration channels.** A relayed outbound request is a channel only where the untrusted text can steer *where* the
+  request goes, or is deposited where someone outside the perimeter reads it back. Not a finding, at any length or shape
+  of text: text passed as a percent-encoded parameter value, a path segment or a request body on a URL whose scheme,
+  host, port and route come from code constants, to an upstream that only answers it — the caller selects the response,
+  never the destination. Findings: a URL whose host or base path comes from fetched or caller-supplied data, or a
+  redirect followed out of a record; untrusted text interpolated into a URL unencoded, where a `/`, `?` or `#` re-routes
+  the request onto an endpoint the upstream's read-only assertion never covered, or an `&` adds a parameter of the
+  caller's choosing (query values go through the client's parameter encoding, never a hand-built query string); a
+  parameter the upstream itself dereferences as a location (a `url=` it fetches, a callback, a redirect target), which
+  leaves our URL constant and still hands over the destination; a call that stores the text where a third party can read
+  it; an evidence-image call to a host with no entry in `themis/services/evidence/upstreams/destinations.py`, and,
+  anywhere, an outbound call built on a client that register does not bind — the not-a-finding rule above assumes a
+  determination has been recorded for the one destination left, and only that client's calls are held to one. Never
+  offer a length cap or a rate limit as the remediation for text leaving in a request's *content* — a secret fits in a
+  short string. The exception is a channel carrying nothing in the request at all, where the timing and count of
+  requests is the signal: there a per-session request budget is the bound, and proposing it is right.
+  [`docs/design/security.md`](../../docs/design/security.md) §What counts as an exfiltration channel.
 - **Token consumption.** Patterns that let an external caller consume LLM tokens for tasks unrelated to the intended
   product surface: open-ended chat endpoints, missing rate limits, missing auth on LLM-backed routes.
 - **Tool-use scope.** Tools given to a model that have broader permissions than the model needs (e.g. a read-only
   summarisation agent given write access to a database).
 - **Rule of Two / lethal trifecta.** Watch for agents or services where *all three* of these intersect: (a) access to
   private or sensitive data; (b) exposure to untrusted content (user input, third-party tool responses, file contents
-  the agent reads); (c) external communication (network calls, sending messages, writing to public surfaces). Any *two*
-  is usually defensible; all *three* is a lethal trifecta and the output needs aggressive sanitisation and policy
-  enforcement. Background: https://ai.meta.com/blog/practical-ai-agent-security/
+  the agent reads); (c) external communication — a channel by the test above, not any outbound call, so a relayed query
+  to a fixed read-only upstream is not this leg. Any *two* is usually defensible; all *three* is a lethal trifecta and
+  the output needs aggressive sanitisation and policy enforcement. Background:
+  https://ai.meta.com/blog/practical-ai-agent-security/
 
 **Supply chain**
 

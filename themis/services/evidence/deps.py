@@ -21,6 +21,7 @@ import os
 import httpx2
 
 from themis.clients.auth import session as session_mod
+from themis.services.evidence.upstreams import destinations
 
 _AUTHORIZER_VAR = 'THEMIS_AUTHORIZER_BACKEND'
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_EVIDENCE_FIXTURE_CONTEXTS'
@@ -37,7 +38,7 @@ class Deps:
         session_resolver: Resolves a request's session token to its binding. Every evidence interface
             authorizes through it — nine on every rpc, `literature` on the one step that spends money.
         http_client: The client every live upstream call is issued on, held open for the server's
-            lifetime by `stack`.
+            lifetime by `stack`. It reaches only the hosts `upstreams.destinations` admits.
         stack: Owns whatever an interface's own adapter holds open for the server's lifetime — the
             GCS client and Cloud SQL connector `literature`'s corpus half builds. Nothing in the data
             plane handles SIGTERM, so it unwinds on a startup failure, not on a Cloud Run stop.
@@ -63,7 +64,7 @@ async def deps_from_env(stack: contextlib.AsyncExitStack) -> Deps:
     """
     return Deps(
         session_resolver=_session_resolver_from_env(),
-        http_client=await stack.enter_async_context(httpx2.AsyncClient(timeout=_HTTP_TIMEOUT)),
+        http_client=await stack.enter_async_context(destinations.admitting_client(timeout=_HTTP_TIMEOUT)),
         stack=stack,
     )
 

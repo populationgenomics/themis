@@ -48,14 +48,16 @@ class MondoClosureResult:
     query: str
 
 
-def _term_url(mondo_id: str, suffix: str) -> str:
+def _ancestors_url(mondo_id: str) -> str:
     """OLS4 addresses a term by its IRI, percent-encoded twice inside the path."""
     iri = urllib.parse.quote(_OBO_IRI + mondo_id.replace(':', '_'), safe='')
-    return f'{_BASE_URL}/ontologies/mondo/terms/{urllib.parse.quote(iri, safe="")}{suffix}'
+    return f'{_BASE_URL}/ontologies/mondo/terms/{urllib.parse.quote(iri, safe="")}/ancestors'
 
 
-async def _get_json(url: str, *, http_client: httpx2.AsyncClient) -> Mapping[str, object]:
-    response = await http_client.get(url, headers={'Accept': 'application/json'})
+async def _get_json(
+    url: str, *, http_client: httpx2.AsyncClient, params: Mapping[str, int] | None = None
+) -> Mapping[str, object]:
+    response = await http_client.get(url, params=params, headers={'Accept': 'application/json'})
     if response.is_client_error and response.status_code != httpx2.codes.TOO_MANY_REQUESTS:
         # Not InvalidRequestError: the term asked about is a curated one, so a refusal is a stale
         # reference table or a retired MONDO term, never the caller's request.
@@ -102,8 +104,9 @@ def _mondo_ids(terms: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
 
 
 async def _fetch_ancestors(mondo_id: str, *, http_client: httpx2.AsyncClient) -> tuple[str, ...]:
-    url = _term_url(mondo_id, f'/ancestors?size={_PAGE_SIZE}')
-    ancestors = _mondo_ids(_terms(await _get_json(url, http_client=http_client), url))
+    url = _ancestors_url(mondo_id)
+    payload = await _get_json(url, http_client=http_client, params={'size': _PAGE_SIZE})
+    ancestors = _mondo_ids(_terms(payload, url))
     if not ancestors:
         raise ValueError(f'{_SOURCE} places {mondo_id} under no MONDO term; every disease term has at least one')
     return ancestors

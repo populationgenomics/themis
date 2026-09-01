@@ -576,8 +576,9 @@ facets (case report, functional study, animal model) as filterable tags.
 The layer adds **no new agent-side egress surface**; it rides themis's existing model (`spike-infrastructure.md` §8,
 PRODUCT.md §9):
 
-- The agent reaches sources only through **tightly-typed internal services**; the self-hosted sandbox has
-  deny-by-default egress and **nothing to exfiltrate to**.
+- The agent reaches sources only through **tightly-typed internal services**; the sandboxed process has no network of
+  its own, and the requests those services make for it are destination-fixed — the agent's text selects a response, not
+  a destination ([`security.md`](security.md) §What counts as an exfiltration channel).
 - Outbound network calls happen **infra-side, never under agent control**, under an egress allowlist:
   - **bulk-available** sources (PubMed/PMC, the OA subset) are **mirrored locally** — no live querying;
   - **non-bulk** resolution/metadata services (Crossref, Semantic Scholar, Unpaywall, arXiv) are queried **live by the

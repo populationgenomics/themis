@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import urllib.parse
 
 import httpx2
 import pytest
@@ -70,3 +71,33 @@ def test_validation_failure_surfaces_the_reason_it_gave() -> None:
     }
     with pytest.raises(errors.UnknownVariantError, match='not in the RefSeq data set'):
         _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload)))
+
+
+def _wire_segments(request: httpx2.Request) -> list[str]:
+    """The path as sent, split into segments and each decoded; `url.path` decodes first, hiding a break-out."""
+    path = request.url.raw_path.split(b'?', 1)[0].decode()
+    return [urllib.parse.unquote(segment) for segment in path.lstrip('/').split('/')]
+
+
+def test_url_syntax_in_a_transcript_selector_cannot_re_route_the_request() -> None:
+    """`select_transcripts` takes an accession, so it is caller text with no closed domain to check.
+
+    Unencoded, a `../` in it climbs off the validator route onto whatever else the host serves.
+    """
+    hostile = 'NM_000546.6/../../submit'
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        return httpx2.Response(200, json=_FIXTURE)
+
+    async def run() -> variant_validator.VariantValidatorResult:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            return await variant_validator.fetch_variant_validator(
+                'GRCh38', 'NM_000546.6:c.524G>A', hostile, http_client=client
+            )
+
+    asyncio.run(run())
+    assert [_wire_segments(request) for request in seen] == [
+        ['VariantValidator', 'variantvalidator', 'GRCh38', 'NM_000546.6:c.524G>A', hostile]
+    ]
