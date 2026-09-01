@@ -37,11 +37,12 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
     uv export --frozen --no-emit-project --only-group guest --no-hashes --project /tmp/uvproj \
     | pip install --no-cache-dir --no-deps -r /dev/stdin
 # The guest SDK: the generated stubs the model dials the hatch with (`from themis.rpc import
-# hello_pb2_grpc` and the per-source equivalents), the code-mode `services` helper (shipped as
-# `themis.agent.services` — the stable name the agent's prompt imports), and the stdlib-only
-# working-document linter. Only the hatch-reachable services' stubs ship; the store stubs would be an
-# unused capability, since the guest reaches the store through no hatch method. `test_guest_rootfs.py`
-# holds this set to the generated allowlist, and to the import closure of everything it lands.
+# hello_pb2_grpc` and the per-source equivalents), the code-mode `services`, `retry` and `display`
+# helpers (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the
+# `channel` the accessors ride, and the stdlib-only working-document linter. Only the hatch-reachable services' stubs ship; the store stubs
+# would be an unused capability, since the guest reaches the store through no hatch method.
+# `test_guest_rootfs.py` holds this set to the generated allowlist, and to the import closure of
+# everything it lands.
 # Each service `_pb2` reaches `sandbox_options_pb2` (its proto carries the `agent_exposed` option) and the
 # evidence ones reach `themis/evidence/models/evidence_pb2`, the shared value types; neither `themis/rpc`
 # nor `themis/evidence/models` takes an `__init__.py`, so both resolve as namespace packages under the
@@ -60,7 +61,9 @@ COPY themis/rpc/sandbox_options_pb2.py \
     /usr/local/lib/python3.13/site-packages/themis/rpc/
 COPY themis/evidence/models/evidence_pb2.py /usr/local/lib/python3.13/site-packages/themis/evidence/models/
 COPY themis/document_linter /usr/local/lib/python3.13/site-packages/themis/document_linter
-COPY themis/services/sandbox_worker/guest/services.py /usr/local/lib/python3.13/site-packages/themis/agent/services.py
+COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_worker/guest/channel.py \
+    themis/services/sandbox_worker/guest/retry.py themis/services/sandbox_worker/guest/display.py \
+    /usr/local/lib/python3.13/site-packages/themis/agent/
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py
 

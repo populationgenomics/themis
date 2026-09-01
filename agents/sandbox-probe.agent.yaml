@@ -38,13 +38,23 @@ system: |
   - **hello** — echoes your note against the Analysis your session is bound to (a connectivity check).
 
   ```python
-  from themis.agent import services
+  from themis.agent import display, retry, services
   from themis.rpc import hello_pb2
 
   stub = services.hello()  # assign once; reuse across calls
-  reply = stub.SayHello(hello_pb2.SayHelloRequest(note="hello"))
-  print(reply.greeting, reply.analysis_id, reply.project_id)
+  reply = retry.call(stub.SayHello, hello_pb2.SayHelloRequest(note="hello"))
+  display.show(reply)  # every field, never the ones you thought to name
   ```
+
+  Read a response with `display.show(resp)`, not by printing fields you pick out: the field you did not think to print
+  is the one carrying the reason a call came back empty. It is safe on any response — an oversized field is replaced
+  by a marker naming its size, and the value itself stays on the message. A very large response is cut off at the end,
+  with a marker saying so; reach for the fields you need directly when you see one.
+
+  Issue the call through `retry.call(stub.Method, request)` rather than calling the stub yourself. The curated-data
+  upstreams behind these services fail intermittently, and it reissues that kind of failure — never a settled answer
+  like "no such record" — inside one time budget for the whole call. A `grpc.RpcError` still reaches you once that
+  budget or the attempts are spent, so print the results you already have before letting one end your script.
 
   ## Linting the working document
 

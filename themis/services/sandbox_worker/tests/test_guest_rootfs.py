@@ -100,20 +100,40 @@ def _imported_module(package: str, name: str) -> str:
     return package
 
 
-def _first_party_imports(module: pathlib.Path) -> set[str]:
-    """Every `themis` module `module` imports, dotted.
+def _relative_import(module: pathlib.Path, landing: str, node: ast.ImportFrom) -> set[str]:
+    """What a relative import inside `module` needs, named by where the guest puts it.
 
-    A relative import is refused rather than skipped: what it resolves to depends on where the module lands,
-    not where the repo keeps it, and the guest renames as it copies — `guest/services.py` lands as
-    `themis/agent/services.py`, so a sibling that sits beside it in the repo is nowhere in the rootfs.
-    Skipping one would contribute no requirement and let the closure pass over a guest that cannot import.
+    A relative import resolves against the *landing* path, not the repo path, and the guest renames as it copies —
+    `guest/services.py` lands as `themis/agent/services.py`. So the module-or-symbol question is settled against
+    the repo, where the sibling actually is, and the answer is then stated in the landing's package. Refusing
+    relative imports outright would be the weaker check: it contributes no requirement, and the closure would pass
+    over a guest that ships one of two siblings.
     """
+    directory = module.parent
+    package = landing.rsplit('/', 1)[0].replace('/', '.')
+    for _ in range(node.level - 1):
+        directory = directory.parent
+        package = package.rsplit('.', 1)[0]
+    if node.module is not None:
+        directory = directory / node.module.replace('.', '/')
+        package = f'{package}.{node.module}'
+    return {
+        f'{package}.{alias.name}'
+        # A name that is neither module nor subpackage is a symbol, satisfied by its package landing.
+        if (directory / f'{alias.name}.py').is_file() or (directory / alias.name).is_dir()
+        else package
+        for alias in node.names
+    }
+
+
+def _first_party_imports(module: pathlib.Path, landing: str) -> set[str]:
+    """Every first-party module `module` imports, dotted and named by where the guest puts it."""
     required: set[str] = set()
     for node in ast.walk(ast.parse(module.read_text('utf-8'))):
         if isinstance(node, ast.ImportFrom):
-            # Checked before the module test: `from . import x` carries no module at all.
-            assert node.level == 0, f'{module} imports relatively, which resolves against the landing path'
-            if node.module is not None and (node.module == 'themis' or node.module.startswith('themis.')):
+            if node.level:
+                required.update(_relative_import(module, landing, node))
+            elif node.module is not None and (node.module == 'themis' or node.module.startswith('themis.')):
                 required.update(_imported_module(node.module, alias.name) for alias in node.names)
         elif isinstance(node, ast.Import):
             required.update(alias.name for alias in node.names if alias.name.split('.')[0] == 'themis')
@@ -137,7 +157,7 @@ def _resolves(dotted: str, landings: frozenset[str]) -> bool:
 def test_the_guest_ships_what_its_modules_import() -> None:
     guest = _guest_modules()
     landings = frozenset(guest)
-    required = {landing: _first_party_imports(source) for landing, source in sorted(guest.items())}
+    required = {landing: _first_party_imports(source, landing) for landing, source in sorted(guest.items())}
     # Both guards rule out a vacuous pass: nothing shipped, or nothing importing, satisfies the closure trivially.
     assert landings, 'no modules parsed out of the guest COPY instructions'
     assert any(required.values()), 'no guest module parsed as importing themis'

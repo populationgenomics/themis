@@ -137,8 +137,27 @@ code unsandboxed, which is the behaviour we want from a boot gate: it fails to t
 deployed.
 
 One first-party library ships into that root beyond the interpreter and the gRPC runtime: the **guest SDK**, a small
-module under a stable import name that hands out a stub accessor per exposed service over one shared channel to the
-hatch. The working-document linter ships beside it, so the agent can check its own output without leaving the sandbox.
+module under a stable import name, handing out a stub accessor per exposed service over one shared channel to the hatch.
+That accessor set is generated from the same proto option the hatch reads its allowlist from
+([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)), so the calls the SDK offers and the calls the hatch admits
+cannot drift apart. Three decisions in it are why the model reaches services through it rather than through gRPC
+directly, and each answers the same failure — a snippet losing work it had already done.
+
+The first belongs to the channel: it fills in a deadline for any call whose caller named none, set below what the
+enclosing tool call gets. gRPC's own default is infinite, so a service that never answers would otherwise be an
+unkillable wait, ended only by the worker abandoning the tool call — and with it the unprinted results of every call
+before it in the same script. Leaving that to each snippet is no protection, because the snippet that forgets is the one
+that hangs; putting it on the channel means an unbounded call is not reachable through the SDK at all.
+
+The second is a renderer for whole responses, so no field goes unread for not having been named — the field a snippet
+did not think to print is the one saying why a lookup came back empty. Printing whole needs a length bound of its own,
+or one oversized field buries every other; past that bound the head is what survives, and a marker says how much was
+cut. The third is a retry that reissues a failure meaning the call never reached an answer, and returns a settled one —
+no record, a request refused — as it stands, since retrying that only spends the upstream's rate limit. It sets one
+budget covering every attempt and the waits between them, in place of the channel's per-call default. An opt-in response
+cache under `/workspace` spares a repeat, at the cost of riding into every checkpoint.
+
+The working-document linter ships beside it, so the agent can check its own output without leaving the sandbox.
 
 ### The hatch is the capability boundary
 

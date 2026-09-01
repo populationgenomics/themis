@@ -188,7 +188,7 @@ target-version = "py313"
 # fight the freshness gate. `themis/rpc`, `themis/evidence/models`, `themis/litcache/models`,
 # `themis/workbench/models` and `themis/workbench/rpc` are the generated proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The pre-commit
 # ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["themis/evidence/models", "themis/litcache/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "buf"]
+extend-exclude = ["themis/evidence/models", "themis/litcache/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"

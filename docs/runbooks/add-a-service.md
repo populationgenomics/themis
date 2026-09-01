@@ -101,7 +101,7 @@ not this outbound leg.
 ## 6. Expose to the sandbox agent (agent-facing services only)
 
 Skip for platform (worker-only) services. Exposure is the `agent_exposed` option on the service's `.proto`, and it is
-fail-closed: `regen` derives the hatch's method allowlist from the files carrying it
+fail-closed: `regen` derives both the hatch's method allowlist and the guest's stub accessors from the files carrying it
 ([`tools/schema/agent_exposed.py`](../../tools/schema/agent_exposed.py)), and a proto without the option reaches the
 guest with nothing. The steps, the rest of the surface the option drives, and the threat model — an exposed RPC must
 assume a hostile caller — are in [`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md) ("In practice").

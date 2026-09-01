@@ -45,7 +45,7 @@ per-service carve-out — a subset is a narrower agent-facing file.
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Hatch allowlist (`GUEST_METHODS`)             | every `/pkg.Service/Method` of every service in an `agent_exposed` file                                                      |
 | Per-service forwarders + `build_hatch` wiring | one generated servicer per exposed service                                                                                   |
-| Guest stub accessors (`guest/services.py`)    | one accessor per exposed service                                                                                             |
+| Guest stub accessors (`guest/services.py`)    | one accessor per exposed service, named for its proto package's last segment                                                 |
 | Guest-stub manifest                           | the transitive import closure of the `agent_exposed` files (their `_pb2_grpc` + the closure's `_pb2`) the Dockerfile `COPY`s |
 | Agent prompt fragment                         | Markdown documenting each exposed call, from the proto's leading comments (`SourceCodeInfo`)                                 |
 
@@ -115,9 +115,9 @@ Implementation state are what tell you which of them you owe:
    `themis/rpc/sandbox_options.proto`). Every service in that file is now agent-callable; split the file if some
    services must stay worker-only.
 1. **`regen`** — regenerates the hatch allowlist. Commit the diff; `regen-is-fresh` gates it.
-1. **The artifacts the allowlist now outruns** — a forwarder and its `build_hatch` wiring, a `guest/services.py`
-   accessor, and the guest rootfs stub selection. Run the sandbox-worker tests: with the allowlist grown and none of
-   these written, each missing one is named by a failure.
+1. **The artifacts the allowlist now outruns** — a forwarder and its `build_hatch` wiring, and the guest rootfs stub
+   selection. Run the sandbox-worker tests: with the allowlist grown and neither written, each missing one is named by a
+   failure.
 1. **Worker deploy config** — add the service's upstream channel to the worker's `service → channel` map. A missing
    entry for an exposed service fails the worker loudly at startup.
 
@@ -148,8 +148,8 @@ agent needs a narrower view of something a trusted caller also reads, that is a 
 The ceremony that keeps the option from being a rubber-stamp:
 
 - **Fail-closed default.** No option ⇒ not exposed. Absence is a definite "no", not a "forgot".
-- **A schema-only edit cannot land an exposure.** Marking a file grows the generated allowlist, and three committed
-  checks then fail until a forwarder, a guest stub accessor and a shipped stub exist for it — the allowlist is asserted
+- **A schema-only edit cannot land an exposure.** Marking a file grows the generated allowlist and the accessors beside
+  it, and two committed checks then fail until a forwarder and a shipped stub exist for it — the allowlist is asserted
   *equal* to the set of services with forwarders, not merely covered by it. So exposure still takes a deliberate second
   edit by someone who sees the service, which is the property that matters. The intended form of this is a co-signature
   the service owner writes rather than a test they satisfy: an `@agent_exposed` decorator on the hand-written servicer
@@ -187,13 +187,14 @@ The ceremony that keeps the option from being a rubber-stamp:
 
 ## Implementation state
 
-The generator above is the target, not yet the whole of what runs. Shipped: the option, `regen`'s descriptor read, and
-the generated `GUEST_METHODS` the hatch consumes.
+The generator above is the target, not yet the whole of what runs. Shipped: the option, `regen`'s descriptor read, the
+generated `GUEST_METHODS` the hatch consumes, and the guest stub accessors the sandbox calls the exposed services
+through. The accessors keep their check in [`test_hatch.py`](../../themis/services/sandbox_worker/tests/test_hatch.py) —
+generation settles that the set is right, not that the emitted module works.
 
 Hand-authored, each held to the exposed set by a check rather than by generation — the per-service forwarders and
-`build_hatch`'s wiring, and the guest stub accessors, by
-[`test_hatch.py`](../../themis/services/sandbox_worker/tests/test_hatch.py) (descriptor-derived and closed-world, one
-case per rpc, plus a dial of every allowlisted method against a live hatch); the Dockerfile's stub selection, by
+`build_hatch`'s wiring, by `test_hatch.py` too (descriptor-derived and closed-world, one case per rpc, plus a dial of
+every allowlisted method against a live hatch); the Dockerfile's stub selection, by
 [`test_guest_rootfs.py`](../../themis/services/sandbox_worker/tests/test_guest_rootfs.py) (a stub per exposed service,
 and the import closure of everything the stage lands).
 
