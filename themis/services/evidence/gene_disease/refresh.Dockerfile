@@ -2,7 +2,7 @@
 
 # Multi-stage build of the weekly gene-disease reference-refresh job. Build context is the repo ROOT
 # (deploy: `docker build -f themis/services/evidence/gene_disease/refresh.Dockerfile .`). Dependencies
-# come from the committed uv.lock via `uv sync --locked --group evidence` — httpx drives the upstream
+# come from the committed uv.lock via `uv sync --locked --group evidence` — httpx2 drives the upstream
 # fetches and google-cloud-storage the bucket writes (the serving deps ride along, unused by the job).
 # The Cloud Run Job injects THEMIS_RESOURCES_BUCKET; a missing value fails loud at startup.
 FROM python:3.13-slim-bookworm AS base

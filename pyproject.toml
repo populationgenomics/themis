@@ -260,6 +260,13 @@ convention = "google"
 [tool.ruff.lint.isort]
 known-first-party = ["themis_infra", "themis"]
 
+# No dependency group declares `httpx`, but the lock still resolves it under `google-genai`
+# (dataflow -> apache-beam[gcp] -> google-cloud-aiplatform), so an import of it passes lint, pyright
+# and the test suite, and breaks only later — in a service image that never installs it, or silently,
+# where an httpx object meets litfetch or the Anthropic SDK.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"httpx" = { msg = "use httpx2: no service image installs httpx, and the two libraries' classes do not interoperate" }
+
 # Complexity thresholds: roughly double the ruff defaults so the checks
 # fire on genuinely sprawling code but not on everyday parsers and
 # dispatcher functions.
