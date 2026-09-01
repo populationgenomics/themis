@@ -28,6 +28,9 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: "1.66.1"
+          # No default token: the release lookup that resolves the download URL would go out
+          # anonymous, against a per-IP rate limit shared across the hosted runner pool.
+          github_token: ${{ github.token }}
       # biome + tsc hooks need apps/web/node_modules.
       - run: bun install --frozen-lockfile
         working-directory: apps/web
