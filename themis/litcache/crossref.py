@@ -21,7 +21,7 @@ import datetime
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
@@ -172,7 +172,7 @@ def from_crossref_work(work: Mapping[str, object]) -> CrossrefResult:
     )
 
 
-async def fetch_crossref(doi: str, *, http_client: httpx.AsyncClient) -> Mapping[str, object]:
+async def fetch_crossref(doi: str, *, http_client: httpx2.AsyncClient) -> Mapping[str, object]:
     """Fetch a Crossref `works` message for one DOI.
 
     Args:
@@ -183,7 +183,7 @@ async def fetch_crossref(doi: str, *, http_client: httpx.AsyncClient) -> Mapping
         The `message` object of the Crossref response.
 
     Raises:
-        httpx.HTTPStatusError: If Crossref returns a non-2xx status (e.g. 404 for
+        httpx2.HTTPStatusError: If Crossref returns a non-2xx status (e.g. 404 for
             an unknown DOI — the caller's `unknown`).
     """
     # DOIs contain '/' (kept) and can carry reserved chars (?, #, ;) that would otherwise
@@ -194,6 +194,6 @@ async def fetch_crossref(doi: str, *, http_client: httpx.AsyncClient) -> Mapping
     return response.json()['message']
 
 
-async def resolve(doi: str, *, http_client: httpx.AsyncClient) -> CrossrefResult:
+async def resolve(doi: str, *, http_client: httpx2.AsyncClient) -> CrossrefResult:
     """Resolve one DOI to `metadata.pb` + cross-ids + publisher via Crossref."""
     return from_crossref_work(await fetch_crossref(doi, http_client=http_client))

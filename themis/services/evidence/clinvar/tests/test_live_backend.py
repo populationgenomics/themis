@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 
 import clinvar_proto
 import defusedxml.ElementTree
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import clinvar_pb2
@@ -37,7 +37,7 @@ def _returns[T](value: T) -> Callable[..., Awaitable[T]]:
 
 def _run[T](call: Callable[[clinvar_backend.LiveBackend], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(clinvar_backend.LiveBackend(client))
 
     return asyncio.run(run())

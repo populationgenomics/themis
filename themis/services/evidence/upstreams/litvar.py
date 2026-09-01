@@ -20,7 +20,7 @@ import urllib.parse
 from collections.abc import Mapping
 from typing import NamedTuple
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 from themis.services.evidence.literature import pmids as pmids_mod
@@ -64,7 +64,7 @@ class ListedEntity(NamedTuple):
     total_articles: int
 
 
-async def autocomplete_entity_ids(query: str, *, http_client: httpx.AsyncClient) -> list[str]:
+async def autocomplete_entity_ids(query: str, *, http_client: httpx2.AsyncClient) -> list[str]:
     """The entity ids autocomplete matches ``query`` to, in the index's own match order.
 
     Autocomplete matches loosely — on a prefix, and across the gene-level entity as readily as an
@@ -80,7 +80,7 @@ async def autocomplete_entity_ids(query: str, *, http_client: httpx.AsyncClient)
 
     Raises:
         errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: If the answer is not a list of matches.
     """
     response = await http_client.get(_AUTOCOMPLETE_URL, params={'query': query})
@@ -95,7 +95,7 @@ async def autocomplete_entity_ids(query: str, *, http_client: httpx.AsyncClient)
     ]
 
 
-async def entity_labels(entity_id: str, *, http_client: httpx.AsyncClient) -> EntityLabels | None:
+async def entity_labels(entity_id: str, *, http_client: httpx2.AsyncClient) -> EntityLabels | None:
     """The index's account of one entity, or ``None`` where it holds no such entity.
 
     Autocomplete states a single ``clingen_id``; only this record states every ClinGen allele id an
@@ -112,12 +112,12 @@ async def entity_labels(entity_id: str, *, http_client: httpx.AsyncClient) -> En
 
     Raises:
         errors.InvalidRequestError: If LitVar2 refuses the call (a non-400, non-429 4xx).
-        httpx.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: If the entity record is not a mapping, or states no id of its own.
     """
     url = _ENTITY_URL_TEMPLATE.format(entity_id=urllib.parse.quote(entity_id, safe=''))
     response = await http_client.get(url)
-    if response.status_code == httpx.codes.BAD_REQUEST:
+    if response.status_code == httpx2.codes.BAD_REQUEST:
         return None
     errors.raise_for_status(response, upstream=_SOURCE, subject=f'entity {entity_id!r}')
     payload = response.json()
@@ -136,7 +136,7 @@ async def entity_labels(entity_id: str, *, http_client: httpx.AsyncClient) -> En
     )
 
 
-async def search_pmids(entity_id: str, limit: int, *, http_client: httpx.AsyncClient) -> tuple[list[str], int]:
+async def search_pmids(entity_id: str, limit: int, *, http_client: httpx2.AsyncClient) -> tuple[list[str], int]:
     """An entity's ranked PMIDs up to ``limit``, and the count the index states for it whole.
 
     The count is what makes a returned list legible as a prefix, and it rides on the same pages the
@@ -157,7 +157,7 @@ async def search_pmids(entity_id: str, limit: int, *, http_client: httpx.AsyncCl
 
     Raises:
         errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: A page is not a mapping carrying an integer ``count`` and ``total_pages`` — the
             shape the walk's own bound and the census both read — or it states a PMID that is not one.
     """
@@ -184,7 +184,7 @@ async def search_pmids(entity_id: str, limit: int, *, http_client: httpx.AsyncCl
         page += 1
 
 
-async def gene_entities(gene: str, *, http_client: httpx.AsyncClient) -> list[ListedEntity]:
+async def gene_entities(gene: str, *, http_client: httpx2.AsyncClient) -> list[ListedEntity]:
     """The rows of LitVar2's per-gene listing, one per line.
 
     The endpoint answers in Python ``repr`` syntax — single-quoted keys and values — one record per
@@ -202,7 +202,7 @@ async def gene_entities(gene: str, *, http_client: httpx.AsyncClient) -> list[Li
 
     Raises:
         errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: A line does not parse, or does not carry the two fields a row is.
     """
     response = await http_client.get(_GENE_URL_TEMPLATE.format(gene=urllib.parse.quote(gene, safe='')))

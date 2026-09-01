@@ -6,7 +6,7 @@ import abc
 from collections.abc import Mapping
 from typing import override
 
-import httpx
+import httpx2
 
 from themis.rpc import mavedb_pb2
 from themis.services.evidence import fixtures, provenance
@@ -45,7 +45,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(MaveDbBackend):
     """The deployed backend, over MaveDB and the ClinGen Allele Registry."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

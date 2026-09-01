@@ -6,7 +6,7 @@ import asyncio
 import json
 import pathlib
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -15,16 +15,16 @@ from themis.services.evidence.upstreams import allele_registry
 _FIXTURE = json.loads((pathlib.Path(__file__).parent / 'fixtures' / 'allele_registry.json').read_text())
 
 
-def _fetch(handler: httpx.MockTransport) -> allele_registry.AlleleRegistryResult:
+def _fetch(handler: httpx2.MockTransport) -> allele_registry.AlleleRegistryResult:
     async def run() -> allele_registry.AlleleRegistryResult:
-        async with httpx.AsyncClient(transport=handler) as client:
+        async with httpx2.AsyncClient(transport=handler) as client:
             return await allele_registry.fetch_allele_registry('NM_000546.6:c.524G>A', http_client=client)
 
     return asyncio.run(run())
 
 
 def test_happy_path_parses_caid_crossids_and_mane_projection() -> None:
-    result = _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=_FIXTURE)))
+    result = _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=_FIXTURE)))
 
     assert result.caid == 'CA000251'
     assert result.gnomad_v4_id == '17-7675088-C-T'
@@ -43,20 +43,20 @@ def test_happy_path_parses_caid_crossids_and_mane_projection() -> None:
 
 def test_upstream_failure_raises_http_status_error_carrying_the_detail() -> None:
     body = {'errorType': 'InternalServerError', 'message': 'coordinates outside reference'}
-    with pytest.raises(httpx.HTTPStatusError, match='coordinates outside reference'):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(500, json=body)))
+    with pytest.raises(httpx2.HTTPStatusError, match='coordinates outside reference'):
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(500, json=body)))
 
 
 def test_rejected_hgvs_surfaces_the_registry_s_own_reason() -> None:
     """A 4xx is the registry judging our input; its reason is the only thing that says what to fix."""
     body = {'errorType': 'HgvsParsingError', 'description': 'Given HGVS expressions cannot be parsed.'}
     with pytest.raises(errors.InvalidRequestError, match=r'HgvsParsingError.*cannot be parsed'):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(400, json=body)))
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(400, json=body)))
 
 
 def test_payload_without_caid_raises_value_error() -> None:
     with pytest.raises(ValueError, match='no @id'):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json={'transcriptAlleles': []})))
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json={'transcriptAlleles': []})))
 
 
 def test_mane_plus_clinical_carries_the_canonical_when_there_is_no_mane_select() -> None:
@@ -72,7 +72,7 @@ def test_mane_plus_clinical_carries_the_canonical_when_there_is_no_mane_select()
             {'geneSymbol': 'X', 'hgvs': ['NM_000001.1:c.1A>T'], 'MANE': mane},
         ],
     }
-    result = _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    result = _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload)))
 
     assert result.canonical_refseq_hgvs == 'NM_000001.1:c.1A>T'
 
@@ -82,15 +82,15 @@ def test_allele_without_a_mane_select_transcript_has_no_refseq_canonical() -> No
         '@id': 'http://reg.genome.network/allele/CA1',
         'transcriptAlleles': [{'geneSymbol': 'X', 'hgvs': ['NM_1.1:c.1A>T']}],
     }
-    result = _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    result = _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload)))
 
     assert result.canonical_refseq_hgvs is None
 
 
 def _fetch_ids(payload: object, hgvs: str = 'NM_000546.6:c.524G>A') -> allele_registry.ClinGenAlleleIds:
     async def run() -> allele_registry.ClinGenAlleleIds:
-        transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload))
+        async with httpx2.AsyncClient(transport=transport) as client:
             return await allele_registry.fetch_clingen_allele_ids(hgvs, http_client=client)
 
     return asyncio.run(run())
@@ -189,7 +189,7 @@ def test_a_transcript_carrying_no_allele_id_is_not_a_deviation() -> None:
 
 
 def _parsed(payload: object) -> allele_registry.AlleleRegistryResult:
-    return _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    return _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload)))
 
 
 def test_the_clinvar_crosswalk_names_the_records_the_canonical_allele_resolves_to() -> None:

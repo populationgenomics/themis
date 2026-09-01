@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 
-import httpx
+import httpx2
 import pytest
 from pubmed_proto import pubmed_pb2
 
@@ -66,7 +66,7 @@ def test_parse_rejects_a_non_works_payload() -> None:
 
 def test_fetch_rejects_a_batch_over_the_cap() -> None:
     async def run() -> None:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             await openalex.fetch([f'10.1/{i}' for i in range(51)], http_client=client)
 
     with pytest.raises(ValueError, match='caps at 50'):
@@ -76,12 +76,12 @@ def test_fetch_rejects_a_batch_over_the_cap() -> None:
 def test_resolve_drives_fetch_with_a_doi_filter() -> None:
     seen: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.update(request.url.params)
-        return httpx.Response(200, content=_response([_work(_DOI_A)]))
+        return httpx2.Response(200, content=_response([_work(_DOI_A)]))
 
     async def run() -> dict[str, openalex.OpenAlexWork]:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await openalex.resolve([_DOI_A], http_client=client)
 
     works = asyncio.run(run())
@@ -122,7 +122,7 @@ def test_live_openalex() -> None:
     doi = os.environ['LITCACHE_OPENALEX_LIVE_DOI']
 
     async def run() -> dict[str, openalex.OpenAlexWork]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx2.AsyncClient(timeout=30.0) as client:
             return await openalex.resolve([doi], http_client=client)
 
     asyncio.run(run())

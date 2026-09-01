@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.evidence.models import evidence_pb2
@@ -19,7 +19,7 @@ from themis.services.evidence.vep import backend as vep_backend
 
 def _run[T](call: Callable[[vep_backend.LiveBackend], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(vep_backend.LiveBackend(client))
 
     return asyncio.run(run())

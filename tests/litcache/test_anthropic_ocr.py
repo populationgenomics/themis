@@ -159,7 +159,7 @@ def test_a_silence_is_caught_before_the_elapsed_budget_runs_out() -> None:
 
 def test_a_call_past_the_elapsed_bound_is_terminal_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     # OcrError, not TimeoutError: the bound is the most the queue's dispatch deadline allows, so the
-    # producer settles the paper FAILED rather than re-billing the model on every retry. httpx has no
+    # producer settles the paper FAILED rather than re-billing the model on every retry. httpx2 has no
     # total-duration timeout, so the client's own value would not have caught a call that keeps
     # streaming — only asyncio.timeout bounds elapsed time.
     monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient())

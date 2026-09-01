@@ -10,7 +10,7 @@ import json
 import pathlib
 from collections.abc import Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import transcript_pb2
@@ -330,23 +330,23 @@ def test_cds_bounds_outside_the_transcript_raise() -> None:
         _parsed(_mutated(overrun), 'NM_001042492.3')
 
 
-def _fetch(handler: httpx.MockTransport) -> transcript_structure.TranscriptStructureResult:
+def _fetch(handler: httpx2.MockTransport) -> transcript_structure.TranscriptStructureResult:
     async def run() -> transcript_structure.TranscriptStructureResult:
-        async with httpx.AsyncClient(transport=handler) as client:
+        async with httpx2.AsyncClient(transport=handler) as client:
             return await transcript_structure.fetch_transcript_structure('NM_001042492.3', 'GRCh38', http_client=client)
 
     return asyncio.run(run())
 
 
-def _routed(request: httpx.Request) -> httpx.Response:
+def _routed(request: httpx2.Request) -> httpx2.Response:
     if request.url.path == '/hello/':
-        return httpx.Response(200, json=_METADATA)
-    return httpx.Response(200, json=_NF1)
+        return httpx2.Response(200, json=_METADATA)
+    return httpx2.Response(200, json=_NF1)
 
 
 def test_fetch_stamps_each_alignment_release_as_one_dataset_versions_element() -> None:
     """The exon table is only reproducible against the alignment database it came from."""
-    result = _fetch(httpx.MockTransport(_routed))
+    result = _fetch(httpx2.MockTransport(_routed))
     assert 'vvta_2025_02' in result.dataset_versions
     assert 'vvdb_2025_3' in result.dataset_versions
     assert len(result.exons) == 58
@@ -356,16 +356,16 @@ def test_fetch_stamps_each_alignment_release_as_one_dataset_versions_element() -
 def test_fetch_raises_on_absent_or_partial_version_metadata(metadata: dict[str, object]) -> None:
     """A partial stamp is indistinguishable from a full one, so it must not pass as provenance."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=metadata if request.url.path == '/hello/' else _NF1)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=metadata if request.url.path == '/hello/' else _NF1)
 
     with pytest.raises(ValueError, match=r'metadata|vvta_version|variantvalidator_version'):
-        _fetch(httpx.MockTransport(handler))
+        _fetch(httpx2.MockTransport(handler))
 
 
 def test_fetch_raises_on_a_non_2xx() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(500, json={})))
+    with pytest.raises(httpx2.HTTPStatusError):
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(500, json={})))
 
 
 _GENE_REFSEQ = json.loads((_FIXTURES / 'gene_transcripts_refseq.json').read_text())
@@ -498,18 +498,18 @@ def test_a_response_without_a_transcripts_list_raises() -> None:
         _gene_parsed([{'current_symbol': 'PCSK9'}])
 
 
-def _gene_routed(request: httpx.Request) -> httpx.Response:
+def _gene_routed(request: httpx2.Request) -> httpx2.Response:
     if request.url.path == '/hello/':
-        return httpx.Response(200, json=_METADATA)
-    return httpx.Response(200, json=_GENE_ENSEMBL if '/ensembl/' in str(request.url) else _GENE_REFSEQ)
+        return httpx2.Response(200, json=_METADATA)
+    return httpx2.Response(200, json=_GENE_ENSEMBL if '/ensembl/' in str(request.url) else _GENE_REFSEQ)
 
 
 def test_fetch_gene_transcripts_reads_both_annotation_sets() -> None:
     """Which set defines "the gene's transcripts" is the curator's question, so both are fetched."""
 
     async def run() -> list[transcript_structure.GeneTranscriptsResult]:
-        transport = httpx.MockTransport(_gene_routed)
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(_gene_routed)
+        async with httpx2.AsyncClient(transport=transport) as client:
             return await transcript_structure.fetch_gene_transcripts('PCSK9', 'GRCh38', http_client=client)
 
     results = asyncio.run(run())
@@ -589,14 +589,14 @@ def _requested_paths(accession: str, gene: str) -> list[str]:
     """
     seen: list[str] = []
 
-    def record(request: httpx.Request) -> httpx.Response:
+    def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(request.url.raw_path.decode().split('?')[0])
         if request.url.path == '/hello/':
-            return httpx.Response(200, json=_METADATA)
-        return httpx.Response(200, json=_NF1 if accession in request.url.path else _GENE_REFSEQ)
+            return httpx2.Response(200, json=_METADATA)
+        return httpx2.Response(200, json=_NF1 if accession in request.url.path else _GENE_REFSEQ)
 
     async def run() -> None:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(record)) as client:
             for call in (
                 transcript_structure.fetch_transcript_structure(accession, 'GRCh38', http_client=client),
                 transcript_structure.fetch_gene_transcripts(gene, 'GRCh38', http_client=client),

@@ -1,6 +1,6 @@
 """The weekly reference-refresh job: dump-shape contract, ETag skip, retry, PanelApp aggregation.
 
-Upstream HTTP is served by an httpx ``MockTransport``; the bucket is an in-memory fake. The raw
+Upstream HTTP is served by an httpx2 ``MockTransport``; the bucket is an in-memory fake. The raw
 GenCC/ClinGen dumps are served from the very fixtures the server's loaders parse, so a produced dump
 is asserted by round-tripping it back through those loaders — the parse contract, not a pinned
 payload. The PanelApp dump is round-tripped through ``upstreams.panelapp.PanelAppTable``.
@@ -14,7 +14,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import override
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -29,7 +29,7 @@ _GENCC_TSV = (_FIXTURES / 'gencc.tsv').read_bytes()
 _VALIDITY_CSV = (_FIXTURES / 'clingen_validity.csv').read_bytes()
 _DOSAGE_CSV = (_FIXTURES / 'clingen_dosage.csv').read_bytes()
 
-_Handler = Callable[[httpx.Request], httpx.Response]
+_Handler = Callable[[httpx2.Request], httpx2.Response]
 
 
 class _FakeStore(refresh_store.ReferenceObjectStore):
@@ -96,20 +96,20 @@ _EVALUATIONS: dict[tuple[str, str], list[str]] = {
 _EVAL_PATH = re.compile(r'^/api/v1/panels/(\d+)/genes/HGNC:(\d+)/evaluations/$')
 
 
-def _panelapp_response(request: httpx.Request) -> httpx.Response:
+def _panelapp_response(request: httpx2.Request) -> httpx2.Response:
     path = request.url.path
     evaluation = _EVAL_PATH.match(path)
     if evaluation is not None:
         key = (evaluation.group(1), evaluation.group(2))
         if key not in _EVALUATIONS:
-            return httpx.Response(httpx.codes.NOT_FOUND, json={'detail': 'not found'})
+            return httpx2.Response(httpx2.codes.NOT_FOUND, json={'detail': 'not found'})
         comments = [{'created': '2026-01-01', 'comment': text, 'user_name': 'Curator'} for text in _EVALUATIONS[key]]
-        return httpx.Response(
+        return httpx2.Response(
             200, json={'count': 1, 'next': None, 'previous': None, 'results': [{'comments': comments}]}
         )
     panel = re.fullmatch(r'/api/v1/panels/(\d+)/', path)
     if panel is not None:
-        return httpx.Response(200, json=_PANELS[int(panel.group(1))])
+        return httpx2.Response(200, json=_PANELS[int(panel.group(1))])
     raise AssertionError(f'unexpected PanelApp request {request.url}')
 
 
@@ -120,20 +120,20 @@ def _handler(*, gencc_etag: str | None = None, gencc_status: Callable[[], int] |
     when set, is a callable returning the status for each GenCC call (to script a transient failure).
     """
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         host, path = request.url.host, request.url.path
         if host == 'search.thegencc.org':
             if gencc_status is not None:
                 status = gencc_status()
                 if status != 200:
-                    return httpx.Response(status, json={})
+                    return httpx2.Response(status, json={})
             if gencc_etag is not None and request.headers.get('If-None-Match') == gencc_etag:
-                return httpx.Response(httpx.codes.NOT_MODIFIED)
-            return httpx.Response(200, content=_GENCC_TSV, headers={'ETag': '"gencc-v1"'})
+                return httpx2.Response(httpx2.codes.NOT_MODIFIED)
+            return httpx2.Response(200, content=_GENCC_TSV, headers={'ETag': '"gencc-v1"'})
         if path == '/kb/gene-validity/download':
-            return httpx.Response(200, content=_VALIDITY_CSV, headers={'ETag': '"validity-v1"'})
+            return httpx2.Response(200, content=_VALIDITY_CSV, headers={'ETag': '"validity-v1"'})
         if path == '/kb/gene-dosage/download':
-            return httpx.Response(200, content=_DOSAGE_CSV, headers={'ETag': '"dosage-v1"'})
+            return httpx2.Response(200, content=_DOSAGE_CSV, headers={'ETag': '"dosage-v1"'})
         if host == 'panelapp-aus.org':
             return _panelapp_response(request)
         raise AssertionError(f'unexpected request {request.url}')
@@ -141,9 +141,9 @@ def _handler(*, gencc_etag: str | None = None, gencc_status: Callable[[], int] |
     return handler
 
 
-def _run[T](handler: _Handler, call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](handler: _Handler, call: Callable[[httpx2.AsyncClient], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
@@ -211,9 +211,9 @@ def test_transient_5xx_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_transient_transport_error_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(asyncio, 'sleep', _instant_sleep)
     base = _handler()
-    blips = iter([httpx.ConnectError('transient'), None])
+    blips = iter([httpx2.ConnectError('transient'), None])
 
-    def flaky_gencc(request: httpx.Request) -> httpx.Response:
+    def flaky_gencc(request: httpx2.Request) -> httpx2.Response:
         if request.url.host == 'search.thegencc.org' and (blip := next(blips)) is not None:
             raise blip
         return base(request)
@@ -226,10 +226,10 @@ def test_transient_transport_error_is_retried(monkeypatch: pytest.MonkeyPatch) -
 def test_malformed_download_raises_before_writing_the_bucket() -> None:
     base = _handler()
 
-    def comma_gencc(request: httpx.Request) -> httpx.Response:
+    def comma_gencc(request: httpx2.Request) -> httpx2.Response:
         # GenCC as commas where the loader parses tabs: the header collapses -> the loader raises.
         if request.url.host == 'search.thegencc.org':
-            return httpx.Response(200, content=_GENCC_TSV.replace(b'\t', b','), headers={'ETag': '"gencc-v1"'})
+            return httpx2.Response(200, content=_GENCC_TSV.replace(b'\t', b','), headers={'ETag': '"gencc-v1"'})
         return base(request)
 
     store = _FakeStore()
@@ -265,23 +265,23 @@ def test_build_dump_stamps_the_refresh_as_an_iso_dated_release() -> None:
 
 
 def test_build_dump_refuses_an_empty_gene_set() -> None:
-    def empty_panels(request: httpx.Request) -> httpx.Response:
+    def empty_panels(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == 'panelapp-aus.org'
-        return httpx.Response(200, json={'name': 'Empty', 'genes': []})
+        return httpx2.Response(200, json={'name': 'Empty', 'genes': []})
 
     # A panel that comes back empty (an upstream glitch) must not blank out a good dump.
     with pytest.raises(ValueError, match='no genes'):
         _run(empty_panels, refresh_panelapp.build_dump)
 
 
-def _paging_evaluations(next_link: Callable[[httpx.Request], str]) -> _Handler:
+def _paging_evaluations(next_link: Callable[[httpx2.Request], str]) -> _Handler:
     """`_handler`'s PanelApp routes, with every evaluations page linking on to `next_link`."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.host == 'panelapp-aus.org'
         if _EVAL_PATH.match(request.url.path) is None:
             return _panelapp_response(request)
-        return httpx.Response(200, json={'count': 1, 'next': next_link(request), 'previous': None, 'results': []})
+        return httpx2.Response(200, json={'count': 1, 'next': next_link(request), 'previous': None, 'results': []})
 
     return handler
 

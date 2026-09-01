@@ -25,7 +25,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -168,13 +168,13 @@ class GnomadGeneResult:
     query: str
 
 
-async def _post_graphql(query: str, variables: dict[str, str], *, http_client: httpx.AsyncClient) -> dict[str, object]:
+async def _post_graphql(query: str, variables: dict[str, str], *, http_client: httpx2.AsyncClient) -> dict[str, object]:
     """POST a GraphQL query and return the decoded response body.
 
     Not on ``errors.raise_for_status``; the taxonomy note in ``docs/design/evidence-interfaces.md`` says why.
 
     Raises:
-        httpx.HTTPStatusError: If gnomAD returns a non-2xx status. None of them is a verdict on a
+        httpx2.HTTPStatusError: If gnomAD returns a non-2xx status. None of them is a verdict on a
             caller-supplied field: those ride in the GraphQL variables and come back inside a 200.
             Measured, the rate limiter answers 429 (from request 11 in a burst) and a malformed
             query document answers 400 — ours to fix, not the caller's.
@@ -234,7 +234,7 @@ async def fetch_gnomad(
     gnomad_id: str,
     dataset: str,
     *,
-    http_client: httpx.AsyncClient,
+    http_client: httpx2.AsyncClient,
     cooccurrence_with: str | None = None,
 ) -> GnomadResult:
     """Fetch one variant's gnomAD frequency block (and optional co-occurrence).
@@ -251,7 +251,7 @@ async def fetch_gnomad(
         requested) and provenance.
 
     Raises:
-        httpx.HTTPStatusError: If gnomAD returns a non-2xx status.
+        httpx2.HTTPStatusError: If gnomAD returns a non-2xx status.
         errors.UnknownVariantError: If gnomAD holds no record of the variant in ``dataset``.
         errors.InvalidRequestError: If gnomAD could not parse ``gnomad_id`` / ``cooccurrence_with``.
         ValueError: If the variant did not resolve and gnomAD gave no reason.
@@ -382,7 +382,7 @@ def _mane_select(gene: dict[str, object]) -> ManeSelectPair | None:
     )
 
 
-async def fetch_gnomad_gene(gene_symbol: str, *, http_client: httpx.AsyncClient) -> GnomadGeneResult:
+async def fetch_gnomad_gene(gene_symbol: str, *, http_client: httpx2.AsyncClient) -> GnomadGeneResult:
     """Fetch gene-level gnomAD constraint signals (LOEUF + pext) for ExonRelevance.
 
     Args:
@@ -394,7 +394,7 @@ async def fetch_gnomad_gene(gene_symbol: str, *, http_client: httpx.AsyncClient)
         the regions themselves, the raw ``gene`` object, and provenance.
 
     Raises:
-        httpx.HTTPStatusError: If gnomAD returns a non-2xx status.
+        httpx2.HTTPStatusError: If gnomAD returns a non-2xx status.
         errors.UnknownVariantError: If gnomAD holds no record of the gene.
         errors.InvalidRequestError: If gnomAD refused the query.
         ValueError: If the gene did not resolve and gnomAD gave no reason, or is not an object.

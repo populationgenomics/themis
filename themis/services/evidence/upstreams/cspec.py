@@ -35,7 +35,7 @@ import datetime
 import urllib.parse
 from collections.abc import Iterable, Mapping, Sequence
 
-import httpx
+import httpx2
 from google.protobuf import timestamp_pb2
 
 from themis.rpc import cspec_pb2
@@ -125,11 +125,11 @@ def _entity_url(entity_type: str, identifier: str) -> str:
     return _ENTITY_URL.format(entity_type=entity_type, identifier=urllib.parse.quote(identifier, safe=''))
 
 
-async def _fetch(url: str, *, http_client: httpx.AsyncClient) -> httpx.Response:
+async def _fetch(url: str, *, http_client: httpx2.AsyncClient) -> httpx2.Response:
     return await http_client.get(url, params=_DETAIL)
 
 
-def _refusal(response: httpx.Response) -> str:
+def _refusal(response: httpx2.Response) -> str:
     """The registry's own explanation of a failure, from whichever envelope it used.
 
     The store answers a missing entity under ``status.msg``; its router answers an unparseable path
@@ -147,7 +147,7 @@ def _refusal(response: httpx.Response) -> str:
     return message if isinstance(message := body.get('errMsg'), str) else response.text.strip()
 
 
-def _data(response: httpx.Response, *, subject: str, caller_supplied_id: bool = False) -> dict[str, object]:
+def _data(response: httpx2.Response, *, subject: str, caller_supplied_id: bool = False) -> dict[str, object]:
     """The response's ``data`` object, failing an error status and a shape that carries none.
 
     Only the gene lookup asks about an identifier the caller chose, so only there is a 4xx a verdict
@@ -163,7 +163,7 @@ def _data(response: httpx.Response, *, subject: str, caller_supplied_id: bool = 
 
     Raises:
         errors.InvalidRequestError: On a non-429 4xx for a caller-supplied identifier.
-        httpx.HTTPStatusError: On a 429 or a 5xx.
+        httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: On any other failure, and if a 2xx carries no ``data`` object — the registry
             states an outcome in the status and the payload under ``data``, so a success without one
             is a shape change.
@@ -175,7 +175,7 @@ def _data(response: httpx.Response, *, subject: str, caller_supplied_id: bool = 
         contradicts_its_own_links = (
             not caller_supplied_id
             and response.is_client_error
-            and response.status_code != httpx.codes.TOO_MANY_REQUESTS
+            and response.status_code != httpx2.codes.TOO_MANY_REQUESTS
         )
         if contradicts_its_own_links:
             raise ValueError(f'{_SOURCE} answered {subject} with {response.status_code}: {refusal}')
@@ -545,13 +545,13 @@ class _RuleSetRecord:
 
 
 async def _fetch_rule_set(
-    ldh_id: str, *, specification: str, version: str, http_client: httpx.AsyncClient
+    ldh_id: str, *, specification: str, version: str, http_client: httpx2.AsyncClient
 ) -> _RuleSetRecord:
     """One rule set whole: its own record plus the files linked to it.
 
     Raises:
         errors.InvalidRequestError: If the registry refuses the request.
-        httpx.HTTPStatusError: On a 429 or a 5xx.
+        httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: If the record's shape is not one this adapter reads. A rule set the document
             itself linked is one the registry holds, so a miss here is a fault, never an absence.
     """
@@ -584,12 +584,12 @@ class _Document:
     queries: list[SourceQuery]
 
 
-async def _fetch_document(identifier: str, gene: str, *, http_client: httpx.AsyncClient) -> _Document:
+async def _fetch_document(identifier: str, gene: str, *, http_client: httpx2.AsyncClient) -> _Document:
     """One candidate document, its rule sets, and whether they specify the gene.
 
     Raises:
         errors.InvalidRequestError: If the registry refuses the request.
-        httpx.HTTPStatusError: On a 429 or a 5xx.
+        httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: If the record's shape is not one this adapter reads. The gene's own record linked
             this document, so the registry holding none of it is a fault rather than an absence.
     """
@@ -628,7 +628,7 @@ async def _fetch_document(identifier: str, gene: str, *, http_client: httpx.Asyn
 
 
 async def _fetch_rule_sets(
-    naming: Sequence[Mapping[str, object]], identifier: str, version: str, *, http_client: httpx.AsyncClient
+    naming: Sequence[Mapping[str, object]], identifier: str, version: str, *, http_client: httpx2.AsyncClient
 ) -> list[_RuleSetRecord]:
     """Every rule set that names the gene, fetched concurrently for its attachments."""
     try:
@@ -715,7 +715,7 @@ def _candidates(gene_record: Mapping[str, object], *, gene: str) -> list[str]:
     ]
 
 
-async def fetch_criteria_specifications(gene: str, *, http_client: httpx.AsyncClient) -> CspecResult:
+async def fetch_criteria_specifications(gene: str, *, http_client: httpx2.AsyncClient) -> CspecResult:
     """Fetch every CSpec criteria specification whose rule set names ``gene``.
 
     Args:
@@ -729,7 +729,7 @@ async def fetch_criteria_specifications(gene: str, *, http_client: httpx.AsyncCl
     Raises:
         errors.InvalidRequestError: If the registry refuses a request (any non-429 4xx but the gene
             lookup's 404, which is `SPECIFICATION_COVERAGE_GENE_ABSENT`).
-        httpx.HTTPStatusError: On a 429 or a 5xx.
+        httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: If a record's shape is not one this adapter reads.
     """
     url = _entity_url('Gene', gene)
@@ -737,7 +737,7 @@ async def fetch_criteria_specifications(gene: str, *, http_client: httpx.AsyncCl
     gene_query = SourceQuery(source=_SOURCE, dataset_versions=(), query=url)
     # The table holds every HGNC gene, so a miss is a symbol the registry has no entry for — an
     # answer about the registry's HGNC snapshot, and not the finding that no panel specified the gene.
-    if response.status_code == httpx.codes.NOT_FOUND:
+    if response.status_code == httpx2.codes.NOT_FOUND:
         return CspecResult(
             specifications=[],
             coverage=cspec_pb2.SPECIFICATION_COVERAGE_GENE_ABSENT,
@@ -772,7 +772,7 @@ async def fetch_criteria_specifications(gene: str, *, http_client: httpx.AsyncCl
     )
 
 
-async def _fetch_documents(candidates: Sequence[str], gene: str, *, http_client: httpx.AsyncClient) -> list[_Document]:
+async def _fetch_documents(candidates: Sequence[str], gene: str, *, http_client: httpx2.AsyncClient) -> list[_Document]:
     """Every candidate document, read concurrently; a failure in one cancels the rest."""
     if not candidates:
         return []

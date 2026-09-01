@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 
-import httpx
+import httpx2
 
 from themis.services.evidence.gene_disease.refresh import object_store, panelapp, raw_files
 from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc
@@ -68,7 +68,7 @@ class RefreshReport:
     panelapp_gene_count: int
 
 
-async def run(store: object_store.ReferenceObjectStore, *, client: httpx.AsyncClient) -> RefreshReport:
+async def run(store: object_store.ReferenceObjectStore, *, client: httpx2.AsyncClient) -> RefreshReport:
     """Refresh all four reference dumps into the bucket ``store`` writes to.
 
     Args:

@@ -8,7 +8,7 @@ import pathlib
 import urllib.parse
 from collections.abc import Callable, Sequence
 
-import httpx
+import httpx2
 import pytest
 
 from themis.evidence.models import evidence_pb2
@@ -46,31 +46,31 @@ _PREDICTOR_FIELDS = {
 }
 
 
-def _annotating(annotate: Callable[[httpx.Request], httpx.Response]) -> httpx.MockTransport:
+def _annotating(annotate: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.MockTransport:
     """A transport answering the release call, and every other request through ``annotate``.
 
     Each `fetch_vep` issues two requests: the annotation, and the `/info/software` release that
     stamps its provenance. Only the first is ever what a test is about.
     """
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == _SOFTWARE_PATH:
-            return httpx.Response(200, json={'release': _RELEASE})
+            return httpx2.Response(200, json={'release': _RELEASE})
         return annotate(request)
 
-    return httpx.MockTransport(handler)
+    return httpx2.MockTransport(handler)
 
 
-def _issued_request(handler_variant: str, predictors: Sequence[str] = ()) -> httpx.Request:
+def _issued_request(handler_variant: str, predictors: Sequence[str] = ()) -> httpx2.Request:
     """The annotation request `fetch_vep` puts on the wire for ``handler_variant``."""
-    seen: list[httpx.Request] = []
+    seen: list[httpx2.Request] = []
 
-    def annotate(request: httpx.Request) -> httpx.Response:
+    def annotate(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
-        return httpx.Response(200, json=_FIXTURE)
+        return httpx2.Response(200, json=_FIXTURE)
 
     async def run() -> vep.VepResult:
-        async with httpx.AsyncClient(transport=_annotating(annotate)) as client:
+        async with httpx2.AsyncClient(transport=_annotating(annotate)) as client:
             return await vep.fetch_vep(handler_variant, predictors, 'GRCh38', http_client=client)
 
     asyncio.run(run())
@@ -84,10 +84,10 @@ def _requested_expression(handler_variant: str) -> str:
 
 
 def _fetch(
-    annotate: Callable[[httpx.Request], httpx.Response], predictors: Sequence[str] = ('AlphaMissense', 'BayesDel')
+    annotate: Callable[[httpx2.Request], httpx2.Response], predictors: Sequence[str] = ('AlphaMissense', 'BayesDel')
 ) -> vep.VepResult:
     async def run() -> vep.VepResult:
-        async with httpx.AsyncClient(transport=_annotating(annotate)) as client:
+        async with httpx2.AsyncClient(transport=_annotating(annotate)) as client:
             return await vep.fetch_vep(_VARIANT, predictors, 'GRCh38', http_client=client)
 
     return asyncio.run(run())
@@ -152,7 +152,7 @@ def test_a_predictor_with_no_wire_form_is_refused_rather_than_sent(predictor: st
 
 
 def test_happy_path_maps_consequence_and_keeps_raw() -> None:
-    result = _fetch(lambda _: httpx.Response(200, json=_FIXTURE))
+    result = _fetch(lambda _: httpx2.Response(200, json=_FIXTURE))
 
     assert result.most_severe_consequence == evidence_pb2.CONSEQUENCE_MISSENSE
     assert result.dataset_versions == (f'VEP {_RELEASE}', 'GRCh38')
@@ -163,11 +163,11 @@ def test_happy_path_maps_consequence_and_keeps_raw() -> None:
 def test_a_host_that_states_no_release_is_a_fault_not_a_bare_assembly() -> None:
     """A stamp naming the assembly alone reads as a full one, so there is no partial to fall back to."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={} if request.url.path == _SOFTWARE_PATH else _FIXTURE)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={} if request.url.path == _SOFTWARE_PATH else _FIXTURE)
 
     async def run() -> vep.VepResult:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await vep.fetch_vep(_VARIANT, [], 'GRCh38', http_client=client)
 
     with pytest.raises(ValueError, match='no integer release'):
@@ -175,7 +175,7 @@ def test_a_host_that_states_no_release_is_a_fault_not_a_bare_assembly() -> None:
 
 
 def test_gene_identity_from_canonical_consequence() -> None:
-    result = _fetch(lambda _: httpx.Response(200, json=_FIXTURE))
+    result = _fetch(lambda _: httpx2.Response(200, json=_FIXTURE))
 
     assert result.gene_symbol == 'NF1'
     assert result.hgnc_id == 'HGNC:7765'
@@ -238,11 +238,11 @@ def test_an_assembly_less_reference_never_reaches_the_endpoint(variant: str) -> 
     assembly the host serves.
     """
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx2.Request) -> httpx2.Response:
         raise AssertionError(f'{variant!r} names no assembly and must be refused before the call')
 
     async def run() -> vep.VepResult:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await vep.fetch_vep(variant, [], 'GRCh38', http_client=client)
 
     with pytest.raises(errors.InvalidRequestError, match='names its assembly'):
@@ -268,17 +268,17 @@ def test_a_genomic_reference_keeps_its_transcript_qualifier() -> None:
 def test_a_variant_ensembl_refuses_is_not_a_fault_to_retry() -> None:
     """Ensembl 400s an expression it cannot parse; reissuing it four times cannot change that."""
     with pytest.raises(errors.InvalidRequestError, match='rejected'):
-        _fetch(lambda _: httpx.Response(400, text='Unable to parse HGVS notation'))
+        _fetch(lambda _: httpx2.Response(400, text='Unable to parse HGVS notation'))
 
 
 def test_empty_list_raises_value_error() -> None:
     with pytest.raises(ValueError, match='no annotation'):
-        _fetch(lambda _: httpx.Response(200, json=[]))
+        _fetch(lambda _: httpx2.Response(200, json=[]))
 
 
 def test_annotation_without_consequence_raises_value_error() -> None:
     with pytest.raises(ValueError, match='most_severe_consequence'):
-        _fetch(lambda _: httpx.Response(200, json=[{'assembly_name': 'GRCh38'}]))
+        _fetch(lambda _: httpx2.Response(200, json=[{'assembly_name': 'GRCh38'}]))
 
 
 def _annotated(**consequence: object) -> list[dict[str, object]]:
@@ -293,7 +293,7 @@ def _annotated(**consequence: object) -> list[dict[str, object]]:
 
 def _resolved(**consequence: object) -> dict[str, object]:
     """The one transcript consequence `fetch_vep` returns for that response, BayesDel requested."""
-    result = _fetch(lambda _: httpx.Response(200, json=_annotated(**consequence)), ['BayesDel'])
+    result = _fetch(lambda _: httpx2.Response(200, json=_annotated(**consequence)), ['BayesDel'])
     consequences = result.raw['transcript_consequences']
     assert isinstance(consequences, list)
     return consequences[0]

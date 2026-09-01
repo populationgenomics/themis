@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 
-import httpx
+import httpx2
 
 from themis.services.evidence.gene_disease.refresh import _http, object_store
 
@@ -42,7 +42,7 @@ def etag_name(object_name: str) -> str:
 
 
 async def refresh_file(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     store: object_store.ReferenceObjectStore,
     *,
     url: str,
@@ -63,13 +63,13 @@ async def refresh_file(
         What the refresh did (written vs 304-skipped, and whether an ETag was stored).
 
     Raises:
-        httpx.HTTPStatusError: If the upstream returns a status other than 200 or 304.
+        httpx2.HTTPStatusError: If the upstream returns a status other than 200 or 304.
         ValueError: If the freshly downloaded bytes fail to parse through ``validate``.
     """
     stored_etag = await store.read(etag_name(object_name))
     headers = {'If-None-Match': stored_etag.decode('utf-8')} if stored_etag else None
     response = await _http.request_with_retry(client, 'GET', url, headers=headers)
-    if response.status_code == httpx.codes.NOT_MODIFIED:
+    if response.status_code == httpx2.codes.NOT_MODIFIED:
         return RefreshOutcome(object_name=object_name, changed=False, etag_stored=bool(stored_etag))
     response.raise_for_status()
     try:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import urllib.parse
 
-import httpx
+import httpx2
 
 # One interpolated part of a message; the whole of one. Both bounds exist because a message becomes a
 # gRPC trailer and an over-limit trailer is dropped whole, taking the diagnosis with it.
@@ -130,13 +130,13 @@ def first_failure(failures: BaseExceptionGroup[BaseException]) -> BaseException:
     return first_failure(leaf) if isinstance(leaf, BaseExceptionGroup) else leaf
 
 
-def raise_for_status(response: httpx.Response, *, upstream: str, subject: str, detail: str | None = None) -> None:
+def raise_for_status(response: httpx2.Response, *, upstream: str, subject: str, detail: str | None = None) -> None:
     """Fail a non-2xx upstream response, telling a refusal from a fault.
 
     A non-429 4xx is the upstream judging the request as issued, so reissuing it unchanged cannot
     change the answer: it becomes ``InvalidRequestError`` (``INVALID_ARGUMENT``) rather than the
-    ``UNKNOWN`` a bare ``httpx.Response.raise_for_status`` yields, which the guest's retry helper
-    counts as transient and reissues with backoff. 429 and 5xx stay ``httpx.HTTPStatusError``: a
+    ``UNKNOWN`` a bare ``httpx2.Response.raise_for_status`` yields, which the guest's retry helper
+    counts as transient and reissues with backoff. 429 and 5xx stay ``httpx2.HTTPStatusError``: a
     retry can clear those. An upstream that reports "no record" with a 4xx needs its own branch
     ahead of this call — ``UnknownVariantError`` is a settled answer, not a refusal.
 
@@ -150,16 +150,16 @@ def raise_for_status(response: httpx.Response, *, upstream: str, subject: str, d
 
     Raises:
         InvalidRequestError: On a non-429 4xx.
-        httpx.HTTPStatusError: On a 429, a 5xx, or any other non-2xx.
+        httpx2.HTTPStatusError: On a 429, a 5xx, or any other non-2xx.
     """
     if response.is_success:
         return
     explained = clipped(detail if detail is not None else response.text.strip())
     named = clipped(subject)
     # 429 is a 4xx about the caller's rate, not about the request, so it stays retryable.
-    if response.is_client_error and response.status_code != httpx.codes.TOO_MANY_REQUESTS:
+    if response.is_client_error and response.status_code != httpx2.codes.TOO_MANY_REQUESTS:
         raise InvalidRequestError(f'{upstream} rejected {named} ({response.status_code}): {explained}')
-    raise httpx.HTTPStatusError(
+    raise httpx2.HTTPStatusError(
         f'{upstream} returned {response.status_code} for {named}: {explained}',
         request=response.request,
         response=response,

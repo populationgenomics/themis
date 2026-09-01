@@ -18,7 +18,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -160,7 +160,7 @@ def _scores(payload: object, *, predictor: str, variant: str) -> Sequence[object
 
 
 async def _fetch(
-    http_client: httpx.AsyncClient, url: str, params: Mapping[str, str | int]
+    http_client: httpx2.AsyncClient, url: str, params: Mapping[str, str | int]
 ) -> tuple[dict[str, object], str]:
     """GET one predictor's score for a variant.
 
@@ -175,7 +175,7 @@ async def _fetch(
     return payload, str(response.request.url)
 
 
-async def fetch_splice(variant: str, genome_build: str, *, http_client: httpx.AsyncClient) -> SpliceResult:
+async def fetch_splice(variant: str, genome_build: str, *, http_client: httpx2.AsyncClient) -> SpliceResult:
     """Score one variant against Broad SpliceAI and Pangolin.
 
     Args:
@@ -187,7 +187,7 @@ async def fetch_splice(variant: str, genome_build: str, *, http_client: httpx.As
         The parsed `SpliceResult`.
 
     Raises:
-        httpx.HTTPStatusError: If either service returns a non-2xx status.
+        httpx2.HTTPStatusError: If either service returns a non-2xx status.
         ValueError: If either response is not an object, or a delta's sign contradicts its
             predictor's convention.
         errors.InvalidRequestError: If either service could not parse `variant`.

@@ -1,6 +1,6 @@
 """NCBI ClinVar adapter: the archive one accession names, submission detail, and the gene-pool census.
 
-The E-utilities calls are driven by an httpx `MockTransport` over committed payloads (accession
+The E-utilities calls are driven by an httpx2 `MockTransport` over committed payloads (accession
 VCV001731988, gene `NF1` capped at 5 of 5866); the rate-limit delay is patched to zero so no test
 sleeps or hits the network.
 
@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
 
 import clinvar_proto
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -41,7 +41,7 @@ def _archive(fixture: str) -> clinvar.ClinvarArchive:
     """What `fetch_variant_archive` returns for a committed archive, fetched end to end."""
     content = (_FIXTURES / fixture).read_bytes()
     return _run(
-        lambda _r: httpx.Response(200, content=content), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
+        lambda _r: httpx2.Response(200, content=content), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
     )
 
 
@@ -58,28 +58,30 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clinvar, '_RATE_LIMIT_DELAY_S', 0)
 
 
-def _handler(request: httpx.Request) -> httpx.Response:
+def _handler(request: httpx2.Request) -> httpx2.Response:
     path = request.url.path
     if path.endswith('/esearch.fcgi'):
         term = request.url.params['term']
-        return httpx.Response(200, json=_FIXTURE['esearch_gene' if '[gene]' in term else 'esearch_variant'])
+        return httpx2.Response(200, json=_FIXTURE['esearch_gene' if '[gene]' in term else 'esearch_variant'])
     if path.endswith('/efetch.fcgi'):
-        return httpx.Response(200, content=_VCV_XML)
+        return httpx2.Response(200, content=_VCV_XML)
     if path.endswith('/esummary.fcgi'):
-        return httpx.Response(200, json=_FIXTURE['esummary_gene'])
+        return httpx2.Response(200, json=_FIXTURE['esummary_gene'])
     raise AssertionError(f'unexpected request path {path!r}')
 
 
-def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](
+    handler: Callable[[httpx2.Request], httpx2.Response], call: Callable[[httpx2.AsyncClient], Awaitable[T]]
+) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
 
 
 def _pool(
-    handler: Callable[[httpx.Request], httpx.Response],
+    handler: Callable[[httpx2.Request], httpx2.Response],
     *,
     gene: str = _GENE,
     floor: int = 1,
@@ -87,25 +89,25 @@ def _pool(
 ) -> clinvar.ClinvarGenePool:
     """The gene pool over ``handler``; the floor and the bound are stated because the rpc states them."""
 
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarGenePool:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarGenePool:
         return await clinvar.fetch_gene_pool(gene, http_client=client, review_status_floor=floor, limit=limit)
 
     return _run(handler, call)
 
 
 def _span(
-    handler: Callable[[httpx.Request], httpx.Response], *, gene: str = _GENE, limit: int = _POOL_LIMIT
+    handler: Callable[[httpx2.Request], httpx2.Response], *, gene: str = _GENE, limit: int = _POOL_LIMIT
 ) -> clinvar.ClinvarSpanRecords:
     """The span census over ``handler``, on one exon-sized interval."""
 
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarSpanRecords:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarSpanRecords:
         return await clinvar.fetch_span_records(gene, 31_232_881, 31_232_931, http_client=client, limit=limit)
 
     return _run(handler, call)
 
 
-def _search_response(uids: list[str], total: int | None = None) -> httpx.Response:
-    return httpx.Response(
+def _search_response(uids: list[str], total: int | None = None) -> httpx2.Response:
+    return httpx2.Response(
         200, json={'esearchresult': {'idlist': uids, 'count': str(total if total is not None else len(uids))}}
     )
 
@@ -147,11 +149,11 @@ def test_the_archive_is_fetched_by_accession_and_nothing_is_searched() -> None:
     """ClinVar indexes renderings, so the crosswalk's accession is the only identity claim there is."""
     fetched_ids: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if not request.url.path.endswith('/efetch.fcgi'):
             raise AssertionError('the archive lookup issues no search')
         fetched_ids.append(request.url.params['id'])
-        return httpx.Response(200, content=_VCV_XML)
+        return httpx2.Response(200, content=_VCV_XML)
 
     fetched = _run(handler, lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c))
     assert fetched_ids == [_VCV]
@@ -172,7 +174,7 @@ def test_the_archive_is_fetched_by_accession_and_nothing_is_searched() -> None:
 def test_an_accession_outside_the_padded_form_is_refused_before_the_fetch(accession: str) -> None:
     """Fetched, a bare UID answers with an empty set that reads as ClinVar holding no such record."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('the accession should be refused before anything is fetched')
 
     with pytest.raises(errors.InvalidRequestError, match='zero-padded ClinVar variation accession'):
@@ -199,7 +201,7 @@ def test_the_two_ways_clinvar_says_it_holds_no_archive_are_one_disagreement(
     """
     with pytest.raises(errors.InconsistentSourcesError, match=stated) as caught:
         _run(
-            lambda _r: httpx.Response(status, content=body),
+            lambda _r: httpx2.Response(status, content=body),
             lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c),
         )
 
@@ -216,7 +218,9 @@ def test_a_refusal_worded_otherwise_is_still_a_refusal() -> None:
     """
     body = b'<eFetchResult><ERROR>Invalid db name specified: clnvar</ERROR></eFetchResult>'
     with pytest.raises(errors.InvalidRequestError, match='Invalid db name'):
-        _run(lambda _r: httpx.Response(400, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c))
+        _run(
+            lambda _r: httpx2.Response(400, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
+        )
 
 
 @pytest.mark.parametrize(
@@ -233,14 +237,16 @@ def test_a_200_that_is_not_one_archive_for_the_accession_fails_the_lookup(body: 
     Read as one, either would become the novelty finding off an answer that never said so.
     """
     with pytest.raises(ValueError, match=match):
-        _run(lambda _r: httpx.Response(200, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c))
+        _run(
+            lambda _r: httpx2.Response(200, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
+        )
 
 
 def test_the_gene_pool_reports_the_census_behind_it() -> None:
     """500 returned out of tens of thousands is indistinguishable from a complete pool without this."""
     retmax: list[str | None] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             retmax.append(request.url.params.get('retmax'))
         return _handler(request)
@@ -406,10 +412,10 @@ def test_an_empty_gene_is_refused() -> None:
 
 
 def test_a_complete_gene_pool_is_not_flagged_as_truncated() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(_FIXTURE['esearch_gene']['esearchresult']['idlist'])
-        return httpx.Response(200, json=_FIXTURE['esummary_gene'])
+        return httpx2.Response(200, json=_FIXTURE['esummary_gene'])
 
     pool = _pool(handler)
     assert not pool.truncated
@@ -420,7 +426,7 @@ def _pool_terms(floor: int) -> list[str]:
     """The esearch terms `fetch_gene_pool` issues at ``floor``."""
     terms: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             terms.append(request.url.params['term'])
         return _handler(request)
@@ -453,14 +459,14 @@ def test_the_pool_is_paged_rather_than_taken_as_one_page() -> None:
     pages: list[tuple[str, str]] = []
     uids = [str(i) for i in range(7)]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             params = request.url.params
             start = int(params.get('retstart') or 0)
             retmax = int(params['retmax'])
             pages.append((params.get('retstart') or '0', params['retmax']))
             return _search_response(uids[start : start + min(retmax, 3)], total=len(uids))
-        return httpx.Response(200, json={'result': {'uids': []}})
+        return httpx2.Response(200, json={'result': {'uids': []}})
 
     pool = _pool(handler, floor=0, limit=7)
     # Three pages of three, three and one: every matched record inside the bound is reached, and no
@@ -473,11 +479,11 @@ def test_the_pool_is_paged_rather_than_taken_as_one_page() -> None:
 def test_a_bound_below_the_match_count_reports_truncation() -> None:
     """The census is what tells a lower bound from a census; a bounded pool has to say so."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             retmax = int(request.url.params['retmax'])
             return _search_response([str(i) for i in range(retmax)], total=5000)
-        return httpx.Response(200, json={'result': {'uids': []}})
+        return httpx2.Response(200, json={'result': {'uids': []}})
 
     pool = _pool(handler, limit=2)
     assert (pool.considered, pool.total, pool.truncated) == (2, 5000, True)
@@ -538,10 +544,10 @@ def test_zero_star_records_are_excluded_from_the_gene_pool() -> None:
         }
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(['1', '2'])
-        return httpx.Response(200, json=summary)
+        return httpx2.Response(200, json=summary)
 
     pool = _pool(handler)
     assert [r.clinvar_id for r in pool.records] == ['VCV000000001']
@@ -571,10 +577,10 @@ def test_a_pool_record_carries_the_coordinates_its_title_names() -> None:
         }
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(list(titles))
-        return httpx.Response(200, json=summary)
+        return httpx2.Response(200, json=summary)
 
     pool = _pool(handler)
     placed, unplaced = pool.records
@@ -605,10 +611,10 @@ def _pool_over(
         }
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(uids)
-        return httpx.Response(200, json=summary)
+        return httpx2.Response(200, json=summary)
 
     return _pool(handler, floor=floor)
 
@@ -710,11 +716,11 @@ def test_a_span_is_searched_by_coordinate_within_the_gene_and_filters_no_classif
     }
     terms: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             terms.append(request.url.params['term'])
             return _search_response(uids)
-        return httpx.Response(200, json=summary)
+        return httpx2.Response(200, json=summary)
 
     found = _span(handler)
     # Two clauses: the endpoint index, plus the long records near the span that could contain it.
@@ -738,13 +744,13 @@ def _span_length_bounds(start: int, end: int) -> tuple[int, int]:
     """The `[Length of the variant]` range the span search over `[start, end]` states, as (low, high)."""
     terms: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path.endswith('/esearch.fcgi')
         term = request.url.params['term']
         terms.append(term)
         return _search_response([], total=0 if '[Base Position]' in term else 5866)
 
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarSpanRecords:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarSpanRecords:
         return await clinvar.fetch_span_records(_GENE, start, end, http_client=client, limit=_POOL_LIMIT)
 
     _run(handler, call)
@@ -766,10 +772,10 @@ def test_a_span_wider_than_the_pad_states_a_length_range_that_holds_it() -> None
     assert low <= end - start + 1 <= high
 
 
-def _empty_span(matches_the_gene: int) -> Callable[[httpx.Request], httpx.Response]:
+def _empty_span(matches_the_gene: int) -> Callable[[httpx2.Request], httpx2.Response]:
     """A transport whose span search matches nothing and whose gene-only probe matches `n`."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path.endswith('/esearch.fcgi')
         matched = matches_the_gene if '[Base Position]' not in request.url.params['term'] else 0
         return _search_response([], total=matched)
@@ -805,12 +811,12 @@ def _span_over(records: list[tuple[str, int, int]], *, start: int, end: int) -> 
         }
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(uids)
-        return httpx.Response(200, json=summary)
+        return httpx2.Response(200, json=summary)
 
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarSpanRecords:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarSpanRecords:
         return await clinvar.fetch_span_records(_GENE, start, end, http_client=client, limit=_POOL_LIMIT)
 
     return _run(handler, call)
@@ -837,10 +843,10 @@ def test_a_long_record_near_the_range_but_not_meeting_it_is_dropped() -> None:
 def test_a_record_stating_no_span_on_the_searched_assembly_is_kept() -> None:
     """It was matched at these coordinates; dropping it would cut the census on an unfilled field."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(['0'])
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 'result': {
@@ -858,7 +864,7 @@ def test_a_record_stating_no_span_on_the_searched_assembly_is_kept() -> None:
             },
         )
 
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarSpanRecords:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarSpanRecords:
         return await clinvar.fetch_span_records(_GENE, 1004, 1006, http_client=client, limit=_POOL_LIMIT)
 
     assert [r.clinvar_id for r in _run(handler, call).records] == ['VCV0']
@@ -882,7 +888,7 @@ def test_an_empty_span_of_a_symbol_clinvar_does_not_index_is_not_the_finding() -
 
 
 def test_a_descending_span_is_refused() -> None:
-    async def call(client: httpx.AsyncClient) -> clinvar.ClinvarSpanRecords:
+    async def call(client: httpx2.AsyncClient) -> clinvar.ClinvarSpanRecords:
         return await clinvar.fetch_span_records(_GENE, 900, 800, http_client=client, limit=10)
 
     with pytest.raises(ValueError, match='ascending'):
@@ -890,10 +896,10 @@ def test_a_descending_span_is_refused() -> None:
 
 
 def test_malformed_esummary_raises() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith('/esearch.fcgi'):
             return _search_response(['1'])
-        return httpx.Response(200, json={'unexpected': 'shape'})  # no 'result'
+        return httpx2.Response(200, json={'unexpected': 'shape'})  # no 'result'
 
     with pytest.raises(ValueError, match='no result object'):
         _pool(handler)
@@ -902,8 +908,8 @@ def test_malformed_esummary_raises() -> None:
 def test_an_esearch_without_a_count_raises() -> None:
     """The count is the truncation signal; a response missing it cannot be silently read as complete."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'esearchresult': {'idlist': ['1']}})
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'esearchresult': {'idlist': ['1']}})
 
     with pytest.raises(ValueError, match='no count'):
         _pool(handler)
@@ -920,12 +926,14 @@ def test_an_esearch_without_a_count_raises() -> None:
 def test_efetch_xml_the_parser_refuses_surfaces_as_a_parse_failure(body: bytes) -> None:
     """Entity expansion is the attack the parser is hardened against; its refusal must not read as an absence."""
     with pytest.raises(ValueError, match='unparsable XML'):
-        _run(lambda _r: httpx.Response(200, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c))
+        _run(
+            lambda _r: httpx2.Response(200, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
+        )
 
 
 def test_non_2xx_raises() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
-        _pool(lambda _r: httpx.Response(429, json={}))
+    with pytest.raises(httpx2.HTTPStatusError):
+        _pool(lambda _r: httpx2.Response(429, json={}))
 
 
 def test_placeholder_submitter_fields_are_not_carried_as_values() -> None:
@@ -933,7 +941,7 @@ def test_placeholder_submitter_fields_are_not_carried_as_values() -> None:
     blanked = _VCV_XML.replace(b'<AffectedStatus>unknown', b'<AffectedStatus>not provided')
 
     fetched = _run(
-        lambda _r: httpx.Response(200, content=blanked), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
+        lambda _r: httpx2.Response(200, content=blanked), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
     )
     observations = _observations(fetched.record)
     assert observations

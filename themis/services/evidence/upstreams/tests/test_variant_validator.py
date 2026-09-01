@@ -6,7 +6,7 @@ import asyncio
 import json
 import pathlib
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -15,9 +15,9 @@ from themis.services.evidence.upstreams import variant_validator
 _FIXTURE = json.loads((pathlib.Path(__file__).parent / 'fixtures' / 'variant_validator.json').read_text())
 
 
-def _fetch(handler: httpx.MockTransport) -> variant_validator.VariantValidatorResult:
+def _fetch(handler: httpx2.MockTransport) -> variant_validator.VariantValidatorResult:
     async def run() -> variant_validator.VariantValidatorResult:
-        async with httpx.AsyncClient(transport=handler) as client:
+        async with httpx2.AsyncClient(transport=handler) as client:
             return await variant_validator.fetch_variant_validator(
                 'GRCh38', 'NM_000546.6:c.524G>A', 'mane', http_client=client
             )
@@ -26,7 +26,7 @@ def _fetch(handler: httpx.MockTransport) -> variant_validator.VariantValidatorRe
 
 
 def test_happy_path_parses_projection_and_both_build_loci() -> None:
-    result = _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=_FIXTURE)))
+    result = _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=_FIXTURE)))
 
     assert result.gene == 'TP53'
     assert len(result.transcripts) == 1
@@ -49,13 +49,13 @@ def test_happy_path_parses_projection_and_both_build_loci() -> None:
 
 
 def test_non_2xx_raises_http_status_error() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(500, json={})))
+    with pytest.raises(httpx2.HTTPStatusError):
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(500, json={})))
 
 
 def test_response_without_transcript_variant_is_an_absent_record() -> None:
     with pytest.raises(errors.UnknownVariantError, match='no transcript variant'):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json={'flag': 'warning', 'metadata': {}})))
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json={'flag': 'warning', 'metadata': {}})))
 
 
 def test_validation_failure_surfaces_the_reason_it_gave() -> None:
@@ -69,4 +69,4 @@ def test_validation_failure_surfaces_the_reason_it_gave() -> None:
         },
     }
     with pytest.raises(errors.UnknownVariantError, match='not in the RefSeq data set'):
-        _fetch(httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload)))

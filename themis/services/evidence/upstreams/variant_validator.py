@@ -16,7 +16,7 @@ import dataclasses
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.rpc import variant_pb2
 from themis.services.evidence import errors
@@ -172,7 +172,7 @@ def parse_variant_validator(payload: Mapping[str, object], *, query: str) -> Var
 
 
 async def fetch_variant_validator(
-    genome_build: str, variant: str, select_transcripts: str, *, http_client: httpx.AsyncClient
+    genome_build: str, variant: str, select_transcripts: str, *, http_client: httpx2.AsyncClient
 ) -> VariantValidatorResult:
     """Validate + project one variant via VariantValidator.
 
@@ -189,7 +189,7 @@ async def fetch_variant_validator(
         errors.InvalidRequestError: If VariantValidator refuses the request (a non-429 4xx). A
             variant it cannot validate comes back 200 with `validation_warnings`, so this is the
             request itself being unacceptable, not the variant being unknown.
-        httpx.HTTPStatusError: If VariantValidator returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If VariantValidator returns a 429 or a 5xx.
         errors.UnknownVariantError: If the response carries no transcript variant.
         ValueError: If the response is not a JSON object.
     """

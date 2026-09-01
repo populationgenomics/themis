@@ -13,7 +13,7 @@ import json
 import pathlib
 from collections.abc import Awaitable, Callable, Sequence
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import transcript_pb2
@@ -38,7 +38,7 @@ def _returns[T](value: T) -> Callable[..., Awaitable[T]]:
 
 def _run[T](call: Callable[[transcript_backend.LiveBackend], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(transcript_backend.LiveBackend(client))
 
     return asyncio.run(run())
@@ -279,7 +279,7 @@ def test_exon_relevance_composes_gnomad_clinvar_and_gtex(monkeypatch: pytest.Mon
         errors.UnknownVariantError('ClinVar holds no record'),
         errors.InvalidRequestError('ClinVar rejected the term'),
         ValueError('ClinVar esearch returned no count'),
-        httpx.HTTPStatusError('502', request=httpx.Request('GET', 'https://e.utils'), response=httpx.Response(502)),
+        httpx2.HTTPStatusError('502', request=httpx2.Request('GET', 'https://e.utils'), response=httpx2.Response(502)),
     ],
 )
 def test_exon_relevance_never_reports_a_density_it_could_not_compute(

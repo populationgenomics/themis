@@ -13,7 +13,7 @@ import json
 import pathlib
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -25,21 +25,23 @@ _SCORED_URN = 'urn:mavedb:00001222-b-2#846'
 _MISSES: dict[str, object] = {'exactMatch': None, 'equivalentNt': [], 'equivalentAa': []}
 
 
-def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](
+    handler: Callable[[httpx2.Request], httpx2.Response], call: Callable[[httpx2.AsyncClient], Awaitable[T]]
+) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
 
 
 def _variant_urn(path: str) -> str:
-    """The URN a `/variants/{urn}` path names; httpx has already decoded the percent-encoding."""
+    """The URN a `/variants/{urn}` path names; httpx2 has already decoded the percent-encoding."""
     return path.rsplit('/', 1)[-1]
 
 
-def _fixture_handler(seen: list[str] | None = None) -> Callable[[httpx.Request], httpx.Response]:
-    def handler(request: httpx.Request) -> httpx.Response:
+def _fixture_handler(seen: list[str] | None = None) -> Callable[[httpx2.Request], httpx2.Response]:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         if seen is not None:
             seen.append(path)
@@ -47,12 +49,12 @@ def _fixture_handler(seen: list[str] | None = None) -> Callable[[httpx.Request],
             # MaveDB answers every id it was asked, an id it holds nothing under included.
             held = {e['clingenAlleleId']: e for e in _FIXTURE['lookup']}
             asked = json.loads(request.content)['clingenAlleleIds']
-            return httpx.Response(200, json=[held.get(a, _MISSES.copy() | {'clingenAlleleId': a}) for a in asked])
+            return httpx2.Response(200, json=[held.get(a, _MISSES.copy() | {'clingenAlleleId': a}) for a in asked])
         if '/variants/' in path:
             record = _FIXTURE['variants'].get(_variant_urn(path))
             if record is None:
-                return httpx.Response(404, json={'detail': 'not found'})
-            return httpx.Response(200, json=record)
+                return httpx2.Response(404, json={'detail': 'not found'})
+            return httpx2.Response(200, json=record)
         raise AssertionError(f'unexpected request path {path!r}')
 
     return handler
@@ -77,7 +79,7 @@ def _entry(allele_id: str, kind: str, *deposits: tuple[str, str | None]) -> dict
     }
 
 
-def _fetch(client: httpx.AsyncClient, *allele_ids: str) -> Awaitable[mavedb.MavedbResult]:
+def _fetch(client: httpx2.AsyncClient, *allele_ids: str) -> Awaitable[mavedb.MavedbResult]:
     return mavedb.fetch_mavedb(allele_ids or (_ALLELE_ID,), http_client=client)
 
 
@@ -107,11 +109,11 @@ def test_no_candidate_is_read_twice_and_none_is_skipped() -> None:
         for urn, record in _FIXTURE['variants'].items()
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request.url.path)
         if request.method == 'POST':
-            return httpx.Response(200, json=_FIXTURE['lookup'])
-        return httpx.Response(200, json=uncalibrated[_variant_urn(request.url.path)])
+            return httpx2.Response(200, json=_FIXTURE['lookup'])
+        return httpx2.Response(200, json=uncalibrated[_variant_urn(request.url.path)])
 
     _run(handler, _fetch)
     assert sum(1 for path in seen if path.endswith('/clingen-allele-id-lookups')) == 1
@@ -123,7 +125,7 @@ def test_every_registered_allele_id_is_asked_in_one_request() -> None:
     """A nucleotide-level deposit and a protein-level one are keyed differently; both get asked."""
     asked: list[list[str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.method == 'POST':
             asked.append(json.loads(request.content)['clingenAlleleIds'])
         return _fixture_handler()(request)
@@ -135,8 +137,8 @@ def test_every_registered_allele_id_is_asked_in_one_request() -> None:
 def test_a_variant_no_deposit_scores_is_a_settled_answer() -> None:
     """An answered-and-empty lookup is the only shape that means "no assay covers this variant"."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[_MISSES.copy() | {'clingenAlleleId': 'CA999'}])
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=[_MISSES.copy() | {'clingenAlleleId': 'CA999'}])
 
     with pytest.raises(errors.UnknownVariantError, match='no scored variant'):
         _run(handler, lambda c: _fetch(c, 'CA999'))
@@ -148,8 +150,8 @@ def test_no_allele_id_is_a_caller_error() -> None:
 
 
 def test_non_2xx_raises() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
-        _run(lambda _r: httpx.Response(504, text='Gateway Time-out'), _fetch)
+    with pytest.raises(httpx2.HTTPStatusError):
+        _run(lambda _r: httpx2.Response(504, text='Gateway Time-out'), _fetch)
 
 
 _UNCALIBRATED: dict[str, object] = {
@@ -176,7 +178,7 @@ def _published_date(record: dict[str, object]) -> str | None:
     return score_set.get('publishedDate')
 
 
-def _two_candidate_handler(records: list[dict[str, object]]) -> Callable[[httpx.Request], httpx.Response]:
+def _two_candidate_handler(records: list[dict[str, object]]) -> Callable[[httpx2.Request], httpx2.Response]:
     by_urn = {record['urn']: record for record in records}
     lookup = [
         _entry(
@@ -186,10 +188,10 @@ def _two_candidate_handler(records: list[dict[str, object]]) -> Callable[[httpx.
         )
     ]
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.method == 'POST':
-            return httpx.Response(200, json=lookup)
-        return httpx.Response(200, json=by_urn[_variant_urn(request.url.path)])
+            return httpx2.Response(200, json=lookup)
+        return httpx2.Response(200, json=by_urn[_variant_urn(request.url.path)])
 
     return handler
 
@@ -287,10 +289,10 @@ def test_a_deposit_reached_under_two_alleles_is_credited_to_the_more_direct_one(
 def test_a_dangling_variant_urn_is_the_upstreams_fault_not_the_callers() -> None:
     """The URN came from MaveDB's own lookup; blaming the request would send a caller rewriting it."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.method == 'POST':
-            return httpx.Response(200, json=[_entry(_ALLELE_ID, 'exactMatch', ('urn:mavedb:gone-a-1', '2025-01-01'))])
-        return httpx.Response(404, json={'detail': 'not found'})
+            return httpx2.Response(200, json=[_entry(_ALLELE_ID, 'exactMatch', ('urn:mavedb:gone-a-1', '2025-01-01'))])
+        return httpx2.Response(404, json={'detail': 'not found'})
 
     with pytest.raises(ValueError, match='which its own lookup named'):
         _run(handler, _fetch)
@@ -300,7 +302,7 @@ def test_a_repeated_allele_id_is_asked_once() -> None:
     """MaveDB echoes a repeated id twice, which would otherwise read as it answering the same id twice."""
     asked: list[list[str]] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.method == 'POST':
             asked.append(json.loads(request.content)['clingenAlleleIds'])
         return _fixture_handler()(request)

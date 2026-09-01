@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import urllib.parse
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
 
 
-def _response(status: int, *, body: str = 'upstream said no') -> httpx.Response:
-    return httpx.Response(status, text=body, request=httpx.Request('GET', 'https://upstream.example/q'))
+def _response(status: int, *, body: str = 'upstream said no') -> httpx2.Response:
+    return httpx2.Response(status, text=body, request=httpx2.Request('GET', 'https://upstream.example/q'))
 
 
 @pytest.mark.parametrize('status', [400, 401, 403, 404, 409, 422])
@@ -24,7 +24,7 @@ def test_a_non_429_client_error_is_a_refusal(status: int) -> None:
 @pytest.mark.parametrize('status', [429, 500, 502, 503, 504])
 def test_a_throttle_or_a_server_fault_stays_retryable(status: int) -> None:
     """429 sits inside the 4xx range but is about the caller's rate, so it is the rule's one carve-out."""
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         errors.raise_for_status(_response(status), upstream='Source', subject="'v'")
 
 
@@ -57,7 +57,7 @@ def test_neither_interpolated_part_can_blow_the_trailer_budget(status: int, fill
     an upstream that answers a 4xx with an HTML error page carries the page.
     """
     caught: pytest.ExceptionInfo[Exception]
-    with pytest.raises((errors.InvalidRequestError, httpx.HTTPStatusError)) as caught:
+    with pytest.raises((errors.InvalidRequestError, httpx2.HTTPStatusError)) as caught:
         errors.raise_for_status(_response(status, body=filler), upstream='Source', subject=filler)
     assert _trailer_cost(str(caught.value)) < 2_000
 

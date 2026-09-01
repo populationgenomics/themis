@@ -17,7 +17,7 @@ import enum
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -83,7 +83,7 @@ class FetchedArticle(NamedTuple):
         return cls(pmid=pmid, record=record, unavailable=None)
 
 
-async def search(query: str, max_results: int, *, http_client: httpx.AsyncClient) -> list[ArticleRecord]:
+async def search(query: str, max_results: int, *, http_client: httpx2.AsyncClient) -> list[ArticleRecord]:
     """Search the index by keyword and return the matching records, most-relevant first.
 
     Args:
@@ -96,7 +96,7 @@ async def search(query: str, max_results: int, *, http_client: httpx.AsyncClient
 
     Raises:
         errors.InvalidRequestError: If Europe PMC refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If Europe PMC returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If Europe PMC returns a 429 or a 5xx.
     """
     response = await http_client.get(
         _SEARCH_URL,
@@ -106,7 +106,7 @@ async def search(query: str, max_results: int, *, http_client: httpx.AsyncClient
     return [_article_record(result) for result in _results(response.json())]
 
 
-async def records_by_pmid(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> dict[str, ArticleRecord]:
+async def records_by_pmid(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, ArticleRecord]:
     """The record for each PMID the index holds one for, keyed by the PMID the record carries.
 
     One query per chunk of ids rather than one per id: Europe PMC resolves a disjunction of
@@ -125,7 +125,7 @@ async def records_by_pmid(pmids: Sequence[str], *, http_client: httpx.AsyncClien
 
     Raises:
         errors.InvalidRequestError: If Europe PMC refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If Europe PMC returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If Europe PMC returns a 429 or a 5xx.
         ValueError: If a page carried fewer records than it reported, or carried a record this query
             did not ask for.
     """

@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import auth_pb2, splice_pb2
@@ -32,7 +32,7 @@ def _from_env() -> splice_backend.SpliceBackend:
     return config.backend_from_env(
         deps_mod.Deps(
             session_resolver=_unreachable_session_resolver,
-            http_client=httpx.AsyncClient(),
+            http_client=httpx2.AsyncClient(),
             stack=contextlib.AsyncExitStack(),
         )
     )

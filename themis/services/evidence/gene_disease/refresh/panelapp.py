@@ -17,7 +17,7 @@ import datetime
 import json
 from collections.abc import Iterable, Mapping
 
-import httpx
+import httpx2
 
 from themis.services.evidence.gene_disease.refresh import _http
 
@@ -45,7 +45,7 @@ class _GeneAccumulator:
     panel_ids: list[int] = dataclasses.field(default_factory=list)
 
 
-async def build_dump(client: httpx.AsyncClient, *, refresh_date: str | None = None) -> dict[str, object]:
+async def build_dump(client: httpx2.AsyncClient, *, refresh_date: str | None = None) -> dict[str, object]:
     """Fetch both panels and their evaluations and assemble the ``panelapp/dump.json`` payload.
 
     Args:
@@ -57,7 +57,7 @@ async def build_dump(client: httpx.AsyncClient, *, refresh_date: str | None = No
         The dump dict in the shape the server's ``PanelAppTable`` parses.
 
     Raises:
-        httpx.HTTPStatusError: If a panel-detail or evaluations request fails (non-404).
+        httpx2.HTTPStatusError: If a panel-detail or evaluations request fails (non-404).
         ValueError: If a panel detail or gene entry has an unexpected shape, or a gene's evaluations
             page off the PanelApp API or never stop paging.
     """
@@ -90,7 +90,7 @@ def serialise_dump(dump: Mapping[str, object]) -> bytes:
 
 
 async def _fetch_panel(
-    client: httpx.AsyncClient, semaphore: asyncio.Semaphore, panel_id: int
+    client: httpx2.AsyncClient, semaphore: asyncio.Semaphore, panel_id: int
 ) -> tuple[str, list[dict[str, object]]]:
     async with semaphore:
         response = await _http.request_with_retry(client, 'GET', f'{_BASE_URL}/panels/{panel_id}/')
@@ -99,7 +99,7 @@ async def _fetch_panel(
 
 
 async def _fetch_all_evaluations(
-    client: httpx.AsyncClient, semaphore: asyncio.Semaphore, accumulators: Mapping[str, _GeneAccumulator]
+    client: httpx2.AsyncClient, semaphore: asyncio.Semaphore, accumulators: Mapping[str, _GeneAccumulator]
 ) -> dict[str, list[str]]:
     """Fetch every ``(gene, panel)`` evaluation set concurrently and merge/de-dupe per HGNC id."""
     requests = [
@@ -115,7 +115,7 @@ async def _fetch_all_evaluations(
 
 
 async def _fetch_evaluations(
-    client: httpx.AsyncClient, semaphore: asyncio.Semaphore, panel_id: int, hgnc_id: str
+    client: httpx2.AsyncClient, semaphore: asyncio.Semaphore, panel_id: int, hgnc_id: str
 ) -> list[str]:
     """The gene's non-empty evaluation comments on ``panel_id``; ``[]`` if it is not on the panel."""
     numeric = hgnc_id.removeprefix('HGNC:')
@@ -124,7 +124,7 @@ async def _fetch_evaluations(
     for _page in range(_MAX_EVALUATION_PAGES):
         async with semaphore:
             response = await _http.request_with_retry(client, 'GET', page_url)
-        if response.status_code == httpx.codes.NOT_FOUND:
+        if response.status_code == httpx2.codes.NOT_FOUND:
             return []
         response.raise_for_status()
         payload = response.json()

@@ -2,7 +2,7 @@
 
 The pure mapping runs against a committed Crossref cassette (the OA paper's DOI —
 Crossref metadata is CC0, so it is redistributable; its response carries no PMID, so
-it exercises the DOI-only path). The fetch path is driven by an httpx `MockTransport`;
+it exercises the DOI-only path). The fetch path is driven by an httpx2 `MockTransport`;
 a live Crossref call is integration-gated on `LITCACHE_CROSSREF_LIVE_DOI`.
 """
 
@@ -14,7 +14,7 @@ import json
 import os
 import pathlib
 
-import httpx
+import httpx2
 import pubmed_proto
 import pytest
 
@@ -123,13 +123,13 @@ def test_resolve_drives_crossref_and_maps() -> None:
     body = _CROSSREF_JSON.read_bytes()
     seen: dict[str, object] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen['path'] = request.url.path
         seen['mailto'] = request.url.params.get('mailto')
-        return httpx.Response(200, content=body)
+        return httpx2.Response(200, content=body)
 
     async def run() -> crossref.CrossrefResult:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await crossref.resolve(_DOI, http_client=client)
 
     result = asyncio.run(run())
@@ -147,7 +147,7 @@ def test_live_crossref() -> None:
     doi = os.environ['LITCACHE_CROSSREF_LIVE_DOI']
 
     async def run() -> crossref.CrossrefResult:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx2.AsyncClient(timeout=30.0) as client:
             return await crossref.resolve(doi, http_client=client)
 
     result = asyncio.run(run())

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -82,7 +82,7 @@ def parse_fasta(text: str, *, accession: str, query: str) -> TranscriptSequenceR
     )
 
 
-async def fetch_transcript_sequence(accession: str, *, http_client: httpx.AsyncClient) -> TranscriptSequenceResult:
+async def fetch_transcript_sequence(accession: str, *, http_client: httpx2.AsyncClient) -> TranscriptSequenceResult:
     """Fetch one versioned RefSeq transcript's mature sequence.
 
     Args:
@@ -95,14 +95,14 @@ async def fetch_transcript_sequence(accession: str, *, http_client: httpx.AsyncC
     Raises:
         errors.UnknownVariantError: If NCBI holds no sequence for the accession (efetch answers a
             400 naming it) — a settled answer, not a fault.
-        httpx.HTTPStatusError: For any other non-2xx status. The 4xx that are about the *client* are
+        httpx2.HTTPStatusError: For any other non-2xx status. The 4xx that are about the *client* are
             among them: 403 for a blocked one, 429 for a throttled one. Neither is a fact about the
             accession, and a NOT_FOUND is what `SpliceOutcome` would then rest a prediction on.
         ValueError: If the body is not the requested accession's FASTA record.
     """
     params = {'db': _DB, 'id': accession, 'rettype': 'fasta', 'retmode': 'text'}
     response = await http_client.get(_EFETCH_URL, params=params)
-    if response.status_code == httpx.codes.BAD_REQUEST:
+    if response.status_code == httpx2.codes.BAD_REQUEST:
         raise errors.UnknownVariantError(
             f'NCBI Nucleotide holds no sequence for {errors.clipped(accession)!r} ({response.status_code}): '
             f'{errors.clipped(response.text.strip())}'

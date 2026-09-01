@@ -11,7 +11,7 @@ import json
 import pathlib
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import splice_pb2
@@ -33,7 +33,7 @@ def _returns[T](value: T) -> Callable[..., Awaitable[T]]:
 
 def _run[T](call: Callable[[splice_backend.LiveBackend], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(splice_backend.LiveBackend(client))
 
     return asyncio.run(run())

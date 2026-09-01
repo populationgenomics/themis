@@ -16,7 +16,7 @@ import json
 import pathlib
 from collections.abc import Awaitable, Callable, Mapping
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import cspec_pb2
@@ -33,31 +33,33 @@ _MISSING = {'status': {'code': 404, 'name': 'Not Found', 'msg': "Bad Entity - No
 type Record = dict[str, object]
 
 
-def _entity_key(request: httpx.Request) -> tuple[str, str]:
+def _entity_key(request: httpx2.Request) -> tuple[str, str]:
     """The (entity type, identifier) a registry URL names."""
     entity_type, _, identifier = request.url.path.removeprefix('/cspec/').partition('/id/')
     return entity_type, identifier
 
 
 def _handler(
-    records: Mapping[tuple[str, str], Record], seen: list[httpx.Request] | None = None
-) -> Callable[[httpx.Request], httpx.Response]:
+    records: Mapping[tuple[str, str], Record], seen: list[httpx2.Request] | None = None
+) -> Callable[[httpx2.Request], httpx2.Response]:
     """Answer each entity lookup from `records`, 404-ing anything the map does not hold."""
 
-    def handle(request: httpx.Request) -> httpx.Response:
+    def handle(request: httpx2.Request) -> httpx2.Response:
         if seen is not None:
             seen.append(request)
         record = records.get(_entity_key(request))
         if record is None:
-            return httpx.Response(404, json=_MISSING)
-        return httpx.Response(200, json={'data': record, 'status': {'code': 200, 'name': 'OK'}})
+            return httpx2.Response(404, json=_MISSING)
+        return httpx2.Response(200, json={'data': record, 'status': {'code': 200, 'name': 'OK'}})
 
     return handle
 
 
-def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](
+    handler: Callable[[httpx2.Request], httpx2.Response], call: Callable[[httpx2.AsyncClient], Awaitable[T]]
+) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
@@ -109,7 +111,7 @@ def _registry(
 
 
 def _fetch(
-    records: Mapping[tuple[str, str], Record], gene: str = _GENE, seen: list[httpx.Request] | None = None
+    records: Mapping[tuple[str, str], Record], gene: str = _GENE, seen: list[httpx2.Request] | None = None
 ) -> cspec.CspecResult:
     return _run(_handler(records, seen), lambda c: cspec.fetch_criteria_specifications(gene, http_client=c))
 
@@ -138,14 +140,14 @@ def test_a_gene_reaches_the_specification_its_rule_set_names() -> None:
 def test_every_request_asks_for_the_content_level_that_carries_the_criteria() -> None:
     # Below `high` the registry omits `entContent` from every linked entity and still answers 200,
     # so a request that did not ask would return a document with no criterion content at all.
-    seen: list[httpx.Request] = []
+    seen: list[httpx2.Request] = []
     _fetch(_registry(), seen=seen)
     assert seen, 'the traversal issued no request'
     assert all(request.url.params.get('detail') == 'high' for request in seen)
 
 
 def test_one_provenance_query_per_request_issued() -> None:
-    seen: list[httpx.Request] = []
+    seen: list[httpx2.Request] = []
     result = _fetch(_registry(), seen=seen)
     assert [query.query for query in result.queries] == [str(request.url.copy_with(params=None)) for request in seen]
     # The document's own version is what a fact read off it rests on; the gene lookup is about no
@@ -395,9 +397,9 @@ def test_a_document_the_gene_links_to_and_the_registry_does_not_hold_is_a_fault(
 def test_a_symbol_carrying_url_syntax_cannot_reach_the_registry_as_another_gene() -> None:
     # Unencoded, a `#` truncates the path client-side: the registry answers about the prefix, the
     # rule-set filter misses, and a mistyped symbol comes back as "no panel has specified this gene".
-    seen: list[httpx.Request] = []
+    seen: list[httpx2.Request] = []
     result = _fetch(_registry(), gene=f'{_GENE}#x', seen=seen)
-    # `raw_path`, not `path`: httpx decodes the latter, so only the wire form shows the encoding.
+    # `raw_path`, not `path`: httpx2 decodes the latter, so only the wire form shows the encoding.
     assert [request.url.raw_path for request in seen] == [f'/cspec/Gene/id/{_GENE}%23x?detail=high'.encode()]
     assert result.coverage == cspec_pb2.SPECIFICATION_COVERAGE_GENE_ABSENT
 
@@ -484,8 +486,8 @@ def test_a_record_whose_shape_is_not_one_the_adapter_reads_fails_rather_than_ret
 
 
 def test_a_success_carrying_no_data_object_is_a_shape_change() -> None:
-    def handle(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'status': {'code': 200, 'name': 'OK'}})
+    def handle(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'status': {'code': 200, 'name': 'OK'}})
 
     with pytest.raises(ValueError, match='no data object'):
         _run(handle, lambda c: cspec.fetch_criteria_specifications(_GENE, http_client=c))
@@ -494,8 +496,8 @@ def test_a_success_carrying_no_data_object_is_a_shape_change() -> None:
 def test_the_routers_own_error_envelope_reaches_the_caller_as_its_message() -> None:
     # The registry answers a missing entity under `status.msg` and its router answers an unparseable
     # path under `errMsg`, in a body carrying no `status` at all.
-    def handle(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={'errCode': 400, 'errMsg': 'INVALID URL', 'errName': 'Bad Request'})
+    def handle(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, json={'errCode': 400, 'errMsg': 'INVALID URL', 'errName': 'Bad Request'})
 
     with pytest.raises(errors.InvalidRequestError, match='INVALID URL'):
         _run(handle, lambda c: cspec.fetch_criteria_specifications(_GENE, http_client=c))

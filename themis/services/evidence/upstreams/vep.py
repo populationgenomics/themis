@@ -26,7 +26,7 @@ import dataclasses
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.services.evidence import errors, hgvs
@@ -307,7 +307,7 @@ def parse_vep(
 
 
 async def fetch_vep(
-    variant: str, predictors: Sequence[str], genome_build: str, *, http_client: httpx.AsyncClient
+    variant: str, predictors: Sequence[str], genome_build: str, *, http_client: httpx2.AsyncClient
 ) -> VepResult:
     """Annotate one variant via Ensembl VEP REST (HGVS endpoint).
 
@@ -327,7 +327,7 @@ async def fetch_vep(
     Raises:
         errors.InvalidRequestError: If `variant` is not such an expression, if `predictors` names one
             this adapter has no wire form for, or if Ensembl rejects the request.
-        httpx.HTTPStatusError: If VEP returns a 429 or a 5xx, or if `/info/software` — which carries
+        httpx2.HTTPStatusError: If VEP returns a 429 or a 5xx, or if `/info/software` — which carries
             no caller input, so its failure is never a refusal — returns any non-2xx.
         ValueError: If the response is not a non-empty JSON list of annotation objects, if
             `/info/software` names no release, or if a dbNSFP column does not resolve to one value.

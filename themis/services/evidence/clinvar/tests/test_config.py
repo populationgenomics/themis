@@ -9,7 +9,7 @@ import pathlib
 
 import clinvar_proto
 import defusedxml.ElementTree
-import httpx
+import httpx2
 import pytest
 from google.protobuf import json_format
 
@@ -54,7 +54,7 @@ def _from_env() -> clinvar_backend.ClinVarBackend:
     return config.backend_from_env(
         deps_mod.Deps(
             session_resolver=_unreachable_session_resolver,
-            http_client=httpx.AsyncClient(),
+            http_client=httpx2.AsyncClient(),
             stack=contextlib.AsyncExitStack(),
         )
     )

@@ -7,7 +7,7 @@ import datetime
 from collections.abc import Mapping
 from typing import override
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import splice_pb2
@@ -79,7 +79,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(SpliceBackend):
     """The deployed backend, over the Broad splice services and NCBI Nucleotide."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

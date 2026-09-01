@@ -22,7 +22,7 @@ import typing
 from collections.abc import Callable, Iterator
 
 import apache_beam as beam
-import httpx
+import httpx2
 import litfetch
 import pg8000.dbapi
 import pg8000.exceptions
@@ -58,7 +58,7 @@ def _no_fetchers() -> list[litfetch.Fetcher]:
     return []
 
 
-def _resolve_handler(request: httpx.Request) -> httpx.Response:
+def _resolve_handler(request: httpx2.Request) -> httpx2.Response:
     """Resolve the batch: idconv maps nothing (OA closed), OpenAlex echoes each DOI."""
     if 'openalex' in request.url.host:
         flt = request.url.params.get('filter', '')
@@ -74,14 +74,14 @@ def _resolve_handler(request: httpx.Request) -> httpx.Response:
             }
             for doi in dois
         ]
-        return httpx.Response(200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode())
+        return httpx2.Response(200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode())
     if 'idconv' in request.url.path:
-        return httpx.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode('utf-8'))
+        return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode('utf-8'))
     raise AssertionError(f'unexpected resolve request (Crossref/efetch not expected here): {request.url}')
 
 
-def _resolve_transport() -> httpx.MockTransport:
-    return httpx.MockTransport(_resolve_handler)
+def _resolve_transport() -> httpx2.MockTransport:
+    return httpx2.MockTransport(_resolve_handler)
 
 
 def _licence() -> pipeline.LicenceFacts:
@@ -464,17 +464,17 @@ def test_report_run_summarizes_and_leaves_seed_intact(
     assert len(_manifests(bucket)) == 2
 
 
-def _unresolvable_transport() -> httpx.MockTransport:
+def _unresolvable_transport() -> httpx2.MockTransport:
     """A transport where neither idconv nor OpenAlex resolves any DOI."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if 'openalex' in request.url.host:
-            return httpx.Response(200, content=json.dumps({'meta': {'count': 0}, 'results': []}).encode())
+            return httpx2.Response(200, content=json.dumps({'meta': {'count': 0}, 'results': []}).encode())
         if 'idconv' in request.url.path:
-            return httpx.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
+            return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
         raise AssertionError(f'unexpected resolve request: {request.url}')
 
-    return httpx.MockTransport(handler)
+    return httpx2.MockTransport(handler)
 
 
 def _forbidden_conn() -> pg8000.dbapi.Connection:

@@ -8,7 +8,7 @@ import itertools
 from collections.abc import Mapping, Sequence
 from typing import cast, override
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import variant_pb2
@@ -46,7 +46,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(VariantBackend):
     """The deployed backend, chaining the Allele Registry, VariantValidator and VEP."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

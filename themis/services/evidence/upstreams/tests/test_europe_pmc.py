@@ -1,6 +1,6 @@
 """Europe PMC adapter: ranked search and the batched record lookup, over recorded payloads.
 
-Driven by an httpx `MockTransport`; no test hits the network. The batch payload is Europe PMC's own
+Driven by an httpx2 `MockTransport`; no test hits the network. The batch payload is Europe PMC's own
 answer to one record query for three PMIDs, recorded verbatim: a research article carrying an
 abstract, a comment carrying none, and an identifier nothing is indexed under — which the answer
 omits rather than reports. Nothing offline can confirm that omission is how absence arrives, so the
@@ -15,7 +15,7 @@ import pathlib
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -27,9 +27,11 @@ _BATCH = json.loads((pathlib.Path(__file__).resolve().parent / 'fixtures' / 'eur
 _EXT_ID = re.compile(r'EXT_ID:(\d+)')
 
 
-def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](
+    handler: Callable[[httpx2.Request], httpx2.Response], call: Callable[[httpx2.AsyncClient], Awaitable[T]]
+) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
@@ -40,25 +42,25 @@ def _page(results: Sequence[Mapping[str, object]]) -> dict[str, object]:
     return {'hitCount': len(results), 'resultList': {'result': list(results)}}
 
 
-def _queried_pmids(request: httpx.Request) -> list[str]:
+def _queried_pmids(request: httpx2.Request) -> list[str]:
     """The PMIDs a record query asks about, read back out of its `EXT_ID` disjunction."""
     return _EXT_ID.findall(request.url.params['query'])
 
 
-def _answering_every_pmid(seen: list[list[str]]) -> Callable[[httpx.Request], httpx.Response]:
+def _answering_every_pmid(seen: list[list[str]]) -> Callable[[httpx2.Request], httpx2.Response]:
     """Answer each record query with one record per PMID it asked for; collect the batches."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         pmids = _queried_pmids(request)
         seen.append(pmids)
-        return httpx.Response(200, json=_page([{'pmid': pmid, 'title': f'Paper {pmid}'} for pmid in pmids]))
+        return httpx2.Response(200, json=_page([{'pmid': pmid, 'title': f'Paper {pmid}'} for pmid in pmids]))
 
     return handler
 
 
 def test_search_returns_the_indexs_records_in_its_own_order() -> None:
     records = _run(
-        lambda _r: httpx.Response(200, json=_page([{'pmid': '111', 'title': 'A'}, {'pmid': '222', 'title': 'B'}])),
+        lambda _r: httpx2.Response(200, json=_page([{'pmid': '111', 'title': 'A'}, {'pmid': '222', 'title': 'B'}])),
         lambda c: europe_pmc.search('GENE1 variant', 10, http_client=c),
     )
     assert [record.pmid for record in records] == ['111', '222']
@@ -67,9 +69,9 @@ def test_search_returns_the_indexs_records_in_its_own_order() -> None:
 def test_search_asks_for_core_records_up_to_the_budget() -> None:
     asked: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         asked.update(request.url.params)
-        return httpx.Response(200, json=_page([]))
+        return httpx2.Response(200, json=_page([]))
 
     _run(handler, lambda c: europe_pmc.search('GENE1', 7, http_client=c))
     assert asked['query'] == 'GENE1'
@@ -79,11 +81,11 @@ def test_search_asks_for_core_records_up_to_the_budget() -> None:
 
 def test_records_read_a_recorded_batch_into_its_three_outcomes() -> None:
     requested = ['24789688', '24789689', '99999999999']
-    asked: list[httpx.Request] = []
+    asked: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         asked.append(request)
-        return httpx.Response(200, json=_BATCH)
+        return httpx2.Response(200, json=_BATCH)
 
     records = _run(handler, lambda c: europe_pmc.records_by_pmid(requested, http_client=c))
     assert len(asked) == 1  # one query for the whole batch: what taking a list is for
@@ -127,14 +129,14 @@ def test_a_record_query_answering_other_than_what_it_asked_fails_loud(payload: o
     # unaccounted for — would report it as a record nothing is indexed under.
     with pytest.raises(ValueError, match='Europe PMC'):
         _run(
-            lambda _r: httpx.Response(200, json=payload),
+            lambda _r: httpx2.Response(200, json=payload),
             lambda c: europe_pmc.records_by_pmid(['111', '222'], http_client=c),
         )
 
 
 def test_a_record_lookup_for_nothing_asks_nothing() -> None:
     # An empty chunk would build the term `() AND SRC:MED`, which is not a query about no records.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError(f'no query should have been issued, got {request.url}')
 
     assert _run(handler, lambda c: europe_pmc.records_by_pmid([], http_client=c)) == {}
@@ -145,9 +147,9 @@ def test_a_record_query_is_scoped_to_medline() -> None:
     # under another source would answer for a PMID it is not.
     asked: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         asked.update(request.url.params)
-        return httpx.Response(200, json=_page([{'pmid': '111'}]))
+        return httpx2.Response(200, json=_page([{'pmid': '111'}]))
 
     _run(handler, lambda c: europe_pmc.records_by_pmid(['111'], http_client=c))
     assert asked['query'] == '(EXT_ID:111) AND SRC:MED'
@@ -157,7 +159,7 @@ def test_a_book_chapter_is_cited_by_its_own_work_and_date() -> None:
     # A chapter's pubYear dates the series, not the chapter, and no journal field names the book. Read
     # flat, a chapter revised this year cites to the year the series opened, with no source at all.
     record = _run(
-        lambda _r: httpx.Response(
+        lambda _r: httpx2.Response(
             200,
             json=_page(
                 [
@@ -180,7 +182,7 @@ def test_a_book_chapter_is_cited_by_its_own_work_and_date() -> None:
 
 def test_an_article_is_cited_by_its_publication_year() -> None:
     record = _run(
-        lambda _r: httpx.Response(
+        lambda _r: httpx2.Response(
             200,
             json=_page(
                 [{'pmid': '1', 'pubYear': '2014', 'firstPublicationDate': '2014-04-24', 'journalTitle': 'Hum Mutat'}]
@@ -219,12 +221,12 @@ def test_a_lookups_outcome_separates_a_missing_abstract_from_a_missing_record(
 
 def test_a_refusal_reaches_the_caller_as_an_invalid_request() -> None:
     with pytest.raises(errors.InvalidRequestError):
-        _run(lambda _r: httpx.Response(400, text='no'), lambda c: europe_pmc.search('GENE1', 10, http_client=c))
+        _run(lambda _r: httpx2.Response(400, text='no'), lambda c: europe_pmc.search('GENE1', 10, http_client=c))
 
 
 def test_a_transient_failure_stays_retryable() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _run(
-            lambda _r: httpx.Response(503, text='busy'),
+            lambda _r: httpx2.Response(503, text='busy'),
             lambda c: europe_pmc.records_by_pmid(['111'], http_client=c),
         )

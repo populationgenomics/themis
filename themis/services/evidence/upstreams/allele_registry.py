@@ -27,7 +27,7 @@ import dataclasses
 import re
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.rpc import variant_pb2
 from themis.services.evidence import errors
@@ -339,7 +339,7 @@ def _clinvar_alleles(external: Mapping[str, object]) -> list[variant_pb2.ClinVar
     return alleles
 
 
-def _error_detail(response: httpx.Response) -> str:
+def _error_detail(response: httpx2.Response) -> str:
     """The registry's own `errorType`/`description`/`message` for a failed query, else the raw body.
 
     Truncated: this rides in an exception message that becomes a gRPC trailer, and a trailer over
@@ -470,7 +470,7 @@ def parse_allele_ids(payload: Mapping[str, object]) -> list[str]:
     return ids
 
 
-async def _fetch_allele(hgvs: str, *, http_client: httpx.AsyncClient) -> tuple[dict[str, object], str]:
+async def _fetch_allele(hgvs: str, *, http_client: httpx2.AsyncClient) -> tuple[dict[str, object], str]:
     """One registry allele record and the request URL that produced it."""
     response = await http_client.get(_ALLELE_URL, params={'hgvs': hgvs})
     if not response.is_success:
@@ -481,7 +481,7 @@ async def _fetch_allele(hgvs: str, *, http_client: httpx.AsyncClient) -> tuple[d
     return payload, str(response.request.url)
 
 
-async def fetch_allele_registry(hgvs: str, *, http_client: httpx.AsyncClient) -> AlleleRegistryResult:
+async def fetch_allele_registry(hgvs: str, *, http_client: httpx2.AsyncClient) -> AlleleRegistryResult:
     """Resolve one HGVS to its canonical allele via the ClinGen Allele Registry.
 
     Args:
@@ -493,7 +493,7 @@ async def fetch_allele_registry(hgvs: str, *, http_client: httpx.AsyncClient) ->
 
     Raises:
         errors.InvalidRequestError: If the registry judges the HGVS unacceptable.
-        httpx.HTTPStatusError: For any non-2xx that is not that. The registry answers an out-of-range
+        httpx2.HTTPStatusError: For any non-2xx that is not that. The registry answers an out-of-range
             position with a 500, so the status alone does not say whether a retry could succeed — the
             detail it returns does, and rides in the message.
         ValueError: If the response is not a JSON object or carries no CAID.
@@ -502,7 +502,7 @@ async def fetch_allele_registry(hgvs: str, *, http_client: httpx.AsyncClient) ->
     return parse_allele(payload, query=query)
 
 
-async def fetch_clingen_allele_ids(hgvs: str, *, http_client: httpx.AsyncClient) -> ClinGenAlleleIds:
+async def fetch_clingen_allele_ids(hgvs: str, *, http_client: httpx2.AsyncClient) -> ClinGenAlleleIds:
     """Resolve one HGVS to the ClinGen allele ids a source keyed on them can be asked about.
 
     Args:
@@ -518,7 +518,7 @@ async def fetch_clingen_allele_ids(hgvs: str, *, http_client: httpx.AsyncClient)
             predicted-consequence parentheses, which it parses as an amino acid.
         UnregisteredAlleleError: If the registry registers no allele for it (a subclass of the above,
             so a caller that does not care which reads them alike).
-        httpx.HTTPStatusError: For a 429 or a 5xx.
+        httpx2.HTTPStatusError: For a 429 or a 5xx.
         ValueError: If the response is not a JSON object.
     """
     payload, query = await _fetch_allele(hgvs, http_client=http_client)

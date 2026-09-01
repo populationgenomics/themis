@@ -2,7 +2,7 @@
 
 The pure parse is exercised against a committed efetch fixture (the OA paper, PMID
 29089047 — CC-BY, so its record is redistributable on the public mirror); the fetch
-path is driven by an httpx `MockTransport` so the offline suite stays deterministic.
+path is driven by an httpx2 `MockTransport` so the offline suite stays deterministic.
 A live efetch is integration-gated on `LITCACHE_EFETCH_LIVE_PMID`.
 """
 
@@ -14,7 +14,7 @@ import pathlib
 import urllib.parse
 from collections.abc import Callable
 
-import httpx
+import httpx2
 import pubmed_proto
 import pytest
 
@@ -60,7 +60,7 @@ def test_unexpected_root_fails_loud() -> None:
 
 def test_fetch_requires_a_pmid() -> None:
     async def run() -> None:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             await efetch.fetch([], http_client=client)
 
     with pytest.raises(ValueError, match='at least one PMID'):
@@ -73,14 +73,14 @@ def test_fetch_posts_the_id_list_in_the_body() -> None:
     pmids = [str(i) for i in range(250)]
     seen: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen['method'] = request.method
         seen['body'] = request.content.decode()
         seen['query_id'] = request.url.params.get('id', '')
-        return httpx.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
+        return httpx2.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
 
     async def run() -> None:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             await efetch.fetch(pmids, http_client=client)
 
     asyncio.run(run())
@@ -94,13 +94,13 @@ def test_resolve_drives_efetch_and_parses() -> None:
     body = _EFETCH_XML.read_bytes()
     seen: dict[str, str] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         # efetch POSTs, so the query rides the form body, not the URL.
         seen.update(dict(urllib.parse.parse_qsl(request.content.decode())))
-        return httpx.Response(200, content=body)
+        return httpx2.Response(200, content=body)
 
     async def run() -> dict[str, efetch.ResolvedMetadata]:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await efetch.resolve([_PMID], http_client=client)
 
     resolved = asyncio.run(run())
@@ -119,7 +119,7 @@ def test_live_efetch() -> None:
     pmid = os.environ['LITCACHE_EFETCH_LIVE_PMID']
 
     async def run() -> dict[str, efetch.ResolvedMetadata]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx2.AsyncClient(timeout=30.0) as client:
             return await efetch.resolve([pmid], http_client=client)
 
     resolved = asyncio.run(run())
@@ -129,16 +129,16 @@ def test_live_efetch() -> None:
 
 def _counting_handler(
     status_sequence: list[int],
-) -> tuple[list[int], Callable[[httpx.Request], httpx.Response]]:
+) -> tuple[list[int], Callable[[httpx2.Request], httpx2.Response]]:
     """A MockTransport handler returning each status in turn (last repeats); records call count."""
     calls: list[int] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         del request  # the response depends only on call count, not the request
         calls.append(1)
         status = status_sequence[min(len(calls) - 1, len(status_sequence) - 1)]
         content = b'<PubmedArticleSet/>' if status == 200 else b''
-        return httpx.Response(status, content=content)
+        return httpx2.Response(status, content=content)
 
     return calls, handler
 
@@ -148,7 +148,7 @@ def test_fetch_retries_transient_error_then_succeeds(monkeypatch: pytest.MonkeyP
     calls, handler = _counting_handler([502, 502, 200])
 
     async def run() -> bytes:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await efetch.fetch(['1'], http_client=client)
 
     assert asyncio.run(run()) == b'<PubmedArticleSet/>'
@@ -160,10 +160,10 @@ def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) 
     calls, handler = _counting_handler([503])  # never recovers
 
     async def run() -> bytes:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await efetch.fetch(['1'], http_client=client)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         asyncio.run(run())
     assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
 
@@ -173,9 +173,9 @@ def test_fetch_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) ->
     calls, handler = _counting_handler([400])  # deterministic; retrying can't help
 
     async def run() -> bytes:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await efetch.fetch(['1'], http_client=client)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         asyncio.run(run())
     assert len(calls) == 1

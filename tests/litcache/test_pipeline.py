@@ -19,7 +19,7 @@ import pathlib
 import posixpath
 from collections.abc import Mapping
 
-import httpx
+import httpx2
 import litfetch
 import pg8000.dbapi
 import pytest
@@ -71,13 +71,13 @@ def _jats_fetcher() -> _BodyFetcher:
     return _BodyFetcher(artifacts.Blob(file=file, content=(_OA / 'fulltext.xml').read_bytes()))
 
 
-def _crossref_transport(body: bytes) -> httpx.MockTransport:
+def _crossref_transport(body: bytes) -> httpx2.MockTransport:
     """A transport serving one Crossref `works` body for any DOI (metadata resolution)."""
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=body)
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=body)
 
-    return httpx.MockTransport(handler)
+    return httpx2.MockTransport(handler)
 
 
 # The non-OA fixture's DOI has no real Crossref record; a synthetic works message
@@ -111,11 +111,11 @@ def _licence() -> pipeline.LicenceFacts:
     )
 
 
-def _resolve_paper(*, pmid: str | None, doi: str | None, transport: httpx.MockTransport) -> resolve.ResolvedPaper:
+def _resolve_paper(*, pmid: str | None, doi: str | None, transport: httpx2.MockTransport) -> resolve.ResolvedPaper:
     """Resolve a `ResolvedPaper` over a mock transport (the input the write half takes)."""
 
     async def run() -> resolve.ResolvedPaper:
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with httpx2.AsyncClient(transport=transport) as client:
             return await resolve.resolve_metadata(pmid=pmid, doi=doi, http_client=client)
 
     return asyncio.run(run())
@@ -128,7 +128,7 @@ def _ingest_via_transport(
     licence: pipeline.LicenceFacts,
     *,
     fetchers: list[litfetch.Fetcher],
-    transport: httpx.MockTransport,
+    transport: httpx2.MockTransport,
     file_sources: list[litfetch.FileSource] | None = None,
 ) -> pipeline.IngestResult:
     """Extract identity, resolve metadata over `transport`, and run the write half."""
@@ -318,15 +318,15 @@ def test_ingests_an_oa_paper_via_the_xml_branch(conn: pg8000.dbapi.Connection, g
 # --- equivalence (cross-paper link) ---------------------------------------------
 
 
-def _crossref_echo_transport() -> httpx.MockTransport:
+def _crossref_echo_transport() -> httpx2.MockTransport:
     """Resolve any DOI to a minimal valid Crossref work echoing the requested DOI."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         doi = request.url.path.removeprefix('/works/')
         message = {'DOI': doi, 'title': ['Synthetic'], 'issued': {'date-parts': [[2020, 1, 1]]}, 'publisher': 'X'}
-        return httpx.Response(200, content=json.dumps({'message': message}).encode('utf-8'))
+        return httpx2.Response(200, content=json.dumps({'message': message}).encode('utf-8'))
 
-    return httpx.MockTransport(handler)
+    return httpx2.MockTransport(handler)
 
 
 def _doi_seed(doi_key: str) -> pipeline.SeedObject:

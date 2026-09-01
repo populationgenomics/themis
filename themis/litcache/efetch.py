@@ -19,7 +19,7 @@ import asyncio
 import dataclasses
 from collections.abc import Sequence
 
-import httpx
+import httpx2
 import pubmed_proto
 from lxml import etree
 
@@ -90,7 +90,7 @@ def to_canonical_bytes(article: pubmed_proto.pubmed_pb2.PubmedArticle) -> bytes:
     return article.SerializeToString()
 
 
-async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> bytes:
+async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> bytes:
     """Fetch the efetch `PubmedArticleSet` XML for a batch of PMIDs.
 
     Args:
@@ -102,9 +102,9 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> byte
 
     Raises:
         ValueError: If `pmids` is empty.
-        httpx.HTTPStatusError: If efetch returns a non-retryable status (a 4xx
+        httpx2.HTTPStatusError: If efetch returns a non-retryable status (a 4xx
             other than 429), or keeps returning a retryable one past the retry budget.
-        httpx.TransportError: If the connection keeps failing past the retry budget.
+        httpx2.TransportError: If the connection keeps failing past the retry budget.
     """
     if not pmids:
         raise ValueError('efetch.fetch requires at least one PMID')
@@ -122,16 +122,16 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> byte
             response = await http_client.post(_EFETCH_URL, data=params)
             response.raise_for_status()
             return response.content
-        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+        except (httpx2.TransportError, httpx2.HTTPStatusError) as exc:
             if not _is_retryable(exc) or attempt == _MAX_FETCH_ATTEMPTS - 1:
                 raise
         await asyncio.sleep(_RETRY_BASE_DELAY_SECONDS * 2**attempt)
     raise AssertionError('unreachable: the retry loop returns or raises on the final attempt')
 
 
-def _is_retryable(exc: httpx.TransportError | httpx.HTTPStatusError) -> bool:
+def _is_retryable(exc: httpx2.TransportError | httpx2.HTTPStatusError) -> bool:
     """Whether an efetch failure is transient: a transport error, HTTP 429, or 5xx."""
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx2.HTTPStatusError):
         return exc.response.status_code == 429 or exc.response.status_code >= 500
     return True
 
@@ -168,7 +168,7 @@ def parse_response(xml: bytes) -> dict[str, ResolvedMetadata]:
     return resolved
 
 
-async def resolve(pmids: Sequence[str], *, http_client: httpx.AsyncClient) -> dict[str, ResolvedMetadata]:
+async def resolve(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, ResolvedMetadata]:
     """Resolve a batch of PMIDs to `metadata.pb` + cross-ids via efetch."""
     xml = await fetch(pmids, http_client=http_client)
     return parse_response(xml)

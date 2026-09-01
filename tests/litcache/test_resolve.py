@@ -1,6 +1,6 @@
 """Tests for the metadata resolver ladder (`themis.litcache.resolve`).
 
-Drives the efetch → Crossref ladder offline with an httpx `MockTransport` over the
+Drives the efetch → Crossref ladder offline with an httpx2 `MockTransport` over the
 committed cassettes (`oa/efetch.xml`, `oa/crossref.json`), proving each rung, the
 PMID-miss → DOI fallback, and the fully-unknown fail-loud. No network.
 """
@@ -13,7 +13,7 @@ import json
 import pathlib
 from collections.abc import Callable
 
-import httpx
+import httpx2
 import litfetch
 import pubmed_proto
 import pytest
@@ -27,21 +27,21 @@ _PMID = '29089047'
 _DOI = '10.1186/s13073-017-0482-5'
 
 
-_Handler = Callable[[httpx.Request], httpx.Response]
+_Handler = Callable[[httpx2.Request], httpx2.Response]
 
 
 def _resolve(handler: _Handler, *, pmid: str | None, doi: str | None) -> resolve.ResolvedPaper:
     async def run() -> resolve.ResolvedPaper:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await resolve.resolve_metadata(pmid=pmid, doi=doi, http_client=client)
 
     return asyncio.run(run())
 
 
 def test_pmid_resolves_via_efetch() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert 'efetch' in request.url.path
-        return httpx.Response(200, content=_EFETCH_XML)
+        return httpx2.Response(200, content=_EFETCH_XML)
 
     result = _resolve(handler, pmid=_PMID, doi=_DOI)
     # The PMID rung wins (efetch never even consults the DOI); cross-ids harvested.
@@ -53,9 +53,9 @@ def test_pmid_resolves_via_efetch() -> None:
 
 
 def test_doi_only_resolves_via_crossref() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == f'/works/{_DOI}'
-        return httpx.Response(200, content=_CROSSREF_JSON)
+        return httpx2.Response(200, content=_CROSSREF_JSON)
 
     result = _resolve(handler, pmid=None, doi=_DOI)
     assert result.external_ids.doi == _DOI
@@ -64,10 +64,10 @@ def test_doi_only_resolves_via_crossref() -> None:
 
 def test_pmid_miss_falls_back_to_crossref() -> None:
     # efetch returns an empty set (the PMID is unknown), so the DOI rung resolves.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if 'efetch' in request.url.path:
-            return httpx.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
-        return httpx.Response(200, content=_CROSSREF_JSON)
+            return httpx2.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
+        return httpx2.Response(200, content=_CROSSREF_JSON)
 
     result = _resolve(handler, pmid='99999999', doi=_DOI)
     assert result.external_ids.doi == _DOI
@@ -76,18 +76,18 @@ def test_pmid_miss_falls_back_to_crossref() -> None:
 
 def test_crossref_404_is_a_miss_not_a_failure() -> None:
     # A 404 from Crossref means "unknown DOI" → the paper is fully unknown.
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404)
 
     with pytest.raises(resolve.MetadataUnresolvedError):
         _resolve(handler, pmid=None, doi=_DOI)
 
 
 def test_non_404_crossref_error_propagates() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500)
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _resolve(handler, pmid=None, doi=_DOI)
 
 
@@ -95,11 +95,11 @@ def test_crossref_429_is_retried_then_resolves() -> None:
     # A transient rate response must not fail the paper: back off (Retry-After) and retry.
     calls = {'n': 0}
 
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx2.Request) -> httpx2.Response:
         calls['n'] += 1
         if calls['n'] == 1:
-            return httpx.Response(429, headers={'retry-after': '0'})
-        return httpx.Response(200, content=_CROSSREF_JSON)
+            return httpx2.Response(429, headers={'retry-after': '0'})
+        return httpx2.Response(200, content=_CROSSREF_JSON)
 
     result = _resolve(handler, pmid=None, doi=_DOI)
     assert result.external_ids.doi == _DOI
@@ -107,15 +107,15 @@ def test_crossref_429_is_retried_then_resolves() -> None:
 
 
 def test_crossref_persistent_429_propagates() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, headers={'retry-after': '0'})
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={'retry-after': '0'})
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _resolve(handler, pmid=None, doi=_DOI)
 
 
 def test_no_ids_is_fully_unknown() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover - never called
+    def handler(_request: httpx2.Request) -> httpx2.Response:  # pragma: no cover - never called
         raise AssertionError('no fetch should happen without ids')
 
     with pytest.raises(resolve.MetadataUnresolvedError) as excinfo:
@@ -130,10 +130,10 @@ def _idconv_json(doi: str, *, pmcid: str, pmid: str) -> bytes:
 
 def _resolve_batch(handler: _Handler, requests: list[resolve.ResolveRequest]) -> dict[str, resolve.ResolvedPaper]:
     async def run() -> dict[str, resolve.ResolvedPaper]:
-        transport = httpx.MockTransport(handler)
+        transport = httpx2.MockTransport(handler)
         async with (
-            httpx.AsyncClient(transport=transport) as client,
-            litfetch.Session(client_factory=functools.partial(httpx.AsyncClient, transport=transport)) as session,
+            httpx2.AsyncClient(transport=transport) as client,
+            litfetch.Session(client_factory=functools.partial(httpx2.AsyncClient, transport=transport)) as session,
         ):
             return await resolve.resolve_batch(requests, http_client=client, session=session)
 
@@ -141,9 +141,9 @@ def _resolve_batch(handler: _Handler, requests: list[resolve.ResolveRequest]) ->
 
 
 def test_resolve_batch_resolves_a_pmid_via_efetch() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert 'efetch' in request.url.path
-        return httpx.Response(200, content=_EFETCH_XML)
+        return httpx2.Response(200, content=_EFETCH_XML)
 
     resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k1', pmid=_PMID, doi=_DOI)])
     assert set(resolved) == {'k1'}
@@ -169,16 +169,16 @@ def _oa_work(doi: str, *, pmid: str | None, title: str = 'OA Title') -> dict[str
 def _doi_handler(*, idconv_pmc: bool, openalex: list[dict[str, object]]) -> _Handler:
     """A resolve-batch transport: idconv (PMC hit or error), OpenAlex, efetch. No Crossref."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if 'openalex' in request.url.host:
-            return httpx.Response(200, content=_openalex_json(openalex))
+            return httpx2.Response(200, content=_openalex_json(openalex))
         if 'idconv' in request.url.path:
             if idconv_pmc:
-                return httpx.Response(200, content=_idconv_json(_DOI, pmcid='PMC5664429', pmid=_PMID))
+                return httpx2.Response(200, content=_idconv_json(_DOI, pmcid='PMC5664429', pmid=_PMID))
             body = json.dumps({'status': 'ok', 'records': [{'doi': _DOI, 'status': 'error', 'errmsg': 'not in PMC'}]})
-            return httpx.Response(200, content=body.encode())
+            return httpx2.Response(200, content=body.encode())
         if 'efetch' in request.url.path:
-            return httpx.Response(200, content=_EFETCH_XML)
+            return httpx2.Response(200, content=_EFETCH_XML)
         raise AssertionError(f'unexpected request (Crossref must not be hit): {request.url}')
 
     return handler
@@ -220,11 +220,11 @@ def test_resolve_batch_non_pubmed_doi_uses_the_openalex_record() -> None:
 def test_resolve_batch_batches_pmids_into_one_efetch_call() -> None:
     efetch_calls = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal efetch_calls
         assert 'efetch' in request.url.path
         efetch_calls += 1
-        return httpx.Response(200, content=_EFETCH_XML)
+        return httpx2.Response(200, content=_EFETCH_XML)
 
     requests = [
         resolve.ResolveRequest(claim_key='a', pmid=_PMID, doi=None),
@@ -249,20 +249,20 @@ def test_resolve_batch_partial_one_doi_resolves_one_absent() -> None:
     # Two DOIs through the batched resolver: the first resolves (idconv gives its pmid →
     # efetch), the second is unknown to every source. A batch is not failed by the miss,
     # and each DOI maps to its own record — no positional misalignment.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         path, host = request.url.path, request.url.host
         if 'idconv' in path:
             records = [
                 {'doi': _DOI, 'pmid': int(_PMID), 'pmcid': 'PMC5664429'},
                 {'doi': _DOI_UNKNOWN, 'status': 'error'},
             ]
-            return httpx.Response(200, content=json.dumps({'records': records}).encode())
+            return httpx2.Response(200, content=json.dumps({'records': records}).encode())
         if 'openalex' in host:
-            return httpx.Response(200, content=_openalex_json([]))
+            return httpx2.Response(200, content=_openalex_json([]))
         if 'efetch' in path:
-            return httpx.Response(200, content=_EFETCH_XML)
+            return httpx2.Response(200, content=_EFETCH_XML)
         if 'ebi.ac.uk' in host:
-            return httpx.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
+            return httpx2.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
         raise AssertionError(f'unexpected request: {request.url}')
 
     resolved = _resolve_batch(
@@ -279,20 +279,20 @@ def test_resolve_batch_partial_one_doi_resolves_one_absent() -> None:
 def test_resolve_batch_pmid_miss_then_doi_resolves_via_batch() -> None:
     # A request carrying both a PMID (that efetch misses) and a DOI: the PMID miss falls
     # through to the batched DOI path, which resolves it.
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         path, host = request.url.path, request.url.host
         if 'efetch' in path:
             # The DOI-discovered PMID returns the record; the original (missing) PMID does not.
             if _PMID in request.content.decode() or _PMID in request.url.params.get('id', ''):
-                return httpx.Response(200, content=_EFETCH_XML)
-            return httpx.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
+                return httpx2.Response(200, content=_EFETCH_XML)
+            return httpx2.Response(200, content=b'<PubmedArticleSet></PubmedArticleSet>')
         if 'idconv' in path:
             record = {'doi': _DOI, 'pmid': int(_PMID), 'pmcid': 'PMC5664429'}
-            return httpx.Response(200, content=json.dumps({'records': [record]}).encode())
+            return httpx2.Response(200, content=json.dumps({'records': [record]}).encode())
         if 'openalex' in host:
-            return httpx.Response(200, content=_openalex_json([]))
+            return httpx2.Response(200, content=_openalex_json([]))
         if 'ebi.ac.uk' in host:
-            return httpx.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
+            return httpx2.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
         raise AssertionError(f'unexpected request: {request.url}')
 
     resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid='99999999', doi=_DOI)])

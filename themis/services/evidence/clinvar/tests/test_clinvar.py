@@ -1,7 +1,7 @@
 """Behaviour tests for the clinvar servicer over an in-process grpc.aio server.
 
 The fixture backend serves most of them. What one upstream answer becomes is asserted over the live
-backend instead, driven by an httpx `MockTransport`, so the status a caller sees is the one the whole
+backend instead, driven by an httpx2 `MockTransport`, so the status a caller sees is the one the whole
 path produces rather than one restated at the boundary.
 """
 
@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 
 import grpc
 import grpc.aio
-import httpx
+import httpx2
 import pytest
 
 from themis.clients.auth import session as session_mod
@@ -94,7 +94,7 @@ async def _serving(backend: clinvar_backend.ClinVarBackend) -> AsyncIterator[cli
         yield clinvar_pb2_grpc.ClinVarStub(channel)
 
 
-def _failed_describe(handler: Callable[[httpx.Request], httpx.Response]) -> grpc.aio.AioRpcError:
+def _failed_describe(handler: Callable[[httpx2.Request], httpx2.Response]) -> grpc.aio.AioRpcError:
     """Fail `DescribeVariant` over the live backend, with E-utilities answered by `handler`.
 
     Args:
@@ -107,7 +107,7 @@ def _failed_describe(handler: Callable[[httpx.Request], httpx.Response]) -> grpc
 
     async def run() -> clinvar_pb2.DescribeVariantResponse:
         async with (
-            httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client,
+            httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client,
             _serving(clinvar_backend.LiveBackend(http_client)) as stub,
         ):
             return await stub.DescribeVariant(_describe_request(), metadata=_GOOD_TOKEN)
@@ -117,7 +117,7 @@ def _failed_describe(handler: Callable[[httpx.Request], httpx.Response]) -> grpc
     return caught.value
 
 
-def _failed_span(handler: Callable[[httpx.Request], httpx.Response]) -> grpc.aio.AioRpcError:
+def _failed_span(handler: Callable[[httpx2.Request], httpx2.Response]) -> grpc.aio.AioRpcError:
     """Fail `SearchCodingSpan` over the live backend, with both upstreams answered by `handler`.
 
     Args:
@@ -130,7 +130,7 @@ def _failed_span(handler: Callable[[httpx.Request], httpx.Response]) -> grpc.aio
 
     async def run() -> clinvar_pb2.SearchCodingSpanResponse:
         async with (
-            httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client,
+            httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client,
             _serving(clinvar_backend.LiveBackend(http_client)) as stub,
         ):
             return await stub.SearchCodingSpan(
@@ -234,7 +234,7 @@ def test_an_accession_the_crosswalk_names_and_clinvar_lacks_is_a_disagreement(
     """
     monkeypatch.setattr(clinvar_upstream, '_RATE_LIMIT_DELAY_S', 0)
 
-    failure = _failed_describe(lambda _request: httpx.Response(status, content=body))
+    failure = _failed_describe(lambda _request: httpx2.Response(status, content=body))
 
     assert failure.code() is grpc.StatusCode.FAILED_PRECONDITION
     details = failure.details() or ''
@@ -248,7 +248,7 @@ def test_a_refusal_worded_otherwise_is_still_invalid_argument(monkeypatch: pytes
     monkeypatch.setattr(clinvar_upstream, '_RATE_LIMIT_DELAY_S', 0)
     body = b'<eFetchResult><ERROR>Invalid db name specified: clnvar</ERROR></eFetchResult>'
 
-    failure = _failed_describe(lambda _request: httpx.Response(400, content=body))
+    failure = _failed_describe(lambda _request: httpx2.Response(400, content=body))
 
     assert failure.code() is grpc.StatusCode.INVALID_ARGUMENT
     assert 'Invalid db name' in (failure.details() or '')
@@ -265,12 +265,12 @@ def test_a_symbol_the_exon_table_names_and_clinvar_does_not_index_is_a_disagreem
     """
     monkeypatch.setattr(clinvar_upstream, '_RATE_LIMIT_DELAY_S', 0)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == '/hello/':
-            return httpx.Response(200, json=_VARIANTVALIDATOR_METADATA)
+            return httpx2.Response(200, json=_VARIANTVALIDATOR_METADATA)
         if request.url.path.endswith('/esearch.fcgi'):  # the span, then the gene-only probe
-            return httpx.Response(200, json={'esearchresult': {'idlist': [], 'count': '0'}})
-        return httpx.Response(200, json=_EXON_TABLE)
+            return httpx2.Response(200, json={'esearchresult': {'idlist': [], 'count': '0'}})
+        return httpx2.Response(200, json=_EXON_TABLE)
 
     failure = _failed_span(handler)
 

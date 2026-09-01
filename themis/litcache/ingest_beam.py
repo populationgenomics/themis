@@ -60,7 +60,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import override
 
 import apache_beam as beam
-import httpx
+import httpx2
 import litfetch
 import pg8000.exceptions
 from apache_beam import pvalue
@@ -126,7 +126,7 @@ BucketFactory = Callable[[], gcs.Bucket]
 ConnFactory = Callable[[], crosswalk.Connection]
 FetchersFactory = Callable[[], Sequence[litfetch.Fetcher]]
 FileSourcesFactory = Callable[[], Sequence[litfetch.FileSource]]
-TransportFactory = Callable[[], httpx.AsyncBaseTransport]
+TransportFactory = Callable[[], httpx2.AsyncBaseTransport]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -372,10 +372,10 @@ class _ResolveBatchFn(beam.DoFn):
         # The batched id-resolver runs on a litfetch Session; a test transport is
         # injected via its client_factory, else litfetch builds its live default client.
         client_factory = (
-            functools.partial(httpx.AsyncClient, transport=self._transport) if self._transport is not None else None
+            functools.partial(httpx2.AsyncClient, transport=self._transport) if self._transport is not None else None
         )
         async with (
-            httpx.AsyncClient(transport=self._transport) as client,
+            httpx2.AsyncClient(transport=self._transport) as client,
             litfetch.Session(client_factory=client_factory, contact=constants.CONTACT_EMAIL) as session,
         ):
             return await resolve.resolve_batch(requests, http_client=client, session=session)
@@ -579,7 +579,7 @@ def build_pipeline(
         file_sources_factory: Builds the litfetch supplementary file sources per
             worker; `None` uses litfetch's default (live) PMC OA source.
         transport_factory: Builds the HTTP transport for batched metadata resolution
-            per worker; `None` uses httpx's default (live) transport.
+            per worker; `None` uses httpx2's default (live) transport.
 
     Returns:
         The `PCollection` of ingested `doc_id`s.

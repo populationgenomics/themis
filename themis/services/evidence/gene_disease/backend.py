@@ -16,7 +16,7 @@ import datetime
 from collections.abc import Mapping, Sequence
 from typing import override
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
@@ -91,12 +91,12 @@ class ReferenceTables:
 class LiveBackend(GeneDiseaseBackend):
     """The deployed backend: an in-memory join over the reference tables, MONDO reached only on demand."""
 
-    def __init__(self, http_client: httpx.AsyncClient, tables: ReferenceTables) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient, tables: ReferenceTables) -> None:
         self._http_client = http_client
         self._tables = tables
 
     @classmethod
-    async def create(cls, *, http_client: httpx.AsyncClient, resources_bucket: str) -> LiveBackend:
+    async def create(cls, *, http_client: httpx2.AsyncClient, resources_bucket: str) -> LiveBackend:
         """Load the reference tables from the bucket once and wire the backend to the shared client.
 
         Args:

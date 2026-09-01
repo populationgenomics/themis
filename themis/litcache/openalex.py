@@ -25,7 +25,7 @@ import datetime
 import json
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
@@ -102,7 +102,7 @@ def _work(record: Mapping[str, object]) -> OpenAlexWork | None:
     )
 
 
-async def fetch(dois: Sequence[str], *, http_client: httpx.AsyncClient) -> bytes:
+async def fetch(dois: Sequence[str], *, http_client: httpx2.AsyncClient) -> bytes:
     """Fetch the works page for a batch of DOIs (one OR-filter query).
 
     Args:
@@ -114,7 +114,7 @@ async def fetch(dois: Sequence[str], *, http_client: httpx.AsyncClient) -> bytes
 
     Raises:
         ValueError: If `dois` is empty or exceeds `_MAX_IDS`.
-        httpx.HTTPStatusError: If OpenAlex returns a non-2xx status.
+        httpx2.HTTPStatusError: If OpenAlex returns a non-2xx status.
     """
     if not dois:
         raise ValueError('openalex.fetch requires at least one DOI')
@@ -159,7 +159,7 @@ def parse_response(payload: bytes) -> dict[str, OpenAlexWork]:
     return works
 
 
-async def resolve(dois: Sequence[str], *, http_client: httpx.AsyncClient) -> dict[str, OpenAlexWork]:
+async def resolve(dois: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, OpenAlexWork]:
     """Resolve a batch of DOIs to their OpenAlex works, chunked to the OR-filter cap."""
     works: dict[str, OpenAlexWork] = {}
     for start in range(0, len(dois), _MAX_IDS):

@@ -1,6 +1,6 @@
 """MONDO subclass closure: the OLS4 responses it accepts, and the ones it refuses to read.
 
-Every response is served by an httpx MockTransport; no test touches the network. The refusals are
+Every response is served by an httpx2 MockTransport; no test touches the network. The refusals are
 the point: a truncated or short collection read as complete would answer "your term is not above
 this curation" from a response that never said so.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence.upstreams import mondo
@@ -29,16 +29,16 @@ def _collection(*terms: Mapping[str, object], total_pages: int = 1) -> dict[str,
     }
 
 
-def _client(routes: Mapping[str, object], *, status: int = 200) -> httpx.AsyncClient:
-    def handler(request: httpx.Request) -> httpx.Response:
+def _client(routes: Mapping[str, object], *, status: int = 200) -> httpx2.AsyncClient:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == _VERSION_PATH:
-            return httpx.Response(200, json={'config': {'version': '2026-07-01'}})
+            return httpx2.Response(200, json={'config': {'version': '2026-07-01'}})
         for fragment, payload in routes.items():
             if fragment in str(request.url):
-                return httpx.Response(status, json=payload)
-        return httpx.Response(404, text=f'no route for {request.url}')
+                return httpx2.Response(status, json=payload)
+        return httpx2.Response(404, text=f'no route for {request.url}')
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
 
 def _closure(routes: Mapping[str, object], terms: list[str], *, status: int = 200) -> mondo.MondoClosureResult:
@@ -96,16 +96,16 @@ def test_a_term_ols4_rejects_is_not_reported_as_the_caller_request() -> None:
 
 def test_a_rate_limited_or_failing_ols4_stays_retryable() -> None:
     for status in (429, 503):
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(httpx2.HTTPStatusError):
             _closure({'MONDO_0000101': {'error': 'later'}}, ['MONDO:0000101'], status=status)
 
 
 def test_an_undated_ontology_is_refused() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'config': {}} if request.url.path == _VERSION_PATH else {})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'config': {}} if request.url.path == _VERSION_PATH else {})
 
     async def run() -> str:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await mondo.fetch_mondo_version(http_client=client)
 
     with pytest.raises(ValueError, match='states no version'):
@@ -115,14 +115,14 @@ def test_an_undated_ontology_is_refused() -> None:
 def test_the_term_iri_is_encoded_the_way_ols4_addresses_it() -> None:
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(str(request.url))
         if request.url.path == _VERSION_PATH:
-            return httpx.Response(200, json={'config': {'version': '2026-07-01'}})
-        return httpx.Response(200, json=_collection(_term('MONDO:0000100')))
+            return httpx2.Response(200, json={'config': {'version': '2026-07-01'}})
+        return httpx2.Response(200, json=_collection(_term('MONDO:0000100')))
 
     async def run() -> mondo.MondoClosureResult:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await mondo.fetch_subclass_closure(['MONDO:0000101'], http_client=client)
 
     asyncio.run(run())

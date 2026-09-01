@@ -19,7 +19,7 @@ import dataclasses
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -54,9 +54,9 @@ def _term_url(mondo_id: str, suffix: str) -> str:
     return f'{_BASE_URL}/ontologies/mondo/terms/{urllib.parse.quote(iri, safe="")}{suffix}'
 
 
-async def _get_json(url: str, *, http_client: httpx.AsyncClient) -> Mapping[str, object]:
+async def _get_json(url: str, *, http_client: httpx2.AsyncClient) -> Mapping[str, object]:
     response = await http_client.get(url, headers={'Accept': 'application/json'})
-    if response.is_client_error and response.status_code != httpx.codes.TOO_MANY_REQUESTS:
+    if response.is_client_error and response.status_code != httpx2.codes.TOO_MANY_REQUESTS:
         # Not InvalidRequestError: the term asked about is a curated one, so a refusal is a stale
         # reference table or a retired MONDO term, never the caller's request.
         raise ValueError(f'{_SOURCE} rejected {url} ({response.status_code}): {errors.clipped(response.text.strip())}')
@@ -101,7 +101,7 @@ def _mondo_ids(terms: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
     )
 
 
-async def _fetch_ancestors(mondo_id: str, *, http_client: httpx.AsyncClient) -> tuple[str, ...]:
+async def _fetch_ancestors(mondo_id: str, *, http_client: httpx2.AsyncClient) -> tuple[str, ...]:
     url = _term_url(mondo_id, f'/ancestors?size={_PAGE_SIZE}')
     ancestors = _mondo_ids(_terms(await _get_json(url, http_client=http_client), url))
     if not ancestors:
@@ -109,7 +109,7 @@ async def _fetch_ancestors(mondo_id: str, *, http_client: httpx.AsyncClient) -> 
     return ancestors
 
 
-async def fetch_mondo_version(*, http_client: httpx.AsyncClient) -> str:
+async def fetch_mondo_version(*, http_client: httpx2.AsyncClient) -> str:
     """The MONDO release OLS4 currently serves, which dates every closure read from it.
 
     Raises:
@@ -124,7 +124,7 @@ async def fetch_mondo_version(*, http_client: httpx.AsyncClient) -> str:
     return version
 
 
-async def fetch_subclass_closure(mondo_ids: Sequence[str], *, http_client: httpx.AsyncClient) -> MondoClosureResult:
+async def fetch_subclass_closure(mondo_ids: Sequence[str], *, http_client: httpx2.AsyncClient) -> MondoClosureResult:
     """The MONDO terms above each of ``mondo_ids``, transitively.
 
     Args:
@@ -137,7 +137,7 @@ async def fetch_subclass_closure(mondo_ids: Sequence[str], *, http_client: httpx
     Raises:
         ValueError: If OLS4 rejects a term, or answers with a truncated collection, an undated
             ontology, or a term it places under nothing.
-        httpx.HTTPStatusError: On a rate-limited or failing OLS4, which a retry can clear.
+        httpx2.HTTPStatusError: On a rate-limited or failing OLS4, which a retry can clear.
     """
     version = await fetch_mondo_version(http_client=http_client)
     closures = await asyncio.gather(*(_fetch_ancestors(mondo_id, http_client=http_client) for mondo_id in mondo_ids))

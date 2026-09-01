@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors, hgvs
 
@@ -86,7 +86,7 @@ class GtexResult:
     query: str
 
 
-def _accepted_tissue_ids(response: httpx.Response) -> str:
+def _accepted_tissue_ids(response: httpx2.Response) -> str:
     """The ``tissueSiteDetailId`` vocabulary GTEx names in a rejection body; empty if it names none."""
     try:
         payload = response.json()
@@ -105,7 +105,7 @@ def _accepted_tissue_ids(response: httpx.Response) -> str:
     return ''
 
 
-def _rejected_query(response: httpx.Response, tissues: Sequence[str], gencode_id: str) -> errors.InvalidRequestError:
+def _rejected_query(response: httpx2.Response, tissues: Sequence[str], gencode_id: str) -> errors.InvalidRequestError:
     """The caller-facing error for a query GTEx refused to validate, carrying its accepted values."""
     accepted = _accepted_tissue_ids(response)
     return errors.InvalidRequestError(
@@ -115,7 +115,7 @@ def _rejected_query(response: httpx.Response, tissues: Sequence[str], gencode_id
 
 
 async def _fetch_all_pages(
-    gencode_id: str, tissues: Sequence[str], *, http_client: httpx.AsyncClient
+    gencode_id: str, tissues: Sequence[str], *, http_client: httpx2.AsyncClient
 ) -> list[dict[str, object]]:
     """Fetch every page of median-expression rows for a versioned gencode id."""
     rows: list[dict[str, object]] = []
@@ -131,7 +131,7 @@ async def _fetch_all_pages(
         response = await http_client.get(_BASE_URL, params=params)
         # GTEx validates each param against its own enum, so an unknown tissue comes back as a 422
         # whose body carries the accepted vocabulary.
-        if response.status_code == httpx.codes.UNPROCESSABLE_ENTITY:
+        if response.status_code == httpx2.codes.UNPROCESSABLE_CONTENT:
             raise _rejected_query(response, tissues, gencode_id)
         errors.raise_for_status(response, upstream=_SOURCE, subject=f'{gencode_id!r}')
         payload = response.json()
@@ -183,7 +183,7 @@ def _requested_but_unreturned(rows: list[dict[str, object]], tissues: Sequence[s
     return [tissue for tissue in tissues if tissue not in returned]
 
 
-async def fetch_gtex(gencode_id: str, *, tissues: Sequence[str] = (), http_client: httpx.AsyncClient) -> GtexResult:
+async def fetch_gtex(gencode_id: str, *, tissues: Sequence[str] = (), http_client: httpx2.AsyncClient) -> GtexResult:
     """Fetch a gene's GTEx median transcript expression.
 
     Args:
@@ -202,7 +202,7 @@ async def fetch_gtex(gencode_id: str, *, tissues: Sequence[str] = (), http_clien
         ValueError: If ``gencode_id`` is unversioned, if a page lacks a ``data`` list, or if an
             unfiltered query returns no rows (a resolved versioned id always has expression;
             zero rows then signals a bad id, not a normal absence).
-        httpx.HTTPStatusError: If GTEx returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If GTEx returns a 429 or a 5xx.
     """
     if '.' not in gencode_id:
         raise ValueError(f'GTEx requires a versioned gencodeId (e.g. ENSG00000012048.23), got {gencode_id!r}')
@@ -259,12 +259,12 @@ def _gencode_id_for_symbol(data: list[object], gene_symbol: str) -> str:
     return distinct[0]
 
 
-async def _resolve_gencode_id(gene_symbol: str, *, http_client: httpx.AsyncClient) -> str:
+async def _resolve_gencode_id(gene_symbol: str, *, http_client: httpx2.AsyncClient) -> str:
     """Resolve an HGNC symbol to its ``gtex_v10`` (GENCODE v39) versioned GENCODE id.
 
     Raises:
         errors.InvalidRequestError: If GTEx refuses the reference-gene query (a non-429 4xx).
-        httpx.HTTPStatusError: If the reference-gene endpoint returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If the reference-gene endpoint returns a 429 or a 5xx.
         errors.UnknownVariantError: If GTEx has no record for the symbol.
         ValueError: If the response has no ``data`` list, the symbol is ambiguous, or a record comes
             back on a GENCODE release other than the pinned one.
@@ -280,7 +280,7 @@ async def _resolve_gencode_id(gene_symbol: str, *, http_client: httpx.AsyncClien
 
 
 async def fetch_gtex_by_symbol(
-    gene_symbol: str, *, tissues: Sequence[str] = (), http_client: httpx.AsyncClient
+    gene_symbol: str, *, tissues: Sequence[str] = (), http_client: httpx2.AsyncClient
 ) -> GtexResult:
     """Fetch a gene's GTEx median transcript expression, keyed by HGNC symbol.
 
@@ -299,7 +299,7 @@ async def fetch_gtex_by_symbol(
     Raises:
         errors.InvalidRequestError: If GTEx rejects a requested tissue id.
         errors.UnknownVariantError: If GTEx has no reference-gene record for the symbol.
-        httpx.HTTPStatusError: If a GTEx call returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If a GTEx call returns a 429 or a 5xx.
         ValueError: If the symbol has no unambiguous reference-gene record, or the resolved id
             yields no expression in any tissue.
     """

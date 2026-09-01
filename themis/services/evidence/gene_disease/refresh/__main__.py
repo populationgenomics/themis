@@ -12,14 +12,14 @@ import contextlib
 import logging
 import os
 
-import httpx
+import httpx2
 
 from themis.services.evidence.gene_disease.refresh import job, object_store
 
 _BUCKET_VAR = 'THEMIS_RESOURCES_BUCKET'
 
 # Generous, since the GenCC TSV is a multi-megabyte download; the per-request PanelApp calls are small.
-_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+_HTTP_TIMEOUT = httpx2.Timeout(60.0, connect=10.0)
 
 _logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _resources_bucket() -> str:
 
 async def _run() -> None:
     with contextlib.closing(object_store.GcsReferenceStore(_resources_bucket())) as store:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=True) as client:
+        async with httpx2.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=True) as client:
             report = await job.run(store, client=client)
     for outcome in report.raw_outcomes:
         _logger.info('refreshed %s: %s', outcome.object_name, 'written' if outcome.changed else 'unchanged (304)')

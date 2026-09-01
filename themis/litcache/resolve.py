@@ -25,7 +25,7 @@ import dataclasses
 import logging
 from collections.abc import Iterator, Sequence
 
-import httpx
+import httpx2
 import litfetch
 from litfetch import resolvers
 
@@ -79,7 +79,7 @@ class ResolvedPaper:
     publisher: str | None
 
 
-def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
+def _retry_after_seconds(response: httpx2.Response, attempt: int) -> float:
     """Seconds to wait before retrying a 429: the `Retry-After` header, else backoff."""
     header = response.headers.get('retry-after')
     if header is not None and header.isdigit():
@@ -87,7 +87,7 @@ def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
     return float(2**attempt)
 
 
-async def _crossref_or_none(doi: str, *, http_client: httpx.AsyncClient) -> crossref.CrossrefResult | None:
+async def _crossref_or_none(doi: str, *, http_client: httpx2.AsyncClient) -> crossref.CrossrefResult | None:
     """Resolve a DOI via Crossref, mapping a 404 (unknown DOI) to `None`.
 
     A 429 is retried with backoff (honoring `Retry-After`) up to `_CROSSREF_MAX_ATTEMPTS`
@@ -97,7 +97,7 @@ async def _crossref_or_none(doi: str, *, http_client: httpx.AsyncClient) -> cros
     for attempt in range(_CROSSREF_MAX_ATTEMPTS):
         try:
             return await crossref.resolve(doi, http_client=http_client)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             if e.response.status_code == _NOT_FOUND:
                 return None
             if e.response.status_code != _TOO_MANY_REQUESTS or attempt == _CROSSREF_MAX_ATTEMPTS - 1:
@@ -106,7 +106,7 @@ async def _crossref_or_none(doi: str, *, http_client: httpx.AsyncClient) -> cros
     raise AssertionError('unreachable: the loop returns or raises on the final attempt')
 
 
-async def resolve_metadata(*, pmid: str | None, doi: str | None, http_client: httpx.AsyncClient) -> ResolvedPaper:
+async def resolve_metadata(*, pmid: str | None, doi: str | None, http_client: httpx2.AsyncClient) -> ResolvedPaper:
     """Resolve one paper's bibliographic metadata via the efetch → Crossref ladder.
 
     Args:
@@ -120,7 +120,7 @@ async def resolve_metadata(*, pmid: str | None, doi: str | None, http_client: ht
 
     Raises:
         MetadataUnresolvedError: If neither rung resolves the paper (fully unknown).
-        httpx.HTTPStatusError: On a non-404 transport failure from either source
+        httpx2.HTTPStatusError: On a non-404 transport failure from either source
             (a transient error the caller retries — distinct from a clean miss).
     """
     if pmid is not None:
@@ -160,7 +160,7 @@ def _chunk(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
 
 
 async def resolve_batch(
-    requests: Sequence[ResolveRequest], *, http_client: httpx.AsyncClient, session: litfetch.Session
+    requests: Sequence[ResolveRequest], *, http_client: httpx2.AsyncClient, session: litfetch.Session
 ) -> dict[str, ResolvedPaper]:
     """Resolve a batch of papers by identifier, batching the NCBI calls.
 
@@ -189,7 +189,7 @@ async def resolve_batch(
         harvested cross-ids; the non-PubMed residual carries OpenAlex's doi/pmid/pmcid.
 
     Raises:
-        httpx.HTTPStatusError: On a non-404 transport failure (transient; the caller
+        httpx2.HTTPStatusError: On a non-404 transport failure (transient; the caller
             retries the batch).
     """
     resolved: dict[str, ResolvedPaper] = {}
@@ -215,7 +215,7 @@ async def resolve_batch(
 
 
 async def _resolve_doi_batch(
-    requests: Sequence[ResolveRequest], *, http_client: httpx.AsyncClient, session: litfetch.Session
+    requests: Sequence[ResolveRequest], *, http_client: httpx2.AsyncClient, session: litfetch.Session
 ) -> dict[str, ResolvedPaper]:
     """Resolve DOI-keyed papers, batched throughout — no per-DOI Crossref.
 

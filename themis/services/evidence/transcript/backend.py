@@ -8,7 +8,7 @@ import dataclasses
 from collections.abc import Iterable, Mapping, Sequence
 from typing import override
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import transcript_pb2
@@ -106,7 +106,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(TranscriptBackend):
     """The deployed backend, over VariantValidator, gnomAD, GTEx and NCBI ClinVar."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

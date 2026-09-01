@@ -1,6 +1,6 @@
 """gnomAD GraphQL adapter: variant frequency + gene constraint, over a recorded payload.
 
-The fetch paths are driven by an httpx `MockTransport` returning a committed gnomAD response
+The fetch paths are driven by an httpx2 `MockTransport` returning a committed gnomAD response
 (variant `1-55051215-G-A` / gene `PCSK9`); no test hits the network. The gene payload's per-region
 pext tissue lists are trimmed to four of gnomAD's 49 columns — the values are as recorded, the list
 is shortened to keep the fixture readable.
@@ -14,7 +14,7 @@ import json
 import pathlib
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -25,9 +25,11 @@ _VARIANT = _FIXTURE['variant']
 _GENE = _FIXTURE['gene']
 
 
-def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
+def _run[T](
+    handler: Callable[[httpx2.Request], httpx2.Response], call: Callable[[httpx2.AsyncClient], Awaitable[T]]
+) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await call(client)
 
     return asyncio.run(run())
@@ -35,7 +37,7 @@ def _run[T](handler: Callable[[httpx.Request], httpx.Response], call: Callable[[
 
 def test_fetch_gnomad_returns_the_variant_block_and_provenance() -> None:
     result: gnomad.GnomadResult = _run(
-        lambda _r: httpx.Response(200, json=_VARIANT),
+        lambda _r: httpx2.Response(200, json=_VARIANT),
         lambda c: gnomad.fetch_gnomad('1-55051215-G-A', 'gnomad_r4', http_client=c),
     )
     variant = result.raw['variant']
@@ -53,11 +55,11 @@ def test_fetch_gnomad_omits_cooccurrence_when_not_requested() -> None:
     query: dict[str, str] = {}
     variables: dict[str, object] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         query['q'] = body['query']
         variables.update(body['variables'])
-        return httpx.Response(200, json=_VARIANT)
+        return httpx2.Response(200, json=_VARIANT)
 
     _run(handler, lambda c: gnomad.fetch_gnomad('1-55051215-G-A', 'gnomad_r4', http_client=c))
     assert 'variant_cooccurrence' not in query['q']
@@ -68,11 +70,11 @@ def test_fetch_gnomad_adds_cooccurrence_when_requested() -> None:
     query: dict[str, str] = {}
     variables: dict[str, object] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         query['q'] = body['query']
         variables.update(body['variables'])
-        return httpx.Response(200, json=_VARIANT)
+        return httpx2.Response(200, json=_VARIANT)
 
     result: gnomad.GnomadResult = _run(
         handler,
@@ -88,7 +90,7 @@ def test_fetch_gnomad_adds_cooccurrence_when_requested() -> None:
 
 def _gene_result() -> gnomad.GnomadGeneResult:
     return _run(
-        lambda _r: httpx.Response(200, json=_GENE),
+        lambda _r: httpx2.Response(200, json=_GENE),
         lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c),
     )
 
@@ -113,7 +115,7 @@ def test_the_mane_select_behind_the_pext_regions_is_read_in_both_namespaces() ->
 def test_a_gene_without_a_mane_select_reports_none_rather_than_an_empty_pair() -> None:
     payload = copy.deepcopy(_GENE)
     payload['data']['gene']['mane_select_transcript'] = None
-    result = _run(lambda _r: httpx.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('X', http_client=c))
+    result = _run(lambda _r: httpx2.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('X', http_client=c))
     assert result.mane_select is None
 
 
@@ -127,7 +129,7 @@ def test_a_partial_mane_select_pair_is_no_pair(missing: str) -> None:
     payload = copy.deepcopy(_GENE)
     payload['data']['gene']['mane_select_transcript'][missing] = None
     result = _run(
-        lambda _r: httpx.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c)
+        lambda _r: httpx2.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c)
     )
     assert result.mane_select is None
     assert result.pext_regions  # the rest of the answer survives
@@ -139,7 +141,7 @@ def test_a_mane_select_block_that_is_not_an_object_raises() -> None:
     payload = copy.deepcopy(_GENE)
     payload['data']['gene']['mane_select_transcript'] = 'NM_174936.4'
     with pytest.raises(ValueError, match='not an object'):
-        _run(lambda _r: httpx.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
+        _run(lambda _r: httpx2.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
 
 
 def test_pext_regions_carry_their_per_tissue_values() -> None:
@@ -171,7 +173,7 @@ def test_pext_regions_disagreeing_on_their_tissues_raise() -> None:
     payload = copy.deepcopy(_GENE)
     payload['data']['gene']['pext']['regions'][0]['tissues'] = [{'tissue': 'liver', 'value': 0.5}]
     with pytest.raises(ValueError, match='different tissue vocabularies'):
-        _run(lambda _r: httpx.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
+        _run(lambda _r: httpx2.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
 
 
 @pytest.mark.parametrize('tissues', [None, []])
@@ -183,13 +185,13 @@ def test_a_pext_region_without_tissues_raises(tissues: list[object] | None) -> N
     else:
         payload['data']['gene']['pext']['regions'][0]['tissues'] = tissues
     with pytest.raises(ValueError, match='carries no tissues'):
-        _run(lambda _r: httpx.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
+        _run(lambda _r: httpx2.Response(200, json=payload), lambda c: gnomad.fetch_gnomad_gene('PCSK9', http_client=c))
 
 
 def test_fetch_gnomad_raises_on_absent_variant() -> None:
     with pytest.raises(errors.UnknownVariantError, match='holds no variant'):
         _run(
-            lambda _r: httpx.Response(
+            lambda _r: httpx2.Response(
                 200, json={'data': {'variant': None}, 'errors': [{'message': 'Variant not found'}]}
             ),
             lambda c: gnomad.fetch_gnomad('9-9-G-C', 'gnomad_r4', http_client=c),
@@ -205,7 +207,7 @@ def test_an_id_gnomad_could_not_parse_is_not_an_absent_variant() -> None:
     rejected = {'data': {'variant': None}, 'errors': [{'message': 'Invalid variant ID'}]}
     with pytest.raises(errors.InvalidRequestError, match='Invalid variant ID'):
         _run(
-            lambda _r: httpx.Response(200, json=rejected),
+            lambda _r: httpx2.Response(200, json=rejected),
             lambda c: gnomad.fetch_gnomad('not-a-variant', 'gnomad_r4', http_client=c),
         )
 
@@ -227,7 +229,7 @@ def test_a_cooccurrence_sub_error_does_not_veto_the_absence_verdict() -> None:
     }
     with pytest.raises(errors.UnknownVariantError, match='holds no variant'):
         _run(
-            lambda _r: httpx.Response(200, json=both),
+            lambda _r: httpx2.Response(200, json=both),
             lambda c: gnomad.fetch_gnomad(
                 '17-31232881-G-C', 'gnomad_r2_1', http_client=c, cooccurrence_with='1-55039974-G-A'
             ),
@@ -248,7 +250,7 @@ def test_a_refusal_anywhere_in_the_array_outranks_an_absence_beside_it() -> None
     }
     with pytest.raises(errors.InvalidRequestError, match='did not accept'):
         _run(
-            lambda _r: httpx.Response(200, json=mixed),
+            lambda _r: httpx2.Response(200, json=mixed),
             lambda c: gnomad.fetch_gnomad(
                 '17-41223094-T-G', 'gnomad_r2_1', http_client=c, cooccurrence_with='99-31232881-G-C'
             ),
@@ -259,7 +261,7 @@ def test_an_unexplained_null_field_is_neither_an_absence_nor_a_refusal() -> None
     """With no message there is nothing to read; claiming absence would manufacture the evidence."""
     with pytest.raises(ValueError, match='malformed'):
         _run(
-            lambda _r: httpx.Response(200, json={'data': {'variant': None}}),
+            lambda _r: httpx2.Response(200, json={'data': {'variant': None}}),
             lambda c: gnomad.fetch_gnomad('1-55051215-G-A', 'gnomad_r4', http_client=c),
         )
 
@@ -267,14 +269,14 @@ def test_an_unexplained_null_field_is_neither_an_absence_nor_a_refusal() -> None
 def test_fetch_gnomad_gene_raises_on_absent_gene() -> None:
     with pytest.raises(errors.UnknownVariantError, match='holds no gene'):
         _run(
-            lambda _r: httpx.Response(200, json={'data': {'gene': None}, 'errors': [{'message': 'Gene not found'}]}),
+            lambda _r: httpx2.Response(200, json={'data': {'gene': None}, 'errors': [{'message': 'Gene not found'}]}),
             lambda c: gnomad.fetch_gnomad_gene('NOTAGENE', http_client=c),
         )
 
 
 def test_fetch_gnomad_raises_on_non_2xx() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _run(
-            lambda _r: httpx.Response(500, json={}),
+            lambda _r: httpx2.Response(500, json={}),
             lambda c: gnomad.fetch_gnomad('1-55051215-G-A', 'gnomad_r4', http_client=c),
         )

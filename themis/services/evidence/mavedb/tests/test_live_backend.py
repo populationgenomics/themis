@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import mavedb_pb2
@@ -18,7 +18,7 @@ from themis.services.evidence.upstreams import allele_registry, mavedb
 
 def _run[T](call: Callable[[mavedb_backend.LiveBackend], Awaitable[T]]) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(mavedb_backend.LiveBackend(client))
 
     return asyncio.run(run())

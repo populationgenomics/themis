@@ -29,7 +29,7 @@ import re
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import transcript_pb2
@@ -482,7 +482,7 @@ def genomic_span_of_cds_range(result: TranscriptStructureResult, start: int, end
 
 
 async def fetch_transcript_structure(
-    transcript: str, genome_build: str, *, http_client: httpx.AsyncClient
+    transcript: str, genome_build: str, *, http_client: httpx2.AsyncClient
 ) -> TranscriptStructureResult:
     """Fetch one RefSeq transcript's exon table on one assembly.
 
@@ -500,7 +500,7 @@ async def fetch_transcript_structure(
             accession it cannot resolve comes back 200 with an ``error`` string instead.
         errors.UnknownVariantError: If VariantValidator holds no record for the accession or no
             alignment on the assembly.
-        httpx.HTTPStatusError: If either request returns a 429 or a 5xx, or if `/hello/` — which
+        httpx2.HTTPStatusError: If either request returns a 429 or a 5xx, or if `/hello/` — which
             carries no caller input, so its failure is never a refusal — returns any non-2xx.
         ValueError: If a response is structurally malformed.
     """
@@ -727,7 +727,7 @@ def parse_gene_transcripts(
 
 
 async def fetch_gene_transcripts(
-    gene: str, genome_build: str, *, http_client: httpx.AsyncClient
+    gene: str, genome_build: str, *, http_client: httpx2.AsyncClient
 ) -> list[GeneTranscriptsResult]:
     """Fetch every transcript VariantValidator holds for a gene, one result per annotation set.
 
@@ -746,7 +746,7 @@ async def fetch_gene_transcripts(
         errors.InvalidRequestError: If VariantValidator refuses the symbol (a non-429 4xx). A symbol
             it cannot resolve comes back 200 with an ``error`` string instead.
         errors.UnknownVariantError: If VariantValidator does not recognise the symbol.
-        httpx.HTTPStatusError: If a request returns a 429 or a 5xx, or if `/hello/` — which carries
+        httpx2.HTTPStatusError: If a request returns a 429 or a 5xx, or if `/hello/` — which carries
             no caller input, so its failure is never a refusal — returns any non-2xx.
         ValueError: If a response is structurally malformed.
     """

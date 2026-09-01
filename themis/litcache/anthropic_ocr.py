@@ -49,7 +49,7 @@ HARNESS_VERSION = '1'
 _MODEL = 'claude-sonnet-5'
 # Under the Sonnet/Opus 128K output ceiling, with headroom for the newer tokenizer.
 _MAX_TOKENS = 64000
-# A minutes-long call must stream, and needs two bounds because httpx has no total-duration setting:
+# A minutes-long call must stream, and needs two bounds because httpx2 has no total-duration setting:
 # it applies its timeout to connect/read/write/pool separately, and on a streamed call `read` is the
 # gap between events. So `asyncio.timeout` bounds elapsed time and the client's bounds a silence.
 #

@@ -11,7 +11,7 @@ import asyncio
 import pathlib
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import gene_disease_pb2
@@ -55,7 +55,7 @@ def _run[T](
     call: Callable[[gene_disease_backend.LiveBackend], Awaitable[T]],
 ) -> T:
     async def run() -> T:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await call(gene_disease_backend.LiveBackend(client, tables))
 
     return asyncio.run(run())
@@ -239,11 +239,11 @@ def test_gene_disease_scopes_mechanism_statements_to_what_they_are_about() -> No
 
 
 def test_gene_disease_resolving_the_curated_term_reads_no_ontology() -> None:
-    def _no_network(_request: httpx.Request) -> httpx.Response:
+    def _no_network(_request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('a request naming a curated term resolves in memory and must not reach the ontology')
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(_no_network)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_network)) as client:
             backend = gene_disease_backend.LiveBackend(
                 client, _tables(validity=_validity_table('HGNC:1100', 'Limited', 'AD'))
             )
@@ -331,11 +331,11 @@ def test_gene_disease_refuses_an_entity_the_gene_is_not_curated_for(monkeypatch:
 def test_gene_disease_from_reference_dumps_makes_no_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gene_disease_backend, '_download_reference_blobs', lambda _bucket: _reference_blobs())
 
-    def _no_network(_request: httpx.Request) -> httpx.Response:
+    def _no_network(_request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('an unresolved describe_gene is a pure table lookup and must not touch the network')
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(_no_network)) as client:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_network)) as client:
             backend = await gene_disease_backend.LiveBackend.create(
                 http_client=client, resources_bucket='resources-bucket'
             )
@@ -361,7 +361,7 @@ def test_create_fetches_the_resources_bucket_once(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(gene_disease_backend, '_download_reference_blobs', fake_download)
 
     async def build() -> gene_disease_backend.LiveBackend:
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             return await gene_disease_backend.LiveBackend.create(
                 http_client=client, resources_bucket='resources-bucket'
             )

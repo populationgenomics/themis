@@ -82,7 +82,7 @@ deployment has them. Plus:
 
 **What every interface shares: `deps`.** Every interface that authorizes does so identically, resolving the same session
 token through the same auth service. So `deps.py` builds one session resolver for the image, and with it a shared
-`httpx.AsyncClient` — one connection pool against overlapping public hosts, not one per interface — and the image's
+`httpx2.AsyncClient` — one connection pool against overlapping public hosts, not one per interface — and the image's
 `contextlib.AsyncExitStack`, which owns whatever an interface's adapter holds open for the server's lifetime.
 
 The resolver is the exception to the per-interface env rule: the vars selecting it and naming the auth service are

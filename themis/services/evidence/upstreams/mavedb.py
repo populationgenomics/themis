@@ -33,7 +33,7 @@ import urllib.parse
 from collections.abc import Iterable, Sequence
 from typing import NamedTuple
 
-import httpx
+import httpx2
 
 from themis.services.evidence import errors
 
@@ -143,7 +143,7 @@ def _select_classification(calibrations: Sequence[dict[str, object]], score: flo
     return with_odds or with_acmg
 
 
-async def _lookup(allele_ids: Sequence[str], *, http_client: httpx.AsyncClient) -> list[dict[str, object]]:
+async def _lookup(allele_ids: Sequence[str], *, http_client: httpx2.AsyncClient) -> list[dict[str, object]]:
     """MaveDB's answer for each queried ClinGen allele id — one entry per id, hit or not."""
     response = await http_client.post(
         f'{_API_URL}/variants/clingen-allele-id-lookups', json={'clingenAlleleIds': list(allele_ids)}
@@ -244,7 +244,7 @@ def _candidates(responses: Iterable[dict[str, object]], allele_ids: Sequence[str
     return list(unique.values())
 
 
-async def _variant_record(variant_urn: str, *, http_client: httpx.AsyncClient) -> dict[str, object]:
+async def _variant_record(variant_urn: str, *, http_client: httpx2.AsyncClient) -> dict[str, object]:
     """One deposited measurement's record: its score, and its score set's calibrations.
 
     The URN is MaveDB's own, from the lookup, so a 404 here is an inconsistency between its two
@@ -254,7 +254,7 @@ async def _variant_record(variant_urn: str, *, http_client: httpx.AsyncClient) -
     # The variant URN carries a '#', which must be percent-encoded in the path.
     encoded = urllib.parse.quote(variant_urn, safe='')
     response = await http_client.get(f'{_API_URL}/variants/{encoded}')
-    if response.status_code == httpx.codes.NOT_FOUND:
+    if response.status_code == httpx2.codes.NOT_FOUND:
         raise ValueError(f'MaveDB has no record for variant {variant_urn!r}, which its own lookup named')
     errors.raise_for_status(response, upstream=_SOURCE, subject=f'variant {variant_urn!r}')
     body = response.json()
@@ -287,7 +287,7 @@ def _score_set_urn(record: dict[str, object], variant_urn: str) -> str:
 
 
 async def _selected(
-    candidates: Sequence[_Candidate], *, http_client: httpx.AsyncClient
+    candidates: Sequence[_Candidate], *, http_client: httpx2.AsyncClient
 ) -> tuple[_Candidate, dict[str, object], dict[str, object] | None] | None:
     """The deposit to answer from and its calibration bin, or ``None`` when nothing was matched.
 
@@ -323,7 +323,7 @@ def _acmg_fields(classification: dict[str, object] | None) -> tuple[float | None
     return oddspath, criterion if isinstance(criterion, str) else '', strength if isinstance(strength, str) else ''
 
 
-async def fetch_mavedb(allele_ids: Sequence[str], *, http_client: httpx.AsyncClient) -> MavedbResult:
+async def fetch_mavedb(allele_ids: Sequence[str], *, http_client: httpx2.AsyncClient) -> MavedbResult:
     """Fetch the depositor's MAVE calibration for one variant, by its ClinGen allele ids.
 
     Args:
@@ -339,7 +339,7 @@ async def fetch_mavedb(allele_ids: Sequence[str], *, http_client: httpx.AsyncCli
     Raises:
         ValueError: If ``allele_ids`` is empty, or a response is not the shape MaveDB documents.
         errors.InvalidRequestError: If MaveDB refuses a call (a non-429 4xx).
-        httpx.HTTPStatusError: If a MaveDB call returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If a MaveDB call returns a 429 or a 5xx.
         errors.UnknownVariantError: If no deposited variant carries any of the ids — MaveDB has
             answered, and the answer is that no assay covers it.
     """

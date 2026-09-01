@@ -58,7 +58,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import clinvar_proto
 import defusedxml.common
 import defusedxml.ElementTree
-import httpx
+import httpx2
 
 from themis.services.evidence import errors, hgvs, requests
 from themis.svcv4 import clinvar_classification, frequency
@@ -344,7 +344,7 @@ def _subject(endpoint: str, params: Mapping[str, str]) -> str:
     return f'{endpoint} for {params.get("term") or params.get("id") or ""!r}'
 
 
-async def _spaced_get(endpoint: str, params: Mapping[str, str], *, http_client: httpx.AsyncClient) -> httpx.Response:
+async def _spaced_get(endpoint: str, params: Mapping[str, str], *, http_client: httpx2.AsyncClient) -> httpx2.Response:
     """GET one E-utilities endpoint, spaced from the previous call by the keyless rate-limit gap.
 
     The status is returned unjudged, for a lookup that has to read the body before it is; `_get` is
@@ -354,14 +354,14 @@ async def _spaced_get(endpoint: str, params: Mapping[str, str], *, http_client: 
     return await http_client.get(f'{_EUTILS_URL}/{endpoint}', params=dict(params))
 
 
-async def _get(endpoint: str, params: Mapping[str, str], *, http_client: httpx.AsyncClient) -> httpx.Response:
+async def _get(endpoint: str, params: Mapping[str, str], *, http_client: httpx2.AsyncClient) -> httpx2.Response:
     """`_spaced_get`, with a non-2xx placed on the evidence taxonomy."""
     response = await _spaced_get(endpoint, params, http_client=http_client)
     errors.raise_for_status(response, upstream=_SOURCE, subject=_subject(endpoint, params))
     return response
 
 
-async def _post(endpoint: str, params: Mapping[str, str], *, http_client: httpx.AsyncClient) -> httpx.Response:
+async def _post(endpoint: str, params: Mapping[str, str], *, http_client: httpx2.AsyncClient) -> httpx2.Response:
     """POST one E-utilities endpoint, spaced from the previous call by the keyless rate-limit gap."""
     await asyncio.sleep(_RATE_LIMIT_DELAY_S)
     response = await http_client.post(f'{_EUTILS_URL}/{endpoint}', data=dict(params))
@@ -370,13 +370,13 @@ async def _post(endpoint: str, params: Mapping[str, str], *, http_client: httpx.
 
 
 async def _esearch(
-    term: str, *, http_client: httpx.AsyncClient, retmax: int | None = None, retstart: int = 0
+    term: str, *, http_client: httpx2.AsyncClient, retmax: int | None = None, retstart: int = 0
 ) -> _SearchResult:
     """Run one ClinVar esearch and return its UID page plus the total behind it.
 
     Raises:
         errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response carries no ``esearchresult.idlist`` / ``count``.
     """
     params = {'db': _DB, 'retmode': 'json', 'term': term}
@@ -394,12 +394,12 @@ async def _esearch(
     return _SearchResult(uids=[uid for uid in result['idlist'] if isinstance(uid, str)], total=int(count))
 
 
-async def _esummary(uids: Sequence[str], *, http_client: httpx.AsyncClient) -> dict[str, object]:
+async def _esummary(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, object]:
     """Fetch the esummary ``result`` map for a batch of UIDs (POSTed, so any batch size fits).
 
     Raises:
         errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response carries no ``result`` object.
     """
     params = {'db': _DB, 'retmode': 'json', 'id': ','.join(uids)}
@@ -410,7 +410,7 @@ async def _esummary(uids: Sequence[str], *, http_client: httpx.AsyncClient) -> d
     return result
 
 
-def _stated_no_record(response: httpx.Response) -> str | None:
+def _stated_no_record(response: httpx2.Response) -> str | None:
     """ClinVar's own words for "no record under that id" off a refused efetch, or ``None``.
 
     efetch refuses inside an `_EFETCH_ENVELOPE` whose ``ERROR`` states which refusal it is, and an
@@ -423,7 +423,7 @@ def _stated_no_record(response: httpx.Response) -> str | None:
     A body that is not that envelope, or not XML at all, is left to the shared 4xx rule, which
     refuses it in turn.
     """
-    if response.status_code != httpx.codes.BAD_REQUEST:
+    if response.status_code != httpx2.codes.BAD_REQUEST:
         return None
     try:
         root = defusedxml.ElementTree.fromstring(response.content)
@@ -448,7 +448,7 @@ def _crosswalk_disagreement(accession: str, answered: str) -> str:
     )
 
 
-async def _efetch_archive(accession: str, *, http_client: httpx.AsyncClient) -> tuple[ET.Element, str]:
+async def _efetch_archive(accession: str, *, http_client: httpx2.AsyncClient) -> tuple[ET.Element, str]:
     """Fetch the single VCV archive one variation accession names, and the URL that fetched it.
 
     Raises:
@@ -460,7 +460,7 @@ async def _efetch_archive(accession: str, *, http_client: httpx.AsyncClient) -> 
             variation, never the allele being absent from ClinVar.
         errors.InvalidRequestError: If E-utilities refuses the call for any other reason (a non-429
             4xx).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response is not a ``ClinVarResult-Set``, or carries more than one archive.
     """
     params = {'db': _DB, 'id': accession, 'rettype': 'vcv', 'retmode': 'xml'}
@@ -861,7 +861,7 @@ def _gene_term(gene: str, review_status_floor: int) -> str:
     return f'{gene}[gene] AND ({clinsig}){_review_status_clause(review_status_floor)}'
 
 
-async def fetch_variant_archive(vcv: str, *, http_client: httpx.AsyncClient) -> ClinvarArchive:
+async def fetch_variant_archive(vcv: str, *, http_client: httpx2.AsyncClient) -> ClinvarArchive:
     """Fetch the ClinVar archive one variation accession names.
 
     Keyed on the accession rather than on an HGVS string because ClinVar indexes renderings: FOXG1
@@ -884,7 +884,7 @@ async def fetch_variant_archive(vcv: str, *, http_client: httpx.AsyncClient) -> 
             `_efetch_archive`).
         errors.InvalidRequestError: If ``vcv`` is not a zero-padded VCV accession, or if E-utilities
             refuses the call for any other reason (a non-429 4xx).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If efetch answers with more than one archive, or the archive is structurally
             malformed.
     """
@@ -899,7 +899,7 @@ async def fetch_variant_archive(vcv: str, *, http_client: httpx.AsyncClient) -> 
     )
 
 
-async def _walk_uids(term: str, limit: int, *, http_client: httpx.AsyncClient) -> _SearchResult:
+async def _walk_uids(term: str, limit: int, *, http_client: httpx2.AsyncClient) -> _SearchResult:
     """Walk the term's UIDs up to ``limit``, in esearch pages.
 
     Entrez's default ordering is by descending variation id and is stable across pages, so a page
@@ -922,7 +922,7 @@ async def _walk_uids(term: str, limit: int, *, http_client: httpx.AsyncClient) -
     return _SearchResult(uids=uids, total=total)
 
 
-async def _summarised(uids: Sequence[str], *, http_client: httpx.AsyncClient) -> list[ClinvarRecordData]:
+async def _summarised(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> list[ClinvarRecordData]:
     """Every UID's esummary record, fetched in batches sized to the measured payload cost."""
     records: list[ClinvarRecordData] = []
     for batch in itertools.batched(uids, _ESUMMARY_BATCH, strict=False):
@@ -936,7 +936,7 @@ def _require_record_bound(limit: int, *, subject: str) -> None:
 
 
 async def fetch_gene_pool(
-    gene: str, *, http_client: httpx.AsyncClient, review_status_floor: int, limit: int
+    gene: str, *, http_client: httpx2.AsyncClient, review_status_floor: int, limit: int
 ) -> ClinvarGenePool:
     """Fetch the gene's pathogenic-classification pool at a review-status floor, and its census.
 
@@ -964,7 +964,7 @@ async def fetch_gene_pool(
     Raises:
         errors.InvalidRequestError: If ``gene`` is empty.
         errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If ``review_status_floor`` is outside ClinVar's gold-star range, ``limit`` is not
             positive, an esearch/esummary response is structurally malformed, or a record carries a
             classification term outside ClinVar's germline vocabulary.
@@ -1029,7 +1029,7 @@ def _span_term(gene: str, start: int, end: int) -> str:
     return f'{gene}[gene] AND ({start}:{end}[Base Position] OR ({containing}))'
 
 
-async def _require_indexed_gene(gene: str, *, http_client: httpx.AsyncClient) -> None:
+async def _require_indexed_gene(gene: str, *, http_client: httpx2.AsyncClient) -> None:
     """Confirm ClinVar indexes the symbol at all, for a span search that matched nothing.
 
     An empty span is a *finding* — "no informative variant at this codon" — so a symbol ClinVar
@@ -1057,7 +1057,7 @@ async def _require_indexed_gene(gene: str, *, http_client: httpx.AsyncClient) ->
 
 
 async def fetch_span_records(
-    gene: str, start: int, end: int, *, http_client: httpx.AsyncClient, limit: int
+    gene: str, start: int, end: int, *, http_client: httpx2.AsyncClient, limit: int
 ) -> ClinvarSpanRecords:
     """Fetch every germline record ClinVar holds for ``gene`` in one genomic interval.
 
@@ -1083,7 +1083,7 @@ async def fetch_span_records(
             non-429 4xx).
         errors.InconsistentSourcesError: If the span matched nothing and ClinVar indexes no record
             under the symbol at all (see ``_require_indexed_gene``).
-        httpx.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the interval is not an ascending 1-based one, ``limit`` is not positive, an
             esearch/esummary response is structurally malformed, or a record carries a review status
             outside ClinVar's vocabulary.

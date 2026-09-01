@@ -6,7 +6,7 @@ import abc
 from collections.abc import Mapping
 from typing import cast, override
 
-import httpx
+import httpx2
 
 from themis.rpc import clinvar_pb2
 from themis.services.evidence import fixtures, hgvs, provenance
@@ -72,7 +72,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(ClinVarBackend):
     """The deployed backend, over NCBI E-utilities."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

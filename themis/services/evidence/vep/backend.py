@@ -6,7 +6,7 @@ import abc
 from collections.abc import Mapping
 from typing import cast, override
 
-import httpx
+import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import vep_pb2
@@ -47,7 +47,7 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 class LiveBackend(VepBackend):
     """The deployed backend, over the Ensembl VEP REST API."""
 
-    def __init__(self, http_client: httpx.AsyncClient) -> None:
+    def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client
 
     @override

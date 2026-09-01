@@ -6,7 +6,7 @@ import asyncio
 import json
 import pathlib
 
-import httpx
+import httpx2
 import pytest
 
 from themis.services.evidence import errors
@@ -15,20 +15,20 @@ from themis.services.evidence.upstreams import spliceai
 _FIXTURE = json.loads((pathlib.Path(__file__).parent / 'fixtures' / 'spliceai.json').read_text())
 
 
-def _route(spliceai_response: httpx.Response, pangolin_response: httpx.Response) -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
+def _route(spliceai_response: httpx2.Response, pangolin_response: httpx2.Response) -> httpx2.MockTransport:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         if '/spliceai/' in request.url.path:
             return spliceai_response
         if '/pangolin/' in request.url.path:
             return pangolin_response
-        return httpx.Response(404)
+        return httpx2.Response(404)
 
-    return httpx.MockTransport(handler)
+    return httpx2.MockTransport(handler)
 
 
-def _fetch(handler: httpx.MockTransport, variant: str = '8-140300616-T-G') -> spliceai.SpliceResult:
+def _fetch(handler: httpx2.MockTransport, variant: str = '8-140300616-T-G') -> spliceai.SpliceResult:
     async def run() -> spliceai.SpliceResult:
-        async with httpx.AsyncClient(transport=handler) as client:
+        async with httpx2.AsyncClient(transport=handler) as client:
             return await spliceai.fetch_splice(variant, 'GRCh38', http_client=client)
 
     return asyncio.run(run())
@@ -37,8 +37,8 @@ def _fetch(handler: httpx.MockTransport, variant: str = '8-140300616-T-G') -> sp
 def test_happy_path_computes_maxima_and_normalises_chr_prefix() -> None:
     result = _fetch(
         _route(
-            httpx.Response(200, json=_FIXTURE['spliceai']),
-            httpx.Response(200, json=_FIXTURE['pangolin']),
+            httpx2.Response(200, json=_FIXTURE['spliceai']),
+            httpx2.Response(200, json=_FIXTURE['pangolin']),
         )
     )
 
@@ -61,8 +61,8 @@ def test_gain_and_loss_are_reported_apart_under_pangolins_negative_loss() -> Non
     donor_loss = {'DS_AG': '0.00', 'DS_AL': '0.00', 'DS_DG': '0.00', 'DS_DL': '0.76'}
     result = _fetch(
         _route(
-            httpx.Response(200, json={'scores': [donor_loss]}),
-            httpx.Response(200, json={'scores': [{'DS_SG': '0.01', 'DS_SL': '-0.71'}]}),
+            httpx2.Response(200, json={'scores': [donor_loss]}),
+            httpx2.Response(200, json={'scores': [{'DS_SG': '0.01', 'DS_SL': '-0.71'}]}),
         )
     )
 
@@ -80,8 +80,8 @@ def test_maxima_are_taken_across_scored_transcripts() -> None:
     pangolin_scores = [{'DS_SG': '0.10', 'DS_SL': '-0.20'}, {'DS_SG': '0.30', 'DS_SL': '-0.05'}]
     result = _fetch(
         _route(
-            httpx.Response(200, json={'scores': spliceai_scores}),
-            httpx.Response(200, json={'scores': pangolin_scores}),
+            httpx2.Response(200, json={'scores': spliceai_scores}),
+            httpx2.Response(200, json={'scores': pangolin_scores}),
         )
     )
 
@@ -109,8 +109,8 @@ def test_a_delta_against_its_predictors_sign_convention_raises(
     with pytest.raises(ValueError, match='sign convention'):
         _fetch(
             _route(
-                httpx.Response(200, json={'scores': [spliceai_score]}),
-                httpx.Response(200, json={'scores': [pangolin_score]}),
+                httpx2.Response(200, json={'scores': [spliceai_score]}),
+                httpx2.Response(200, json={'scores': [pangolin_score]}),
             )
         )
 
@@ -118,8 +118,8 @@ def test_a_delta_against_its_predictors_sign_convention_raises(
 def test_empty_scores_yield_none() -> None:
     result = _fetch(
         _route(
-            httpx.Response(200, json={'scores': []}),
-            httpx.Response(200, json={'scores': []}),
+            httpx2.Response(200, json={'scores': []}),
+            httpx2.Response(200, json={'scores': []}),
         )
     )
 
@@ -130,8 +130,8 @@ def test_empty_scores_yield_none() -> None:
 
 
 def test_non_2xx_raises_http_status_error() -> None:
-    with pytest.raises(httpx.HTTPStatusError):
-        _fetch(_route(httpx.Response(500, json={}), httpx.Response(200, json=_FIXTURE['pangolin'])))
+    with pytest.raises(httpx2.HTTPStatusError):
+        _fetch(_route(httpx2.Response(500, json={}), httpx2.Response(200, json=_FIXTURE['pangolin'])))
 
 
 @pytest.mark.parametrize(
@@ -143,12 +143,12 @@ def test_non_2xx_raises_http_status_error() -> None:
 )
 def test_a_position_the_model_could_not_score_is_an_absent_variant(reported: str) -> None:
     with pytest.raises(errors.UnknownVariantError, match='no scores'):
-        _fetch(_route(httpx.Response(200, json={'error': reported}), httpx.Response(200, json=_FIXTURE['pangolin'])))
+        _fetch(_route(httpx2.Response(200, json={'error': reported}), httpx2.Response(200, json=_FIXTURE['pangolin'])))
 
 
-def _routed(predictor: str, failing: httpx.Response) -> httpx.MockTransport:
+def _routed(predictor: str, failing: httpx2.Response) -> httpx2.MockTransport:
     """`failing` in ``predictor``'s slot, the recorded fixture in the other's."""
-    scored = {name: httpx.Response(200, json=_FIXTURE[name]) for name in ('spliceai', 'pangolin')}
+    scored = {name: httpx2.Response(200, json=_FIXTURE[name]) for name in ('spliceai', 'pangolin')}
     scored[predictor] = failing
     return _route(scored['spliceai'], scored['pangolin'])
 
@@ -161,7 +161,7 @@ def test_an_id_the_service_could_not_parse_is_not_an_unscorable_position(predict
     finding — and never retries it, an unscorable position being settled. A servicer-side shape check
     cannot stand in: it is calibrated to gnomAD, which parses casings the Broad services reject.
     """
-    unparsable = httpx.Response(200, json={'error': 'Unable to parse variant: chr17-43045677-a-c'})
+    unparsable = httpx2.Response(200, json={'error': 'Unable to parse variant: chr17-43045677-a-c'})
     with pytest.raises(errors.InvalidRequestError, match='could not parse'):
         _fetch(_routed(predictor, unparsable))
 
@@ -186,4 +186,4 @@ def test_a_payload_this_adapter_cannot_place_is_not_an_unscorable_position(
     the SPL_PRD finding — silently, and without a retry.
     """
     with pytest.raises(ValueError, match=r'neither scores nor an error|cannot place'):
-        _fetch(_routed(predictor, httpx.Response(200, json=payload)))
+        _fetch(_routed(predictor, httpx2.Response(200, json=payload)))

@@ -5,7 +5,7 @@ applies — the same session token, resolved through the same auth service — s
 `THEMIS_AUTHORIZER_BACKEND` selects it, not a per-interface copy of the same value: every interface
 resolves a session somewhere, and a resolver each would hold ten idle gRPC channels to auth in place of
 one. And the nine database-backed interfaces reach public HTTP upstreams, as does `literature`'s
-discovery half, so they share one `httpx.AsyncClient`: a client each would be ten connection pools
+discovery half, so they share one `httpx2.AsyncClient`: a client each would be ten connection pools
 against overlapping hosts.
 
 Everything else stays the interface's own — which adapter its port builds, and the vars that
@@ -18,7 +18,7 @@ import contextlib
 import dataclasses
 import os
 
-import httpx
+import httpx2
 
 from themis.clients.auth import session as session_mod
 
@@ -26,7 +26,7 @@ _AUTHORIZER_VAR = 'THEMIS_AUTHORIZER_BACKEND'
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_EVIDENCE_FIXTURE_CONTEXTS'
 
 # The live upstreams' shared client: a generous default (VariantValidator self-extends per call).
-_HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_HTTP_TIMEOUT = httpx2.Timeout(30.0, connect=10.0)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -44,7 +44,7 @@ class Deps:
     """
 
     session_resolver: session_mod.SessionResolver
-    http_client: httpx.AsyncClient
+    http_client: httpx2.AsyncClient
     stack: contextlib.AsyncExitStack
 
 
@@ -63,7 +63,7 @@ async def deps_from_env(stack: contextlib.AsyncExitStack) -> Deps:
     """
     return Deps(
         session_resolver=_session_resolver_from_env(),
-        http_client=await stack.enter_async_context(httpx.AsyncClient(timeout=_HTTP_TIMEOUT)),
+        http_client=await stack.enter_async_context(httpx2.AsyncClient(timeout=_HTTP_TIMEOUT)),
         stack=stack,
     )
 

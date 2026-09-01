@@ -7,7 +7,7 @@ import contextlib
 import functools
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import auth_pb2, literature_pb2, literature_pb2_grpc
@@ -19,7 +19,7 @@ from themis.testing import in_process_grpc
 def _deps() -> deps_mod.Deps:
     """Image-level collaborators, with a resolver no read here may reach."""
     return deps_mod.Deps(
-        session_resolver=_unreachable_resolver, http_client=httpx.AsyncClient(), stack=contextlib.AsyncExitStack()
+        session_resolver=_unreachable_resolver, http_client=httpx2.AsyncClient(), stack=contextlib.AsyncExitStack()
     )
 
 

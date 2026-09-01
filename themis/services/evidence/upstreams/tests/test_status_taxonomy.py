@@ -3,7 +3,7 @@
 The property spans the adapters rather than sitting in any one of them, and it is what the guest's
 retry helper keys on. ``errors.InvalidRequestError`` (INVALID_ARGUMENT), ``errors.UnknownVariantError``
 (NOT_FOUND) and ``errors.InconsistentSourcesError`` (FAILED_PRECONDITION) are settled and are never
-retried; ``httpx.HTTPStatusError`` surfaces as UNKNOWN, which is reissued four times with backoff. A
+retried; ``httpx2.HTTPStatusError`` surfaces as UNKNOWN, which is reissued four times with backoff. A
 failure in the wrong bucket therefore either burns four calls on a verdict that cannot change, or
 states a settled fact about a fault a single retry would have cleared. That every one of those types
 reaches a status of its own is ``tests/test_serving.py``'s.
@@ -32,7 +32,7 @@ import inspect
 import types
 from collections.abc import Awaitable, Callable
 
-import httpx
+import httpx2
 import pytest
 
 from themis.rpc import cspec_pb2
@@ -84,7 +84,7 @@ _VARIANT_HGVS = 'NM_001042492.3:c.3496G>C'
 _TRANSCRIPT = 'NM_001042492.3'
 _GNOMAD_ID = '17-31232881-G-C'
 
-_ENTRY_POINTS: dict[str, Callable[[httpx.AsyncClient], Awaitable[object]]] = {
+_ENTRY_POINTS: dict[str, Callable[[httpx2.AsyncClient], Awaitable[object]]] = {
     'allele_registry': lambda c: allele_registry.fetch_allele_registry(_VARIANT_HGVS, http_client=c),
     'allele_registry_ids': lambda c: allele_registry.fetch_clingen_allele_ids(_VARIANT_HGVS, http_client=c),
     'clinvar_archive': lambda c: clinvar.fetch_variant_archive('VCV001731988', http_client=c),
@@ -194,8 +194,8 @@ def _call(entry_point: str, status: int) -> object:
     """Drive one upstream entry point against a transport that answers every request with ``status``."""
 
     async def run() -> object:
-        transport = httpx.MockTransport(lambda _request: httpx.Response(status, text='upstream said no'))
-        async with httpx.AsyncClient(transport=transport) as client:
+        transport = httpx2.MockTransport(lambda _request: httpx2.Response(status, text='upstream said no'))
+        async with httpx2.AsyncClient(transport=transport) as client:
             return await _ENTRY_POINTS[entry_point](client)
 
     return asyncio.run(run())
@@ -273,7 +273,7 @@ def test_a_status_specific_refusal_reaches_the_caller_as_its_own_shape(
 @pytest.mark.parametrize('status', [429, 500, 502, 503])
 def test_a_transient_failure_stays_retryable(entry_point: str, status: int) -> None:
     """429 is the one 4xx a retry can clear — reading it as an answer states a fact about the rate."""
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _call(entry_point, status)
 
 
@@ -285,5 +285,5 @@ def test_an_exempt_transport_keeps_every_4xx_retryable(entry_point: str, status:
     gnomAD's 400 covers its rate limiter, which is precisely the failure a retry clears; the Broad
     hosts' would name the caller's variant for a fault in a hard-coded URL, on every call, forever.
     """
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         _call(entry_point, status)
