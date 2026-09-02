@@ -31,10 +31,10 @@ Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.p
 ## Storage
 
 The literature **full-text store** (per-paper PDFs/XML, derived markdown, figures, knowledge units —
-`docs/design/literature-evidence-layer.md` §2.1) lives in a per-environment GCS bucket,
-`gs://cpg-themis-<env>-fulltext`. It is the durable source of truth; Cloud SQL is a rebuildable projection of it. Named
-for its content (full text): it never expires live objects (so not the design doc's "cache"), and stays distinct from
-the 37M abstract *corpus* (in Cloud SQL, not a bucket). Policy:
+`docs/design/literature-evidence-layer.md`) lives in a per-environment GCS bucket, `gs://cpg-themis-<env>-fulltext`. It
+is the durable source of truth; Cloud SQL is a rebuildable projection of it. Named for its content (full text): it never
+expires live objects (so not the design doc's "cache"), and stays distinct from the 37M abstract *corpus* (in Cloud SQL,
+not a bucket). Policy:
 
 - **Private** — uniform bucket-level access + enforced public-access prevention (it holds copyrighted source PDFs).
 - **Versioned, 30-day window; soft delete off** — recovery is object versioning: a superseded (noncurrent) version is

@@ -2,10 +2,9 @@
 
 **Status:** current — schema and the identity/mint core have landed; conversion, metadata resolution, the writer, and
 the ingestion pipeline are in progress (Implementation state). **Related:**
-[`../design/literature-evidence-layer.md`](../design/literature-evidence-layer.md) §2 (cache), §2.1 (layout), §2.2
-(identity), §3 (capture), §4.2 (source anchors) — the design + why;
-[`../design/litcache-manifest.md`](../design/litcache-manifest.md) (manifest structural model);
-[`../design/proto.md`](../design/proto.md) (schema rails + serialization);
+[`../design/literature-evidence-layer.md`](../design/literature-evidence-layer.md) (the corpus, its identity model, and
+the interface that serves it) — the design + why; [`../design/litcache-manifest.md`](../design/litcache-manifest.md)
+(manifest structural model); [`../design/proto.md`](../design/proto.md) (schema rails + serialization);
 [`../design/spike-infrastructure.md`](../design/spike-infrastructure.md) §8 (boundary/egress).
 
 ## Overview

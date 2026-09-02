@@ -36,6 +36,16 @@ class MissingContentError(Exception):
     """The paper lacks the selected object (no such rendering / PDF / file) — NOT_FOUND."""
 
 
+class MissingRenderingBlobError(Exception):
+    """The manifest lists a rendering whose bytes the store cannot produce — INTERNAL.
+
+    Distinct from ``MissingContentError``, which is a fact about the paper: here the manifest
+    promised the rendering and the store cannot deliver it, so the store has broken its own
+    invariant. Reporting it as NOT_FOUND would file a fault as an answer, and NOT_FOUND is the one
+    status the shared taxonomy says is never retried.
+    """
+
+
 class RepresentationUnavailableError(Exception):
     """The paper has no rendering in the requested representation — FAILED_PRECONDITION."""
 
@@ -140,6 +150,8 @@ class LiteratureBackend(abc.ABC):
         Raises:
             UnknownPaperError: no such doc_id.
             RepresentationUnavailableError: the paper has no rendering in ``representation``.
+            MissingRenderingBlobError: the manifest lists the rendering it must read, and the store
+                cannot produce its bytes.
         """
         ...
 
@@ -149,6 +161,11 @@ class LiteratureBackend(abc.ABC):
 
         Never raises for an unknown doc_id or an absent quote: both are ``ok=false`` with a reason,
         the forgiving answer the agent tool wants.
+
+        Raises:
+            MissingRenderingBlobError: the manifest lists the rendering it must read, and the store
+                cannot produce its bytes. A fault does not belong in ``ok=false``, which an agent
+                reads as a verdict on its quote.
         """
         ...
 

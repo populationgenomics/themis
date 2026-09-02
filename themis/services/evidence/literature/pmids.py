@@ -13,8 +13,8 @@ import re
 # One identifier in the spellings a caller holds it in: bare digits, a `PMID:` prefix, zero-padded.
 _PMID = re.compile(r'\A(?:pmid\s*:?\s*)?0*([1-9][0-9]*)\Z', re.IGNORECASE)
 
-# The most distinct PMIDs one FetchAbstracts answers. A batch is answered whole or refused, so this
-# bounds the upstream bibliographic lookups behind a single request.
+# The most distinct PMIDs one FetchPubmedArticles answers. A batch is answered whole or refused, so
+# this bounds the upstream bibliographic lookup behind a single request.
 MAX_PMIDS_PER_BATCH = 50
 
 

@@ -1,18 +1,25 @@
-// The `Literature` service — the literature evidence layer's read surface for the workbench,
-// (docs/design/document-pane.md). It owns litcache resolution — given a canonical doc_id it names
-// the GCS object for a rendering, the PDF, or an associated file, and it locates a citation's quote
-// within a chosen representation (offsets in markdown; a page region in a PDF). This proto is the
-// source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the server
-// subclasses the servicer base, a caller uses the stub.
+// The `Literature` service — the literature evidence layer, in two groups. The store group owns
+// litcache resolution (docs/design/document-pane.md): given a canonical doc_id it names the GCS
+// object for a rendering, the PDF, or an associated file, serves the rendering's text, and locates a
+// citation's quote within a chosen representation (offsets in markdown; a page region in a PDF). The
+// discovery group reaches the live indexes — Europe PMC for keyword search, PubMed for the
+// bibliographic records behind a batch of PMIDs, NCBI's LitVar2 for the variant entity census — and
+// every outbound call is the service's own, since the agent holds no credential and no egress. This
+// proto is the source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the
+// server subclasses the servicer base, a caller uses the stub.
 //
 // Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and serves
-// the named object itself; the sandbox agent calls Validate at authoring time. The corpus is shared
-// (litcache is not session-scoped yet — entitlement is a deferred non-goal, literature-evidence-layer.md),
-// so the read rpcs carry no session binding. MaybeIngestPapers is the exception, stated where it is
-// declared rather than here: auth is per-rpc on this service, not uniform across it.
+// the named object itself; the sandbox agent searches the indexes, resolves the identifiers it holds
+// to doc_ids, reads the markdown behind one, and validates a quote at authoring time. The full-text
+// store is shared (litcache is not session-scoped — entitlement is a deferred non-goal,
+// literature-evidence-layer.md), so the read rpcs carry no session binding. MaybeIngestPapers is the
+// exception, stated where it is declared rather than here: auth is per-rpc on this service, not
+// uniform across it.
 syntax = "proto3";
 
 package themis.rpc.literature;
+
+import "pubmed_proto/pubmed.proto";
 
 
 // Which rendering of a paper a request concerns. Markdown is a converter's output; PDF is the
@@ -29,6 +36,19 @@ enum FileRole {
   FILE_ROLE_UNSPECIFIED = 0;
   FILE_ROLE_FIGURE = 1;
   FILE_ROLE_SUPPLEMENTARY = 2;
+}
+
+// How the canonical rendering's text entered the full-text store. SUPPLIED text reached it only
+// through a human's institutional access, so a run records what it relied on; both are equally
+// citable. UNSPECIFIED is a store that does not say — no rendering, an unresolvable lineage, or a
+// licence disposition that is neither of the two — never a default for a paper whose lineage does
+// say. It rides only on a served rendering, so "no rendering" is the `unavailable` arm, not this
+// value. Named for the text, not the fact: `themis.evidence.models.Provenance`, which every other
+// evidence rpc returns, is a record of where a fact came from and is a different thing entirely.
+enum TextProvenance {
+  TEXT_PROVENANCE_UNSPECIFIED = 0;
+  TEXT_PROVENANCE_OPEN_ACCESS = 1;
+  TEXT_PROVENANCE_SUPPLIED = 2;
 }
 
 message DescribePaperRequest {
@@ -181,6 +201,311 @@ message ValidateResponse {
   string reason = 3;
 }
 
+message GetMarkdownRequest {
+  string doc_id = 1;
+  // Maximum characters to return. Unset takes the service default; above the service ceiling clamps
+  // to it, and below the service floor likewise — a budget under the floor could not carry the
+  // truncation marker a cut read ends in.
+  uint32 max_chars = 2;
+}
+
+// The canonical rendering's text.
+message PaperMarkdown {
+  string doc_id = 1;
+  string markdown = 2;
+  TextProvenance provenance = 3;
+  // The rendering's full character count — Unicode code points, as `TextOffsets` counts them. The
+  // text came whole iff this does not exceed `markdown`'s length; above it the payload was cut at a
+  // line boundary behind an inline marker, and this says how much lies past the cut. The cut text,
+  // marker included, stays within the granted budget, which is what keeps that test sound. The way
+  // past a cut is a re-ask with a larger `max_chars`, up to the service ceiling; past it the
+  // remainder stays unreachable, since the request carries no offset or cursor. `Validate` and
+  // `Locate` still run against the whole rendering, so quoting within what was read is the reader's
+  // to hold to.
+  int32 total_chars = 4;
+}
+
+// The store holds the paper but has no servable rendering — a fact about the paper, not an error.
+message FullTextUnavailable {
+  // Never READY (there would be text to serve) nor UNKNOWN_PAPER (that doc_id is a NOT_FOUND).
+  FullTextState state = 1;
+}
+
+message GetMarkdownResponse {
+  oneof result {
+    PaperMarkdown content = 1;
+    FullTextUnavailable unavailable = 2;
+  }
+}
+
+// A hit in Europe PMC's own shape (docs/design/literature-evidence-layer.md, "A discovery rpc is a
+// query against one named source"). The store's door is `MaybeIngestPapers`: hand it `pmid:<value>`
+// and key everything downstream on the `doc_id` that comes back. Europe PMC's index is wider than
+// PubMed's, so a hit can be a preprint or a PMC-only record that no PubMed id names; `pmid` is empty
+// there, and `pmcid:<value>` or `doi:<value>` is the key to the door instead. A record carrying none
+// of the three has no key at all — readable as a hit, not checkable against the store.
+message EuropePmcRecord {
+  // The PubMed identifier as the index states it, empty where it carries the record under no PubMed id.
+  string pmid = 1;
+  string title = 2;
+  // The index's author list: one author per entry, in the order it states them.
+  repeated string authors = 3;
+  string journal = 4;
+  // Publication year as a display string; empty when the record carries no parseable date.
+  string year = 5;
+  string doi = 6;
+  // The abstract as the index states it, empty where it states none. Readable, never quotable: no
+  // discovery record is anchored in the full-text store, so nothing here can anchor a
+  // `:quote[doc_id, …]` directive — only the markdown `GetMarkdown` serves can.
+  string abstract = 7;
+  // The PMC identifier as the index states it (`PMC…`), empty where it states none — the door's key
+  // for the PMC-only deposit no PubMed id names.
+  string pmcid = 8;
+}
+
+// A literature query and the cap on how many records to return.
+message SearchEuropePmcRequest {
+  // The keyword query, in Europe PMC's own search syntax; empty is INVALID_ARGUMENT, since the index
+  // refuses a search for nothing. Reaches Europe PMC only as the percent-encoded value of one query
+  // parameter on a fixed endpoint: it selects which records come back, never where the request goes.
+  string query = 1;
+  // Maximum records to return. Unset takes the service default; above the service ceiling clamps to
+  // it.
+  uint32 max_results = 2;
+}
+
+// The records matching a query, most-relevant first, with the index's own census of the match.
+message SearchEuropePmcResponse {
+  repeated EuropePmcRecord records = 1;
+  // Every record the index matched, before the budget. Above `records.size()` it means this list is
+  // the top-ranked prefix of the index's hits, and the way to the rest is a narrower query — the
+  // search has no page cursor.
+  int32 total_matched = 2;
+}
+
+// The PubMed records to fetch, as a batch: PMIDs reached from outside this service — a submission's
+// citation list, a reference list, a clinical note — or selected from `SearchLitVar`'s census.
+// `SearchEuropePmc` hits already carry their bibliography and abstract inline, so re-reading one of
+// those here buys nothing.
+message FetchPubmedArticlesRequest {
+  // The PMIDs as a caller holds them: digits, optionally `PMID:`-prefixed and zero-padded, all read
+  // as the same identifier. Anything else is INVALID_ARGUMENT rather than a record that does not
+  // exist — a wrong identifier and an absent record are different facts, and a malformed one
+  // reported absent reads as the latter. An empty list, and more than 50 distinct PMIDs, are
+  // INVALID_ARGUMENT for the same reason: the batch is answered whole or refused, never trimmed to
+  // fit, since a dropped PMID would come back looking like one nothing is indexed under.
+  repeated string pmids = 1;
+}
+
+// Every distinct requested PMID lands in exactly one of the three outcomes — a journal record, a
+// book record, or the list of PMIDs nothing is indexed under; a PMID named twice, including under
+// two spellings of the one identifier, gets one — so an absent record is a statement this response
+// makes, never an omission the caller has to notice. Read an outcome off a record's own PMID —
+// `medline_citation.pmid.value` on a journal record, `book_document.pmid.value` on a book record;
+// digits, unprefixed and unpadded, what the request's spelling normalises to — rather than off
+// position.
+message FetchPubmedArticlesResponse {
+  // Each journal record whole, as PubMed states it: bibliography, abstract, MeSH terms, the article
+  // id list — `pubmed.PubmedArticle`, the record the full-text store embeds in a paper's canonical
+  // metadata. A record without an abstract still carries its bibliography — ordinary for a letter, a
+  // comment, an editorial, and for older records; that is what the index states, not proof the work
+  // was published without one. Abstract text is readable, never quotable: no discovery record is
+  // anchored in the full-text store, so nothing here can anchor a `:quote[doc_id, …]` directive —
+  // only the markdown `GetMarkdown` serves can.
+  repeated pubmed.PubmedArticle articles = 1;
+  // The requested PMIDs (normalised) nothing is indexed under in PubMed/MEDLINE — most often a wrong
+  // identifier. Not retryable, and depositing the paper in the store answers nothing here: whether
+  // the store can serve a paper's full text is a separate question, answered by `MaybeIngestPapers`.
+  repeated string pmids_without_record = 2;
+  // Each book record whole, as PubMed states it — a GeneReviews chapter, say, or the book itself —
+  // `pubmed.PubmedBookArticle`. Its outcome is read off `book_document.pmid.value`, and
+  // `book_document.article_id_list` carries the Bookshelf accession (`NBK…`) beside it. Abstract
+  // text is readable, never quotable, as for `articles`.
+  repeated pubmed.PubmedBookArticle book_articles = 3;
+}
+
+// A variant to find literature for, in the identifiers LitVar2 can resolve. An empty string means not
+// supplied for every string field here. Each supplied identifier issues its own autocomplete query —
+// `caid`, `rsid`, gene + the bare protein change, gene + the bare coding change — and every entity
+// any of them reaches is returned; `entity_id` names an entity instead and issues no query. A change
+// may be transcript-qualified or bare. Resolution needs `entity_id`, `rsid`, `caid`, or `gene` with
+// one of the two changes; anything less is INVALID_ARGUMENT, since a gene alone reaches the gene's
+// whole literature rather than a variant's — that is what `ListLitVarEntities` is for.
+//
+// `gene`, `hgvs_c` and `protein_change` reach the index only percent-encoded in the value of one query
+// parameter on a fixed endpoint: they select which entities come back, never where the request goes.
+//
+// What the index keys an entity on, and how it ranks what it links to one, is NCBI's:
+// https://www.ncbi.nlm.nih.gov/research/litvar2/
+message SearchLitVarRequest {
+  // HGNC symbol. Compared against an entity's gene list as written (case-insensitively), so an alias
+  // or a superseded symbol reads DIFFERS against an entity the index labelled with the current one.
+  string gene = 1;
+  // The coding-DNA change, bare (`c.300G>A`) or transcript-qualified (`NM_1.2:c.300G>A`).
+  string hgvs_c = 2;
+  // The protein change, bare (`V100M`) or `p.`-prefixed; empty when the variant has none.
+  string protein_change = 3;
+  // dbSNP rsID when known — digits, with or without the `rs`; any other form is INVALID_ARGUMENT
+  // rather than searched loosely, since a malformed key reaches nothing and would come back looking
+  // like a fact about the index. The entity it reaches may mix alleles: more than one
+  // `VariantEntity.caids` entry says so, and an empty `caids` says nothing either way.
+  string rsid = 4;
+  // Maximum PMIDs to return per entity, in the index's own ranking; a PMID several entities link to
+  // appears under each. Unset takes the service default; above the service ceiling clamps to it.
+  // Named for what it bounds: nothing a caller sets bounds `entities` — that is the service's
+  // fan-out ceiling, reported through `total_entities`.
+  uint32 max_pmids_per_entity = 5;
+  // ClinGen canonical allele id — `CA` and digits, in either case; any other form is
+  // INVALID_ARGUMENT, for the reason `rsid` gives. Leading zeros are not significant and are
+  // normalised away, so the padded and unpadded spellings of one id ask one question. It reaches an
+  // allele-scoped entity only where the index holds one.
+  string caid = 6;
+  // A LitVar2 entity id (`VariantEntity.id`, `ListedEntity.id`) to fetch directly, skipping
+  // resolution: no query is issued and no other entity is returned. This is how an entity found
+  // through `ListLitVarEntities`, or one the fan-out ceiling dropped, is read. There is no cursor, so
+  // it reaches the entity's top PMIDs up to the request's `max_pmids_per_entity` and no further.
+  // An id the index does not hold, and one it attaches to no allele, both come back as an empty
+  // `entities`. Combining this
+  // with the other identifiers still compares them against the entity's labels. Reaches the index
+  // only as one percent-encoded path segment of a fixed endpoint: it selects which entity is asked
+  // about, never where the request goes.
+  string entity_id = 7;
+}
+
+// Every LitVar2 entity the request's identifiers reached, unmerged: each keeps its own id, its own
+// labels and its own PMIDs. Which entity is the caller's variant is the caller's reading; the
+// service cannot distinguish a disagreeing label the request got wrong from one the index got wrong,
+// so it returns the entity with the disagreement stated (`VariantEntity.agreement`) rather than
+// withholding it. An empty `entities` is a fact about the index — it holds no entity for these
+// identifiers — not an error; a paper naming the variant in prose alone is indexed under no entity
+// and is still reachable through `SearchEuropePmc`. Only a lookup the service cannot complete fails
+// the rpc.
+//
+// The entity sets are not a partition: one PMID arrives under several entities, so neither the
+// `pmids` lists nor the `total_records` counts sum. Deduplicate before counting anything. The census
+// stays in the index's own terms — a PMID's bibliography and abstract are `FetchPubmedArticles`'
+// answer.
+//
+// The census: `total_entities >= entities.size()`, and per entity `total_records >= pmids.size()`.
+message SearchLitVarResponse {
+  // In the order the queries reached them — `caid`, `rsid`, gene + protein change, gene + coding
+  // change — taking one match from each query in turn, and within one query the index's own match
+  // order. An entity several queries reach appears once, under the first that reached it. Not a
+  // ranking: nothing here says which entity is the caller's variant.
+  repeated VariantEntity entities = 1;
+  // Entities the identifiers reached, less any the service examined and found the index does not
+  // hold or attaches to no allele. Above `entities.size()` it means the fan-out ceiling cut the
+  // candidate set, and the entities it dropped are reachable only through `ListLitVarEntities` and
+  // an `entity_id` call, not by re-asking — a request carrying fewer identifiers reaches fewer
+  // candidates and so cuts less.
+  int32 total_entities = 2;
+}
+
+// Whether an entity's own labels agree with the identifiers the request supplied, one verdict per
+// kind of identifier. Each is a fact about how the index labelled the entity, never an error, and
+// says nothing about which of the two is wrong.
+message IdentifierAgreement {
+  enum Agreement {
+    // Never set by this service: a verdict is always one of the four below.
+    AGREEMENT_UNSPECIFIED = 0;
+    // Both state one and they are the same, after normalising away the spellings that do not
+    // distinguish two identifiers.
+    AGREEMENT_AGREES = 1;
+    // Both state one and they differ. What that is worth differs by identifier — see each field.
+    AGREEMENT_DIFFERS = 2;
+    // The entity states nothing this identifier can be compared against, so no comparison happened:
+    // no evidence either way.
+    AGREEMENT_UNSTATED = 3;
+    // The request supplied no identifier of this kind, so there was nothing to compare.
+    AGREEMENT_UNCOMPARED = 4;
+  }
+  // AGREES means the request's symbol is among the entity's genes, not that the entity is the
+  // caller's — a multi-gene entity agrees with each of them. DIFFERS is weak evidence: an alias, a
+  // superseded symbol or an overlapping locus produces one on an entity that is the caller's variant.
+  Agreement gene = 1;
+  Agreement rsid = 2;
+  // Compared with leading zeros normalised away on both sides. DIFFERS is strong evidence, since two
+  // ClinGen ids are two alleles by construction.
+  Agreement caid = 3;
+  // Compared within one notation: the entity's `c.` change against `hgvs_c`, its `p.` change against
+  // `protein_change`, each stripped of any transcript prefix. An entity whose change is in the other
+  // notation reads UNSTATED, not DIFFERS. A protein change is reconciled across residue spellings —
+  // three-letter against one-letter, and the several spellings of a synonymous change — for a
+  // single-residue substitution only; two forms outside that (a frameshift, an indel, an extension)
+  // that are not string-equal read UNSTATED rather than DIFFERS, because the service cannot tell two
+  // spellings of one such change from two different ones. Numbering is never offset: an entity under
+  // a superseded numbering reads DIFFERS, and offsetting it is the caller's reading.
+  Agreement change = 4;
+}
+
+// One LitVar2 entity and the slice of its literature this request bought — a candidate for the
+// caller's variant, never a verdict on it.
+message VariantEntity {
+  // The index's own id, opaque but for its last `#`-separated segment, which is the change the entity
+  // is keyed on and is empty where it is keyed on none. Pass it back verbatim as
+  // `SearchLitVarRequest.entity_id`; nothing else about the id is a contract.
+  string id = 1;
+  // The index's own labels, verbatim, each empty where it states none. `caids` is its full ClinGen id
+  // list for the entity; more than one entry means the records under it are about several different
+  // changes, and the allele-scoped entity for each is a separate entity here.
+  string rsid = 2;
+  repeated string caids = 3;
+  // Every gene the index assigns the entity, in its order; the first is not more authoritative than
+  // the rest.
+  repeated string genes = 4;
+  // The change string the index carries, in its own notation and numbering (`c.300G>A`, `p.V100M`);
+  // empty where it carries none.
+  string change = 5;
+  IdentifierAgreement agreement = 6;
+  // Every record the index links to this entity, not only the listed ones. Above `pmids.size()` it
+  // means the list is the top-ranked prefix of a longer one.
+  int32 total_records = 7;
+  // The entity's top-ranked PMIDs up to the per-entity budget, in the index's relevance order —
+  // `FetchPubmedArticles` is the read behind any of them.
+  repeated string pmids = 8;
+}
+
+// The gene whose entity inventory to list. Enumeration is the route to an entity no identifier the
+// caller holds can construct — one keyed under a superseded numbering, say — whose id then goes back
+// through `SearchLitVarRequest.entity_id` to read its records.
+message ListLitVarEntitiesRequest {
+  // HGNC symbol (required); empty is INVALID_ARGUMENT. Reaches the index only as one percent-encoded
+  // path segment of a fixed endpoint: it selects which gene's inventory comes back, never where the
+  // request goes.
+  string gene = 1;
+  // Case-insensitive substring narrowing a gene's entities — a residue number, a codon, a nucleotide
+  // position; empty keeps every entity. Matched against the change segment of an entity's `id` and
+  // not the whole id, so a bare number cannot match on the index's internal segments. The listing
+  // states no change string of its own, which is why this narrows on the id. Applied service-side to
+  // the gene's whole inventory, which the service has already fetched, so it never reaches the
+  // upstream.
+  string contains = 2;
+  // Maximum entities to return. Unset takes the service default; above the service ceiling clamps to
+  // it.
+  uint32 max_results = 3;
+}
+
+// One row of a gene's inventory: what the index states about an entity before anything is fetched for
+// it. `id` reads as `VariantEntity.id` does, and is the only place this listing states which change an
+// entity is keyed on. A row naming no allele at all — neither ClinGen id nor rsID nor change — yields
+// an empty `entities` through `entity_id`, so it is not a variant to read.
+message ListedEntity {
+  string id = 1;
+  string rsid = 2;  // Empty where the index does not key the entity on one.
+  string caid = 3;  // The one id this listing states, not the full set `VariantEntity.caids` carries.
+  int32 total_records = 4;  // Every record the index links to the entity.
+}
+
+// A gene's entities, most-published first. `total_matched` above `entities.size()` means the list
+// is a prefix: below the service ceiling, a larger `max_results` returns more; at the ceiling the
+// way to the rest is a different `contains`, since the listing has no page cursor. A gene the index
+// holds nothing for returns an empty list and a zero census, a fact about the index, not an error.
+message ListLitVarEntitiesResponse {
+  repeated ListedEntity entities = 1;
+  int32 total_in_gene = 2;  // Every entity the index lists for the gene, before `contains`.
+  int32 total_matched = 3;  // How many of those `contains` kept.
+}
+
 service Literature {
   // What representations and files a paper offers; the pane's default-representation choice.
   // An unknown doc_id is a NOT_FOUND the server adds.
@@ -189,10 +514,17 @@ service Literature {
   // doc_id or a selected object the paper lacks.
   rpc ResolveContent(ResolveContentRequest) returns (ContentLocation);
   // Locate a quote within a representation. NOT_FOUND for an unknown doc_id; FAILED_PRECONDITION
-  // when the paper lacks the requested representation; a `not_located` result when the quote is
-  // absent (not an error).
+  // when the paper lacks the requested representation; INTERNAL when the rendering it must read is
+  // listed but unreadable; a `not_located` result when the quote is absent (not an error). No
+  // producer resolves a quote against a PDF yet, so the live store answers a `REPRESENTATION_PDF`
+  // request UNIMPLEMENTED rather than the `not_located` that would read as the quote being absent
+  // from the paper. The fixture resolves its seeded PDF quotes, in the provisional coordinate
+  // space `Rect` states, so the pane's highlight path can be built offline.
   rpc Locate(LocateRequest) returns (LocateResponse);
-  // Whether a quote locates in any representation — the agent's authoring-time check.
+  // Whether a quote locates in any representation — the agent's authoring-time check. An unknown
+  // doc_id and an absent quote are both `ok=false` with a reason, not errors; INTERNAL when the
+  // rendering it must read is listed but unreadable, since a store fault reported `ok=false` would
+  // read as the quote failing to validate.
   rpc Validate(ValidateRequest) returns (ValidateResponse);
   // Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
   // effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
@@ -217,4 +549,37 @@ service Literature {
   // A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
   // outage affects the batch, and a caller reading it per-id would write papers off permanently.
   rpc MaybeIngestPapers(MaybeIngestPapersRequest) returns (MaybeIngestPapersResponse);
+  // The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
+  // doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
+  // produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
+  // result for a known paper with no rendering at all (a fact about the store, not an error).
+  rpc GetMarkdown(GetMarkdownRequest) returns (GetMarkdownResponse);
+  // Search the live Europe PMC index by keyword and return matching bibliographic records. The
+  // records are the index's, not the store's: a hit here says a paper exists, never that its text
+  // is readable — `MaybeIngestPapers` is what says that. `total_matched` says how much of the
+  // index's match the returned records cover; see `SearchEuropePmcResponse`.
+  rpc SearchEuropePmc(SearchEuropePmcRequest) returns (SearchEuropePmcResponse);
+  // Fetch the PubMed record — abstract included — for each of a batch of PMIDs. The route from an
+  // identifier to something readable where the store holds no full text: an abstract is often enough
+  // to judge whether the work matters, and for a conference abstract it is the whole of what was
+  // published. Answers with PubMed's own record whole, in the kind PubMed indexes the PMID under —
+  // `pubmed.PubmedArticle` for a journal record, `pubmed.PubmedBookArticle` for a book record — the
+  // record the store embeds in a paper's canonical metadata. It produces and ingests nothing —
+  // `MaybeIngestPapers` is the one door into the full-text store. INVALID_ARGUMENT for a malformed,
+  // empty or oversized batch.
+  rpc FetchPubmedArticles(FetchPubmedArticlesRequest) returns (FetchPubmedArticlesResponse);
+  // Resolve a variant through LitVar2 and return every entity it reached, unmerged and labelled.
+  // The index splits one variant across entities that share no record, so the answer is a candidate
+  // set, not a list: each carries the index's own labels, an `agreement` verdict per identifier, its
+  // whole record count, and its top-ranked PMIDs up to the `max_pmids_per_entity` budget.
+  // Choosing among them, deduplicating a PMID that reaches several, and reading any of them through
+  // `FetchPubmedArticles`, is the caller's. `entity_id` re-asks for one entity; `total_entities`
+  // above `entities.size()` says the fan-out ceiling left candidates unexamined. See
+  // `SearchLitVarResponse`.
+  rpc SearchLitVar(SearchLitVarRequest) returns (SearchLitVarResponse);
+  // List the variant entities LitVar2 holds for a gene, most-published first, narrowed by `contains`
+  // on the entity id. The route to an entity indexed under a name no current identifier constructs —
+  // a superseded numbering, say — whose id then goes back through `SearchLitVar.entity_id` to list
+  // its PMIDs. See `ListLitVarEntitiesResponse`.
+  rpc ListLitVarEntities(ListLitVarEntitiesRequest) returns (ListLitVarEntitiesResponse);
 }

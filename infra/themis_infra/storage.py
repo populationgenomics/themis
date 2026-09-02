@@ -1,7 +1,7 @@
 """The durable data-plane buckets: literature full text, shared resources.
 
 The full-text store is the source of truth for the literature-evidence layer —
-one GCS directory per paper (`docs/design/literature-evidence-layer.md` §2.1).
+one GCS directory per paper (`docs/design/literature-evidence-layer.md`).
 The resources bucket holds the re-derivable reference data the Project shares.
 See `infra/README.md` (Storage) for each bucket's policy and naming.
 """

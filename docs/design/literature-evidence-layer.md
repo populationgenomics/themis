@@ -1,823 +1,496 @@
-# Design: Literature-evidence layer
+# Design: the literature evidence layer
 
-**Status:** design — infra architecture resolved; evidence-trust model (grounding quality, retraction currency, KU
-dedup) and several empirical questions still open (§9). Build pending; not yet ticketed. **Related:**
-[`../PRODUCT.md`](../PRODUCT.md) §4 (facts-as-durable-value), §7 (facts-cross-Projects / literature-does-not), §9
-(security); the workspace and sharing rules in [`workspace-model.md`](workspace-model.md); infrastructure in
-[`spike-infrastructure.md`](spike-infrastructure.md). Terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
+**Related:** [`evidence-fulltext.md`](evidence-fulltext.md) (how a paper's text is produced, and how readiness is
+derived from the store), [`litcache-manifest.md`](litcache-manifest.md) (the per-paper record: source lineages,
+content-addressed renderings, recorded licence), [`document-pane.md`](document-pane.md) (the workbench surface that
+reveals a paper and highlights a quote), [`evidence-interfaces.md`](evidence-interfaces.md) (the sibling fact interfaces
+in the same deployment, and the error taxonomy they share), [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (how an
+rpc becomes agent-callable), [`services.md`](services.md) (the service pattern this follows). Terms in
+[`../../GLOSSARY.md`](../../GLOSSARY.md).
 
-## Purpose
+## Overview
 
-The evidence layer that supplies Themis with literature: find papers, read their full text, answer specific questions,
-and distil reusable facts. It is the concrete realisation of PRODUCT.md's "platform-wide, provenance-tracked substrate
-of facts extracted from the literature" plus the source-document access that backs it.
+An analysis run has to answer two questions about the published literature, and they are not the same question: *what
+has been published about this?* and *can I read it, and quote it?* The first is answered by public indexes that list far
+more than we hold; the second only by what Themis has ingested. This doc decides how one gRPC interface —
+[`literature.proto`](../../schema/proto/themis/rpc/literature.proto), served by the `evidence` deployment — answers both
+without letting either answer be mistaken for the other.
 
-Built on **pubmedifier** ([`populationgenomics/pubmedifier`](https://github.com/populationgenomics/pubmedifier) —
-existing: a 37M-abstract PubMed search service with E5-base-v2 embeddings, an ANN index, a MedCPT cross-encoder
-reranker, a PMID→full-text-markdown ladder, and per-user publisher credentials). pubmedifier is extended and partly
-re-scoped here, not replaced.
+- **Discovery asks named sources, one rpc each, and returns what each one states.** Each answer keeps its source's own
+  shape — PubMed's own record behind a PMID, Europe PMC's hit for a search — and is never mapped into a schema its
+  source did not publish, so a further index arrives as its own rpc returning its own record shape, never as a change to
+  what an existing rpc means. A hit from any of them claims a paper *exists*; it never claims its text is readable.
+- **`MaybeIngestPapers` is the one door into the full-text store.** It takes an external identifier, scheme-qualified,
+  and answers with the internally minted `doc_id` that names the paper plus whether the store can serve its text,
+  starting a conversion where that text is still pending. Everything past the door — reads and citations — keys on
+  `doc_id` alone, and the citation grammar spells nothing else, so the door is enforced rather than taught.
+- **An abstract is readable and deliberately not quotable.** It rides on what a discovery rpc returns, so a run can
+  judge whether a paper matters without holding the paper — and it is then stated in prose, never quoted, because only
+  the text `GetMarkdown` serves has an anchor a quote can resolve against.
+- **Absence is modelled wherever it could be read as a fault**, and a fault is never reported as absence. "The index has
+  no abstract for this record" and "the store has no text for this paper" are answers a run can act on; a crosswalk
+  outage or a malformed identifier is not.
+- **Serving a paper never produces its text.** A paper the store cannot serve is a fact the run reports, and the
+  ingestion loop closes it out of band — because producing text on a request path turns a settled answer into a timeout
+  ([`evidence-fulltext.md`](evidence-fulltext.md)).
+- **A variant search returns candidates, not a verdict.** The variant literature index splits one variant across several
+  entities that share no records; the interface surfaces all of them, labelled with where they agree and where they
+  disagree, and leaves the choice to the caller.
+- **Reading is the foundation for a layer above it.** What a run reads here is distilled into shareable facts that each
+  cite the exact rendering text they came from. That is why a rendering is identified by its own bytes: a citation made
+  years ago has to resolve against the same text, or against nothing.
 
-**Motivating example.** A variant curator asks whether there is functional evidence that *KCNJ11* p.Arg201His impairs
-K_ATP channel function (an ACMG PS3 question). The layer answers from facts it has already distilled: it grounds the
-question to the gene and variant, pulls the knowledge units that bear on it, and judges each as *supporting* or
-*refuting* the claim — returning a cited tally (say four supporting reports and one conflicting) without reading a paper
-— **the tally itself is always displayable** (facts aren't copyrightable); only the source-sentence check below is
-entitlement-gated. To check the load-bearing report, the curator follows its citation and the gated reader shows the
-exact source sentence — but only for a paper they are entitled to read. Meanwhile the same question runs against the
-37M-abstract corpus to surface papers *not yet ingested*; these are captured and distilled **in the background of the
-same conversation** and folded in as they land (subject to ingestion latency). Everything below — the cache, source
-access, knowledge units, the retrieval funnel, and collections — exists to make that loop cheap, cited, and shareable;
-§4.1 walks this example through the components step by step.
+## Background
 
-## 1. The boundary: two planes
+**Why literature is a service and not a fetch.** Themis shares *facts* extracted from papers across Projects, each fact
+carrying a citation — a pointer to its source, not a copy of it — while the source documents themselves stay behind the
+institutional licensing of whoever obtained them ([`../PRODUCT.md`](../PRODUCT.md) §7). Sources are also untrusted
+content reached through a curated tool surface (§9). Both push the same way: reading literature is a typed call into a
+service we control, not something a run does for itself.
 
-The split between what is shared and what is gated is driven by two forcing functions only — **copyright** and
-**compute** — and they act on different axes. **Copyright** is the *sharing* gate: it bars redistribution of the source
-**and its whole-paper derivations** — verbatim text *and* a full transcription/markdown, since a reworded whole-paper
-rendering is still a derivative work carrying far more than isolated facts. **Compute** is *not* a sharing gate: it
-makes *preprocessing the 37M corpus* (capture + extract) prohibitively expensive at our resources, so the processed
-substrate covers a selected subset (§5), not all of PubMed. Everything else defaults open: extracted **atomic facts**
-("knowledge units", §4) are **not copyrightable**, so the shared fact substrate crosses institutional and Project lines
-even when a fact was distilled from a licensed paper one institution can read and another cannot. The hard-gated
-artifacts are the **verbatim source text and its whole-paper derivations** (markdown, transcriptions); only the
-atomic-fact substrate crosses freely.
+**Two consumers.** The sandboxed analysis agent finds papers, reads them, and cites them into a working document; it has
+no network and no cloud credentials, so every outbound call is the service's own. The workbench BFF (the web tier's
+backend-for-frontend) resolves a paper for the document pane and serves its bytes to the browser
+([`document-pane.md`](document-pane.md#backend-seam-structured-over-connect-bytes-over-presigned-redirects)).
 
-This yields two planes:
+**The three live indexes.** Keyword search asks Europe PMC, and for a reason PubMed cannot match: Europe PMC matches
+query terms against open-access full text, where a variant notation or an assay name routinely appears only in the body
+or a table, and its index carries preprints and PMC-only deposits no PubMed id names. The record behind a PMID, by
+contrast, is PubMed's own: efetch already serves a whole batch in one call, and its record is the one the full-text
+store embeds in a paper's canonical metadata — so a triage read and the store speak one bibliographic language, and the
+service carries no second account of the same paper. NCBI's LitVar2 is a variant-literature index built by running an
+entity recogniser over publication text. One property of LitVar2 shapes a large part of this contract: it keys an entity
+on *whichever identifier the recogniser found in the text* — an rsID, a ClinGen allele id, or a bare change string under
+a gene — never on a variant. One variant is therefore split across several entities that may share no record at all, and
+some entities are indexed under a numbering no currently valid identifier constructs.
 
-- **Shared public plane** — pubmedifier. Discovery (abstract search + rerank), the public-OA full-text cache, and
-  corpus-scale classifier scoring for collection selection. Low sensitivity; reusable beyond Themis.
-- **Themis boundary plane** — behind the egress-controlled boundary (`spike-infrastructure.md` §8). Paragraph
-  embeddings, the knowledge-unit substrate, the licensed/captured cache tier, the extraction pipeline, and
-  question-answering. Reached by the agent only through tightly-typed internal services, called in code mode; the agent
-  never touches the stores directly.
+**The full-text store.** One bucket holds everything Themis has of a paper: the captured sources — publisher XML, PDFs —
+and the text converted from them. It is the **full-text store**, and it is what a public index's hits get checked
+against: an index says a paper exists, the store says whether we can serve its text. Nothing in this design has a second
+store. Its concrete name belongs to the infrastructure that creates it
+([`storage.py`](../../infra/themis_infra/storage.py), `fulltext_bucket`), and the interface takes it from its
+environment ([`config.py`](../../themis/services/evidence/literature/config.py)). The per-paper layout inside it — one
+directory per paper, holding the captured sources, the converted renderings, the figures and supplementary files, and a
+manifest that records what each lineage is and under what terms it was obtained — is **litcache**'s, and is
+[`litcache-manifest.md`](litcache-manifest.md)'s subject. Sources and renderings are written additively, each
+content-addressed by its own bytes: a re-fetch adds a revision, a re-conversion adds a rendering. So a citation against
+a rendering resolves to the exact bytes it was made against for as long as the paper exists.
 
-Which plane an artifact physically lives in (the public store vs behind the boundary) **follows from** its
-shared-vs-gated class above; it is not an independent decision.
+## Non-goals
 
-## 2. Cache
+- **No production on the serving path.** Nothing that serves a paper fetches or converts its text. The reason is
+  [`evidence-fulltext.md`](evidence-fulltext.md)'s: the cheap production route takes seconds and the expensive one takes
+  minutes, so a request that waited for either would be a timeout dressed as an answer.
+- **No entitlement, for now.** The store is shared and its reads are session-free: they carry no session binding and
+  nothing is gated per reader — only the enqueue behind `MaybeIngestPapers` resolves a session, because a conversion
+  spends model budget ([`evidence-fulltext.md`](evidence-fulltext.md)). Gating a read by the reader's institutional
+  access is a requirement this interface will have to grow, and it will need both a session binding on these requests
+  and a decision about what a reader who may not open a paper sees instead. Deferring it is what lets the Spike run
+  against public sources with no session plumbing at all.
+- **No external identifiers on the rpcs that serve a paper.** Resolution is its own step, so a request either names a
+  paper we hold or does not.
+- **No search over the papers the store holds.** The discovery group reaches live indexes only. A search scoped to the
+  store, keyword or semantic, is a different question — *what do we hold about X* rather than *what has been published
+  about X* — and would arrive as its own rpc behind the same interface, not as a mode of these.
 
-One **logical keyspace** keyed by a canonical paper id (§2.2 — PMID/DOI/PMCID are alternate keys; not all papers have
-them). The key is versioned `(doc_id, version)`, where `doc_id` is the canonical id and `version` identifies one
-**immutable snapshot of the paper's text** — a distinct revision of the same work (preprint vs published, successive PMC
-article versions, PubMed revisions). Each version is captured and stored once and never overwritten (§2.1), so a
-citation to `(doc_id, version)` always resolves to the exact text it was made against. The stored representation is
-**markdown**, the form fed to LLMs.
+## Design
 
-- **XML→markdown is preferred over PDF→markdown** and treated as a faithful representation of the paper; PDF-derived
-  markdown is accepted as a fallback. The conversion route is recorded as a quality tag (`xml-faithful` |
-  `pdf-derived`), not a separate pipeline.
+### A discovery rpc is a query against one named source
 
-- Each object carries two **orthogonal** tags, set on every object from the start:
+Each rpc in the discovery group asks one named external index, and answers with what that index states.
+`SearchEuropePmc` returns Europe PMC's records, abstract inline; `SearchLitVar` returns LitVar2's entities, each with
+its ranked PMIDs; `FetchPubmedArticles` returns PubMed's own record whole — `PubmedArticle` for a journal record,
+`PubmedBookArticle` for a book record — from the source's own published schema rather than a re-modelling of it, so
+nothing is lost in a mapping and nothing invented in one.
 
-  - a **licence** — the canonical licence identifier (SPDX-style: `CC-BY-4.0`, `CC-BY-NC-4.0`, `CC-BY-ND-4.0`,
-    `CC-BY-SA-4.0`, `CC0-1.0`, `publisher-proprietary`, `unknown`), sourced from authoritative metadata (PMC OA-subset
-    licence field, Crossref `license` URL + `content-version`, Unpaywall). The redistribution **policy booleans** the
-    design keys on (`redistributable`, `derivatives-allowed`, `commercial-allowed`, `share-alike`) are **derived** from
-    this identifier, not stored by hand — so the CC-BY-vs-NC-vs-ND distinctions that actually govern reuse are
-    preserved, not collapsed into a single "readable" flag.
-  - a **provenance/access** tag — how it entered and who may read it (`free-to-read` | `licensed:<publisher>` |
-    `institution-captured`), plus the **capture entitlement** — the contractual basis a captured copy was obtained under
-    and the audience it may be served to (e.g. an institutional subscription entitles that institution's members to
-    *read* it, not to redistribute it). It governs who the gated read-tool (§3) will resolve source text for. This is
-    independent of the licence: "free-to-read" is an access fact, not a redistribution right.
+What the rule guards against is a *mapping*: a record re-modelled into a schema its source did not publish. The target
+can be a type invented to be common, or an existing source's schema borrowed for another source's hits; either way it
+carries only what the target has a field for, so each source either loses the fields that made it worth querying or
+bends the target's fields to mean something their owner never stated, and it invites code that handles "records" without
+knowing which index answered — the point at which the differences between indexes stop being visible and start being
+bugs. The store's own metadata adapters are the evidence: the Crossref and OpenAlex records they squeeze into
+`PubmedArticle` ([`crossref.py`](../../themis/litcache/crossref.py), [`openalex.py`](../../themis/litcache/openalex.py))
+are lossy for this reason. Sharing is the opposite move, and it is why `FetchPubmedArticles` and the store carry one
+record: PubMed's own, arriving through the schema's own converter, with every field the source states and nothing
+invented.
 
-  The licence governs the **verbatim source full text** (caching, redistribution, reformatting-as-derivative); it does
-  **not** gate the knowledge-unit substrate, which shares on the non-copyrightability basis (§4.3).
+The same test is why `SearchEuropePmc` does not answer in `PubmedArticle`, although both rpcs carry a bibliography and
+an abstract. A hit is Europe PMC's JSON, not NLM's XML, so the answer would be a mapping — and the hits Europe PMC holds
+its seat for are the ones the message cannot hold. A preprint would arrive as a `MedlineCitation` with no PMID and a
+publisher standing in for a journal; a year-only date would gain a month and a day the index never stated; and the facts
+only this index states — that a hit is a preprint, that its text is open access — would have nowhere to land, where a
+record of Europe PMC's own can take them as fields. A source that answers in its own shape arrives as its own rpc with
+its own record message, and nothing already written against an existing rpc has to be re-read when it does.
 
-- **Write-through**: every read path (agent reads, Q&A, extraction) populates the cache, so it warms incrementally and
-  markdown is never reconverted.
+Names carry the same concreteness. Every rpc names the source or payload it deals in — `SearchEuropePmc`,
+`FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `GetMarkdown` — rather than a generic verb, and so does
+every record message that comes back. A generic `Search` returning a generic `Record` is a promise the interface cannot
+keep: the next source would either break it or be folded quietly into it, changing what an existing rpc means for
+callers already written against it.
 
-- A **gated read-tool** mediates access to verbatim full text per the source rules (§3); the cache is not read directly.
-
-The OA tier may later be physically separated into the shared plane; until reuse or scale justifies that migration, a
-single store behind the boundary suffices. The per-object licence (and its derived `redistributable` flag) makes the
-split a later data migration — filter the redistributable objects out — not a re-architecture.
-
-### 2.1 Storage layout — one directory per paper (GCS)
-
-Each paper is a **GCS directory** holding all its artifacts: source `xml` and/or `pdf`, derived `markdown`, extracted
-`figures/` (images), `supplementary/` files, the write-once `knowledge_units.pb` (Layer 1 model output, §4.2), and the
-derived `entities.pb` (the entity→KU map — stable entity ids + mention clustering, rebuildable, §4.2). **Revisions are
-additive and content-addressed** ([the litcache-manifest design](litcache-manifest.md)): an updated source (a re-fetch,
-a PMC article-version bump, a PubMed revision) is collected as an **additional revision of that source lineage**, and a
-re-conversion as an **additional content-addressed rendering** — existing bytes are **never overwritten**, so a
-knowledge unit that cites a given rendering hash always resolves to the exact, unchanged text it was extracted from
-(§2.2). A preprint and its published version are **distinct works** (distinct `doc_id`s linked by an equivalence edge,
-§2.2), not versions of one. **GCS is the durable source of truth**; everything in Cloud SQL (§2.3) is a rebuildable
-projection of these directories.
-
-- **`manifest.pb`** describes the directory: this UUID, all known external ids (§2.2), any equivalence edges linking it
-  to other UUIDs of the same work + the resulting canonical UUID (§2.2), the licence, access, and quality tags (§2),
-  capture provenance, a **retraction flag** (§6.1), and **the source URL of every known associated file — even files not
-  (yet) downloaded** (a figure or supplementary archive we know exists but haven't fetched). This makes the directory
-  self-describing and supports lazy fetch.
-- **`metadata.pb`** holds bibliographic metadata. The **schema is `pubmed_proto`** — the 37M corpus is already modelled
-  there, so we reuse it rather than re-model — **stored as binary proto** (bucket 1 [proto.md](proto.md)): write-once
-  over the re-derivable PubMed XML. In-corpus and external papers (e.g. bioRxiv, synthesised into the same
-  `PubmedArticle`) stay uniform downstream; readability is via the dump helper, not a stored JSON copy.
-
-### 2.2 Identity — canonical id + external-id crosswalk
-
-Not every paper has a PMID or DOI (preprints, supplements), so the cache key is an internally-minted **UUID**, with a
-**crosswalk** mapping external ids (PMID, DOI, PMCID, arXiv/bioRxiv) → UUID. The UUID is the directory name, the Cloud
-SQL primary key, and what knowledge units cite.
-
-- **Late binding (4c).** A paper may enter external to the corpus and *become* part of it later (a preprint gets a PMID;
-  the corpus ingests it). The crosswalk is **mutable**: reconciliation adds the new PMID/corpus-gid to the paper's
-  identity. Two cases:
-
-  - **Known same paper at capture** — a revision whose identity resolves when it arrives (a PMC article version; a
-    published paper whose record carries the preprint DOI) is added to the existing directory as an additive `(version)`
-    artifact (§2.1), under one UUID.
-  - **Separately cached, linked later** — if a preprint and its published version were cached under **separate UUIDs**
-    before the link was known, we **do not merge their directories**. The crosswalk records an **equivalence edge**
-    (same work); the linked UUIDs form an **equivalence class** with a deterministic **canonical UUID** (lowest),
-    reconstructable from crosswalk edges alone. This replaces an earlier physical survivor-merge — the only operation
-    that mutated the otherwise-additive GCS store — so GCS stays purely additive and rebuild stays trivial.
-
-  Raw `DOI → UUID` is therefore **M:N**, but `DOI → canonical-UUID` is a function: the canonical representative is the
-  single paper identity that dedup, counting, Project joins, and presentation key on. **Knowledge units are never
-  re-pointed** — each cites the specific `(doc_id, version)` markdown it was extracted from, and resolves through the
-  crosswalk if its UUID was later folded into a class. The corpus link is formed *after the fact*, never assumed at
-  capture.
-
-- **Versions carry their own licence; binaries are content-addressed.** Versions in a class keep per-object
-  licence/access (§2): a preprint stays `CC-BY / free-to-read` and cleanly separable to the shared plane even when the
-  version of record is `publisher-proprietary`. Large binary artifacts (figures, supplementary data) are stored
-  **content-addressed** — identical data shared across versions or papers is stored once and referenced by hash from
-  each version's manifest (which still lists human-readable filenames), the licence carried on the blob.
-
-- **Cross-version facts reconcile at extraction, not by merge (§4.2):** the prior version's KUs seed the new version's
-  extraction, partitioning its output into new / lifted / silently-absent facts. Within a class, conflicts resolve by
-  **temporal recency** (latest version authoritative) after the **retraction gate** (§6.1); *across* classes recency
-  does not apply — independent works disagreeing is real evidence conflict (§4.1).
-
-### 2.3 Structured projection — Cloud SQL (rebuildable), not parquet/DuckDB
-
-Extracted columns (title, abstract, authors, year, journal, MeSH, the crosswalk, knowledge units, grounding overlay)
-live in **Cloud SQL** (Postgres — themis already runs it).
-
-The knowledge-unit table is the one worth sizing, since it is the per-fact substrate. Draft row:
-
-```
-knowledge_unit(
-  id uuid pk, doc_id uuid, document_id text,  -- anchor: document_id = rendering hash (§4.2)
-  quote text, exact bool,                       -- verbatim supporting quote; stripped on export. NO offsets here
-  assertion text,                               -- expression-stripped, ~250 B
-  type text, epistemic text, confidence real,
-  supersedes uuid null, prov jsonb,
-  created_at timestamptz)
--- entity/grounding + the resolved-offsets cache ((cite, rendering_hash) -> spans)
--- live in sibling tables keyed by id (Layer 2 / derived, recomputable)
+```mermaid
+flowchart TD
+    subgraph discovery["discovery — one rpc per named source"]
+        Q["a variant, a gene, a question"] --> S["SearchEuropePmc"]
+        Q --> V["SearchLitVar · ListLitVarEntities"]
+        S --> E["Europe PMC records — abstract inline, keyed by PMID"]
+        V --> PMIDS["entities with ranked PMIDs"]
+        PMIDS --> F["FetchPubmedArticles"]
+        H["a PMID from a reference list or a clinical note"] --> F
+        F --> E2["PubMed records, whole — the record the store embeds in its metadata"]
+    end
+    subgraph store["the full-text store — keyed on doc_id throughout"]
+        M["GetMarkdown — the canonical rendering's text"] --> C["a quote directive, spelling that doc_id"]
+    end
+    E --> DOOR{"MaybeIngestPapers — which paper is this, and can the store serve its text?"}
+    E2 --> DOOR
+    DOOR -->|"READY"| M
+    DOOR -->|"anything else"| N["reported as a fact; nothing here produces text"]
+    E -.->|"the abstract: readable, anchored in no rendering"| P["prose, with no directive"]
+    E2 -.-> P
 ```
 
-**Napkin math.** Extraction is confined to the cached RD-relevant subset (§5), not the 37M corpus — order ~100k papers —
-and the reference build measured ~85 atomic units/paper, each assertion ~250 B. So the KU *text + structured columns*
-are ~100k × 85 × ~400 B ≈ **~3.4 GB** — trivial on the always-on instance's disk, and nowhere near "close to the full
-text" (one paper's markdown alone is ~40 KB). The cost that *would* bite is not storage: embedding the KUs is ~8.5M
-vectors × 768-d ≈ ~13 GB at fp16 (**peanuts**). The open question is **value** — does a KU semantic index add retrieval
-recall over grounded + paragraph search (§4.1)? Structural + entity-grounded retrieval is the floor; whether to add the
-KU index is the §9 question, decided on recall, not on the ~13 GB. (The only real costs would be the GPU embed pass and
-keeping the index RAM-resident in pgvector, §2.4.)
-
-- **Why Cloud SQL over a parquet+DuckDB snapshot (4a):** the workload is **incremental and transactional** — papers
-  added one at a time, units appended, the grounding overlay recomputed, the crosswalk mutated, joined against KUs and
-  Project/entity tables. That is OLTP, where Postgres fits; parquet+DuckDB is for read-only analytical scans of a
-  *static* dump and is poor at per-row mutation, concurrent writes, and joins.
-- **Parquet is the bulk-load / rebuild artifact, not the query engine.** The PubMed ingestion pipeline (Beam) emits the
-  extracted corpus columns as **parquet on GCS**; Cloud SQL is populated by bulk-loading it (`COPY` into a staging table
-  → upsert). The same parquet doubles as the corpus-columns rebuild source and as a DuckDB-queryable analytical snapshot
-  if ever wanted — so parquet earns its place as the columnar transfer/rebuild format *feeding* the OLTP store, not as
-  the live query layer.
-- **Reingestion upserts; it never replaces.** PubMed re-ingests (annual baseline
-  - rolling updates; papers get revised). Two **ownership domains** keep this safe: corpus-derived columns (the
-    ingestion regenerates them) vs cache-owned tables (UUID crosswalk, knowledge units, grounding overlay, manifests,
-    externally-captured papers — *never touched* by reingest), bridged by the crosswalk (§2.2). On reingest the
-    corpus-columns table is **upserted keyed by corpus id + revision** (staging-table merge / `INSERT … ON CONFLICT`) —
-    never dropped-and-reloaded, which would destroy the cache-owned layer and orphan the units that cite it. When a
-    reingested revision differs from the one a cached extraction was built on, the cached artifacts are **flagged
-    stale** for lazy re-extraction (the `(doc_id, version)` field tracks this). Reingestion is also the natural
-    **trigger for late-binding reconciliation** (§2.2): newly-ingested corpus papers are matched (DOI/title) to any
-    pre-existing external UUID and linked or merged.
-- **Rebuildable from GCS (4d).** Cloud SQL holds **no primary state**: it is a materialised projection rebuilt from
-  **two GCS sources** — the ingestion's corpus-columns parquet, and the per-paper cache directories (`manifest.pb` +
-  `metadata.pb` + `knowledge_units.pb`), joined via the crosswalk. Lose the database, rebuild it from the bucket. The
-  expensive Layer-1 extraction is stored as a GCS artifact (not Postgres-primary) so a rebuild never re-extracts; the
-  grounding overlay is recomputable anyway (§4.2).
-- **Corpus columns — project the proven subset for the full corpus.** Exploding a column subset out of the bagz files
-  has already paid off in practice, so that subset is projected into Cloud SQL for **all 37M** papers, not just cached
-  ones — giving uniform SQL over the whole corpus (joins to KUs, the crosswalk, Project/entity tables; relational
-  filtering). This is a **column subset, not the full bagz payload**: vm_search keeps the embedding and
-  word/bigram/filter indices it already serves; Cloud SQL holds only the columns worth querying relationally. The
-  tens-of-GB duplication is the accepted cost of that query surface — disk on the always-on instance, not RAM-resident
-  (unlike the pgvector index, §2.4).
-
-### 2.4 Embeddings — split by scale and mutability
-
-Two embedding indices with opposite characteristics, so they live in different stores. Cloud SQL is fully **managed**
-Postgres: you choose a machine type (vCPU/RAM) but get no raw VM, no local NVMe, and **no scale-to-zero** — it runs and
-bills 24/7 at the configured size. `pgvector` (0.8) ANN is **RAM-bound**: fast only while index + vectors sit in the
-instance's memory; spill to disk and it degrades.
-
-**Embeddings never egress as raw vectors.** No tool returns vectors; similarity is computed **server-side** and only
-results cross (paper mappings, scores). So "is an embedding shareable?" never arises — the vectors don't move, and the
-public discovery surface receives results, not vectors. (It is also not a meaningful derivative of the source: an
-embedding captures concepts, not predicates, and is not invertible to its paragraph — not even to a
-semantically-equivalent one — so it carries no redistributable expression regardless.)
-
-**The 37M abstract corpus → vm_search ANN VM (NVMe + Rust HNSW), not pgvector.** Measured (X1,
-`pubmedifier/docs/pgvector-bench.md`): head-to-head over the live ~30M-doc E5 corpus, same `m=16`/`ef_construction=200`
-graph, identical queries, recall@100 ground-truthed by exact seq-scan.
-
-- **vm_search is ~55× faster at first-pass recall (≤0.89) on identical 32 GB hardware** — ~7 ms vs pgvector's ~385 ms;
-  first-pass retrieval feeding a read is the operating point, not high-recall exact search.
-- **pgvector needs the index RAM-resident to compete.** That corpus's HNSW index is **110 GB**; pgvector built it on a
-  256 GB host (160 GB `maintenance_work_mem`) and degrades a consistent **3–4×** forced onto pd-ssd at 32 GB. The 110 GB
-  index is the disqualifier: serving it competitively wants a ≥128 GB RAM-resident instance, always-on.
-- **Neither of pgvector's apparent edges is durable.** Its higher recall ceiling (~0.984 vs vm_search's ~0.97) is a
-  **build-heuristic** gap, not a backend property — the bench attributes it to pgvector's C build vs FAISS `HNSWFlat`,
-  and porting that heuristic to a Rust-readable graph is a ~1–3 day, license-permitted follow-up. Conversely pgvector
-  has its **own ceiling**: `hnsw.ef_search` is hard-capped at **1000** (0.8.x), bounding candidate depth, where
-  vm_search pushes ef to **5120+** for deep pools.
-
-**The ~4M paragraph index → pgvector in Cloud SQL.** This is a *different regime* and the bench verdict does not
-transfer. At 4M × 768-d the index is **~6 GB** (`halfvec`/fp16) — resident in RAM the Cloud SQL instance already pays
-for, so the 110 GB-can't-fit failure mode that condemns pgvector at 30M never bites. Here pgvector is the **better**
-fit, for reasons beyond size:
-
-- **Native incremental `INSERT`** — the paragraph index grows in **small batches** as papers enter the write-through
-  cache (§2) — embedding is a batch GPU step (§7), but the batches are small and frequent, not one static bulk build.
-  pgvector ingests each batch with an ordinary transactional `INSERT`; the vm_search batch-mmap build would need
-  base+delta/compaction machinery to match. The incremental workload wants the incremental-friendly store.
-- **Filtered ANN** — pgvector combines the vector search with SQL predicates (collection membership §5, licence tag §2,
-  MeSH) in one query; vm_search would need a separate filter-fusion build.
-- **Co-located** with the structured projection (§2.3) and crosswalk — no second serving component to build, deploy, and
-  keep warm.
-
-## 3. Source access and capture
-
-Verbatim source full text is the gated artifact. Access follows the user's **institutional licensing** (an axis distinct
-from the Project boundary; PRODUCT.md §7) and Project membership; provenance and access are recorded for every object.
-
-Capture has two routes:
-
-- **Upload** — a researcher adds a paper they already hold. The researcher supplied the access; the system ingests,
-  converts to markdown, and records provenance.
-- **Proven-access fetch** — the system fetches on a researcher's behalf **only against proven access**. Per-user
-  publisher credentials (already in pubmedifier; e.g. the Elsevier key) are the proof. Open-access is trivially proven.
-  With no proof the system does not fetch; it offers the upload route.
-
-Capture runs in a **dedicated worker, not the agent sandbox** (§6).
-
-## 4. Knowledge units and question-answering
-
-**RAG forms facts; knowledge units remember them.** Full-text retrieval-and-read is the mechanism that answers arbitrary
-specific questions; knowledge units are the durable, shared, cited cache of facts already formed. A question consults
-the knowledge-unit substrate first, falls back to reading source text, and a read mints new knowledge units.
-
-### 4.1 Retrieval funnel
-
-A **probe** is a natural-language proposition to **answer or refute** ("the KCNJ11 p.Arg201His variant impairs K_ATP
-channel function"; "variant X is benign for condition Y"). "Pertains to" is an **entailment** relation, not similarity:
-cosine fires on same-*topic* and cannot separate support from refute ("X causes Y" and "X does not cause Y" embed
-alike). So the substrate query is **retrieve broad, then entail** — not nearest-neighbour.
-
-1. **Knowledge-unit substrate** — answer from facts already formed (cheap, cited, cross-Project; often answers
-   outright). Three moves: **(a) understand** — an LLM turns the probe into grounded entities/CURIEs where resolvable
-   (gene/variant/ disease) + a normalised hypothesis + optional relation/ACMG cell (query-side grounding reuses the §4.2
-   linker, same CURIE space as the units); **(b) retrieve** (recall, polarity-agnostic) — union of **grounded-entity
-   match** (KUs whose entity set intersects the probe's CURIEs; precise, misses ungrounded units) and **KU semantic
-   embedding** (paraphrase + ungrounded recall backstop) — a refuting unit is topically near, so both surface it and
-   polarity is the next step's job; **(c) entail** (precision + polarity) — judge each candidate against the hypothesis
-   → {supports, refutes, neutral} + strength. (c) is the step cosine cannot do, and it is the same NLI judge the
-   KU-quality scorer runs.
-1. **Discovery = ingestion targeting** (not a prefilter for step 1) — the pubmedifier abstract/paragraph corpus search +
-   MedCPT rerank (§2.4, §4.4) finds papers pertaining to the probe **not yet in the KU DB**, queued for capture +
-   extraction (§3); step 1 then re-runs over the fuller substrate. Corpus recall closes the KU DB's **coverage gap**; it
-   never caps a fact query by prefiltering it.
-1. **Read** — a small candidate set is read **whole** (a single paper fits model context); a large set (an accumulated
-   Project corpus or a preprocessed collection, §5) is reached by **paragraph retrieval** (§4.4). The agent answers,
-   cites, and mints knowledge units — which feed step 1 next time.
-
-The steps cooperate rather than strictly fall through. Recall over the literature is bounded by ingestion (step 2), not
-by the fact query (step 1).
-
-**Conflict resolution.** When entailed units disagree, two rules apply in order: a **retraction gate** drops units from
-retracted versions (§6.1), then — **within an equivalence class** (the versions of one work, §2.2) — **temporal
-recency** wins (version of record supersedes preprint; a correction supersedes the version of record). *Across* classes
-there is no recency: two independent works disagreeing is a genuine evidence conflict, reported in the support/refute
-tally, not silently resolved.
-
-#### Worked example — a probe through the funnel
-
-**Probe.** *"Is there functional evidence that the KCNJ11 p.Arg201His variant impairs K_ATP channel function?"* (a PS3
-question during variant curation).
-
-- **Understand.** → entities `HGNC:6257` (KCNJ11), `HGVS:NM_000525.4:c.602G>A` (p.Arg201His); hypothesis "the R201H
-  variant reduces K_ATP channel function"; target cell **PS3** (functional).
-- **Retrieve.** grounded-entity match returns units whose entity set includes the variant; KU-embedding match adds
-  paraphrases ("Kir6.2 R201H lowers ATP sensitivity") and any unit the linker failed to ground → ~12 candidate units
-  across 5 papers.
-- **Entail.** judge each against the hypothesis → **4 support** (e.g. "the R201H mutant channel showed markedly reduced
-  ATP sensitivity in vitro"), **1 refutes** (no measurable effect in a different assay), the rest **neutral** (mention
-  with no functional measurement).
-- **Aggregate.** 4 supporting / 1 refuting, each an independent report with its own citation — **not merged**
-  (independent support is evidence weight; the conflict is surfaced, not hidden).
-- **Verify (gated, §3).** for the load-bearing supporting unit the agent resolves `cite:{doc_id, version, spans}` → the
-  gated read-tool slices the span (entitlement permitting) so a curator sees the exact sentence.
-- **Coverage check (step 2, in parallel).** the same probe runs against the 37M abstract corpus; a recent paper matching
-  "KCNJ11 R201H functional" is **not yet in the KU DB** → queued for ingestion, after which its units join the substrate
-  and the probe is re-answerable with fuller recall.
-
-The agent produced the support/refute tally from facts (step 1), grew coverage (step 2), and validated against source
-(step 3) — reading no paper to compute the tally.
-
-### 4.2 Knowledge-unit structure — two layers
-
-- **Layer 1 — free-form units (immutable, append-only).** Paragraph-level extraction in the style of Project Alexandria
-  (<https://arxiv.org/abs/2502.19413>): entities, attributes, and relationships with stylistic content stripped, which
-  is the basis for non-copyrightability. Domain-agnostic; the costly LLM pass. Extracted **append-style** (§4.5), not
-  per-paragraph-in-isolation. The jsonl is **write-once — what the model emits**: assertions plus raw, unresolved
-  entity-mention strings, with **no stable entity ids** (the model doesn't assign them at generation time). Entity
-  identity is resolved in a separate pass into an **entity→KU map** stored alongside (§2.1, `entities.pb`): it mints a
-  stable local id per resolved entity, clusters that entity's mentions across units, and indexes which units mention it
-  — so other layers reference entities by id while the write-once jsonl is never rewritten (rebuild the map with a
-  better resolver, Layer 1 untouched). Unit refinements are append-only — a later unit carries a `supersedes` pointer to
-  the unit it refines, never mutating it. **Queries resolve to the head of the supersedes-chain** (the latest
-  non-superseded unit for an id); superseded units are retained for provenance, not returned by default. There is no
-  compaction in Layer 1 (the substrate grows monotonically); bounding query cost is the dedup/merge work tracked in §9.
-  Source linkage is by **character-offset spans into the pinned source markdown** (see *Source anchors* below),
-  **never** verbatim text.
-- **Layer 2 — grounding overlay (derived, recomputable).** Controlled-vocabulary and ACMG-type pointers that *reference*
-  Layer-1 entities/assertions — "this entity is an instance of `HGNC:1100`", "this assertion is a PS3-type functional
-  claim" — each tagged with the grounding-model version that produced it. Grounded identifiers are **`DB:id` CURIEs**
-  (`HGNC:`, `OMIM:`/`MONDO:`, `HPO:`, `HGVS:`/`dbSNP:`) — one uniform `prefix:id` key across every ontology the layer
-  targets, so resolution, display, and cross-references are prefix-dispatched rather than per-source. Recomputing the
-  overlay (improved entity-linker, extended ontology) does **not** re-run extraction; Layer 1 is untouched.
-
-Here "grounding" means **ontology-linking** (Layer 2 — resolving an entity/assertion to a `DB:id` CURIE or ACMG type),
-*not* text-faithfulness. Extraction is **always** text-faithful: the floor is transcribing the paper's stated facts,
-which are grounded-in-text trivially. Cross-paragraph synthesis — a fact assembled by reading several passages together
-— is **in scope**, but carries `epistemic: inferred` (per PRODUCT.md §6) so a reader can tell a transcribed fact from a
-synthesised one. What a unit can lack is an **ontology** grounding (no CURIE resolved yet), and that is the
-goal-not-a-gate:
-
-Grounding is a **goal, not a gate**: extraction never drops a fact that fails to ground. Grounded/typed units are the
-first-class, queryable, cross-Project substrate; ungrounded free-form units persist and are upgraded as grounding
-improves.
-
-Every unit carries: the assertion (expression stripped); ≥1 anchor entity (ontology-grounded where possible — HGNC /
-HGVS / MONDO-or-OMIM / HPO); a citation pointer (**`(doc_id, version)`** + character-offset spans (see *Source anchors*
-below) — PMID/DOI for display; version-pinned so revisions/merges never re-attribute it (§2.2); never verbatim);
-provenance (extractor model+version, date, source); epistemic status (observed / inferred / assumed, per PRODUCT.md §6)
-and confidence; optional ACMG cell(s) the unit bears on. Typed assertion categories align to ACMG evidence (gene–disease
-association; variant observation / proband count + zygosity; functional effect; population frequency; segregation; *de
-novo*); a free-form type carries the long tail. One paper yields many atomic units.
-
-**Worked example.** A paragraph stating *"Gain-of-function mutations in KCNJ11 or ABCC8 cause neonatal diabetes"* yields
-a write-once Layer-1 unit — the model's assertion plus raw, unresolved mention strings, no entity ids:
-
-```jsonc
-// knowledge_units.pb  (Layer 1 — write-once, exactly as the model emits it)
-{ "id": "u17",
-  "assertion": "Gain-of-function mutations in KCNJ11 or ABCC8 cause neonatal diabetes",
-  "mentions": ["KCNJ11", "ABCC8", "neonatal diabetes"],   // raw strings, unresolved
-  "type": "gene-disease-association",
-  "epistemic": "observed", "confidence": 0.9,
-  "cite": {"doc_id": "9f3a-…", "version": "pmc-v2", "spans": [{"start": 4012, "end": 4083}]},
-  "prov": {"extractor": "gemma-4-31b", "date": "2026-06-14"} }
-```
-
-A later paragraph adds mechanism and permanence. The refinement is **appended and points back** — `u17` is never edited:
-
-```jsonc
-{ "id": "u41", "supersedes": "u17",
-  "assertion": "Activating mutations in the K_ATP-channel subunits KCNJ11 (Kir6.2) and ABCC8 (SUR1) cause permanent neonatal diabetes by suppressing insulin secretion",
-  "mentions": ["KCNJ11 (Kir6.2)", "ABCC8 (SUR1)", "permanent neonatal diabetes"],
-  "type": "gene-disease-association", "epistemic": "observed", "confidence": 0.95,
-  "cite": {"doc_id": "9f3a-…", "version": "pmc-v2", "spans": [{"start": 5566, "end": 5701}]}, "prov": {…} }
-```
-
-A query for this fact returns `u41` (the head of the supersedes-chain); `u17` is retained for provenance, not returned
-by default.
-
-The **entity→KU map** is built by a separate resolution pass and stored alongside. It mints the stable entity ids,
-clusters the raw mentions (here `"KCNJ11"` and `"KCNJ11 (Kir6.2)"` resolve to one entity), and indexes the units each
-entity occurs in — all without touching the write-once jsonl:
-
-```jsonc
-// entities.pb  (derived, write-alongside, rebuildable) — resolution only
-{ "eid": "e30", "canonical": "KCNJ11",
-  "mentions": ["KCNJ11", "KCNJ11 (Kir6.2)"], "kus": ["u17", "u41"] }
-{ "eid": "e31", "canonical": "ABCC8",
-  "mentions": ["ABCC8", "ABCC8 (SUR1)"], "kus": ["u17", "u41"] }
-{ "eid": "e32", "canonical": "permanent neonatal diabetes",
-  "mentions": ["neonatal diabetes", "permanent neonatal diabetes"], "kus": ["u17", "u41"] }
-```
-
-The **Layer-2 grounding overlay** is computed on top of the resolved entities and only *references* their ids —
-re-running an improved entity-linker rewrites the map and overlay and never touches `u17`/`u41`:
-
-```jsonc
-// grounding overlay (derived, recomputable) — each entity maps to a DB:id CURIE
-{ "unit": "u41", "grounding_model": "themis-linker-v3",
-  "entities": [ {"eid": "e30", "curie": "HGNC:6257"},        // KCNJ11
-                {"eid": "e31", "curie": "HGNC:59"},          // ABCC8
-                {"eid": "e32", "curie": "MONDO:0010890"} ],  // permanent neonatal diabetes mellitus
-  "assertion_type": "gene-disease-association" }
-```
-
-(A *functional* assertion — e.g. "the R201H KCNJ11 variant reduces ATP sensitivity of the K_ATP channel" — would carry a
-variant anchor as a CURIE (`HGVS:NM_000525.4:c.602G>A`, or `dbSNP:rs104894157`) and a `PS3`-type overlay instead.) This
-is what "grounding is an overlay, not a gate" (§4.2) buys: `u17`/`u41` stay queryable as free-form facts even before any
-IRI resolves, and improving the ontology never disturbs the extracted assertions.
-
-#### Source anchors — the quote is durable, offsets are a cache
-
-A unit's `cite` records **`(doc_id, document_id, quote, exact)`** — the paper id, the **rendering hash** the quote was
-made against (`document_id` is a content hash, not a converter-named version), the **verbatim supporting quote**, and
-whether the alignment that produced it was exact. The quote is the durable, boundary-side anchor; offsets are **not** in
-the cite — they are a recomputable cache ([the litcache-manifest design](litcache-manifest.md)).
-
-- **Why the quote, not offsets.** Offsets are valid only against one exact byte sequence, so re-rendering (a better
-  converter, a re-fetch) invalidates them; the quote survives, because it re-aligns into any rendering that still
-  contains the text. Models also quote far better than they count characters. **Multiple spans** (when resolved) cover a
-  fact assembled from non-contiguous sentences.
-- **Resolved-offsets cache.** A derived `(cite, rendering_hash) -> spans` table with status
-  `exact | fuzzy | unlocatable`. Fast path: if the rendering hash still matches, verify the quote at the cached span
-  (O(quote)); else re-align (exact -> fuzzy -> unlocatable). Any offset hint lives here, never in the write-once cite.
-- **Converter is not part of version identity.** Re-converting a source adds a rendering (a new content-addressed
-  `renderings[hash]` entry), not a version; old rendering hashes keep resolving old cites. The markdown a quote was made
-  against is immutable because it is content-addressed, not because a converter is pinned into an identity.
-- **Export strips the quote.** A shared cite is `(doc_id, document_id, ref_id)`; the quote stays in the KU record and is
-  stripped on export, so the share reproduces nothing copyrightable (§4.3).
-- **Two mint paths.** Offline KU extraction aligns its quote against the body markdown it read. Online agent cite-back:
-  the read tool serves markdown bundled with its rendering hash and **verifies the agent's quote verbatim** against the
-  served bytes (rejecting hallucinations), mints the durable anchor, and seeds the offsets cache for free (the rendering
-  is known and current).
-- **Lift-over across renderings and works.** *Re-render* (same text, a better converter, e.g. `llm-ocr` over `docling`):
-  the quote re-aligns into the new rendering via the offsets cache — `unlocatable` is the explicit "the source changed
-  under me" signal. *Cross-work supersession* (a published paper superseding a preprint — a **distinct work**, distinct
-  `doc_id`, linked by an equivalence edge, not a version): the prior work's KUs **seed** the new work's extraction (the
-  two-stage shape of §4.5), partitioning into **new** assertions; **lifted** facts (a `supersedes` unit anchored to the
-  new work, only if its quote actually re-aligns there); and a **silent residual** — a prior fact the new work doesn't
-  carry persists, cited against the prior work. A contradiction surfaces as an ordinary *negative* unit. Both run on the
-  gated plane and never edit the original unit.
-- **Resolution is gated.** Turning a quote/spans back into rendered text means slicing the gated markdown, so grounding
-  is visible exactly where the reader is already entitled to that paper (§3) — OA to everyone, licensed/captured to
-  entitled readers only. An unentitled consumer of the shared substrate gets an assertion verifiable by us but not by
-  them; that is intended.
-
-### 4.3 Knowledge-unit substrate shares; sources do not
-
-Knowledge units cross Projects and institutions (non-copyrightable assertion; citation is offsets, not text — *Source
-anchors*, §4.2). Resolving a citation to verbatim source text is gated per §3.
-
-### 4.4 Paragraph embeddings — body-resolution discovery
-
-An embedding index over the **bodies** of cached papers (one vector per paragraph), built incrementally as papers enter
-the cache. Its job is **paper- level discovery** — *find papers about X* — at body resolution, complementing the
-corpus-wide abstract-embedding search. In the funnel its role is **§4.1 step 2 — ingestion targeting**: surfacing papers
-not yet in the KU DB for capture, *not* answering fact probes (those go to the KU substrate, §4.1 step 1). (It is also
-**not** for within-paper Q&A — single papers are read whole — nor for extraction support; those rationales were
-superseded by whole-paper reads and eager append extraction, §4.5.)
-
-- **Mechanism.** Embed each body paragraph; score a query against a paper's paragraphs and **max-pool to a paper score**
-  (relevant if *any* paragraph matches). **RRF-fuse** with the abstract-embedding search, then **MedCPT rerank** the
-  fused top-N (§4.1). A paper in the full-text subset gets two signals (abstract + body); a paper outside it gets
-  abstract-only.
-- **Two backends, one id space.** Paragraph search runs on **pgvector** (the cached subset; §2.4) and abstract search on
-  the **vm_search ANN VM** (the 37M corpus). Fusion is on the **canonical UUID** (§2.2), but UUIDs are needed only for
-  the *fused candidate set*, not all 37M: the abstract arm returns corpus gids/PMIDs and its **top-N** are resolved
-  gid→UUID through the crosswalk (minting a UUID for any corpus paper entering the candidate set — N is hundreds);
-  paragraph hits are already UUID-keyed. Cached papers carry both ids and fuse to two signals; uncached papers union
-  abstract-only; paragraph-only preprints union on their own UUID.
-- **Where it wins: body-bound queries.** Recall improves specifically for queries whose subject is in the body, not the
-  abstract — a method, reagent, secondary finding, organism-as-control, or specific value. Measured: **~42% of
-  abstract-retrieval-missed golds were unfindable by abstract embeddings even at depth 3000** (X7), their relevant
-  content being body-bound — shapes common in RD curation ("papers using an animal model of Y", "a functional assay on
-  variant Z"). For abstract-topic queries the gain is small (the abstract already finds them); max-pool also lifts false
-  positives, which the MedCPT rerank absorbs.
-- **Cheap, scoped to the cached subset, built now.** You can only body-embed cached bodies, so paragraph search covers
-  cached collections, not the 37M corpus — the cheap win exactly where caching is invested, **deferring the
-  37M-full-text embed** (the cold-corpus body-recall lever, a separate major build). Vectors are cheap (~4M for a 100k
-  seed, one-time GPU-hours, E5-base) and slot into the write-through cache, served from **pgvector** (small,
-  incremental, filter-scoped — §2.4). Collections (§5) cache RD papers → body-embedded → surface more RD papers → cached
-  in turn, so coverage compounds with use. A never-cached body-bound paper stays reachable only by abstract search.
-  Building this is **not** a bet against the KU substrate.
-- **Open: value relative to the KU substrate.** For discovery, the grounded KU substrate (§4.2) is a third signal over
-  the same subset (search KUs/entities → papers). Whether paragraph-embedding discovery and KU/entity discovery are
-  complementary or one dominates is **unresolved** — resolve empirically (§9). Embeddings are built because they are
-  cheap and natural here, not because they win that comparison.
-
-### 4.5 Extraction mechanism — measured
-
-These are empirical, from a one-paper 6-config probe + a 20-paper scale-up + an append/single-para A/B. They override
-the earlier estimates where they differ.
-
-- **Append, not per-paragraph-in-isolation (X2).** Each paragraph is extracted with the *earlier paragraphs as context*
-  (a cached, growing prefix) plus a rolling list of recently-extracted units, instructed to resolve references and not
-  duplicate. Measured against independent-paragraph extraction (Haiku fixed, 3 papers), append produced **fewer but
-  better units**: it resolved coreference from context (vague subject → named entity), consolidated duplicates, dropped
-  metadata noise (DOIs/authors mis-extracted as "facts"), and added inferential context the isolated pass lost — an LLM
-  side-by-side rated append more complete on every paper. Coreference-resolution-at-extraction is its distinctive value
-  and can't be recovered later, which matters because the grounding overlay and cross-Project merge *require* resolved
-  entities (you can't ground "the protein").
-- **Cost of append ≈ 1.4× independent, not 2×.** The growing paper-so-far prefix is a real cache prefix (measured
-  98k–206k cache-read tokens/paper), holding the input premium down; append also emits ~30–40% fewer units. It is
-  **sequential per paper** (parallelise across papers, not within).
-- **Model tier and reasoning don't move extraction (X3).** Extraction is a transform, not a judgement. Over 20 papers,
-  Haiku−reasoning ≈ Haiku+reasoning ≈ Sonnet+reasoning on answer-coverage (reasoning recovered 0 papers; a bigger model
-  recovered 0 of the misses). So extraction runs on the **cheapest tier (Haiku) without reasoning**. (Reserve reasoning
-  for the *judgement* steps — the gate and answer-step, §4.1 — where it is separately decisive (X6, §7.2). A
-  single-paper result suggesting reasoning helped extraction did **not** replicate at n=20 — it was variance.)
-- **Open-weight can *exceed* Haiku at extraction, not just match it (X4).** Gemma-4-31B (self-hosted, vLLM) vs Haiku 4.5
-  over 17 OA papers, append-style, judged by Sonnet: Gemma rated **more accurate on 17/17** papers and **better at
-  coreference on 14/17** (Haiku 2, 1 tie); answer-coverage tied (Gemma 16/17 + 1 partial, Haiku 17/17). Gemma resolved
-  abbreviations/co-citations more completely ("platelet-derived growth factor (PDGF)-AA"; "*P. syringae* pv. tomato
-  DC3000 hopM1⁻/avrE1⁻ double mutant"), while Haiku committed outright errors Gemma avoided — a wrong author
-  affiliation, and *inverting* a paper's claim about imaging resolution. Two facts make this **conservative**: the judge
-  is an Anthropic sibling of Haiku (self-preference would favour Haiku, yet Gemma won), and Haiku extracted *more* units
-  (#h > #g on every paper) but scored *less* accurate — its extra volume was verbosity, not coverage. So "tier doesn't
-  move extraction" (Haiku↔Sonnet) extends downward to open-weight at 31B, and slightly *up* in quality. Caveat: n=17,
-  single judge/paper (not a panel); only the 31B size is verified — smaller candidates (§7.1) are untested. This
-  resolves §7.1's in-flight quality test in the floor option's favour at the 31B tier.
-- **Residual failure mode: figure-bound facts.** The one extraction miss that survives every model/reasoning/design
-  choice is a value stated only in a figure image (e.g. "lower in X and Y than Z [Fig 1B]"; the text gives a partial
-  comparison, the ranking is in the figure). Text extraction can't reach it; the fix is **multimodal figure reading**,
-  not a bigger model, better table rendering, or XML-vs-PDF (figures are images either way). Tables themselves render
-  fine.
-- **Measured cost: ~$0.15–0.23/paper (X9)** (Haiku, append, real OA papers) — real papers run larger than §7.1's
-  40-paragraph assumption, so the §7.1 sweep estimate is ~2× low; budget **~$15–23k for a 100k-paper sweep**.
-- **KU quality needs a real metric.** It is invisible to answer-coverage (LitQA2 questions don't test coreference) and
-  is *not* captured by raw embedding-cosine dedup (cosine>0.9 fires on same-*entity* units, not true duplicates). Use an
-  entity-normalised dedup metric or an LLM judge — build it before trusting a quality number.
-
-## 5. Collections
-
-Selection of large paper sets to preprocess (cache + embed + extract). Multiple first-class, tagged **collections**, not
-one cut; the agent can scope retrieval per collection (e.g. per ACMG evidence type or disease area). Membership is
-many-to-many with per-route provenance, ingested via several routes whose union forms a collection:
-
-- an existing **curated set** (human-picked, high trust);
-- **MeSH / publication-type** selection (e.g. `Rare Diseases`, `Case Reports`, organism check-tags) — free, high
-  precision, a training signal;
-- a **supervised classifier on embeddings** (E5 + logistic regression; measured AUC 0.926 separating relevant from not
-  on a rare-disease-gene-discovery query — X8) for recall across the 37M corpus;
-- **citation / semantic expansion** from known relevant papers.
-
-Selection is **recomputable and incremental** (improve the classifier, re-score, grow the cache), mirroring the
-grounding overlay. Candidate (classifier-derived) collections carry lower trust than curated sets and are promoted by
-curator validation (mirroring the working-document→Report accept step). The same classifier family produces category
-facets (case report, functional study, animal model) as filterable tags.
-
-## 6. Security, egress, and integrity
-
-The layer adds **no new agent-side egress surface**; it rides themis's existing model (`spike-infrastructure.md` §8,
-PRODUCT.md §9):
-
-- The agent reaches sources only through **tightly-typed internal services**; the sandboxed process has no network of
-  its own, and the requests those services make for it are destination-fixed — the agent's text selects a response, not
-  a destination ([`security.md`](security.md) §What counts as an exfiltration channel).
-- Outbound network calls happen **infra-side, never under agent control**, under an egress allowlist:
-  - **bulk-available** sources (PubMed/PMC, the OA subset) are **mirrored locally** — no live querying;
-  - **non-bulk** resolution/metadata services (Crossref, Semantic Scholar, Unpaywall, arXiv) are queried **live by the
-    discovery plane / capture worker**, not the agent.
-- Source full text is **untrusted content**: knowledge units derived from it carry provenance and epistemic status —
-  asserted by a source, not ground truth (PRODUCT.md §6). No new mechanism is needed beyond the tool surface, the
-  sandbox, and provenance.
-
-### 6.1 Retraction and currency
-
-A retracted or withdrawn paper's knowledge units stay in the immutable append-only substrate (§4.2) — they are **not
-deleted**. Retraction is handled as a **paper-level overlay fact, checked at resolution time**, not a mutation of units:
-
-- **Flag, don't purge.** Retraction/withdrawal is recorded as a flag on the paper: in `manifest.pb` (GCS source of
-  truth) and its Cloud SQL projection. Detection rides the existing non-bulk metadata path (§6) — PubMed retraction
-  notices and Crossref retraction metadata, polled by the discovery/capture worker, never the agent.
-- **Every result resolves to a paper; the flag propagates on use.** Each KU and each paragraph-embedding hit resolves to
-  a `(doc_id, version)` (§2.2). The gated read-tool and the Q&A path **re-check the retraction flag at resolution time**
-  and surface it alongside the result, so a retracted source can never be cited as live evidence — decisive for
-  ACMG-evidence use. This makes currency a query-time check rather than a substrate-purge, consistent with append-only
-  Layer 1 and the recomputable overlay. Retraction is the **gate applied before within-class temporal recency** (§4.1,
-  §2.2): a retracted version is suppressed regardless of how recent it is — recency orders versions, retraction removes
-  them.
-- **Open:** retraction *detection latency and coverage* (PubMed/Crossref lag, preprints with no formal retraction
-  channel) — see §9.
-
-## 7. Compute and storage
-
-Seed scale: ~100k open-access papers. Most boundary-plane storage maps onto infrastructure the Spike already provisions
-(Cloud SQL Postgres, GCS, Cloud Run, the sandbox forward leg); the layer is largely additive tables, buckets, jobs, and
-services.
-
-| Asset                                     | Size / cost                                                                                                                                    | Where                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Cache markdown (~100k)                    | ~4 GB                                                                                                                                          | GCS                                                                |
-| Paragraph embeddings (~4M × 768-d)        | ~6 GB halfvec/fp16                                                                                                                             | pgvector in Cloud SQL — small + incremental + filter-scoped (§2.4) |
-| Abstract embeddings (~37M × 768-d)        | 110 GB HNSW index                                                                                                                              | vm_search ANN VM (NVMe + Rust HNSW), *not* pgvector (§2.4)         |
-| Knowledge-unit substrate + overlay        | \<1 GB (~0.5–2M units)                                                                                                                         | Cloud SQL (Postgres)                                               |
-| Corpus columns (37M, subset)              | tens of GB, disk not RAM-resident                                                                                                              | Cloud SQL (Postgres) — bulk-loaded from ingestion parquet (§2.3)   |
-| Paragraph-embedding compute               | one-time, hours on one GPU (E5-base)                                                                                                           | batch job                                                          |
-| Knowledge-unit extraction (variable cost) | the dominant cost — see §7.1. **Measured ~$15–23k** for a 100k full sweep (Haiku, append; batched ~half); self-hosted spot ~$6–8k (X4, X5, X9) | LLM API / GPU                                                      |
-| Classifier scoring (37M)                  | minutes (LR over existing E5 vectors)                                                                                                          | shared plane                                                       |
-| MedCPT rerank                             | CPU adequate at shortlist depth (~30 s for a 200-candidate pool); GPU only for deep pools                                                      | shared plane                                                       |
-
-Storage is negligible. The only material variable cost is **extraction LLM spend** — modelled in §7.1.
-
-## 7.1 Knowledge-unit extraction cost
-
-Extraction is the one part of the system whose cost is large and worth modelling before committing to a full-corpus
-sweep. The cost is:
-
-```
-calls × (input_tokens × input_price + output_tokens × output_price)
-```
-
-modulated by prompt caching and the Batches API. Four cost drivers, in order of leverage:
-
-1. **Output tokens × output price — the irreducible floor.** Output cannot be cached. At a full sweep this term alone
-   dominates, and **model choice is the biggest single lever** (Haiku output is 3× cheaper than Sonnet).
-1. **Call count** = papers swept × paragraphs/paper, where *paragraphs/paper* is the **extraction call granularity**
-   (one append step per paragraph, §4.5) — not a claim that knowledge units are one-per-paragraph (a paragraph yields
-   many units, or none). Extraction is an eager whole-paper append sweep — every paragraph extracted, no within-paper
-   fraction — so the only lever is *which papers* are swept: **collection selection (§5)** confines the sweep to the
-   cached RD-relevant subset, not the 37M corpus. (Paragraph embeddings serve discovery, not extraction targeting —
-   §4.4.)
-1. **Prompt caching.** The extraction prompt's fixed prefix (schema + few-shot examples, ~1.5k tokens) is identical on
-   every call → cache reads at ~0.1× input price. Kills the fixed-input cost; does nothing for output.
-1. **Batches API.** 50% off everything. Bulk extraction is non-latency- sensitive, so this is free money — always batch
-   the sweep.
-
-**Modelled** (superseded by measurement below; kept for the driver logic, not the numbers). Assume 100k papers × ~40
-paragraphs = 4M paragraphs; per call ~2,350 input (350 paragraph + ~500 rolling prior-KU + ~1,500 cacheable
-schema/few-shot) + ~400 output; catalogue prices Haiku $1/$5, Sonnet $3/$15 per 1M, cache read ~0.1× input, Batches
-−50%. The model said Sonnet+cache+batch ~$18k, Haiku+cache+batch ~$6k. The instructive part is *why*: **output sets the
-floor** — 4M × 400 output tokens is ~$24k at Sonnet pricing *before* batch, and caching can't touch output. So model
-choice (Haiku output 3× cheaper) is the biggest lever; caching and Batches trim the rest.
-
-**Measured** (X9, the operating number). **~$0.15–0.23/paper on real OA papers** (Haiku, append). Real papers run larger
-than the 40-paragraph assumption, so the modelled sweep was ~2× low; a full 100k sweep is **~$15–23k**. The modelled
-per-call also assumed the small schema prefix caches — in practice it's the *paper-so-far* append prefix that caches
-(§4.5). **Caveat (§9):** probes likely ran **synchronously**, not through Batches; if so the batched production sweep is
-~half (~$0.08–0.12/paper → **~$8–12k**). Use the batched figure as baseline.
-
-**Floor option — self-hosted open model.** A self-hosted model costs GPU-hours, not per-token. Both legs are now
-**measured** (Gemma-4-31B, 4×A100-40GB, §4.5), not modelled: quality **beats Haiku** (risk retired at the 31B tier), and
-graphs-on throughput is **19.7 papers/hr/A100** (eager was ~2 — a config artifact, not a hardware limit). At that rate
-it is **cheaper than Haiku-batch only on spot** (~$6–8k vs ~$10k for 100k); on-demand it is ~1.9× *pricier* (~$19k). So
-it earns its place as a **spot-priced, recurring/at-scale** extractor — still a later optimization than the Spike, but a
-viable one.
-
-- **Compute, measured (not modelled) (X5).** Gemma-4-31B on 4×A100-40GB, **graphs-on**, append extraction at concurrency
-  17: **19.7 papers/hr/A100** (78.8/hr on the box), GPUs at 100% util. So **$/paper = (A100 $/hr) ÷ 19.7**: spot
-  (~$1.1–1.5/A100-hr) → **$0.06–0.08/paper → ~$6–8k for 100k** (under Haiku-batch); on-demand (~$3.7) → ~$0.19 → ~$19k
-  (over). Break-even with Haiku-batch is ~15 papers/hr/A100 on spot, ~37 on-demand — **spot clears it, on-demand
-  doesn't.** (Eager mode managed only ~2 papers/hr/A100 → ~$185k; it was a workaround for a CUDA-graph-capture crash on
-  a missing `ninja` build dep, not a real ceiling. With ninja installed, graphs-on boots clean after a one-time ~27 min
-  compile/capture.)
-- **Week deadline.** 100k/168h ≈ 595 papers/hr → **~30 A100-40GB** at 19.7/hr/A100, i.e. **~3–4 days on spot** — within
-  reach of existing preemptible quota, no new quota request needed. Spot preemption ⇒ **checkpoint per paper** (the eval
-  run's write-only-at-end design lost an entire run to one tunnel drop — same lesson).
-- **Bottleneck is prefill, not decode.** 299 tok/s output at 100% util means the GPU is busy re-prefilling the ~8k-token
-  append window each chunk, not generating — vLLM prefix-caching holds the *paper-so-far* prefix across paragraphs (the
-  API bills those re-reads; self-hosted doesn't), but each new chunk still extends it. More GPUs/concurrency won't raise
-  per-GPU throughput (already saturated); the levers are **bigger chunks** (fewer append steps → less repeated prefill)
-  or **faster-prefill hardware (e.g. H100)**, either of which could also reach on-demand parity.
-- **Candidates** (current small-open instruct field): Qwen3-14B/32B, Mistral Small 3 (24B), Gemma 3 12B — permissive
-  licences, all with vLLM guided-JSON decoding for structured output (replacing the API's structured-output
-  enforcement).
-- **Quality risk — retired at the 31B tier (X4, §4.5).** §4.5's "tier doesn't move extraction" was Haiku-vs-**Sonnet**
-  and did not on its own license "small-open = Haiku." A direct test now does, *upward*: Gemma-4-31B *beat* Haiku on
-  KU-extraction quality under a conservative Haiku-sibling judge — open-weight at 31B is a quality **upgrade**, at
-  ~10–30× lower compute cost. Two questions remain before committing the corpus: (a) do the **smaller/cheaper
-  candidates** (12–24B) hold that quality, or is ~31B the floor? — A/B them on the KU-quality metric (§9); (b) re-price
-  compute for whichever size passes (next bullet).
-- **Ops cost is real and excluded from the compute figures above** (vLLM serving, batching, retries, a GPU box to stand
-  up and babysit). For a *one-time* sweep — self-hosted spot ~$6–8k vs Haiku-batch ~$8–12k — that thin margin doesn't
-  repay the ops overhead under cost-unconstrained exploration (PRODUCT.md §2/§6); it earns its place for **recurring /
-  at-scale** extraction — incremental ingestion at full corpus scale, or an extractor-model upgrade that re-sweeps (S3).
-
-## 7.2 Reasoning and the cost matrix
-
-Reasoning (extended/adaptive thinking) materially improves **abstract judgement** — observed directly in the prepass
-gate, where a reasoning gate skipped 0/28 golds versus 10/28 for a snap, no-reasoning gate. The cost catch: **thinking
-tokens bill as output**, and output is the dominant, uncacheable term (§7.1). So reasoning multiplies the expensive half
-of every judgement call, and **where it's affordable depends entirely on how many calls there are**.
-
-**Per-1,000 judgement calls** (an abstract-relevance decision: input ≈ 1,500 cacheable prefix + ~500 abstract/question;
-output ≈ 50 tokens no-reasoning vs ~550 with ~500 thinking tokens; fixed prefix cached at 0.1×, no batch — this is
-query-time, latency-sensitive). Thinking volume scales with effort (~200 low → ~1,500+ high), so treat the reasoning
-column as a mid-effort estimate:
-
-| Model  | no reasoning | + reasoning |
-| ------ | ------------ | ----------- |
-| Haiku  | ~$0.90       | ~$3.40      |
-| Sonnet | ~$2.70       | ~$10.20     |
-| Opus   | ~$4.50       | ~$17.00     |
-
-Reasoning is ~3–4× the per-call cost (output goes ~50 → ~550); the model ladder is a further ~3× (Haiku→Sonnet) and
-~1.7× (Sonnet→Opus).
-
-**Applied at the two scales in this system:**
-
-- **Per-query judgement (the gate, the answer-step) — reasoning is cheap, use it.** A walk of 30 candidates is 30
-  calls/query; even **Opus + reasoning ≈ $0.51/query** (200 candidates ≈ $3.40/query). At interactive Spike volumes this
-  is negligible — so spend reasoning here, where it's *observed* to matter and N is bounded.
-
-- **Corpus-sweep judgement (extraction, or any LLM-classification at 100k+ scale) — reasoning is expensive.** Over the
-  4M-paragraph sweep (batched, cached prefix), adding ~500 thinking tokens/call lifts the floor sharply:
-
-  | Model  | sweep, no reasoning | sweep, + reasoning |
-  | ------ | ------------------- | ------------------ |
-  | Haiku  | ~$6k                | ~$11k              |
-  | Sonnet | ~$18k               | ~$33k              |
-  | Opus   | ~$30k               | ~$55k              |
-
-  (Targeting to ~25% of paragraphs divides each by ~4.)
-
-**The principle: reasoning pays off for *judgement*, not for *extraction or classification*.** Put reasoning on the gate
-and the answer-step — small N, judgement is load-bearing, and measured to matter (X6, above). Run the bulk
-**extraction** sweep *without* reasoning on Haiku — neither reasoning nor tier moves extraction (X3, §4.5). Likewise
-keep collection selection (§5) on the E5+LR classifier, not an LLM-judgement pass — a reasoning LLM over 37M abstracts
-would be the most expensive thing in the system. Extraction is a transform; the gate and answer-step are judgements —
-spend reasoning only on the latter.
-
-## 8. Staged build
-
-Each stage stands alone and is additive; ordering is a guide, not a critical path — stages parallelise and reorder to
-favour fast iteration. Effort is eng-weeks for a small team.
-
-- **S0 — Cache + capture + whole-read Q&A (~2–4 wk).** Licence-tagged write-through cache; upload + proven-access fetch;
-  discovery→whole-read service calls. Reuses pubmedifier's full-text ladder and per-user credentials. Serves the Spike
-  (`variant + condition → ACMG`, public sources) immediately.
-- **S1 — Seed + paragraph retrieval (~3–6 wk).** Collection selection v1 (MeSH + E5+LR classifier); fill the ~100k OA
-  cache; paragraph embeddings; passage- retrieval tool. Answers specific RD questions over a real corpus. Parallelisable
-  with S0.
-- **S2 — Knowledge-unit substrate (~4–8 wk, widest variance).** Free-form extraction (Layer 1) + grounding overlay
-  (Layer 2) + substrate store + knowledge-unit-first Q&A path. **Entity-linking/grounding quality is the load-bearing
-  unknown, not just fiddly** — HGVS/variant normalisation is unsolved (§9), so the upper end of the range is the
-  realistic planning figure; the recomputable overlay (§4.2) de-risks shipping with partial grounding rather than
-  collapsing the estimate. Yields cheap, cited, cross-Project facts and ACMG evidence population.
-- **S3 — Scale and share (ongoing).** Grow and validate collections; cross- Project knowledge-unit sharing; physical
-  OA-tier split into the shared plane; more publishers; MedCPT rerank in discovery; deeper grounding.
-
-## 9. Open questions
-
-- How a user's **institutional affiliation** is established and trusted for proven-access fetch (also open in
-  `workspace-model.md`).
-- **Grounding/entity-linking quality**, especially HGVS/variant normalisation — now load-bearing on **both sides** of
-  the probe path (§4.1): the query's entities and the units' entities must resolve to the same CURIEs. The recomputable
-  overlay de-risks but does not solve it; like extraction, it needs its own eval.
-- **KU semantic embedding** — the probe→KU retrieve step (§4.1 step 1b) wants a fact-level semantic index (~13 GB, §2.3)
-  to catch paraphrase and ungrounded units. Either pay it or accept the recall ceiling of a grounded-only path; reopens
-  the deferral implied in §4.4/§2.3.
-- **Entailment-judge calibration** — the support/refute judge (§4.1 step 1c) is the KU-quality scorer's NLI judge; its
-  stability and cross-judge agreement gate the probe path's precision, so the scorer's robustness suite is the shared
-  instrument.
-- **OA redistribution rights** — the licence representation is settled (§2: canonical identifier → derived policy
-  booleans). Residuals: confirming the source-metadata → identifier mapping (PMC/Crossref/Unpaywall coverage and
-  conflicts), and the **NC/commercial determination** — whether a clinical-genomics product counts as commercial use
-  under a `CC-BY-NC` licence.
-- **Knowledge-unit dedup/merge correctness** across papers — the cross-Project signal's value depends on it; needs an
-  entity-normalised metric (raw embedding cosine doesn't work — §4.5).
-- **Figure-bound facts** — values present only in a figure image are unreachable by text extraction (§4.5). Whether to
-  add a **multimodal figure-reading** pass (and at what cost/coverage) is open; XML-faithful markdown does not help
-  here.
-- **A KU-quality metric** — extraction quality (coreference, dedup, refinement) is invisible to answer-coverage; build a
-  judge/entity-normalised metric to evaluate extraction-design changes (§4.5).
-- **Next empirical study (moderately sized).** Three questions below resolve in one study over a few hundred papers,
-  sharing one instrument and one caveat: KU quality is **not cheaply measurable empirically**
-  (coreference/dedup/refinement are invisible to answer-coverage), so **LLM-as-judge is the quality ceiling** — use it,
-  with its self-preference and single-judge limits acknowledged (X4).
-  - **Smaller open-weight extractors** — Gemma-4-31B beats Haiku (X4); whether the 12–24B candidates (§7.1) hold that
-    quality, or ~31B is the floor, is untested. Re-price compute for whichever size passes.
-  - **KU substrate vs paragraph embeddings for discovery** — over the same full-text subset both can answer "papers
-    about X" (KU/entity search vs body-resolution paragraph search, §4.4). They likely have **different searchability
-    properties**; whether complementary or one dominates is unknown. Build embeddings into the study so they are scored
-    for their own weight, not assumed.
-  - **Collection-selection generalization** — the classifier's AUC 0.926 (X8) is a single RD-gene-discovery query;
-    precision/recall across disease areas and ACMG evidence types is untested, and selection sets the real
-    extraction-cost lever (§5, §7.1).
-- **Retraction detection latency and coverage** — the §6.1 flag is only as good as the signal feeding it:
-  PubMed/Crossref retraction lag, and preprints with no formal retraction channel, bound it.
-- **Extraction-cost measurement basis** — confirm whether the X9 cost probes ran synchronously or through the Batches
-  API; if synchronous, the batched production sweep is ~half the measured figure (§7.1).
-
-## Appendix: Experiment log
-
-Every empirical claim in the body cites a row here by `X#`. The body holds the *decision and interpretation*; this table
-holds the *method and raw result*, so a future reader can weigh each finding without re-deriving it. (`X#` is the
-experiment id; `E5` elsewhere is the embedding model, not an experiment.) Dates backfill where unrecorded.
-
-| #   | Date       | Question                                         | Setup (n, models, judge)                                                                                                                                                                                        | Result                                                                                                                                                                                                                                                                                       | →          |
-| --- | ---------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| X1  | —          | pgvector vs vm_search for the 37M abstract index | head-to-head over the live ~30M-doc E5 corpus; same `m=16`/`ef_construction=200`; identical queries; recall@100 ground-truthed by exact seq-scan; 32 GB and 256 GB hosts (`pubmedifier/docs/pgvector-bench.md`) | vm_search ~55× faster first-pass (≤0.89 recall): ~7 ms vs ~385 ms at 32 GB. pgvector's 110 GB HNSW degrades 3–4× spilled to pd-ssd. Its higher recall ceiling (0.984 vs 0.97) is a build-heuristic gap, not a backend property; `hnsw.ef_search` capped at 1000 (0.8.x) vs vm_search's 5120+ | §2.4       |
-| X2  | —          | append vs independent-paragraph extraction       | 3 papers, Haiku fixed; append (prior paragraphs + rolling KU list as context) vs per-paragraph isolation; LLM side-by-side judge                                                                                | append → fewer but better units: resolved coreference (vague subject → named entity), consolidated dups, dropped metadata noise, added inferential context; rated more complete on every paper                                                                                               | §4.5       |
-| X3  | —          | does model tier or reasoning move extraction?    | 20 papers; Haiku−reasoning vs Haiku+reasoning vs Sonnet+reasoning; answer-coverage                                                                                                                              | no movement — reasoning recovered 0 papers, Sonnet 0 of Haiku's misses. (An earlier 1-paper signal that reasoning helped was variance.) Residual miss across **all** configs: figure-bound facts (value only in a figure image) — needs multimodal, not a bigger model                       | §4.5, §7.2 |
-| X4  | 2026-06-14 | Gemma-4-31B vs Haiku 4.5 extraction quality      | 17 OA papers, append; judged by Sonnet (a Haiku sibling → self-preference would favour Haiku)                                                                                                                   | Gemma more accurate **17/17**, better coreference **14/17** (Haiku 2, 1 tie); answer-coverage tied. Haiku extracted *more* units but scored less accurate (verbosity, not coverage). Caveat: n=17, single judge/paper, only 31B verified                                                     | §4.5, §7.1 |
-| X5  | —          | Gemma-4-31B serving throughput                   | 4×A100-40GB, vLLM, append, concurrency 17; graphs-on vs eager                                                                                                                                                   | graphs-on **19.7 papers/hr/A100** (78.8/box), 100% util, prefill-bound (299 tok/s decode). Eager ~2/hr was a ninja/CUDA-graph-capture artifact, not a ceiling. → spot $0.06–0.08/paper                                                                                                       | §7.1       |
-| X6  | —          | reasoning value at the prepass gate              | 28 golds; reasoning gate vs snap (no-reasoning) gate                                                                                                                                                            | reasoning gate skipped **0/28** golds vs **10/28** for the snap gate                                                                                                                                                                                                                         | §7.2       |
-| X7  | —          | abstract-retrieval body-bound miss rate          | golds missed by abstract embeddings, checked to depth 3000                                                                                                                                                      | **~42%** unfindable by abstract embeddings — relevant content body-bound; motivates body (paragraph) embeddings                                                                                                                                                                              | §4.4       |
-| X8  | —          | collection classifier separability               | E5 embeddings + logistic regression; rare-disease-gene-discovery query                                                                                                                                          | **AUC 0.926** relevant-vs-not                                                                                                                                                                                                                                                                | §5         |
-| X9  | —          | measured extraction cost                         | Haiku, append, real OA papers (likely synchronous, not Batches — confirm §9)                                                                                                                                    | **~$0.15–0.23/paper** → ~$15–23k for a 100k sweep; ~half if batched. Real papers run larger than the 40-paragraph model assumption, so the modelled sweep was ~2× low                                                                                                                        | §7.1       |
+### The door into the store: `MaybeIngestPapers`, over a minted `doc_id`
+
+Nothing a source hands back is a key the store can take. Not every paper has a PMID or a DOI, and the ones that do often
+have several identifiers that arrive at different times, so the store's key is neither: it is an internally minted UUID,
+the `doc_id`, which names the paper's directory and is what every rpc that reads the store, and every citation, takes.
+`MaybeIngestPapers` is the one rpc that turns an external identifier into one — the single door from a discovery result
+into everything the store can do. A **crosswalk** table maps scheme-qualified external ids (`pmid:`, `doi:`, `pmcid:`,
+…) onto `doc_id`s.
+
+Qualifying an id by its scheme is what keeps the door indifferent to which source produced it. A PMID goes through as
+`pmid:12345678`; a source that answers in DOIs instead needs nothing new on this side of the interface. The scheme also
+removes the guessing: a bare number could be a PMID and a bare `10.1/x` a DOI, but a wrong guess resolves to another
+paper.
+
+Ingestion *mints* against that table, claiming all of a paper's identifiers in one transaction and adopting an incumbent
+where one exists, so concurrent ingestion workers converge on one `doc_id` per paper. Identifiers that turn out to
+bridge two separately-ingested works form an equivalence class: the linked `doc_id`s resolve to one deterministically
+chosen canonical member, recorded as an edge in the manifests. The table is the mint lock, not the system of record: it
+is rebuildable from the manifests, and a row claimed by an ingestion that never committed its manifest is harmless — it
+reads back as a paper the store does not hold.
+
+The evidence service holds the **read half only**. `MaybeIngestPapers` looks an identifier up and claims nothing, and
+the service's database role is granted `SELECT` and no more. The distinction is not fussiness: minting *claims*, so
+minting to answer a read would hand back a fresh `doc_id` naming no manifest — permanently unresolvable — and would
+leave a crosswalk claim on someone else's DOI. The same read-only posture holds for the store itself: nothing in this
+interface writes it, and ingestion and production write under their own identities. Confining the lookup to one rpc also
+confines the interface's only relational dependency to one method; every other rpc reads the store's objects alone.
+
+The lookup answers only for identifiers captured at ingest, so a caller holding a PMCID for a paper stored under its DOI
+and PMID misses even though the store has it. Closing that gap means resolving identifiers against one another in front
+of the lookup, which puts a network round trip on a request path; it is deferred because ingestion captures a DOI and a
+PMID for most papers.
+
+That gap is the shape the rpc's *name* reserves. A renamed rpc is a broken one for every deployed caller, so the name is
+chosen for where the call is going rather than for what it does today, and `Maybe` is load-bearing either way — such a
+call may resolve nothing and produce nothing.
+
+Production is not reserved in the same way: a paper that comes back unsettled has its conversion enqueued by the same
+call. Resolution only ever *starts* production and never waits for it — the queue and the producer behind that enqueue
+are [`evidence-fulltext.md`](evidence-fulltext.md)'s. The *no production on the serving path* rule above is untouched by
+that, because what it bars is a request that serves a paper waiting on its text, and nothing here waits.
+
+**One spelling per identifier, folded at the boundary that owns it.** The crosswalk folds the case of the schemes whose
+identifiers are case-insensitive and no more, so two spellings that genuinely denote different identifiers stay
+different keys. The discovery rpcs never touch the crosswalk and fold a PMID's several spellings — bare digits, a
+`PMID:` prefix, zero padding — onto one. A malformed identifier is refused outright rather than looked up: a malformed
+key reaches nothing, and an answer of "no such paper" to a request that was never well-formed reads as a settled fact
+about what the store holds.
+
+### What the store says about a paper
+
+A paper can accumulate several renderings of its text — one converted from publisher XML, one transcribed from a PDF, an
+older one from a superseded converter. The read surface serves exactly one of them, the **canonical rendering**, picked
+by converter fidelity first (a rendering derived from source XML beats a transcription of a PDF) and recency on a tie.
+One choice, made in one place, is what lets the agent's read, the quote matcher and the document pane agree on which
+text a paper *is*; without it a quote validated against one rendering could fail to locate in another.
+
+Two further per-paper facts cross the wire, and neither is stored anywhere:
+
+- **Readiness** — whether full text is servable at all: `READY`, `PENDING`, or one of the two terminal outcomes
+  `NO_FULL_TEXT` and `FAILED`, plus `UNKNOWN_PAPER` for a `doc_id` the store holds no paper under. It is derived from
+  the store's layout on each read, and [`evidence-fulltext.md`](evidence-fulltext.md) owns both the derivation and the
+  reason there is no status store behind it.
+- **Text provenance** — how the canonical rendering's text got into the store. A lineage the manifest records as
+  institutionally captured, or an uploaded revision, is `SUPPLIED`; a lineage recorded as free to read is `OPEN_ACCESS`;
+  a licensed, unknown or unplaceable lineage says neither. Open access is a claim about how text was obtained, so
+  nothing defaults to it. `SUPPLIED` text reached the store only through a human's institutional access, which is a
+  thing a run should be able to state about what it relied on — but it is no less citable for that.
+
+Text provenance is named for the *text*, not for the fact: the `Provenance` message every other evidence rpc returns
+records where a *fact* came from, which is a different thing that happens to want the same English word.
+
+### The store's read surface
+
+| rpc                 | what it does in the system                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MaybeIngestPapers` | The door: a batch of scheme-qualified external ids in, the paper each names and that paper's readiness out, and a conversion where pending. The mandatory first step for a caller holding a PMID or a DOI.   |
+| `GetMarkdown`       | The agent's read path: the canonical rendering's text and its provenance — or a modelled statement that the paper has no servable text.                                                                      |
+| `DescribePaper`     | What a paper offers, so the document pane can choose a default representation and list its figures and supplementary files.                                                                                  |
+| `ResolveContent`    | Names the storage object behind a chosen representation or file — a location, never bytes. Serving bytes to a browser is the BFF's job, and the BFF holds the authorisation boundary.                        |
+| `Locate`            | Where a quote sits inside a chosen representation, for the pane to highlight. A quote that is not there is a modelled outcome, not an error.                                                                 |
+| `Validate`          | Whether a quote locates in any representation at all — the agent's authoring-time check, and deliberately forgiving: an unknown paper and an absent quote both come back as a negative answer with a reason. |
+| `PollFullTexts`     | Readiness for a batch of `doc_id`s, producing nothing and enqueuing nothing.                                                                                                                                 |
+
+Four mechanisms the table rests on:
+
+- **Readiness and content are separate rpcs.** A batch that answered with each paper's text would blow past the message
+  budget, and a caller asking which of fifty papers is worth opening does not want fifty papers back. So readiness is a
+  cheap batch and content is a single-paper read.
+- **A read is budgeted, and says so.** `GetMarkdown` cuts a long rendering at a line boundary behind an inline marker
+  and reports the rendering's full character count beside the text, so a whole paper and a clipped one are told apart by
+  comparing that count against the text's own length, and a reader handed a clipped one learns how much lies past the
+  cut. `Validate` and `Locate` still run over the whole rendering, which means quoting only within what was actually
+  read is the reader's discipline, not something the server can enforce for it. The budget is there to protect the
+  reading run's context, and the cut is where that protection is spent. Which is why the budget is the caller's to
+  suggest and the server's to bound, on the same census idiom the searches use: `max_chars` asks, the service ceiling
+  caps what it grants, and the full character count beside the text's own length says whether anything was cut. A run
+  that hits a cut and needs what lay past it asks again for more, up to that ceiling — the way to more is a larger
+  budget, never a cursor, and past the ceiling the remainder stays unreachable.
+- **A batch has a ceiling, and it is the server's.** A readiness or resolution batch is refused past a fixed size,
+  because each entry costs the service reads it did not ask for. Nothing blocks server-side to make a batch wait: a
+  caller with somewhere to sleep waits there and asks again.
+- **One quote matcher, over markdown.** `Validate` and `Locate` share a single matcher run server-side over the
+  rendering's bytes, so what the agent validated while authoring is what the pane later resolves
+  ([`document-pane.md`](document-pane.md#highlight-resolution-server-side-one-matcher)). No producer resolves a quote
+  against a PDF yet, so against the live store `Locate` answers a PDF request `UNIMPLEMENTED` and `Validate` reports a
+  PDF-only paper as unchecked — the alternative, a "not located" for a quote that is plainly on the page, states the
+  opposite of the truth. The fixture's seeded locations are the offline surface, which is what the pane's highlight path
+  is built against before a producer exists.
+
+### Searching the live indexes
+
+| rpc                   | what it does in the system                                                                                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SearchEuropePmc`     | A keyword query against the live index, answered with ranked Europe PMC records and the index's own count of what matched.                                                                                                                                             |
+| `FetchPubmedArticles` | PubMed's own record, whole, for a batch of PMIDs — `PubmedArticle` for a journal record, `PubmedBookArticle` for a book record — ones reached from outside this service (a reference list, a submission's citation list, a clinical note) or selected from the census. |
+| `SearchLitVar`        | A variant's identifiers in, every LitVar2 entity they reached out — unmerged, each with the index's own labels, a per-identifier agreement verdict, its record count, and its top-ranked PMIDs.                                                                        |
+| `ListLitVarEntities`  | A gene's whole entity inventory, most-published first — the route to an entity indexed under a spelling no current identifier constructs.                                                                                                                              |
+
+**A hit is existence, not readability.** Nothing in this group says the store can serve a paper's text;
+`MaybeIngestPapers` is what says that. The same gap is why the abstract riding on a record is readable but not quotable:
+a discovery result carries no `doc_id`, so there is no citation directive that could resolve against it.
+
+**The variant census belongs to literature, not to a variant interface.** What `SearchLitVar` and `ListLitVarEntities`
+produce is literature — entities carrying ranked PMIDs, each one `FetchPubmedArticles` read away from its bibliography.
+Variant identifiers are one way of searching for papers, beside keywords; they are not a different kind of answer.
+
+### A search states its census instead of paging
+
+None of the three searches offers a page cursor. Instead each reports, alongside its results, a count of everything that
+matched before the budget — the index's own count where the index states one, the service's own census where the cut is
+the service's (the entity fan-out, a `contains` narrowing). Comparing that count against what came back tells a complete
+answer from a top-ranked prefix, and the way to more is a narrower query, a larger budget, or — for a candidate the
+fan-out ceiling dropped — the entity's own id. Nothing else is echoed: the budget a caller asked for it already knows,
+and the one the service applied is visible in what a cut answer carries.
+
+Paging is what we would owe callers if the goal were exhaustive retrieval. It is not: a run reads the most relevant
+handful and then narrows. A cursor would add per-call state, a stale-cursor failure mode, and an invitation to walk a
+thousand hits, in exchange for a completeness the reading loop does not use. The census gives the caller the one thing a
+cursor would have told it — *there is more, and how much* — for the price of a couple of integers.
+
+### A variant search answers with candidates
+
+Because LitVar2 keys entities on whatever its recogniser found rather than on a variant, there is no reliable way for
+the service to decide which of the entities a request reached is the caller's variant. It could withhold the ambiguous
+ones; it does not. It returns every entity it reached, unmerged, and states the disagreement instead: for each kind of
+identifier the request supplied, a verdict on whether the entity's own labels agree, differ, say nothing comparable, or
+were never asked about.
+
+That shape follows from what the service can and cannot know. A gene symbol that differs is weak evidence, because an
+alias or a superseded symbol produces one on an entity that *is* the caller's variant. Two differing ClinGen allele ids
+are strong evidence, because two such ids are two alleles by construction. The service cannot tell a label the request
+got wrong from one the index got wrong — so reporting the verdict and letting the caller weigh it beats silently
+dropping an entity that may be the only one carrying the relevant paper. For the same reason a disagreement is never
+raised as an error: it is a fact about how the index labelled something.
+
+Three consequences the contract makes explicit rather than leaving to be discovered:
+
+- The entity sets are not a partition. An allele-scoped entity's records are usually a subset of an rsID-scoped one's,
+  so one PMID arrives under several entities and neither the PMID lists nor the counts sum. Deduplicating before
+  counting anything is the caller's.
+- The census answers in PMIDs, not bibliographies: each entity carries its top-ranked PMIDs up to the request's budget,
+  beside the index's own total. Which of them deserve a bibliographic read is the caller's call, spent through
+  `FetchPubmedArticles`; an entity the fan-out ceiling dropped is re-asked by its id.
+- An empty answer is a fact about the index, not an error. A paper that names a variant in prose alone is indexed under
+  no entity at all, and is still reachable by keyword.
+
+Unioning those entities into one answer per variant, and merging what several sources say about one paper, both belong
+to a layer above this contract. The store's own metadata normalisation is where cross-source merging has the knowledge
+to happen: it sees every source's record for a paper against one `doc_id`, which is precisely what a discovery rpc,
+holding one index's answer, does not.
+
+### Absence is a statement; a fault is a status
+
+The failure vocabulary follows one rule: never let a transient failure look like a settled fact, and never let a settled
+fact look like a failure. Concretely:
+
+- An unknown `doc_id` on the rpcs that serve a paper is `NOT_FOUND` — a broken reference, not a fact about the store.
+- In the two per-id batches it is a per-entry `UNKNOWN_PAPER` instead, because aborting the batch would lose the answers
+  for every other entry.
+- A known paper with no servable text is a modelled *unavailable* result carrying its state, not an error.
+- A rendering the manifest lists but the store cannot produce is `INTERNAL`: the store has broken its own invariant, and
+  `NOT_FOUND` — a status the shared taxonomy never retries — would file that fault as a settled answer about the paper.
+  An object the paper simply lacks, or lists without having fetched it yet, stays `NOT_FOUND`.
+- A batch that is malformed or oversized is `INVALID_ARGUMENT` — answered whole or refused, never trimmed to fit, since
+  a silently dropped entry comes back looking exactly like an identifier nothing is indexed under.
+- A crosswalk that cannot be reached fails the whole call `UNAVAILABLE`; a deployment that wires none fails
+  `FAILED_PRECONDITION`. The distinction matters because gRPC's default policy retries `UNAVAILABLE`, and no number of
+  retries configures a database.
+- A bibliographic lookup's outcomes are statements about the record, never faults: a PMID nothing is indexed under is
+  named in the response rather than left to be noticed as an omission, one indexed as a Bookshelf citation — a
+  GeneReviews chapter — arrives as PubMed's own book record, `PubmedBookArticle`, beside the journal records, and a
+  record the index carries no abstract under still arrives whole. None is retryable within a run, and none is answered
+  by ingesting the paper: all are things the index says.
+
+The discovery adapters make no attempt to retry an upstream themselves; they place an upstream failure on the error
+taxonomy the evidence interfaces share ([`evidence-interfaces.md`](evidence-interfaces.md)), and the caller's retry
+helper owns backoff.
+
+### The agent's reach: typed calls through the hatch
+
+Exposure to the sandboxed agent is decided per proto file, and this file is not marked: its rpcs do not yet meet the
+condition [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) sets for one — most of them resolve no session at all,
+and `MaybeIngestPapers`, which resolves one, does so at its enqueue rather than at the door.
+
+The read surface is shaped for that agent regardless: the guest (the sandboxed process these calls would serve) has no
+network and no storage credentials, so once the file meets the condition, typed calls are its entire reach into the
+literature. That is also why the agent's read path is `GetMarkdown` rather than the store directly, even though
+`ResolveContent` already names the object:
+
+- the service owns canonical-rendering selection, the read budget, and readiness and provenance derivation; a raw object
+  read would re-derive all three inside the guest, where they could drift;
+- a read crosses the hatch (the sandbox's one channel out, a fixed allowlist of typed rpcs) and lands in the session's
+  event log, which is what makes it possible to see afterwards which papers a run relied on;
+- the location `ResolveContent` returns is useless in the guest by construction — nothing in the sandbox can follow it.
+
+The BFF path is the complement: it takes a location and serves the bytes to the browser itself. `ResolveContent` and
+`Locate` are useful only there, and file-level exposure would carry both into the guest's catalog anyway — catalogued
+noise, and the Open question at the end.
+
+Several channels in that reach do carry free text the agent composes: the keyword query, and the variant identifiers a
+search carries — a gene symbol, a coding or protein change, an entity id passed back from a listing. They are an
+accepted residual rather than a hole, because of the shape they are bounded to. Each crosses only as an encoded value on
+a fixed endpoint — a parameter's value or a single path segment — so what it can influence is which records or entities
+come back and nothing about where the request goes; there is no destination for it to name ([`security.md`](security.md)
+§What counts as an exfiltration channel). And the same typed, logged crossing that records which papers a run read
+records what it asked, so a string the agent composed is legible afterwards rather than an unobserved reach outward.
+
+The agent's working loop, in outline: discover or arrive with a PMID → through the door to a `doc_id` → read the
+markdown → save the served text verbatim in the workspace and quote only from that saved copy → validate every quote
+while authoring. A truncated read cannot anchor text past its cut even where the server-side check would pass it, which
+is exactly why the saved copy, and not the server, is the thing quotes are taken from. A paper the store cannot serve is
+reported, not worked around.
+
+### Citing a paper
+
+A working document's literature claims are anchored by two markdown directives the workbench renders:
+`:quote[doc_id, verbatim quote]` for a passage the run read, and `:paper[doc_id]` for reliance on a paper without
+resting the claim on any single passage. Clicking either reveals the paper in the document pane; a quote resolves live
+through `Locate` into a highlight, and one that does not locate renders as a warning rather than an error — a citation
+that has drifted is worth showing as drifted.
+
+The grammar is `doc_id`-keyed end to end, and that is what makes the door mandatory rather than a convenience: there is
+no directive spelling that names a PMID. Abstracts, database facts and specification text are stated in prose with no
+directive at all, because none of them has an anchor in the store a directive could resolve against.
+
+### Knowledge units: the layer above reading
+
+A run that reads a paper and cites it has answered one question, once. Above this interface sits the layer that makes
+such an answer reusable: a paper's full text is distilled into **knowledge units** — atomic assertions, each stripped of
+the source's phrasing, each citing the exact text in a rendering it was drawn from. One paper yields many. A unit is a
+claim together with the evidence for it, not a summary of a paper.
+
+What that buys is a question answered without opening anything. Asked whether there is functional evidence that a
+variant impairs a channel's function, the layer pulls the units bearing on that claim, judges each as supporting or
+refuting it, and returns a cited tally — four supporting reports and one conflicting, say — from facts already
+distilled. The reading surface comes back in for the next step: whoever wants to check the load-bearing report follows
+its citation into the source text, which resolves to a passage in a rendering through `Locate`, exactly as a working
+document's `:quote` directive does. So the layer above answers from facts, and this interface is what makes an answer
+verifiable against the paper.
+
+That is also why the two are separate layers rather than one interface. A knowledge unit is a fact, and facts cross
+Project and institutional lines, each keeping a citation that points at its source rather than copying it
+([`../PRODUCT.md`](../PRODUCT.md) §7); reaching the text a citation names is a separate step, taken against the store,
+under whatever access the reader has. Nothing above has to hold a paper to use what was read from it.
+
+Content-addressed renderings are what make a unit's citation permanent, which is why that property is load-bearing here
+rather than merely tidy. A unit outlives the run that extracted it, so its citation has to still mean something after a
+better converter has produced a new rendering of the same paper and a re-fetch has added a source revision. Because a
+rendering is identified by its own bytes, the one a unit cites cannot change under it: the citation resolves against
+exactly the text it was made against, or against nothing. For an anchor to record which rendering that was
+([`litcache-manifest.md`](litcache-manifest.md) §Quote-reference model), the read has to hand back its hash, and
+`PaperMarkdown` does not carry one yet; the field lands with the knowledge-unit layer that reads it.
+
+### Supplied papers are ordinary papers
+
+A paper the open-access route cannot serve enters the store through a human. Such papers accumulate in a **mirror**: a
+durable, maintained collection of PDFs obtained under institutional access, kept outside the store and outside anything
+this interface reaches. The route the design admits off that mirror is a **deposit**: per PDF, resolve its identifiers,
+mint or adopt its `doc_id`, write the PDF as an institutionally-captured source, and produce the same markdown rendering
+by the same converter every non-open-access paper gets. Nothing downstream then treats the result as a special case —
+the one thing that distinguishes it is the recorded access disposition, which surfaces as `SUPPLIED` text provenance.
+
+A deposit is idempotent by construction, so the whole mirror can be re-run safely: the mint adopts incumbents, every
+write is content-addressed, and an existing rendering short-circuits the conversion. It runs under the ingestion
+identity, not the service's, which is what keeps the evidence service read-only. So the mirror, not the bucket, is the
+authoritative copy: everything the store holds for such a paper derives from it, and recovery is re-running the deposit
+rather than restoring the bucket. No tooling in the tree drives a deposit yet.
+
+### Offline or real, never half of each
+
+Behind the servicer sits one port, however many places its answers come from: the live backend reads two sources, the
+full-text store and the live indexes. A **single** switch chooses live or fixture ([`services.md`](services.md); the
+interface is [`literature/`](../../themis/services/evidence/literature/)). A run is therefore entirely offline or
+entirely real. A switch per source would buy a mode nobody wants — real papers with invented search results, or the
+reverse — and would make a fixture run's results impossible to interpret.
+
+The live store adapter proves the bucket readable at startup by listing it, and exits if it cannot. A bucket the service
+cannot read would otherwise answer every request "no such paper", which is indistinguishable from a store that genuinely
+holds nothing — the one failure mode that would let a run conclude, quietly and wrongly, that the literature says
+nothing.
+
+## Alternatives considered
+
+- **One bibliographic record across the discovery rpcs**, whether a type invented to be common or `PubmedArticle`
+  borrowed for `SearchEuropePmc`'s hits. Rejected: both are mappings of a source's answer into a schema it did not
+  publish — see *A discovery rpc is a query against one named source*.
+- **Serving the PMID-keyed lookups from Europe PMC**, so the one index that answers search also answers the bibliography
+  behind the census and the batch fetch. Rejected: a PMID is PubMed's own key, efetch already serves a whole batch in
+  one call, and its record is the one the store embeds in a paper's canonical metadata — Europe PMC in that seat means a
+  second account of every paper across the service's own rpcs, and a batch lookup emulated through a search endpoint's
+  term disjunction. Europe PMC keeps the seat it earns: keyword search over open-access full text and preprints.
+- **Inline bibliographies on the variant census.** Rejected: filling records into `SearchLitVar`'s answer forces a
+  record budget shared across entities, and its truncation accounting — which entity's list was cut by budget rather
+  than by the index — is exactly the delicate part. The census in PMIDs keeps the budget per entity, and the caller —
+  who chooses which entities matter — spends the bibliographic read through `FetchPubmedArticles` on the PMIDs it
+  actually wants, at the price of one more call.
+- **Accepting external identifiers directly on the rpcs that serve a paper**, as an either-or in each request, instead
+  of a separate resolution step. Rejected: every one of those rpcs would then have to police an ambiguous request;
+  resolution has to happen explicitly anyway, since directives and saved copies are `doc_id`-keyed; and a dedicated rpc
+  is what confines the relational dependency to one method.
+- **Serving bytes rather than a location** from a single content rpc. Rejected: the guest consumes only text, publisher
+  PDFs routinely exceed the message budget, and the markdown rendering is the citable representation in any case. A
+  file-serving rpc can be added later if a need appears; declaring selectors that the rpc would refuse trades fail-loud
+  honesty for a symmetry nobody reads.
+- **A separate home for the variant-literature pair** — its own interface under `evidence-interfaces.md`'s
+  one-interface-per-source rule, or folded into the variant interface. Rejected: what it produces is literature, and a
+  two-rpc interface would buy a separation no consumer wants.
+- **Merging LitVar2's entities into one answer per variant.** Rejected: the merge would have to guess which entity is
+  the caller's, using exactly the labels the caller can see, and a wrong guess silently drops the papers under the
+  dropped entity. Reporting the disagreement costs the caller a decision and costs nobody a paper.
+- **A page cursor on the searches** — see *A search states its census instead of paging*.
+- **A status store for readiness, or producing text on a read** — rejected in
+  [`evidence-fulltext.md`](evidence-fulltext.md), and not restated here.
+
+## Open questions
+
+- **Exposure granularity to the guest.** Exposure is decided per proto file, so the guest's catalog would carry
+  `ResolveContent` and `Locate` — a storage location it cannot follow, and a UI reveal seam. Harmless noise; per-rpc
+  granularity would remove it, at the cost of a second place where exposure is decided.
+- **Surfacing retraction.** The manifest records a paper's retraction — flagged, never purged
+  ([`litcache-manifest.md`](litcache-manifest.md)) — but nothing on this read surface reports it, so a retracted paper
+  reads like any other and a run can cite it as live evidence. How the read surface and the citation directives carry
+  the flag needs a contract decision.

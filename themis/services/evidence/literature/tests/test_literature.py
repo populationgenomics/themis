@@ -81,7 +81,9 @@ def _run[T](
     """
 
     async def run() -> T:
-        servicer = servicer_mod.Servicer(backend or literature_backend.FixtureBackend(SEED), _session_resolver)
+        servicer = servicer_mod.Servicer(  # pyright: ignore[reportAbstractUsage]
+            backend or literature_backend.FixtureBackend(SEED), _session_resolver
+        )
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
         ) as channel:
@@ -448,7 +450,7 @@ def test_a_repeated_request_asks_again_and_lets_the_task_name_dedup() -> None:
     # many and scales to zero, so the only durable dedup is the task name. A servicer that remembered
     # would drop the second request of a caller whose first task has since been deleted.
     backend = _RecordingBackend(SEED)
-    servicer = servicer_mod.Servicer(backend, _session_resolver)
+    servicer = servicer_mod.Servicer(backend, _session_resolver)  # pyright: ignore[reportAbstractUsage]
     request = literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])
 
     async def run() -> None:

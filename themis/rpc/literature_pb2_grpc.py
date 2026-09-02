@@ -64,6 +64,31 @@ class LiteratureStub:
                 request_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
                 _registered_method=True)
+        self.GetMarkdown = channel.unary_unary(
+                '/themis.rpc.literature.Literature/GetMarkdown',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
+                _registered_method=True)
+        self.SearchEuropePmc = channel.unary_unary(
+                '/themis.rpc.literature.Literature/SearchEuropePmc',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.SearchEuropePmcRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.SearchEuropePmcResponse.FromString,
+                _registered_method=True)
+        self.FetchPubmedArticles = channel.unary_unary(
+                '/themis.rpc.literature.Literature/FetchPubmedArticles',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesResponse.FromString,
+                _registered_method=True)
+        self.SearchLitVar = channel.unary_unary(
+                '/themis.rpc.literature.Literature/SearchLitVar',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.SearchLitVarRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.SearchLitVarResponse.FromString,
+                _registered_method=True)
+        self.ListLitVarEntities = channel.unary_unary(
+                '/themis.rpc.literature.Literature/ListLitVarEntities',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesResponse.FromString,
+                _registered_method=True)
 
 
 class LiteratureServicer:
@@ -87,15 +112,22 @@ class LiteratureServicer:
 
     def Locate(self, request, context):
         """Locate a quote within a representation. NOT_FOUND for an unknown doc_id; FAILED_PRECONDITION
-        when the paper lacks the requested representation; a `not_located` result when the quote is
-        absent (not an error).
+        when the paper lacks the requested representation; INTERNAL when the rendering it must read is
+        listed but unreadable; a `not_located` result when the quote is absent (not an error). No
+        producer resolves a quote against a PDF yet, so the live store answers a `REPRESENTATION_PDF`
+        request UNIMPLEMENTED rather than the `not_located` that would read as the quote being absent
+        from the paper. The fixture resolves its seeded PDF quotes, in the provisional coordinate
+        space `Rect` states, so the pane's highlight path can be built offline.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Validate(self, request, context):
-        """Whether a quote locates in any representation — the agent's authoring-time check.
+        """Whether a quote locates in any representation — the agent's authoring-time check. An unknown
+        doc_id and an absent quote are both `ok=false` with a reason, not errors; INTERNAL when the
+        rendering it must read is listed but unreadable, since a store fault reported `ok=false` would
+        read as the quote failing to validate.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -134,6 +166,64 @@ class LiteratureServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetMarkdown(self, request, context):
+        """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
+        doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
+        produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
+        result for a known paper with no rendering at all (a fact about the store, not an error).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SearchEuropePmc(self, request, context):
+        """Search the live Europe PMC index by keyword and return matching bibliographic records. The
+        records are the index's, not the store's: a hit here says a paper exists, never that its text
+        is readable — `MaybeIngestPapers` is what says that. `total_matched` says how much of the
+        index's match the returned records cover; see `SearchEuropePmcResponse`.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FetchPubmedArticles(self, request, context):
+        """Fetch the PubMed record — abstract included — for each of a batch of PMIDs. The route from an
+        identifier to something readable where the store holds no full text: an abstract is often enough
+        to judge whether the work matters, and for a conference abstract it is the whole of what was
+        published. Answers with PubMed's own record whole, in the kind PubMed indexes the PMID under —
+        `pubmed.PubmedArticle` for a journal record, `pubmed.PubmedBookArticle` for a book record — the
+        record the store embeds in a paper's canonical metadata. It produces and ingests nothing —
+        `MaybeIngestPapers` is the one door into the full-text store. INVALID_ARGUMENT for a malformed,
+        empty or oversized batch.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SearchLitVar(self, request, context):
+        """Resolve a variant through LitVar2 and return every entity it reached, unmerged and labelled.
+        The index splits one variant across entities that share no record, so the answer is a candidate
+        set, not a list: each carries the index's own labels, an `agreement` verdict per identifier, its
+        whole record count, and its top-ranked PMIDs up to the `max_pmids_per_entity` budget.
+        Choosing among them, deduplicating a PMID that reaches several, and reading any of them through
+        `FetchPubmedArticles`, is the caller's. `entity_id` re-asks for one entity; `total_entities`
+        above `entities.size()` says the fan-out ceiling left candidates unexamined. See
+        `SearchLitVarResponse`.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListLitVarEntities(self, request, context):
+        """List the variant entities LitVar2 holds for a gene, most-published first, narrowed by `contains`
+        on the entity id. The route to an entity indexed under a name no current identifier constructs —
+        a superseded numbering, say — whose id then goes back through `SearchLitVar.entity_id` to list
+        its PMIDs. See `ListLitVarEntitiesResponse`.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_LiteratureServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -166,6 +256,31 @@ def add_LiteratureServicer_to_server(servicer, server):
                     servicer.MaybeIngestPapers,
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.SerializeToString,
+            ),
+            'GetMarkdown': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetMarkdown,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.SerializeToString,
+            ),
+            'SearchEuropePmc': grpc.unary_unary_rpc_method_handler(
+                    servicer.SearchEuropePmc,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.SearchEuropePmcRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.SearchEuropePmcResponse.SerializeToString,
+            ),
+            'FetchPubmedArticles': grpc.unary_unary_rpc_method_handler(
+                    servicer.FetchPubmedArticles,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesResponse.SerializeToString,
+            ),
+            'SearchLitVar': grpc.unary_unary_rpc_method_handler(
+                    servicer.SearchLitVar,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.SearchLitVarRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.SearchLitVarResponse.SerializeToString,
+            ),
+            'ListLitVarEntities': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListLitVarEntities,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -330,6 +445,141 @@ class Literature:
             '/themis.rpc.literature.Literature/MaybeIngestPapers',
             themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
             themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetMarkdown(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/GetMarkdown',
+            themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SearchEuropePmc(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/SearchEuropePmc',
+            themis_dot_rpc_dot_literature__pb2.SearchEuropePmcRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.SearchEuropePmcResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FetchPubmedArticles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/FetchPubmedArticles',
+            themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.FetchPubmedArticlesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SearchLitVar(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/SearchLitVar',
+            themis_dot_rpc_dot_literature__pb2.SearchLitVarRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.SearchLitVarResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListLitVarEntities(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/ListLitVarEntities',
+            themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.ListLitVarEntitiesResponse.FromString,
             options,
             channel_credentials,
             insecure,

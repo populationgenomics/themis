@@ -183,10 +183,6 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
             return literature_pb2.ValidateResponse(
                 ok=False, reason='no markdown rendering to validate against; PDF validation is not yet available'
             )
-        except literature_backend.MissingContentError as e:
-            return literature_pb2.ValidateResponse(
-                ok=False, reason=f'markdown rendering is missing (corpus fault): {e}'
-            )
         if offsets is None:
             return literature_pb2.ValidateResponse(ok=False, reason='quote not located in the markdown rendering')
         return literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
@@ -264,7 +260,7 @@ class LitcacheBackend(literature_backend.LiteratureBackend):
         rendering_hash, _ = paper.rendering
         markdown = self._download(f'{writer.paper_dir(doc_id)}/renderings/{rendering_hash}.md')
         if markdown is None:
-            raise literature_backend.MissingContentError(f'{doc_id} rendering {rendering_hash} is missing')
+            raise literature_backend.MissingRenderingBlobError(f'{doc_id} rendering {rendering_hash} is missing')
         return anchorite.locate_quote_span(markdown.decode('utf-8'), quote)
 
     def _download(self, name: str) -> bytes | None:

@@ -2,9 +2,9 @@
 
 Fully local — no BSR remote plugins:
 
-1. The upstream record schema our own protos embed is copied verbatim out of its published wheel
-   into the module, at the path the wheel's stub registers its descriptor under (``docs/design/proto.md``,
-   "Generated upstream schemas").
+1. The upstream record schemas our own protos embed are copied verbatim out of their published
+   wheels into the module, each at the path the wheel's stub registers its descriptor under
+   (``docs/design/proto.md``, "Generated upstream schemas").
 2. ``buf export`` materializes the protos + their ``buf.lock``-pinned deps (``buf/validate``)
    into a temp tree. This is a one-time, cached module fetch, not a repeated remote-plugin
    execution — so it is not subject to the remote-plugin rate limit.
@@ -43,6 +43,7 @@ import tempfile
 
 from clinvar_proto import clinvar_pb2
 from grpc_tools import protoc
+from pubmed_proto import pubmed_pb2
 
 from tools.schema import agent_exposed
 
@@ -50,33 +51,38 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # grpcio-tools' bundled well-known-type protos (descriptor.proto, timestamp.proto, …). The
 # protoc.main() API — unlike the `python -m grpc_tools.protoc` CLI — does not add this itself.
 _WELL_KNOWN = importlib.resources.files('grpc_tools') / '_proto'
-# ClinVar's record schema, module-relative. The `clinvar_proto` wheel publishes it together with the
-# stubs generated from it, and registers those stubs' descriptor under this same path.
-_WHEEL_PROTO = 'clinvar_proto/clinvar.proto'
+# The upstream record schemas our own protos embed, module-relative. Each wheel publishes its schema
+# together with the stubs generated from it, and registers those stubs' descriptor under this path.
+_WHEEL_PROTOS = {
+    'clinvar_proto/clinvar.proto': clinvar_pb2,
+    'pubmed_proto/pubmed.proto': pubmed_pb2,
+}
 
 
-def _copy_wheel_proto() -> None:
-    """Refresh the module's copy of ClinVar's record schema from the installed ``clinvar_proto`` wheel.
+def _copy_wheel_protos() -> None:
+    """Refresh the module's copies of the upstream record schemas from their installed wheels.
 
     Raises:
-        SystemExit: If the wheel ships no schema, or registers its stubs under a different path —
+        SystemExit: If a wheel ships no schema, or registers its stubs under a different path —
             protoc derives the generated import from the path, so a mismatch would compile our
             contract against a second registration of the same descriptor instead of the wheel's.
     """
-    if clinvar_pb2.DESCRIPTOR.name != _WHEEL_PROTO:
-        raise SystemExit(
-            f'clinvar_proto registers its descriptor as {clinvar_pb2.DESCRIPTOR.name!r}, not {_WHEEL_PROTO!r}; '
-            'the copy under schema/proto/ has to sit at the path the wheel registers'
-        )
-    source = importlib.resources.files('clinvar_proto') / 'clinvar.proto'
-    if not source.is_file():
-        raise SystemExit(
-            'the installed clinvar_proto ships no clinvar.proto; pin a release that publishes it '
-            '(pyproject, `codegen` and `evidence` groups)'
-        )
-    target = _REPO_ROOT / 'schema' / 'proto' / _WHEEL_PROTO
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(source.read_bytes())
+    for wheel_proto, stub in _WHEEL_PROTOS.items():
+        package, filename = wheel_proto.split('/')
+        if stub.DESCRIPTOR.name != wheel_proto:
+            raise SystemExit(
+                f'{package} registers its descriptor as {stub.DESCRIPTOR.name!r}, not {wheel_proto!r}; '
+                'the copy under schema/proto/ has to sit at the path the wheel registers'
+            )
+        source = importlib.resources.files(package) / filename
+        if not source.is_file():
+            raise SystemExit(
+                f'the installed {package} ships no {filename}; pin a release that publishes it '
+                '(pyproject, `codegen` and `evidence` groups)'
+            )
+        target = _REPO_ROOT / 'schema' / 'proto' / wheel_proto
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
 
 
 def _protoc(include: pathlib.Path, protos: list[str], *, grpc: bool) -> None:
@@ -121,8 +127,8 @@ def main() -> int:
     # Compile the module once: the descriptor set both selects the service-bearing protos for the gRPC pass
     # (a proto that declares no service — a data or options proto — gets no `_pb2_grpc.py`) and drives the
     # agent-exposure surface below.
-    print('schema/regen: upstream record schema (clinvar_proto wheel)')
-    _copy_wheel_proto()
+    print('schema/regen: upstream record schemas (clinvar_proto, pubmed_proto wheels)')
+    _copy_wheel_protos()
 
     image = agent_exposed.build_image()
     service_files = agent_exposed.service_files(image)
@@ -134,9 +140,9 @@ def main() -> int:
         protos = sorted(str(p.relative_to(export)) for p in export.rglob('*.proto'))
 
         print('schema/regen: python message + pyi stubs (all protos + used deps)')
-        # The copied schema is compiled as a dependency but not generated for: the wheel's own
-        # `clinvar_pb2` is the module our contract's stubs import, and a second one here would shadow it.
-        _protoc(export, [p for p in protos if p != _WHEEL_PROTO], grpc=False)
+        # The copied schemas are compiled as dependencies but not generated for: each wheel's own
+        # `*_pb2` is the module our contract's stubs import, and a second one here would shadow it.
+        _protoc(export, [p for p in protos if p not in _WHEEL_PROTOS], grpc=False)
 
         services = [p for p in protos if p in service_files]
         print('schema/regen: grpc stubs (service protos)')

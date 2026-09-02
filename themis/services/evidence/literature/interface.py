@@ -26,4 +26,7 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
             that is not a cost an unauthorized caller may incur.
     """
     backend = config.backend_from_env(deps.stack)
-    literature_pb2_grpc.add_LiteratureServicer_to_server(servicer.Servicer(backend, deps.session_resolver), server)
+    # mypy-protobuf marks every rpc on the generated base abstract; a servicer implementing a subset is
+    # legal, and the base answers the rest with UNIMPLEMENTED.
+    literature_servicer = servicer.Servicer(backend, deps.session_resolver)  # pyright: ignore[reportAbstractUsage]
+    literature_pb2_grpc.add_LiteratureServicer_to_server(literature_servicer, server)

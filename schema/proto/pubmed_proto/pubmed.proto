@@ -1,0 +1,518 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+package pubmed;
+message Abstract {
+  repeated AbstractText abstract_text = 1;
+  optional string copyright_information = 2;
+}
+message AbstractText {
+  enum NlmCategory {
+    NLM_CATEGORY_UNSPECIFIED = 0;
+    NLM_CATEGORY_BACKGROUND = 1;
+    NLM_CATEGORY_OBJECTIVE = 2;
+    NLM_CATEGORY_METHODS = 3;
+    NLM_CATEGORY_RESULTS = 4;
+    NLM_CATEGORY_CONCLUSIONS = 5;
+    NLM_CATEGORY_UNASSIGNED = 6;
+  }
+  optional string label = 1;
+  optional NlmCategory nlm_category = 2;
+  optional string value = 3;
+}
+message AffiliationInfo {
+  string affiliation = 1;
+  repeated Identifier identifier = 2;
+}
+message Article {
+  enum PubModel {
+    PUB_MODEL_UNSPECIFIED = 0;
+    PUB_MODEL_PRINT = 1;
+    PUB_MODEL_PRINT_ELECTRONIC = 2;
+    PUB_MODEL_ELECTRONIC = 3;
+    PUB_MODEL_ELECTRONIC_PRINT = 4;
+    PUB_MODEL_ELECTRONIC_E_COLLECTION = 5;
+  }
+  PubModel pub_model = 1;
+  Journal journal = 2;
+  ArticleTitle article_title = 3;
+  repeated ElocationId elocation_id = 4;
+  Abstract abstract = 6;
+  AuthorList author_list = 7;
+  GrantList grant_list = 8;
+  repeated PublicationType publication_type_list = 9;
+}
+message ArticleId {
+  enum IdType {
+    ID_TYPE_UNSPECIFIED = 0;
+    ID_TYPE_DOI = 1;
+    ID_TYPE_PII = 2;
+    ID_TYPE_PMCPID = 3;
+    ID_TYPE_PMPID = 4;
+    ID_TYPE_PMC = 5;
+    ID_TYPE_MID = 6;
+    ID_TYPE_SICI = 7;
+    ID_TYPE_PUBMED = 8;
+    ID_TYPE_MEDLINE = 9;
+    ID_TYPE_PMCID = 10;
+    ID_TYPE_PMCBOOK = 11;
+    ID_TYPE_BOOKACCESSION = 12;
+  }
+  optional IdType id_type = 1;
+  optional string value = 2;
+}
+message ArticleTitle {
+  optional string book = 1;
+  optional string sec = 2;
+  optional string part = 3;
+  optional string value = 4;
+}
+message Author {
+  optional bool valid_yn = 1;
+  optional bool equal_contrib = 2;
+  string last_name = 3;
+  optional string fore_name = 4;
+  optional string initials = 5;
+  optional string suffix = 6;
+  CollectiveName collective_name = 7;
+  repeated Identifier identifier = 8;
+  repeated AffiliationInfo affiliation_info = 9;
+}
+message AuthorList {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_AUTHORS = 1;
+    TYPE_EDITORS = 2;
+  }
+  optional bool complete_yn = 1;
+  optional Type type = 2;
+  repeated Author author = 3;
+}
+message Book {
+  Publisher publisher = 1;
+  BookTitle book_title = 2;
+  google.protobuf.Timestamp pub_date = 3;
+  google.protobuf.Timestamp beginning_date = 4;
+  google.protobuf.Timestamp ending_date = 5;
+  repeated AuthorList author_list = 6;
+  optional string volume = 7;
+  optional string volume_title = 8;
+  optional string edition = 9;
+  CollectionTitle collection_title = 10;
+  repeated string isbn = 11;
+  repeated ElocationId elocation_id = 12;
+  optional string medium = 13;
+  optional string report_number = 14;
+}
+message BookDocument {
+  Pmid pmid = 1;
+  repeated ArticleId article_id_list = 2;
+  Book book = 3;
+  repeated LocationLabel location_label = 4;
+  ArticleTitle article_title = 5;
+  repeated AuthorList author_list = 6;
+  repeated PublicationType publication_type = 7;
+  Abstract abstract = 8;
+  repeated Section sections = 9;
+  repeated KeywordList keyword_list = 10;
+  google.protobuf.Timestamp contribution_date = 11;
+  google.protobuf.Timestamp date_revised = 12;
+  GrantList grant_list = 13;
+  repeated ItemList item_list = 14;
+  repeated Reference reference_list = 15;
+}
+message BookTitle {
+  optional string book = 1;
+  optional string sec = 2;
+  optional string part = 3;
+  optional string value = 4;
+}
+message Chemical {
+  string registry_number = 1;
+  NameOfSubstance name_of_substance = 2;
+}
+message Citation {
+  optional string value = 1;
+}
+message CollectionTitle {
+  optional string book = 1;
+  optional string sec = 2;
+  optional string part = 3;
+  optional string value = 4;
+}
+message CollectiveName {
+  optional string investigators = 1;
+  optional string value = 2;
+}
+message CommentsCorrections {
+  enum RefType {
+    REF_TYPE_UNSPECIFIED = 0;
+    REF_TYPE_ASSOCIATED_DATASET = 1;
+    REF_TYPE_ASSOCIATED_PUBLICATION = 2;
+    REF_TYPE_COMMENT_IN = 3;
+    REF_TYPE_COMMENT_ON = 4;
+    REF_TYPE_CORRECTEDAND_REPUBLISHED_IN = 5;
+    REF_TYPE_CORRECTEDAND_REPUBLISHED_FROM = 6;
+    REF_TYPE_ERRATUM_IN = 7;
+    REF_TYPE_ERRATUM_FOR = 8;
+    REF_TYPE_EXPRESSION_OF_CONCERN_IN = 9;
+    REF_TYPE_EXPRESSION_OF_CONCERN_FOR = 10;
+    REF_TYPE_REPUBLISHED_IN = 11;
+    REF_TYPE_REPUBLISHED_FROM = 12;
+    REF_TYPE_RETRACTEDAND_REPUBLISHED_IN = 13;
+    REF_TYPE_RETRACTEDAND_REPUBLISHED_FROM = 14;
+    REF_TYPE_RETRACTION_IN = 15;
+    REF_TYPE_RETRACTION_OF = 16;
+    REF_TYPE_UPDATE_IN = 17;
+    REF_TYPE_UPDATE_OF = 18;
+    REF_TYPE_SUMMARY_FOR_PATIENTS_IN = 19;
+    REF_TYPE_ORIGINAL_REPORT_IN = 20;
+    REF_TYPE_REPRINT_IN = 21;
+    REF_TYPE_REPRINT_OF = 22;
+    REF_TYPE_CITES = 23;
+  }
+  RefType ref_type = 1;
+  string ref_source = 2;
+  Pmid pmid = 3;
+  optional string note = 4;
+}
+message DataBank {
+  string data_bank_name = 1;
+  repeated string accession_number_list = 2;
+}
+message DescriptorName {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_GEOGRAPHIC = 1;
+  }
+  enum AutoHm {
+    AUTO_HM_UNSPECIFIED = 0;
+    AUTO_HM_Y = 1;
+  }
+  optional bool major_topic_yn = 1;
+  string ui = 2;
+  optional Type type = 3;
+  optional AutoHm auto_hm = 4;
+}
+message ElocationId {
+  enum EidType {
+    EID_TYPE_UNSPECIFIED = 0;
+    EID_TYPE_DOI = 1;
+    EID_TYPE_PII = 2;
+  }
+  EidType eid_type = 1;
+  optional bool valid_yn = 2;
+  optional string value = 3;
+}
+message Grant {
+  optional string grant_id = 1;
+  optional string acronym = 2;
+  string agency = 3;
+  optional string country = 4;
+}
+message GrantList {
+  optional bool complete_yn = 1;
+  repeated Grant grant = 2;
+}
+message Issn {
+  enum IssnType {
+    ISSN_TYPE_UNSPECIFIED = 0;
+    ISSN_TYPE_ELECTRONIC = 1;
+    ISSN_TYPE_PRINT = 2;
+  }
+  IssnType issn_type = 1;
+  optional string value = 2;
+}
+message Identifier {
+  string source = 1;
+  optional string value = 2;
+}
+message Investigator {
+  optional bool valid_yn = 1;
+  string last_name = 2;
+  optional string fore_name = 3;
+  optional string initials = 4;
+  optional string suffix = 5;
+  repeated Identifier identifier = 6;
+  repeated AffiliationInfo affiliation_info = 7;
+}
+message ItemList {
+  string list_type = 1;
+  repeated string item = 2;
+}
+message Journal {
+  Issn issn = 1;
+  JournalIssue journal_issue = 2;
+  optional string title = 3;
+  optional string isoabbreviation = 4;
+}
+message JournalIssue {
+  enum CitedMedium {
+    CITED_MEDIUM_UNSPECIFIED = 0;
+    CITED_MEDIUM_INTERNET = 1;
+    CITED_MEDIUM_PRINT = 2;
+  }
+  CitedMedium cited_medium = 1;
+  optional string volume = 2;
+  optional string issue = 3;
+  google.protobuf.Timestamp pub_date = 4;
+}
+message Keyword {
+  optional bool major_topic_yn = 1;
+  optional string value = 2;
+}
+message KeywordList {
+  enum Owner {
+    OWNER_UNSPECIFIED = 0;
+    OWNER_NLM = 1;
+    OWNER_NLM_AUTO = 2;
+    OWNER_NASA = 3;
+    OWNER_PIP = 4;
+    OWNER_KIE = 5;
+    OWNER_NOTNLM = 6;
+    OWNER_HHS = 7;
+  }
+  optional Owner owner = 1;
+  repeated Keyword keyword = 2;
+}
+message LocationLabel {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_PART = 1;
+    TYPE_CHAPTER = 2;
+    TYPE_SECTION = 3;
+    TYPE_APPENDIX = 4;
+    TYPE_FIGURE = 5;
+    TYPE_TABLE = 6;
+    TYPE_BOX = 7;
+  }
+  optional Type type = 1;
+  optional string value = 2;
+}
+message MedlineCitation {
+  enum Owner {
+    OWNER_UNSPECIFIED = 0;
+    OWNER_NLM = 1;
+    OWNER_NASA = 2;
+    OWNER_PIP = 3;
+    OWNER_KIE = 4;
+    OWNER_HSR = 5;
+    OWNER_HMD = 6;
+    OWNER_NOTNLM = 7;
+  }
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_COMPLETED = 1;
+    STATUS_IN_PROCESS = 2;
+    STATUS_PUB_MED_NOT_MEDLINE = 3;
+    STATUS_IN_DATA_REVIEW = 4;
+    STATUS_PUBLISHER = 5;
+    STATUS_MEDLINE = 6;
+    STATUS_OLDMEDLINE = 7;
+  }
+  optional Owner owner = 1;
+  optional string indexing_method = 2;
+  optional string version_date = 3;
+  optional string version_id = 4;
+  Status status = 5;
+  Pmid pmid = 6;
+  google.protobuf.Timestamp date_revised = 7;
+  Article article = 8;
+  repeated MeshHeading mesh_heading_list = 9;
+  repeated OtherId other_id = 10;
+  repeated KeywordList keyword_list = 11;
+}
+message MeshHeading {
+  DescriptorName descriptor_name = 1;
+  repeated QualifierName qualifier_name = 2;
+}
+message NameOfSubstance {
+  string ui = 1;
+  optional string value = 2;
+}
+message Object {
+  string type = 1;
+  repeated Param param = 2;
+}
+message OtherId {
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    SOURCE_NASA = 1;
+    SOURCE_KIE = 2;
+    SOURCE_PIP = 3;
+    SOURCE_POP = 4;
+    SOURCE_ARPL = 5;
+    SOURCE_CPC = 6;
+    SOURCE_IND = 7;
+    SOURCE_CPFH = 8;
+    SOURCE_CLML = 9;
+    SOURCE_NRCBL = 10;
+    SOURCE_NLM = 11;
+    SOURCE_QCIM = 12;
+  }
+  Source source = 1;
+  optional string value = 2;
+}
+message Pmid {
+  string version = 1;
+  optional string value = 2;
+}
+message Param {
+  string name = 1;
+  optional string value = 2;
+}
+message PersonalNameSubject {
+  string last_name = 1;
+  optional string fore_name = 2;
+  optional string initials = 3;
+  optional string suffix = 4;
+}
+message PubMedPubDate {
+  enum PubStatus {
+    PUB_STATUS_UNSPECIFIED = 0;
+    PUB_STATUS_RECEIVED = 1;
+    PUB_STATUS_ACCEPTED = 2;
+    PUB_STATUS_EPUBLISH = 3;
+    PUB_STATUS_PPUBLISH = 4;
+    PUB_STATUS_REVISED = 5;
+    PUB_STATUS_AHEADOFPRINT = 6;
+    PUB_STATUS_RETRACTED = 7;
+    PUB_STATUS_ECOLLECTION = 8;
+    PUB_STATUS_PMC = 9;
+    PUB_STATUS_PMCR = 10;
+    PUB_STATUS_PUBMED = 11;
+    PUB_STATUS_PUBMEDR = 12;
+    PUB_STATUS_PREMEDLINE = 13;
+    PUB_STATUS_MEDLINE = 14;
+    PUB_STATUS_MEDLINER = 15;
+    PUB_STATUS_ENTREZ = 16;
+    PUB_STATUS_PMC_RELEASE = 17;
+  }
+  PubStatus pub_status = 1;
+  string year = 2;
+  string month = 3;
+  string day = 4;
+  optional string hour = 5;
+  optional string minute = 6;
+  optional string second = 7;
+}
+message PublicationType {
+  string ui = 1;
+  optional string value = 2;
+}
+message Publisher {
+  string publisher_name = 1;
+  optional string publisher_location = 2;
+}
+message PubmedArticle {
+  MedlineCitation medline_citation = 1;
+  PubmedData pubmed_data = 2;
+}
+message PubmedArticleSet {
+  repeated PubmedArticle pubmed_article = 1;
+  repeated PubmedBookArticle pubmed_book_article = 2;
+}
+message PubmedBookArticle {
+  BookDocument book_document = 1;
+  PubmedBookData pubmed_book_data = 2;
+}
+message PubmedBookData {
+  string publication_status = 1;
+  repeated ArticleId article_id_list = 2;
+}
+message PubmedData {
+  string publication_status = 1;
+  repeated ArticleId article_id_list = 2;
+  repeated Reference reference_list = 3;
+}
+message QualifierName {
+  optional DescriptorName.AutoHm auto_hm = 1;
+  string ui = 2;
+  optional bool major_topic_yn = 3;
+}
+message Reference {
+  Citation citation = 1;
+  repeated ArticleId article_id_list = 2;
+}
+message Section {
+  LocationLabel location_label = 1;
+  SectionTitle section_title = 2;
+  repeated Section section = 3;
+}
+message SectionTitle {
+  optional string book = 1;
+  optional string sec = 2;
+  optional string part = 3;
+  optional string value = 4;
+}
+message SupplMeshName {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_DISEASE = 1;
+    TYPE_PROTOCOL = 2;
+    TYPE_ORGANISM = 3;
+    TYPE_ANATOMY = 4;
+    TYPE_POPULATION = 5;
+  }
+  Type type = 1;
+  string ui = 2;
+  optional string value = 3;
+}
+message Url {
+  enum Lang {
+    LANG_UNSPECIFIED = 0;
+    LANG_AF = 1;
+    LANG_AR = 2;
+    LANG_AZ = 3;
+    LANG_BG = 4;
+    LANG_CS = 5;
+    LANG_DA = 6;
+    LANG_DE = 7;
+    LANG_EN = 8;
+    LANG_EL = 9;
+    LANG_ES = 10;
+    LANG_FA = 11;
+    LANG_FI = 12;
+    LANG_FR = 13;
+    LANG_HE = 14;
+    LANG_HU = 15;
+    LANG_HY = 16;
+    LANG_IN = 17;
+    LANG_IS = 18;
+    LANG_IT = 19;
+    LANG_IW = 20;
+    LANG_JA = 21;
+    LANG_KA = 22;
+    LANG_KO = 23;
+    LANG_LT = 24;
+    LANG_MK = 25;
+    LANG_ML = 26;
+    LANG_NL = 27;
+    LANG_NO = 28;
+    LANG_PL = 29;
+    LANG_PT = 30;
+    LANG_PS = 31;
+    LANG_RO = 32;
+    LANG_RU = 33;
+    LANG_SL = 34;
+    LANG_SK = 35;
+    LANG_SQ = 36;
+    LANG_SR = 37;
+    LANG_SV = 38;
+    LANG_SW = 39;
+    LANG_TH = 40;
+    LANG_TR = 41;
+    LANG_UK = 42;
+    LANG_VI = 43;
+    LANG_ZH = 44;
+  }
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_FULL_TEXT = 1;
+    TYPE_SUMMARY = 2;
+    TYPE_FULLTEXT = 3;
+    TYPE_SUMMARY_4 = 4;
+  }
+  optional Lang lang = 1;
+  optional Type type = 2;
+  optional string value = 3;
+}

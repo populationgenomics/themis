@@ -56,9 +56,9 @@ protoc = ["grpcio-tools"]
 # mypy-protobuf supplies protoc-gen-mypy_grpc for the _pb2_grpc.pyi protoc does not emit; it is
 # resolved off PATH, never imported. Its types-protobuf dep installs as `google-stubs`, which pyright
 # resolves ahead of the pinned protobuf wheel's own .pyi — so `lint` takes `protoc` alone. clinvar_proto
-# is imported: regen copies the ClinVar record's .proto out of the wheel into the buf module, so the
-# same pin that fixes the runtime stubs fixes the schema they are generated against.
-codegen = ["mypy-protobuf", "clinvar_proto==0.1.0", { include-group = "protoc" }]
+# and pubmed_proto are imported: regen copies each record's .proto out of its wheel into the buf module,
+# so the same pin that fixes the runtime stubs fixes the schema they are generated against.
+codegen = ["mypy-protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", { include-group = "protoc" }]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
@@ -139,10 +139,10 @@ sheaf = ["google-cloud-storage"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
-# id_token + the store stubs (the worker's own checkpoint client). clinvar_proto: the clinvar contract
-# embeds the upstream record schema, so the hatch's forwarder imports the wheel's message module through
-# the generated stub.
-sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", { include-group = "session" }]
+# id_token + the store stubs (the worker's own checkpoint client). clinvar_proto and pubmed_proto: the
+# clinvar and literature contracts embed the upstream record schemas, so importing the generated stubs
+# pulls in the wheels' message modules.
+sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", { include-group = "session" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
 # protobuf backs the shipped stubs, and clinvar_proto the upstream record schema the clinvar stub imports —

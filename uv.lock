@@ -3505,6 +3505,7 @@ codegen = [
     { name = "clinvar-proto" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
+    { name = "pubmed-proto" },
 ]
 convert-worker = [
     { name = "aiohttp" },
@@ -3649,6 +3650,7 @@ sandbox-worker = [
     { name = "grpcio" },
     { name = "postern", extra = ["grpc"] },
     { name = "protobuf" },
+    { name = "pubmed-proto" },
     { name = "requests" },
 ]
 screen = [
@@ -3738,6 +3740,7 @@ codegen = [
     { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
 ]
 convert-worker = [
     { name = "aiohttp" },
@@ -3880,6 +3883,7 @@ sandbox-worker = [
     { name = "grpcio" },
     { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "protobuf" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "requests" },
 ]
 screen = [{ name = "pyyaml" }]

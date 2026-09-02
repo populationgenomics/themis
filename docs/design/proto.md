@@ -105,7 +105,8 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
   themis/litcache/models/         # at-rest domain contracts (the manifest)
-  clinvar_proto/                  # a copy of an upstream's published schema (below)
+  clinvar_proto/                  # copy of an upstream's published schema (below)
+  pubmed_proto/                   # copy of an upstream's published schema (below)
 buf.yaml                          # module, lint rules, buf breaking config, deps
 buf.lock                          # pinned buf deps (protovalidate)
 apps/web/buf.gen.yaml             # protobuf-es (local protoc-gen-es plugin)
@@ -118,13 +119,13 @@ Generated (committed, never hand-edited): `themis/<pkg>/*_pb2.py` + `.pyi` (+ `*
 
 `tools/schema/regen.py` generates locally — no remote plugins:
 
-| Stage           | Tool                                     | Output                                                        |
-| --------------- | ---------------------------------------- | ------------------------------------------------------------- |
-| Upstream copy   | the pinned `clinvar-proto` wheel         | `schema/proto/clinvar_proto/clinvar.proto`                    |
-| Python messages | `grpcio-tools` protoc (`--python/--pyi`) | `themis/**/*_pb2.py` + `.pyi`; `buf/validate/validate_pb2.py` |
-| gRPC stubs      | `grpcio-tools` protoc (`--grpc_python`)  | `themis/rpc/*_pb2_grpc.py` (service protos only)              |
-| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc` | `themis/rpc/*_pb2_grpc.pyi` (service protos only)             |
-| protobuf-es     | local `protoc-gen-es` via `buf generate` | `apps/web/src/gen/**/*_pb.ts`                                 |
+| Stage           | Tool                                                 | Output                                                                               |
+| --------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Upstream copy   | the pinned `clinvar-proto` and `pubmed-proto` wheels | `schema/proto/clinvar_proto/clinvar.proto`, `schema/proto/pubmed_proto/pubmed.proto` |
+| Python messages | `grpcio-tools` protoc (`--python/--pyi`)             | `themis/**/*_pb2.py` + `.pyi`; `buf/validate/validate_pb2.py`                        |
+| gRPC stubs      | `grpcio-tools` protoc (`--grpc_python`)              | `themis/rpc/*_pb2_grpc.py` (service protos only)                                     |
+| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc`             | `themis/rpc/*_pb2_grpc.pyi` (service protos only)                                    |
+| protobuf-es     | local `protoc-gen-es` via `buf generate`             | `apps/web/src/gen/**/*_pb.ts`                                                        |
 
 `buf export` first materializes the protos + the `buf.lock`-pinned `buf/validate` dep into a temp tree (a cached module
 fetch, not a remote-plugin call); `grpcio-tools`' protoc runs over it, its bundled protoc pinning the generated-code
@@ -218,22 +219,34 @@ The Python pass generates nothing for the copy, for the same reason; the web tie
 generates from it like any other proto. The freshness gate catches both ways the copy can go stale: a hand edit, and a
 pin bumped without a regeneration.
 
-Only a type our own protos embed needs a copy. `pubmed-proto` gets none: no message of ours has a field of that type —
-the litcache reads a stored citation through the wheel's stubs directly.
+Only a type our own protos embed needs a copy: `clinvar_proto/clinvar.proto` (the record `themis/rpc/clinvar.proto`
+embeds) and `pubmed_proto/pubmed.proto` (the records `themis/rpc/literature.proto` embeds).
 
-Four properties a reader has to know, because the copy does not behave like the hand-authored protos beside it:
+Two properties hold for every copy, because it does not behave like the hand-authored protos beside it:
 
 - **Never hand-edited**, like every other generated artifact here — it is the wheel's file byte for byte, rewritten by
   every regeneration.
-- **Field numbers are positional**, assigned by the generator in document order. A pin bump is therefore a coordinated
-  wholesale rewrite of the file, not the additive evolution the [Schema evolution](#schema-evolution) rules describe:
-  numbers move, and no reservation can make them stable.
-- **`buf breaking` does not bind it**, which is what makes that acceptable: the copy sits on the pre-release exclusion
-  list (`tools/schema/buf_compat.py`) permanently rather than until it stabilizes, since the instability is the
-  generator's design and not a phase it grows out of.
-- **The message is never persisted and never round-tripped.** It carries an upstream payload in flight, inside one rpc
-  response, and both ends of that call ship together. Nothing reads a stored copy of it, so a renumbering breaks no
-  reader — the condition the two rules above rest on, and the one to re-check before any new use of this bucket.
+- **Field numbers are positional**, assigned by the generator in document order. A pin bump can therefore be a
+  coordinated wholesale rewrite of the file, not the additive evolution the [Schema evolution](#schema-evolution) rules
+  describe: numbers move, and no reservation can make them stable.
+
+What that instability costs depends on what depends on the copy, and the two differ:
+
+- **ClinVar's message is never persisted and never round-tripped.** It carries an upstream payload in flight, inside one
+  rpc response, and both ends of that call ship together. Nothing reads a stored copy of it, so a renumbering breaks no
+  reader — which is why its copy sits on the pre-release exclusion list (`tools/schema/buf_compat.py`) permanently,
+  unbound by `buf breaking`.
+- **PubMed's message is at rest**: litcache's `metadata.pb` is a serialized `PubmedArticle`, so a renumbering would
+  already corrupt every stored record — the schema's stability was load-bearing before any rpc embedded it. Its copy is
+  therefore *inside* the compared module (it cannot be pre-release listed anyway: the released `literature.proto`
+  imports it, and listing unlinks a file from the build), and the compat gate refusing an incompatible pin bump is the
+  store's own constraint made visible. The wheel is first-party, so holding its releases additive is ours to do. The
+  copy enters the module at 0.3.0, whose `MedlineCitation` is renumbered relative to 0.1.0's. That one reshape is
+  accepted: the dev corpus's `metadata.pb` is re-serialised from source for it, and the gate binds from the copy's first
+  release onward.
+
+Whether the embedded message is persisted is the one thing to re-check before any new use of this bucket: it decides
+which of the two regimes the copy lands in.
 
 ## Schema evolution
 

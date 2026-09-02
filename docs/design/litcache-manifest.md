@@ -1,7 +1,7 @@
 # Design: litcache manifest — per-source revisions, content-addressed renderings, the quote-reference model
 
 **Status:** current **Related:** [`proto.md`](proto.md) (serialization + the litcache proto),
-[`literature-evidence-layer.md`](literature-evidence-layer.md) §2 (the cache),
+[`literature-evidence-layer.md`](literature-evidence-layer.md) (the full-text store and the interface that serves it),
 [`../plans/literature-cache.md`](../plans/literature-cache.md) (the S0 build plan).
 
 ## Overview

@@ -3,8 +3,10 @@
 Subclasses the generated ``themis.rpc.literature_pb2_grpc.LiteratureServicer`` (the forced interface),
 delegating to the injected backend and mapping its typed failures to transport status codes:
 an unknown doc_id is NOT_FOUND, a missing selected object is NOT_FOUND, a requested representation
-the paper lacks is FAILED_PRECONDITION, and an unset selector / unspecified representation is
-INVALID_ARGUMENT. A quote that does not locate is a modelled ``not_located`` result, not an error.
+the paper lacks is FAILED_PRECONDITION, an unset selector / unspecified representation is
+INVALID_ARGUMENT, a rendering the manifest lists but the store cannot produce is INTERNAL (the store
+broke its own invariant), and a quote against a PDF is UNIMPLEMENTED while no producer resolves one.
+A quote that does not locate is a modelled ``not_located`` result, not an error.
 
 ``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: the papers it resolves
 to PENDING get a conversion requested through the backend, so its failures split three ways — retry
@@ -82,15 +84,17 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
         except literature_backend.PdfLocationUnavailableError as e:
             await context.abort(grpc.StatusCode.UNIMPLEMENTED, str(e))
-        except literature_backend.MissingContentError as e:
-            await context.abort(grpc.StatusCode.NOT_FOUND, str(e))
+        except literature_backend.MissingRenderingBlobError as e:
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
     @override
     async def Validate(
         self, request: literature_pb2.ValidateRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.ValidateResponse:
-        del context  # required by the servicer interface; Validate never aborts
-        return await self._backend.validate(request.doc_id, request.quote)
+        try:
+            return await self._backend.validate(request.doc_id, request.quote)
+        except literature_backend.MissingRenderingBlobError as e:
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
     @override
     async def PollFullTexts(

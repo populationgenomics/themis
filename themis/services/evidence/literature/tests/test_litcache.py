@@ -321,7 +321,7 @@ def _run_over_grpc[T](
     """Drive one read against a real in-process server, over a resolver the read may not reach."""
 
     async def run() -> T:
-        servicer = servicer_mod.Servicer(_backend(bucket), _unreachable_resolver)
+        servicer = servicer_mod.Servicer(_backend(bucket), _unreachable_resolver)  # pyright: ignore[reportAbstractUsage]
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
         ) as channel:
@@ -375,9 +375,10 @@ def test_source_by_format_picks_the_newest_pdf_lineage_and_skips_revision_less()
     assert litcache_backend._source_by_format(only_empty, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF) is None
 
 
-def test_locate_maps_a_missing_rendering_blob_to_not_found(gcs_bucket: storage.Bucket) -> None:
+def test_locate_maps_a_missing_rendering_blob_to_internal(gcs_bucket: storage.Bucket) -> None:
     # The manifest lists a rendering hash whose `.md` blob is absent (partial write / lifecycle-deleted):
-    # MissingContentError must surface as NOT_FOUND, not an UNKNOWN unexpected-exception.
+    # the store broke its own invariant, so this is INTERNAL — not an UNKNOWN unexpected-exception, and
+    # not the NOT_FOUND that would file a fault as an answer about the paper.
     rendering_hash = _seed_paper(gcs_bucket)
     gcs_bucket.blob(f'papers/{_DOC}/renderings/{rendering_hash}.md').delete()
     with pytest.raises(grpc.aio.AioRpcError) as exc:
@@ -389,16 +390,17 @@ def test_locate_maps_a_missing_rendering_blob_to_not_found(gcs_bucket: storage.B
                 )
             ),
         )
-    assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
 
 
-def test_validate_reports_a_missing_rendering_blob_as_a_fault(gcs_bucket: storage.Bucket) -> None:
-    # A rendering hash whose .md blob is absent is a corpus fault, distinct from the benign no-rendering case.
+def test_validate_aborts_on_a_missing_rendering_blob_rather_than_answering(gcs_bucket: storage.Bucket) -> None:
+    # A rendering hash whose .md blob is absent is a store fault, not a verdict on the quote: answering
+    # ok=false would tell an agent its citation is bad and send it to rewrite a quote that is fine.
     rendering_hash = _seed_paper(gcs_bucket)
     gcs_bucket.blob(f'papers/{_DOC}/renderings/{rendering_hash}.md').delete()
-    result = asyncio.run(_backend(gcs_bucket).validate(_DOC, _QUOTE))
-    assert result.ok is False
-    assert 'missing' in result.reason
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_over_grpc(gcs_bucket, lambda s: s.Validate(literature_pb2.ValidateRequest(doc_id=_DOC, quote=_QUOTE)))
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
 
 
 def test_full_text_readiness_over_the_litcache_layout(gcs_bucket: storage.Bucket) -> None:
