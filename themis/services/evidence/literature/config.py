@@ -1,11 +1,13 @@
-"""The literature interface's environment contract: ``THEMIS_LITERATURE_*`` to a backend.
+"""The literature interface's environment contract: ``THEMIS_LITERATURE_*`` to its backend.
 
 ``THEMIS_LITERATURE_BACKEND`` selects the adapter (required — no silent default): ``fixture``
-(in-memory, seeded from ``THEMIS_LITERATURE_FIXTURE``) or ``live`` (the litcache-reading backend over
-``THEMIS_FULLTEXT_BUCKET``, plus the Cloud SQL crosswalk named by the three
-``THEMIS_LITERATURE_CROSSWALK_*`` vars). The full-text store is one bucket that several services read,
-so it travels under one name rather than an interface-scoped one; every ``THEMIS_LITERATURE_*`` value
-below it is this interface's alone.
+(in-memory, seeded from the sections of ``THEMIS_LITERATURE_FIXTURE``) or ``live`` (the
+litcache-reading store over ``THEMIS_FULLTEXT_BUCKET`` plus the Cloud SQL crosswalk named by the
+three ``THEMIS_LITERATURE_CROSSWALK_*`` vars, and the public indexes over the image's shared HTTP
+client). One selector for the whole interface: which sources it reads is how the interface is
+factored, not an operational knob, and half of it offline is a state nobody deploys on purpose. The
+full-text store is one bucket that several services read, so it travels under one name rather than an
+interface-scoped one; every ``THEMIS_LITERATURE_*`` value below it is this interface's alone.
 
 Two trios are all-or-nothing, and for the same reason: a half-configured capability fails per request
 instead of at deploy, so a partial set is a ``SystemExit``. Set together, the
@@ -14,13 +16,14 @@ instead of at deploy, so a partial set is a ``SystemExit``. Set together, the
 unset together, each leaves its capability off and the rpc answers FAILED_PRECONDITION to a call that
 would have needed it.
 
-Malformed input is a ``SystemExit`` at startup, never a backend that serves an empty corpus: "no such
-paper" from an unseeded store is indistinguishable from a paper genuinely absent from the corpus.
+Malformed input is a ``SystemExit`` at startup, never a backend that serves an empty store: "no such
+paper" from an unseeded store is indistinguishable from a paper the store genuinely does not hold.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 from collections.abc import Callable
 
@@ -30,8 +33,12 @@ from google.cloud.sql import connector as sql_connector
 
 from themis.common import sql
 from themis.litcache import enqueue
+from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.literature import backend as literature_backend
-from themis.services.evidence.literature import litcache as litcache_backend
+from themis.services.evidence.literature import discovery as discovery_mod
+from themis.services.evidence.literature import fixture as fixture_mod
+from themis.services.evidence.literature import litcache
+from themis.services.evidence.literature import live as live_mod
 
 _BACKEND_VAR = 'THEMIS_LITERATURE_BACKEND'
 _FIXTURE_VAR = 'THEMIS_LITERATURE_FIXTURE'
@@ -45,13 +52,23 @@ _CONVERT_WORKER_URL_VAR = 'THEMIS_LITERATURE_CONVERT_WORKER_URL'
 _CONVERT_INVOKER_SA_VAR = 'THEMIS_LITERATURE_CONVERT_INVOKER_SA'
 _CONVERT_VARS = (_CONVERT_QUEUE_VAR, _CONVERT_WORKER_URL_VAR, _CONVERT_INVOKER_SA_VAR)
 
+# The seed document's sections, one per vocabulary: papers the store holds, and the index's records
+# and entities. Both are required: an absent section is a seed nobody finished writing, and
+# defaulting it to empty would answer every lookup of that kind "nothing here" — the fault this whole
+# module fails loud on. An empty list inside a section says that deliberately.
+_STORE_SECTION = 'store'
+_DISCOVERY_SECTION = 'discovery'
+_SECTIONS = (_STORE_SECTION, _DISCOVERY_SECTION)
 
-def backend_from_env(stack: contextlib.AsyncExitStack) -> literature_backend.LiteratureBackend:
-    """The adapter named by ``THEMIS_LITERATURE_BACKEND``, or ``SystemExit``.
+
+def backend_from_env(deps: deps_mod.Deps) -> literature_backend.LiteratureBackend:
+    """The backend ``THEMIS_LITERATURE_BACKEND`` names, or ``SystemExit``.
 
     Args:
-        stack: Owns whatever client the adapter holds open, for as long as the server runs — it
-            unwinds on a startup failure, not on a Cloud Run stop (see ``interface.register``).
+        deps: The image's collaborators. ``deps.stack`` owns whatever client the live backend holds
+            open for as long as the server runs — it unwinds on a startup failure, not on a Cloud Run
+            stop (see ``interface.register``); ``deps.http_client`` is what it issues its index calls
+            on.
 
     Returns:
         The selected backend, ready to serve.
@@ -64,35 +81,67 @@ def backend_from_env(stack: contextlib.AsyncExitStack) -> literature_backend.Lit
     if backend is None:
         raise SystemExit(f'{_BACKEND_VAR} is required (expected "fixture" or "live")')
     if backend == 'fixture':
-        return literature_backend.fixture_backend_from_json(os.environ.get(_FIXTURE_VAR), var_name=_FIXTURE_VAR)
+        return _fixture_backend_from_env()
     if backend == 'live':
-        return _litcache_backend_from_env(stack)
+        return _live_backend_from_env(deps)
     raise SystemExit(f'unsupported {_BACKEND_VAR} {backend!r} (expected "fixture" or "live")')
 
 
-def _litcache_backend_from_env(stack: contextlib.AsyncExitStack) -> litcache_backend.LitcacheBackend:
-    """Build the litcache-reading backend over the ``THEMIS_FULLTEXT_BUCKET`` GCS bucket."""
+def _fixture_backend_from_env() -> fixture_mod.FixtureBackend:
+    """The seeded backend from the one sectioned seed document."""
+    raw = os.environ.get(_FIXTURE_VAR)
+    if raw is None:
+        raise SystemExit(
+            f'{_FIXTURE_VAR} is required for the fixture backend: a JSON object with a '
+            f'{_STORE_SECTION!r} and a {_DISCOVERY_SECTION!r} section'
+        )
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f'{_FIXTURE_VAR} is not valid JSON: {e}') from e
+    if not isinstance(document, dict):
+        raise SystemExit(f'{_FIXTURE_VAR} must be a JSON object of sections, got {type(document).__name__}')
+    unknown = set(document) - set(_SECTIONS)
+    if unknown:
+        raise SystemExit(f'{_FIXTURE_VAR} has unknown section(s) {sorted(unknown)}; expected {list(_SECTIONS)}')
+    missing = [section for section in _SECTIONS if section not in document]
+    if missing:
+        raise SystemExit(f'{_FIXTURE_VAR} is missing section(s) {missing}; seed an empty one to mean "nothing here"')
+    return fixture_mod.backend_from_seed(
+        document[_STORE_SECTION],
+        document[_DISCOVERY_SECTION],
+        store_source=f'{_FIXTURE_VAR} {_STORE_SECTION!r}',
+        index_source=f'{_FIXTURE_VAR} {_DISCOVERY_SECTION!r}',
+    )
+
+
+def _live_backend_from_env(deps: deps_mod.Deps) -> live_mod.LiveBackend:
+    """Build both live halves and the backend over them, or ``SystemExit``.
+
+    The composition root for the live path: everything the backend holds — the GCS client, the Cloud
+    SQL connector, the image's HTTP client — is created and registered on ``deps.stack`` here, where
+    the environment that names it and the stack that owns it both are.
+    """
     bucket_name = os.environ.get(_BUCKET_VAR)
     if not bucket_name:
         raise SystemExit(f'{_BUCKET_VAR} is required for the live backend (the litcache bucket)')
     client = storage.Client()
-    stack.callback(client.close)
+    deps.stack.callback(client.close)
     bucket = client.bucket(bucket_name)
     # A bucket handle is lazy: a wrong/uncreated name would 404 every read, and _download can't tell
     # "no such object" from "no such bucket", so the service would answer NOT_FOUND for every paper —
-    # the "empty corpus reads as genuinely absent" fault the fixture path fails loud on at startup. List
-    # once so a bad bucket fails the startup probe instead. `objects.list` is what the runtime SA's
+    # the "an empty store reads as genuinely absent" fault the fixture path fails loud on at startup.
+    # List once so a bad bucket fails the startup probe instead. `objects.list` is what the runtime SA's
     # objectViewer grants (not `buckets.get`, so `bucket.exists()` would 403 on a correct deploy); an
-    # empty result is a valid not-yet-populated corpus. A 403 raises Forbidden, already loud.
+    # empty result is a valid not-yet-populated store. A 403 raises Forbidden, already loud.
     try:
         next(iter(bucket.list_blobs(prefix='papers/', max_results=1)), None)
     except api_exceptions.NotFound as e:
         raise SystemExit(f'{_BUCKET_VAR} {bucket_name!r} does not exist or is not readable') from e
-    return litcache_backend.LitcacheBackend(
-        bucket,
-        connect=_crosswalk_connect_from_env(stack),
-        enqueuer=_enqueuer_from_env(stack),
+    store = litcache.Store(
+        bucket, connect=_crosswalk_connect_from_env(deps.stack), enqueuer=_enqueuer_from_env(deps.stack)
     )
+    return live_mod.LiveBackend(store, discovery_mod.Indexes(deps.http_client))
 
 
 def _crosswalk_connect_from_env(stack: contextlib.AsyncExitStack) -> Callable[[], sql.Connection] | None:

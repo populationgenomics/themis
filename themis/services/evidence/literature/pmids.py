@@ -10,8 +10,14 @@ from __future__ import annotations
 
 import re
 
+from themis.services.evidence import errors
+
 # One identifier in the spellings a caller holds it in: bare digits, a `PMID:` prefix, zero-padded.
 _PMID = re.compile(r'\A(?:pmid\s*:?\s*)?0*([1-9][0-9]*)\Z', re.IGNORECASE)
+
+# How much of a rejected value a message repeats. An error message is clipped whole to fit a gRPC
+# trailer, so echoing an over-long value would push the diagnosis past the cut and lose it.
+_ECHOED_VALUE = 80
 
 # The most distinct PMIDs one FetchPubmedArticles answers. A batch is answered whole or refused, so
 # this bounds the upstream bibliographic lookup behind a single request.
@@ -23,7 +29,7 @@ def pmid_key(pmid: str) -> str:
 
     A caller holds a PMID as whatever source it read the identifier from wrote it — bare digits, a
     ``PMID:`` prefix, zero-padded — and those spell one identifier. Anything else is refused rather
-    than looked up: a malformed key reaches no paper and would come back as a fact about the corpus.
+    than looked up: a malformed key reaches no paper and would come back as a fact about the store.
 
     Args:
         pmid: The identifier as supplied; surrounding whitespace is not part of it.
@@ -36,5 +42,8 @@ def pmid_key(pmid: str) -> str:
     """
     match = _PMID.match(pmid.strip())
     if match is None:
-        raise ValueError(f'pmid {pmid!r} is not a PubMed identifier (digits, optionally "PMID:"-prefixed)')
+        raise ValueError(
+            f'pmid {errors.clipped(pmid, _ECHOED_VALUE)!r} is not a PubMed identifier '
+            '(digits, optionally "PMID:"-prefixed)'
+        )
     return match.group(1)

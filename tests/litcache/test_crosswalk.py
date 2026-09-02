@@ -94,9 +94,24 @@ def test_normalise_key_folds_the_case_insensitive_schemes() -> None:
     assert crosswalk.normalise_key('pmcid:pmc99') == 'pmcid:PMC99'
 
 
+@pytest.mark.parametrize(
+    ('external_id', 'expected'),
+    [
+        ('pmid:0012345', 'pmid:12345'),
+        ('pmid:12345', 'pmid:12345'),
+        ('pmid:000', 'pmid:0'),
+        ('pmid:' + '0' * 3 + '9' * 5000, 'pmid:' + '9' * 5000),  # past int()'s 4300-digit limit: a strip, not a parse
+    ],
+)
+def test_normalise_key_drops_a_pmids_leading_zeros(external_id: str, expected: str) -> None:
+    # Applied on mint and lookup alike, so a padded spelling on either side reaches the same row.
+    assert crosswalk.normalise_key(external_id) == expected
+
+
 def test_normalise_key_leaves_the_other_schemes_alone() -> None:
-    # pmid/binhash carry no case; pii and the preprint schemes have no specified rule.
-    assert crosswalk.normalise_key('pmid:12345') == 'pmid:12345'
+    # binhash carries no case; pii and the preprint schemes have no specified rule. A pmid value
+    # that is not decimal digits is not this function's to judge.
+    assert crosswalk.normalise_key('pmid:PMID:12345') == 'pmid:PMID:12345'
     assert crosswalk.normalise_key('pii:S0140AbC') == 'pii:S0140AbC'
     assert crosswalk.normalise_key('not-a-key') == 'not-a-key'
 

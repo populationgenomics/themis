@@ -208,7 +208,7 @@ def test_gene_listing_is_read_as_python_literals_not_json() -> None:
     )
     assert [entity.id for entity in entities] == ['litvar@rs00##', 'litvar@CA1000#rs00##', 'litvar@#77#p.A340T']
     assert [entity.caid for entity in entities] == ['', 'CA1000', '']
-    assert [entity.total_articles for entity in entities] == [5, 2, 3]
+    assert [entity.total_records for entity in entities] == [5, 2, 3]
 
 
 @pytest.mark.parametrize(

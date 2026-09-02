@@ -1,4 +1,4 @@
-"""The literature interface's env contract: which adapter each selector value builds, fail-loud."""
+"""The literature interface's env contract: which backend the one selector builds, fail-loud."""
 
 from __future__ import annotations
 
@@ -7,15 +7,17 @@ import contextlib
 import json
 from typing import Self
 
+import httpx2
 import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud.sql import connector as sql_connector
 
 from themis.litcache import enqueue
-from themis.rpc import literature_pb2
+from themis.rpc import auth_pb2, literature_pb2
+from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import config
-from themis.services.evidence.literature import litcache as litcache_backend
+from themis.services.evidence.literature import live as live_mod
 
 _BUCKET = 'a-bucket'
 _CROSSWALK_VARS = (
@@ -41,10 +43,24 @@ _CONVERT_ENV = dict(
     )
 )
 
+_EMPTY_SEED = json.dumps({'store': {}, 'discovery': {'records': [], 'entities': [], 'book_articles': []}})
 
-def _from_env() -> literature_backend.LiteratureBackend:
+
+async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
+    raise AssertionError('literature resolves no session')
+
+
+def _deps(stack: contextlib.AsyncExitStack | None = None) -> deps_mod.Deps:
+    return deps_mod.Deps(
+        session_resolver=_unreachable_resolver,
+        http_client=httpx2.AsyncClient(),
+        stack=stack if stack is not None else contextlib.AsyncExitStack(),
+    )
+
+
+def _from_env(stack: contextlib.AsyncExitStack | None = None) -> literature_backend.LiteratureBackend:
     """Select the backend as the entrypoint would; the fixture path reaches no client."""
-    return config.backend_from_env(contextlib.AsyncExitStack())
+    return config.backend_from_env(_deps(stack))
 
 
 class _FakeBucket:
@@ -82,6 +98,11 @@ def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
     monkeypatch.setattr(config.storage, 'Client', lambda: client)
 
 
+def _fixture_env(monkeypatch: pytest.MonkeyPatch, seed: str = _EMPTY_SEED) -> None:
+    monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'fixture')
+    monkeypatch.setenv('THEMIS_LITERATURE_FIXTURE', seed)
+
+
 def test_backend_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('THEMIS_LITERATURE_BACKEND', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_LITERATURE_BACKEND'):
@@ -109,24 +130,68 @@ def test_fixture_seed_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
         _from_env()
 
 
-def test_fixture_selector_builds_the_seeded_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'fixture')
-    monkeypatch.setenv(
-        'THEMIS_LITERATURE_FIXTURE',
-        json.dumps({'doc-1': {'title': 'A paper', 'markdown': {'gcs_uri': 'gs://c/r.md', 'from_xml': True}}}),
+@pytest.mark.parametrize('section', [pytest.param('store', id='store'), pytest.param('discovery', id='discovery')])
+def test_every_section_of_the_seed_is_required(monkeypatch: pytest.MonkeyPatch, section: str) -> None:
+    # An absent section is a seed nobody finished writing. Defaulting it to empty would stand the
+    # interface up answering "nothing here" for one whole half — a fact about the seed that reaches
+    # a run as a fact about the store or the index.
+    document = {'store': {}, 'discovery': {'records': [], 'entities': [], 'book_articles': []}}
+    del document[section]
+    _fixture_env(monkeypatch, json.dumps(document))
+    with pytest.raises(SystemExit, match=section):
+        _from_env()
+
+
+@pytest.mark.parametrize(
+    'seed',
+    [
+        pytest.param('not json', id='malformed'),
+        pytest.param(json.dumps([]), id='not-an-object'),
+        pytest.param(json.dumps({'store': {}, 'discovery': {}, 'papers': []}), id='unknown-section'),
+        pytest.param(json.dumps({'store': {'d': {}}, 'discovery': {}}), id='paper-without-a-title'),
+        pytest.param(
+            json.dumps(
+                {'store': {}, 'discovery': {'records': [{'pmid': 'PMC1'}], 'entities': [], 'book_articles': []}}
+            ),
+            id='pmid-that-is-not-one',
+        ),
+    ],
+)
+def test_a_seed_the_backend_cannot_stand_up_on_exits(monkeypatch: pytest.MonkeyPatch, seed: str) -> None:
+    _fixture_env(monkeypatch, seed)
+    with pytest.raises(SystemExit, match='THEMIS_LITERATURE_FIXTURE'):
+        _from_env()
+
+
+def test_the_fixture_selector_seeds_both_halves_of_the_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fixture_env(
+        monkeypatch,
+        json.dumps(
+            {
+                'store': {'doc-1': {'title': 'A paper', 'markdown': {'gcs_uri': 'gs://c/r.md', 'from_xml': True}}},
+                'discovery': {
+                    'records': [{'pmid': '111', 'title': 'An indexed paper', 'abstract': 'Something.'}],
+                    'entities': [],
+                    'book_articles': [],
+                },
+            }
+        ),
     )
-    info = asyncio.run(_from_env().describe_paper('doc-1'))
+    backend = _from_env()
+    info = asyncio.run(backend.describe_paper('doc-1'))
     assert info.title == 'A paper'
     assert info.default_representation == literature_pb2.REPRESENTATION_MARKDOWN
+    assert [record.pmid for record in asyncio.run(backend.search_europe_pmc('indexed', 10)).records] == ['111']
 
 
-def test_live_selector_hands_its_client_to_the_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_live_selector_hands_its_client_to_the_stack(monkeypatch: pytest.MonkeyPatch) -> None:
     closed: list[bool] = []
     _live_env(monkeypatch, _FakeClient(closed, existing_bucket=_BUCKET))
 
     async def build() -> None:
         async with contextlib.AsyncExitStack() as stack:
-            assert isinstance(config.backend_from_env(stack), litcache_backend.LitcacheBackend)
+            # One selector wires both halves: no separate live/fixture choice for the indexes.
+            assert isinstance(_from_env(stack), live_mod.LiveBackend)
             assert not closed, 'the client is held open for as long as the server runs'
         assert closed, 'the stack closed the client on unwind'
 
@@ -140,7 +205,7 @@ def test_live_selector_fails_loud_on_an_unreadable_bucket(monkeypatch: pytest.Mo
     async def build() -> None:
         async with contextlib.AsyncExitStack() as stack:
             with pytest.raises(SystemExit, match=_BUCKET):
-                config.backend_from_env(stack)
+                _from_env(stack)
         assert closed, 'a failed startup probe leaks no client'
 
     asyncio.run(build())
@@ -205,7 +270,7 @@ def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeyp
 
     async def build() -> dict[str, str]:
         async with contextlib.AsyncExitStack() as stack:
-            backend = config.backend_from_env(stack)
+            backend = _from_env(stack)
             found = await backend.resolve_external_ids(['doi:10.1/x'])
             assert not closed, 'the connector is held for as long as the server runs'
         assert closed, 'the stack closed the connector on unwind'
@@ -261,9 +326,9 @@ def test_a_complete_convert_config_targets_the_named_queue_and_worker(monkeypatc
 
     async def build() -> enqueue.ConversionTarget:
         async with contextlib.AsyncExitStack() as stack:
-            backend = config.backend_from_env(stack)
-            assert isinstance(backend, litcache_backend.LitcacheBackend)
-            enqueuer = backend._enqueuer
+            backend = _from_env(stack)
+            assert isinstance(backend, live_mod.LiveBackend)
+            enqueuer = backend._store._enqueuer
             assert enqueuer is not None
             assert not closed, 'the client is held open for as long as the server runs'
             target = enqueuer._target

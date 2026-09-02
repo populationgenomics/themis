@@ -64,11 +64,13 @@ _CASE_FOLDS = {'doi': _ASCII_LOWER, 'pmcid': _ASCII_UPPER}
 
 
 def normalise_key(external_id: str) -> str:
-    """Canonicalise a `{scheme}:{value}` key's case, so equal identifiers compare equal.
+    """Canonicalise a `{scheme}:{value}` key, so equal identifiers compare equal.
 
     `external_id = ANY(...)` is byte-exact, and DOI names are case-insensitive by specification — so
     without this a paper held as `doi:10.1016/S0140-6736(20)30183-5` is unreachable by the lowercase
-    spelling of the same DOI, and the miss is indistinguishable from the corpus not holding it.
+    spelling of the same DOI, and the miss is indistinguishable from the corpus not holding it. A
+    PMID's leading zeros likewise spell one identifier: applied on mint and lookup alike, this is
+    what makes a padded spelling on either side reach the same row by construction.
 
     Args:
         external_id: A `{scheme}:{value}` key, its scheme already lower-case — `identity` emits the
@@ -76,9 +78,12 @@ def normalise_key(external_id: str) -> str:
             to the caller that accepts it.
 
     Returns:
-        The key with its value folded, when that scheme's ids are case-insensitive. Idempotent.
+        The key with its value folded (a case-insensitive scheme) or its leading zeros dropped
+        (`pmid:`). Idempotent.
     """
     scheme, sep, value = external_id.partition(':')
+    if scheme == 'pmid' and value.isdecimal():
+        return f'{scheme}{sep}{value.lstrip("0") or "0"}'
     fold = _CASE_FOLDS.get(scheme)
     return f'{scheme}{sep}{value.translate(fold)}' if fold is not None else external_id
 

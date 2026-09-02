@@ -61,7 +61,7 @@ class ListedEntity(NamedTuple):
     id: str
     rsid: str
     caid: str
-    total_articles: int
+    total_records: int
 
 
 async def autocomplete_entity_ids(query: str, *, http_client: httpx2.AsyncClient) -> list[str]:
@@ -227,7 +227,7 @@ def _listed_entities(payload: str) -> list[ListedEntity]:
             raise ValueError(f'LitVar2 gene listing row lacks an id or a count: {line[:120]!r}')
         entities.append(
             ListedEntity(
-                id=entity_id, rsid=_field(record, 'rsid'), caid=_field(record, 'clingen_id'), total_articles=total
+                id=entity_id, rsid=_field(record, 'rsid'), caid=_field(record, 'clingen_id'), total_records=total
             )
         )
     return entities

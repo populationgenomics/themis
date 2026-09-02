@@ -89,6 +89,8 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # grpc.aio server + generated stubs. Includes the session client: every interface authorizes through
 # auth — literature only where it enqueues a conversion, the shared corpus it reads being unscoped.
 # httpx2 is the shared async transport for every live upstream call, Europe PMC + LitVar2 among them;
+# lxml parses efetch's PubmedArticleSet for the PubMed batch lookup (litcache/efetch.py: the pubmed_proto
+# converter takes the parsed element and its wheel carries no lxml dependency of its own);
 # defusedxml parses ClinVar's VCV XML (stdlib ElementTree stays exposed to entity expansion, and the
 # payload comes off an unauthenticated public endpoint). google-cloud-storage reaches the litcache
 # fulltext bucket and the gene-disease reference dumps; pubmed_proto reads the metadata.pb title. The
@@ -102,7 +104,7 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 # google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts

@@ -107,6 +107,28 @@ def read_outcome(bucket: gcs.Bucket, doc_id: str) -> FetchOutcome | None:
     )
 
 
+def readiness_from_manifest(bucket: gcs.Bucket, doc_id: str, manifest: litcache_pb2.Manifest) -> Readiness:
+    """A paper's readiness from a manifest already in hand.
+
+    For a caller that does not hold the manifest, `read_readiness` downloads it and asks this.
+
+    Args:
+        bucket: The full-text bucket, probed for the terminal sidecar when the manifest lists no
+            rendering.
+        doc_id: The paper the manifest belongs to.
+        manifest: That paper's manifest.
+
+    Returns:
+        The readiness.
+    """
+    if manifest.renderings:
+        return Readiness.READY
+    outcome = read_outcome(bucket, doc_id)
+    if outcome is None:
+        return Readiness.PENDING
+    return terminal_readiness(outcome)
+
+
 def read_readiness(bucket: gcs.Bucket, doc_id: str) -> Readiness | None:
     """Derive full-text readiness for `doc_id` from the litcache layout, or None for an unknown paper.
 
@@ -117,10 +139,4 @@ def read_readiness(bucket: gcs.Bucket, doc_id: str) -> Readiness | None:
         manifest_bytes = manifest_blob.download_as_bytes()
     except api_exceptions.NotFound:
         return None
-    manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
-    if manifest.renderings:
-        return Readiness.READY
-    outcome = read_outcome(bucket, doc_id)
-    if outcome is not None:
-        return terminal_readiness(outcome)
-    return Readiness.PENDING
+    return readiness_from_manifest(bucket, doc_id, litcache_pb2.Manifest.FromString(manifest_bytes))

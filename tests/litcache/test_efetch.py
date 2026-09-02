@@ -24,6 +24,51 @@ from themis.litcache.models import litcache_pb2
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _EFETCH_XML = _FIXTURES / 'oa' / 'efetch.xml'
 _PMID = '29089047'
+_BOOK_PMID = '20301288'
+# A synthetic `PubmedBookArticle`, structurally complete in the schema's element order: the converter
+# reads a record whole or not at all.
+_BOOK_XML = (
+    b'<PubmedBookArticle><BookDocument>'
+    b'<PMID Version="1">20301288</PMID>'
+    b'<ArticleIdList><ArticleId IdType="bookaccession">NBK900001</ArticleId></ArticleIdList>'
+    b'<Book>'
+    b'<Publisher><PublisherName>A university press</PublisherName>'
+    b'<PublisherLocation>A city</PublisherLocation></Publisher>'
+    b'<BookTitle book="synthetic">A synthetic review series</BookTitle>'
+    b'<PubDate><Year>1993</Year></PubDate>'
+    b'</Book>'
+    b'<ArticleTitle book="synthetic" part="chapter1">A synthetic chapter</ArticleTitle>'
+    b'<AuthorList Type="authors" CompleteYN="Y">'
+    b'<Author ValidYN="Y"><LastName>Doe</LastName><ForeName>Jane</ForeName><Initials>J</Initials></Author>'
+    b'</AuthorList>'
+    b'<PublicationType UI="D016454">Review</PublicationType>'
+    b'<Abstract><AbstractText>A synthetic summary.</AbstractText></Abstract>'
+    b'<Sections><Section><SectionTitle book="synthetic" part="chapter1.s1">Summary</SectionTitle></Section></Sections>'
+    b'<ContributionDate><Year>2010</Year><Month>3</Month><Day>23</Day></ContributionDate>'
+    b'<DateRevised><Year>2024</Year><Month>1</Month><Day>4</Day></DateRevised>'
+    b'</BookDocument><PubmedBookData>'
+    b'<History><PubMedPubDate PubStatus="pubmed"><Year>2010</Year><Month>3</Month><Day>23</Day></PubMedPubDate>'
+    b'</History>'
+    b'<PublicationStatus>ppublish</PublicationStatus>'
+    b'<ArticleIdList>'
+    b'<ArticleId IdType="bookaccession">NBK900001</ArticleId>'
+    b'<ArticleId IdType="pubmed">20301288</ArticleId>'
+    b'</ArticleIdList>'
+    b'</PubmedBookData></PubmedBookArticle>'
+)
+
+
+def _set(*records: bytes) -> bytes:
+    return b'<PubmedArticleSet>' + b''.join(records) + b'</PubmedArticleSet>'
+
+
+def _oa_set_with(*records: bytes) -> bytes:
+    """The recorded OA set with `records` appended beside its journal article."""
+    return _EFETCH_XML.read_bytes().replace(b'</PubmedArticleSet>', b''.join(records) + b'</PubmedArticleSet>')
+
+
+def _book_under(pmid: bytes) -> bytes:
+    return _BOOK_XML.replace(b'<PMID Version="1">20301288</PMID>', b'<PMID Version="1">' + pmid + b'</PMID>', 1)
 
 
 def test_parse_response_validates_and_keys_by_pmid() -> None:
@@ -46,6 +91,91 @@ def test_cross_ids_harvested_from_own_id_list() -> None:
         pmid=_PMID,
         pmcid='PMC5664429',
     )
+
+
+def test_parse_set_keys_each_record_kind_by_the_pmid_it_states() -> None:
+    parsed = efetch.parse_set(_oa_set_with(_BOOK_XML))
+
+    assert set(parsed.articles) == {_PMID}
+    assert set(parsed.book_articles) == {_BOOK_PMID}
+    book = parsed.book_articles[_BOOK_PMID]
+    assert book.book_document.pmid.value == _BOOK_PMID
+    assert [i.value for i in book.book_document.article_id_list] == ['NBK900001']
+    assert book.book_document.article_title.value == 'A synthetic chapter'
+    assert book.pubmed_book_data.publication_status == 'ppublish'
+
+
+def test_parse_response_resolves_journal_records_only() -> None:
+    # `metadata.pb` is a `PubmedArticle`: a book record resolves nothing on the store's path.
+    assert set(efetch.parse_response(_oa_set_with(_BOOK_XML))) == {_PMID}
+
+
+def test_a_deletion_notice_names_pmids_nothing_is_indexed_under() -> None:
+    # PubMed's trailing `DeleteCitation` names PMIDs whose records it has withdrawn. Nothing is
+    # indexed under them — what an absent record means — so they key no record of a third kind.
+    xml = _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1">111</PMID><PMID Version="1">222</PMID></DeleteCitation>')
+    parsed = efetch.parse_set(xml)
+
+    assert parsed.articles == {}
+    assert set(parsed.book_articles) == {_BOOK_PMID}
+    assert parsed.deleted_pmids == {'111', '222'}
+
+
+def test_a_comment_in_the_set_is_not_a_member() -> None:
+    parsed = efetch.parse_set(_set(b'<!-- retrieved -->', _BOOK_XML, b'<!-- end -->'))
+    assert set(parsed.book_articles) == {_BOOK_PMID}
+
+
+@pytest.mark.parametrize(
+    ('xml', 'message'),
+    [
+        pytest.param(_set(_BOOK_XML, _BOOK_XML), 'answered twice', id='book-twice'),
+        pytest.param(_oa_set_with(_book_under(_PMID.encode())), 'answered twice', id='article-and-book-under-one-pmid'),
+        pytest.param(_set(_book_under(b'')), 'not canonical', id='book-stating-no-pmid'),
+        pytest.param(_set(_book_under(b'0020301288')), 'not canonical', id='book-under-a-padded-pmid'),
+        pytest.param(
+            _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1"> 333 </PMID></DeleteCitation>'),
+            'not canonical',
+            id='deletion-under-a-pmid-with-whitespace',
+        ),
+        pytest.param(
+            _set(
+                b'<PubmedBookArticle><BookDocument><PMID Version="1">20301288</PMID></BookDocument></PubmedBookArticle>'
+            ),
+            r'<PubmedBookArticle> \(PMID 20301288\) does not convert',
+            id='truncated-book-names-its-pmid',
+        ),
+        pytest.param(
+            _set(b'<PubmedBookArticle><BookDocument/></PubmedBookArticle>'),
+            r'<PubmedBookArticle> \(no PMID stated\) does not convert',
+            id='truncated-book-stating-no-pmid',
+        ),
+        pytest.param(
+            _set(b'<PubmedArticle><MedlineCitation><PMID Version="1">111</PMID></MedlineCitation></PubmedArticle>'),
+            r'<PubmedArticle> \(PMID 111\) does not convert',
+            id='truncated-article-names-its-pmid',
+        ),
+        pytest.param(
+            _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1">20301288</PMID></DeleteCitation>'),
+            'answered twice',
+            id='record-then-deletion-under-one-pmid',
+        ),
+        pytest.param(
+            _set(b'<DeleteCitation><PMID Version="1">20301288</PMID></DeleteCitation>', _BOOK_XML),
+            'answered twice',
+            id='deletion-then-record-under-one-pmid',
+        ),
+        pytest.param(
+            _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1"></PMID></DeleteCitation>'),
+            'not canonical',
+            id='deletion-stating-no-pmid',
+        ),
+        pytest.param(_set(b'<ErrorList><PMID Version="1">111</PMID></ErrorList>'), 'unexpected', id='not-a-member'),
+    ],
+)
+def test_a_set_that_does_not_read_as_one_record_per_pmid_fails_loud(xml: bytes, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        efetch.parse_set(xml)
 
 
 def test_empty_set_yields_no_record() -> None:
@@ -166,6 +296,27 @@ def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(httpx2.HTTPStatusError):
         asyncio.run(run())
     assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
+
+
+def test_fetch_with_one_attempt_raises_on_the_first_transient_failure() -> None:
+    calls, handler = _counting_handler([503])
+
+    async def run() -> bytes:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client, attempts=1)
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        asyncio.run(run())
+    assert len(calls) == 1  # no retry: the caller said its own policy owns backoff
+
+
+def test_fetch_refuses_non_positive_attempts() -> None:
+    async def run() -> bytes:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _r: httpx2.Response(200))) as client:
+            return await efetch.fetch(['1'], http_client=client, attempts=0)
+
+    with pytest.raises(ValueError, match='attempts'):
+        asyncio.run(run())
 
 
 def test_fetch_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
