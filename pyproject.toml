@@ -39,14 +39,16 @@ screenshot = ["google-cloud-storage"]
 # non-OA Docling-json→markdown; pypdfium2 — pdf char-addressability probe;
 # litfetch — OA fetch + raw licence; litdown — JATS/Elsevier XML→markdown from
 # bytes (the OA branch calls it directly on the fetched bytes, added in 0.4);
-# pubmed_proto — bibliographic metadata.pb; httpx2 — async HTTP client for the efetch
+# pubmed_proto — bibliographic metadata.pb and the XML→proto converter efetch.py feeds;
+# lxml — efetch.py's XML parser (the converter takes the parsed element; the wheel carries no
+# lxml dependency of its own); httpx2 — async HTTP client for the efetch
 # and Crossref metadata-resolution calls; anthropic — the PDF LLM-OCR converter
 # (produce.py's pdf-without-xml branch); pillow — pdf.py encodes its page rasters
 # through it; google-cloud-tasks — enqueue.py creates the convert worker's
 # task. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "litfetch==0.3.0", "litdown==0.5.0", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.3.0", "litdown==0.5.0", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -100,7 +102,7 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 # google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "pubmed_proto==0.1.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
@@ -118,7 +120,7 @@ convert_worker = [
     "requests",
     "litfetch==0.3.0",
     "litdown==0.5.0",
-    "pubmed_proto==0.1.0",
+    "pubmed_proto==0.3.0",
     "anthropic",
     "pypdfium2",
     "pillow",
@@ -155,7 +157,7 @@ guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0"]
 # web app: analyses are created through it, so the rows are the app's to write.
 # protobuf + pubmed_proto + cloudsql: the supplied-papers check reads litcache manifests and the
 # crosswalk (themis/classifier_eval/literature.py).
-classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests", "pyyaml", "protobuf", "pubmed_proto==0.1.0", { include-group = "cloudsql" }]
+classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests", "pyyaml", "protobuf", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
@@ -165,8 +167,8 @@ test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf
 infra = ["pulumi", "pulumi-gcp"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
-# what runs locally. lxml-stubs: litcache/metadata.py parses efetch XML via lxml (a
-# pubmed_proto dep, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
+# what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
+# dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
 lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }]
 
 [tool.pytest.ini_options]

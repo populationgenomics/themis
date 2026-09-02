@@ -2639,16 +2639,15 @@ wheels = [
 
 [[package]]
 name = "pubmed-proto"
-version = "0.1.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "lxml" },
     { name = "protobuf" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/72/28e1905fd830361215e64a12832714087a8490c85c4737ee2cb897bce62c/pubmed_proto-0.1.0.tar.gz", hash = "sha256:a375416097ee17dbd4f099b434e0854af4feafe7d51f14902bda2ecf49e58797", size = 30212, upload-time = "2026-07-06T10:53:20.08Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/1e/c1bdc900a8c618aec6769df738a4d1f59c168f10deb2931ac5dc24b14f55/pubmed_proto-0.3.0.tar.gz", hash = "sha256:b3fb9d886d0df39e91d0c8170f52b525151de72c2d0c23cf483f7c0cc19ef066", size = 36675, upload-time = "2026-09-02T07:31:41.07Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/5d/af6110a908be0e508ea7abf5fd4104a4dd8692bb8dedf8318562c4970175/pubmed_proto-0.1.0-py3-none-any.whl", hash = "sha256:38335b12ee2a8ef5eb457e96b23aea17f541c5d350883137da430122123e2a2d", size = 33827, upload-time = "2026-07-06T10:53:18.771Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/38/ad4f57133498f906c4d63847741370d251679f329c78fe2fb0f353eaa76a/pubmed_proto-0.3.0-py3-none-any.whl", hash = "sha256:7cfeb3df1e17fd017606a666e4781a2f9a932d7cd027120e37486136e7557685", size = 40169, upload-time = "2026-09-02T07:31:39.546Z" },
 ]
 
 [[package]]
@@ -3530,6 +3529,7 @@ dataflow = [
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
@@ -3597,6 +3597,7 @@ lint = [
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "lxml" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -3626,6 +3627,7 @@ litcache = [
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
@@ -3692,6 +3694,7 @@ test = [
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "postern", extra = ["grpc"] },
@@ -3723,7 +3726,7 @@ classifier-eval = [
     { name = "google-cloud-storage" },
     { name = "pg8000" },
     { name = "protobuf" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pyyaml" },
     { name = "requests" },
 ]
@@ -3745,7 +3748,7 @@ convert-worker = [
     { name = "litfetch", specifier = "==0.3.0" },
     { name = "pillow" },
     { name = "protobuf" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pypdfium2" },
     { name = "requests" },
 ]
@@ -3759,10 +3762,11 @@ dataflow = [
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.3.0" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pypdfium2" },
 ]
 dispatcher = [
@@ -3786,7 +3790,7 @@ evidence = [
     { name = "httpx2" },
     { name = "pg8000" },
     { name = "protobuf" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "requests" },
 ]
 guest = [
@@ -3826,6 +3830,7 @@ lint = [
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.3.0" },
+    { name = "lxml" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -3833,7 +3838,7 @@ lint = [
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
     { name = "pypdfium2" },
@@ -3855,10 +3860,11 @@ litcache = [
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.3.0" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pypdfium2" },
 ]
 migrate = [
@@ -3913,12 +3919,13 @@ test = [
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.5.0" },
     { name = "litfetch", specifier = "==0.3.0" },
+    { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
     { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.1.0" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "pyyaml" },
