@@ -21,7 +21,6 @@ import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage, tasks_v2
 from google.protobuf import timestamp_pb2
-from pubmed_proto import pubmed_pb2
 
 from themis.litcache import enqueue
 from themis.litcache import outcome as litcache_outcome
@@ -89,9 +88,27 @@ def _rendering(from_source: str, converter: litcache_pb2.Converter) -> litcache_
 
 
 def _metadata(title: str) -> bytes:
-    article = pubmed_pb2.PubmedArticle()
-    article.medline_citation.article.article_title.value = title
-    return article.SerializeToString()
+    """A journal record's ``metadata.pb``: PubMed's field, in its journal arm."""
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.pubmed.article.medline_citation.article.article_title.value = title
+    return metadata.SerializeToString()
+
+
+def _crossref_metadata(title: str) -> bytes:
+    """A Crossref-resolved paper's ``metadata.pb``: the envelope's ``crossref`` field alone."""
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.crossref.title.append(title)
+    return metadata.SerializeToString()
+
+
+def _book_metadata(*, chapter_title: str | None, book_title: str) -> bytes:
+    """A book record's ``metadata.pb``: PubMed's field, in its book arm; ``chapter_title=None`` is a whole book."""
+    metadata = litcache_pb2.PaperMetadata()
+    document = metadata.pubmed.book_article.book_document
+    document.book.book_title.value = book_title
+    if chapter_title is not None:
+        document.article_title.value = chapter_title
+    return metadata.SerializeToString()
 
 
 def _seed_paper(
@@ -102,11 +119,11 @@ def _seed_paper(
     rendering: litcache_pb2.Rendering | None = None,
     markdown: str | None = _MARKDOWN,
     files: Sequence[litcache_pb2.AssociatedFile] = (),
-    title: str | None = 'A title',
+    metadata: bytes | None = _metadata('A title'),
 ) -> str:
     """Write a paper directory into the bucket; return the markdown rendering hash (if any).
 
-    ``title=None`` omits ``metadata.pb`` — the not-yet-resolved-metadata case.
+    ``metadata=None`` omits ``metadata.pb`` — the not-yet-resolved-metadata case.
     """
     manifest = litcache_pb2.Manifest(
         doc_id=doc_id,
@@ -123,8 +140,8 @@ def _seed_paper(
         )
         bucket.blob(f'papers/{doc_id}/renderings/{rendering_hash}.md').upload_from_string(markdown)
     bucket.blob(f'papers/{doc_id}/manifest.pb').upload_from_string(manifest.SerializeToString())
-    if title is not None:
-        bucket.blob(f'papers/{doc_id}/metadata.pb').upload_from_string(_metadata(title))
+    if metadata is not None:
+        bucket.blob(f'papers/{doc_id}/metadata.pb').upload_from_string(metadata)
     return rendering_hash
 
 
@@ -133,7 +150,7 @@ def _store(bucket: storage.Bucket) -> litcache_store.Store:
 
 
 def test_describe_prefers_markdown_when_xml_derived(gcs_bucket: storage.Bucket) -> None:
-    _seed_paper(gcs_bucket, sources=[_pdf_source(), _xml_source()], title='K_ATP channel study')
+    _seed_paper(gcs_bucket, sources=[_pdf_source(), _xml_source()], metadata=_metadata('K_ATP channel study'))
     info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
     assert info.title == 'K_ATP channel study'
     assert info.has_markdown
@@ -275,7 +292,7 @@ def test_validate_unknown_doc_is_not_ok(gcs_bucket: storage.Bucket) -> None:
 
 def test_locate_and_validate_do_not_need_metadata(gcs_bucket: storage.Bucket) -> None:
     # metadata.pb resolves only the title; locate/validate must work without it.
-    _seed_paper(gcs_bucket, sources=[_xml_source()], title=None)
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=None)
     backend = _store(gcs_bucket)
     located = asyncio.run(backend.locate(_DOC, _QUOTE, literature_pb2.REPRESENTATION_MARKDOWN))
     assert located.WhichOneof('result') == 'offsets'
@@ -283,9 +300,47 @@ def test_locate_and_validate_do_not_need_metadata(gcs_bucket: storage.Bucket) ->
 
 
 def test_describe_without_metadata_falls_back_to_an_external_id(gcs_bucket: storage.Bucket) -> None:
-    _seed_paper(gcs_bucket, sources=[_xml_source()], title=None)
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=None)
     info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
     assert info.title == '10.1/x'  # the manifest's DOI, not a crash on the missing metadata
+
+
+def test_describe_titles_a_bookshelf_chapter_by_its_chapter_title(gcs_bucket: storage.Bucket) -> None:
+    metadata = _book_metadata(chapter_title='A synthetic chapter', book_title='A synthetic review series')
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=metadata)
+    info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
+    assert info.title == 'A synthetic chapter'
+
+
+def test_describe_maps_a_corrupt_metadata_pb_to_internal(gcs_bucket: storage.Bucket) -> None:
+    # The writer validates every envelope it writes, so bytes that do not read as one are the store's
+    # own fault — INTERNAL, not an UNKNOWN unexpected-exception, and not a paper without a title.
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=b'\xff\xff\xff')
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_over_grpc(gcs_bucket, lambda s: s.DescribePaper(literature_pb2.DescribePaperRequest(doc_id=_DOC)))
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
+
+
+def test_describe_titles_a_crossref_resolved_paper_by_its_crossref_title(gcs_bucket: storage.Bucket) -> None:
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=_crossref_metadata('A Crossref title'))
+    info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
+    assert info.title == 'A Crossref title'
+
+
+def test_describe_titles_a_whole_book_record_by_its_book_title(gcs_bucket: storage.Bucket) -> None:
+    # A record for a whole book states no chapter title; the book's title is the record's own.
+    metadata = _book_metadata(chapter_title=None, book_title='A synthetic review series')
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=metadata)
+    info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
+    assert info.title == 'A synthetic review series'
+
+
+def test_describe_fails_on_metadata_with_no_record(gcs_bucket: storage.Bucket) -> None:
+    # An envelope with no record set is a corrupt blob: the reader fails rather than reading it as a
+    # paper without metadata (which would fall back to an external id and hide the corruption).
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=litcache_pb2.PaperMetadata().SerializeToString())
+    with pytest.raises(literature_backend.CorruptMetadataError, match='no record set'):
+        asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
 
 
 def test_validate_pdf_only_paper_is_honest_not_a_false_negative(gcs_bucket: storage.Bucket) -> None:

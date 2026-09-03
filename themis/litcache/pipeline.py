@@ -18,8 +18,9 @@ Bibliographic metadata is resolved in bulk *outside* this core (`resolve.resolve
 in the batched stage), not per paper — one efetch/idconv call per 200 ids rather than
 one per paper, collapsing the NCBI rate domain. `ingest_paper` receives the
 `ResolvedPaper` and never calls the resolver ladder itself. The resolved cross-ids
-also carry the `pmcid` the OA fetch keys on (efetch-harvested or idconv-mapped), so
-the OA fetch needs no live resolver.
+also carry the ids the OA fetch keys on — the `pmcid` (efetch-harvested or
+idconv-mapped) and, for a Bookshelf chapter, the `bookid` — so the OA fetch needs no
+live resolver.
 
 This branches on OA (literature-cache.md §Conversion): it attempts the litfetch ladder
 for full-text XML, and on a hit renders it with litdown (`xml-faithful`), retaining the
@@ -29,10 +30,12 @@ the pdf for char-addressability — the pdf is the source of truth there, so quo
 recovery hinges on its character layer; on the OA branch the probe is skipped (the XML
 is the source of truth).
 
-The manifest's `ExternalIds` come from identity (the ids that were minted), not the
-resolver's harvested cross-ids: minting the resolved cross-ids is what makes them
-crosswalk-consistent, and that minting can trip the (deferred) equivalence path — so
-cross-id enrichment waits for that work.
+The manifest's `ExternalIds` are the ids that were minted: identity's, claimed before the
+manifest-exists skip, plus one harvested id — a book record's Bookshelf accession — claimed
+on the write path only (`_claim_accession`), so a committed paper never gains a crosswalk
+row its manifest does not record. The resolver's other cross-ids are not minted: minting
+them is what would make them crosswalk-consistent, and that minting can trip the
+(deferred) equivalence path — so cross-id enrichment waits for that work.
 
 A genuine cross-paper link (`mint` returning two or more incumbents — the paper's ids
 bridge previously-separate works) writes the equivalence edge into every involved
@@ -202,7 +205,8 @@ def ingest_paper(
     Raises:
         ValueError: If an OA body's source is not a known `SourceKind`, a cross-paper
             link reaches an incumbent with no manifest (an orphan, which cannot carry
-            an equivalence edge), or an input the writer rejects.
+            an equivalence edge), a book record's accession is already claimed by
+            another paper (`_claim_accession`), or an input the writer rejects.
         pypdfium2.PdfiumError: If, on the non-OA branch, the seed pdf is not a
             loadable pdf (the char-addressability probe fails loud rather than report
             a degraded paper as image-only).
@@ -219,6 +223,7 @@ def ingest_paper(
     if existing is not None:
         return IngestResult(doc_id=doc_id, minted=mint_result.minted, written=False, manifest=existing)
 
+    _claim_accession(mint, ident, resolved)
     oa_source, supplementary = asyncio.run(_fetch_oa(ident, resolved, fetchers=fetchers, file_sources=file_sources))
     branch = _convert_branch(seed, licence, oa_source, now=now)
     files = [
@@ -233,7 +238,7 @@ def ingest_paper(
 
     paper = writer.PaperInput(
         doc_id=doc_id,
-        external_ids=_manifest_external_ids(ident),
+        external_ids=_manifest_external_ids(ident, resolved),
         claim_key=ident.claim_key,
         equivalence=litcache_pb2.Equivalence(edges=[], canonical_doc_id=doc_id),
         retraction=litcache_pb2.Retraction(),
@@ -255,11 +260,12 @@ async def _fetch_oa(
 ) -> tuple[oa.OaSource | None, list[oa.SupplementaryFile]]:
     """Fetch the OA-XML body and its supplementary files (no metadata resolution).
 
-    The id bundle is identity's fetchable ids plus the batch-resolved `pmcid` the PMC
-    fetchers key on, so no live resolver runs (`resolver=None`); litfetch owns its own
-    HTTP client and pacing through the `Session`. The OA work is skipped when the paper
-    carries no fetchable id; supplementary files are fetched only when the OA body was
-    served (the paper is in PMC OA), so a non-OA paper pays no extra listing call.
+    The id bundle is identity's fetchable ids plus the batch-resolved ids the fetchers key
+    on — the `pmcid` for the PMC rungs, the `bookid` for the Bookshelf rung — so no live
+    resolver runs (`resolver=None`); litfetch owns its own HTTP client and pacing through
+    the `Session`. The OA work is skipped when the paper carries no fetchable id;
+    supplementary files are fetched only when the OA body was served (the paper is in PMC
+    OA), so a non-OA paper pays no extra listing call.
     """
     article_ids = oa.article_ids_for_fetch(ident.external_ids, resolved.external_ids)
     if article_ids is None:
@@ -272,15 +278,48 @@ async def _fetch_oa(
     return oa_source, supplementary
 
 
-def _manifest_external_ids(ident: identity.Identity) -> litcache_pb2.ExternalIds:
-    """Map identity's minted ids to the manifest `ExternalIds` (doi/pmid/pmcid).
+def _claim_accession(
+    mint: Callable[[Iterable[str]], crosswalk.MintResult], ident: identity.Identity, resolved: resolve.ResolvedPaper
+) -> None:
+    """Claim a book record's Bookshelf accession for the paper — on the write path only.
 
-    Only the schemes the manifest models; `pii`/`binhash` have no field. The
-    resolver's harvested cross-ids are not used here — they would need minting to
-    stay crosswalk-consistent (the deferred equivalence work).
+    The accession is the one harvested id that is minted, and it is claimed after the
+    manifest-exists skip so a committed paper never gains a crosswalk row its manifest does
+    not record (the manifests are what `rebuild` inverts). Identity's keys are presented with
+    it so the claim attaches to the paper's own `doc_id`. The resolver's other cross-ids stay
+    unminted: a DOI or PMCID harvested for one seed may already be claimed by another deposit
+    of the same work, and claiming it would bridge the two — the equivalence path that is
+    deferred. An accession names exactly the record it was read from, so the only other
+    deposit that can carry it is a second copy of the chapter under a different identity —
+    the same deferred path, refused here rather than committed as a manifest and a table
+    that disagree.
+
+    Raises:
+        ValueError: If the accession is already claimed by another paper.
+    """
+    if not resolved.external_ids.HasField('bookid'):
+        return
+    key = identity.ExternalId(scheme='bookid', value=resolved.external_ids.bookid).key
+    claim = mint((*ident.mint_keys, key))
+    if claim.linked_doc_ids:
+        raise ValueError(
+            f'{key} is already claimed by another paper ({", ".join(claim.linked_doc_ids)}): a second deposit of '
+            'one chapter under a different identity is the deferred equivalence path'
+        )
+
+
+def _manifest_external_ids(ident: identity.Identity, resolved: resolve.ResolvedPaper) -> litcache_pb2.ExternalIds:
+    """Map the minted ids to the manifest `ExternalIds` (doi/pmid/pmcid, and a book record's bookid).
+
+    Only the schemes the manifest models; `pii`/`binhash` have no field. The manifest carries
+    exactly the ids the paper claimed — identity's and, on the write path, the accession
+    `_claim_accession` minted — which is what keeps the crosswalk rebuildable from the
+    manifests alone.
     """
     by_scheme = {eid.scheme: eid.value for eid in ident.external_ids}
     present = {scheme: by_scheme[scheme] for scheme in ('doi', 'pmid', 'pmcid') if scheme in by_scheme}
+    if resolved.external_ids.HasField('bookid'):
+        present['bookid'] = resolved.external_ids.bookid
     return litcache_pb2.ExternalIds(**present)
 
 

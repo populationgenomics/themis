@@ -13,7 +13,6 @@ import hashlib
 import pytest
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
-from pubmed_proto import pubmed_pb2
 
 from themis.litcache import outcome, writer
 from themis.litcache.models import litcache_pb2
@@ -51,9 +50,9 @@ def _rendering() -> litcache_pb2.Rendering:
 
 
 def _metadata() -> bytes:
-    article = pubmed_pb2.PubmedArticle()
-    article.medline_citation.pmid.value = '1'
-    return article.SerializeToString()
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.pubmed.article.medline_citation.pmid.value = '1'
+    return metadata.SerializeToString()
 
 
 def _paper(

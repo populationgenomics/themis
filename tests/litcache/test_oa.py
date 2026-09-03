@@ -2,10 +2,10 @@
 
 Drives the litfetch fetcher ladder with in-memory doubles (no network) to prove the
 branch's outcomes: an XML body opens the OA branch (XML bytes + provenance + access
-terms returned, convertible by `convert.convert_jats`); a served non-XML body and an
-empty ladder both close it (`None` → the caller renders the seed Docling json on the
-non-OA path). The served body's `source` is a real fetcher name, so it maps to a
-`SourceKind`.
+terms returned, convertible by `convert.convert_jats`) — a journal article's JATS or a
+Bookshelf chapter's BITS wrapper alike; a served non-XML body and an empty ladder both
+close it (`None` → the caller renders the seed Docling json on the non-OA path). The
+served body's `source` is a real fetcher name, so it maps to a `SourceKind`.
 """
 
 from __future__ import annotations
@@ -25,18 +25,30 @@ from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _OA_JATS = _FIXTURES / 'oa' / 'fulltext.xml'
+_BOOKSHELF_XML = _FIXTURES / 'bookshelf' / 'chapter.xml'
 _ARTICLE = ids.ArticleIds(pmcid='PMC5664429')
+_CHAPTER = ids.ArticleIds(bookid='NBK900001')
 _CREATED_AT = datetime.datetime(2026, 6, 25, 12, 0, tzinfo=datetime.UTC)
+# GeneReviews states its terms as the URL of its usage notice, flagged open-access — not a CC licence.
+_GENEREVIEWS_TERMS = 'https://www.ncbi.nlm.nih.gov/books/NBK138602/'
 
 
 class _BodyFetcher:
-    """A Fetcher serving one in-memory body Blob, bypassing the network."""
+    """A Fetcher serving one in-memory body Blob, bypassing the network.
 
-    name = 'fixture'
-    requires: frozenset[str] = frozenset()
+    `name` and `requires` default to a keyless fixture rung; a test standing in for a real rung
+    passes that rung's, so the ladder gates it as it would the real one.
+    """
 
-    def __init__(self, blob: artifacts.Blob | None) -> None:
+    name: str
+    requires: frozenset[str]
+
+    def __init__(
+        self, blob: artifacts.Blob | None, *, name: str = 'fixture', requires: frozenset[str] = frozenset()
+    ) -> None:
         self._blob = blob
+        self.name = name
+        self.requires = requires
 
     async def fetch(
         self,
@@ -47,6 +59,12 @@ class _BodyFetcher:
     ) -> artifacts.Blob | None:
         del article_ids, credentials, http  # litfetch's Fetcher signature; this double ignores them
         return self._blob
+
+
+def _bookshelf_fetcher() -> _BodyFetcher:
+    """The Bookshelf rung's double: the synthetic chapter, served as litfetch's rung serves one."""
+    blob = _body_blob(artifacts.JATS_XML, _BOOKSHELF_XML.read_bytes(), source='europe_pmc_bookshelf')
+    return _BodyFetcher(blob, name='europe_pmc_bookshelf', requires=frozenset({'bookid'}))
 
 
 def _body_blob(media_type: str, content: bytes, *, source: str = 'europe_pmc') -> artifacts.Blob:
@@ -71,6 +89,25 @@ def test_xml_body_opens_oa_branch() -> None:
     # The bytes are exactly what the xml→litdown conversion consumes.
     conversion = convert.convert_jats(result.content, from_source='xml', from_revision='0', created_at=_CREATED_AT)
     assert conversion.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+
+
+def test_bookshelf_rung_opens_oa_branch_for_a_chapter() -> None:
+    result = asyncio.run(oa.fetch_oa_source(_CHAPTER, fetchers=[_bookshelf_fetcher()]))
+    assert result is not None
+    assert result.kind == litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC_BOOKSHELF
+    # The chapter states its terms as a usage-terms URL: recorded verbatim, read off the bytes.
+    assert result.access.licence == 'https://example.test/books/NBK900000/terms/'
+    assert result.access.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
+    assert result.access.access.WhichOneof('kind') == 'free_to_read'
+    # The BITS wrapper is what the xml→litdown conversion consumes.
+    conversion = convert.convert_jats(result.content, from_source='xml', from_revision='0', created_at=_CREATED_AT)
+    assert conversion.markdown.startswith('# A synthetic chapter')
+
+
+def test_bookshelf_rung_does_not_fire_without_an_accession() -> None:
+    # The rung requires a bookid; a bundle without one walks past it, so a PMCID-only paper is never
+    # served a chapter's body.
+    assert asyncio.run(oa.fetch_oa_source(_ARTICLE, fetchers=[_bookshelf_fetcher()])) is None
 
 
 def test_pdf_body_closes_oa_branch() -> None:
@@ -210,14 +247,27 @@ def test_article_ids_maps_fetchable_schemes() -> None:
         identity.ExternalId(scheme='doi', value='10.1/x'),
         identity.ExternalId(scheme='pmid', value='123'),
         identity.ExternalId(scheme='pmcid', value='PMC9'),
+        identity.ExternalId(scheme='bookid', value='NBK900001'),
     )
     aids = oa.article_ids(external_ids)
-    assert aids == ids.ArticleIds(doi='10.1/x', pmid='123', pmcid='PMC9')
+    assert aids == ids.ArticleIds(doi='10.1/x', pmid='123', pmcid='PMC9', bookid='NBK900001')
 
 
 def test_article_ids_is_none_without_a_fetchable_id() -> None:
     # A content-addressed paper (only binhash) has nothing litfetch can fetch.
     assert oa.article_ids((identity.ExternalId(scheme='binhash', value='abc'),)) is None
+
+
+def test_article_ids_for_fetch_takes_the_resolved_ids_the_fetchers_key_on() -> None:
+    # A PMID-keyed seed: the pmcid and the bookid are the resolver's, and the fetch bundle carries them.
+    resolved = litcache_pb2.ExternalIds(pmid='30000010', bookid='NBK900001')
+    aids = oa.article_ids_for_fetch((identity.ExternalId(scheme='pmid', value='30000010'),), resolved)
+    assert aids == ids.ArticleIds(pmid='30000010', bookid='NBK900001')
+
+
+def test_article_ids_for_fetch_is_none_when_nothing_is_fetchable() -> None:
+    aids = oa.article_ids_for_fetch((identity.ExternalId(scheme='pii', value='S1'),), litcache_pb2.ExternalIds())
+    assert aids is None
 
 
 def _access_kind(terms: oa.AccessTerms) -> str | None:
@@ -228,6 +278,16 @@ def test_artifact_basis_maps_verbatim_and_free_to_read() -> None:
     meta = artifacts.SourceMetadata(licence='CC-BY-4.0', access='open-access', basis='artifact')
     terms = oa.from_source_metadata(meta)
     assert terms.licence == 'CC-BY-4.0'
+    assert terms.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
+    assert _access_kind(terms) == 'free_to_read'
+
+
+def test_a_usage_terms_url_read_off_a_chapter_is_recorded_verbatim_and_free_to_read() -> None:
+    # The GeneReviews shape: litfetch read a usage-terms URL (not a CC licence) off the chapter's bytes,
+    # flagged open-access. The raw string is what the source records, with the basis it was read under.
+    meta = artifacts.SourceMetadata(licence=_GENEREVIEWS_TERMS, access='open-access', basis='artifact')
+    terms = oa.from_source_metadata(meta)
+    assert terms.licence == _GENEREVIEWS_TERMS
     assert terms.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
     assert _access_kind(terms) == 'free_to_read'
 

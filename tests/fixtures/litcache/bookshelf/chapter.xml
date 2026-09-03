@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part-wrapper xmlns:xlink="http://www.w3.org/1999/xlink" dtd-version="2.0" xml:lang="en">
+  <book-meta>
+    <book-id book-id-type="nbk">NBK900000</book-id>
+    <book-title-group>
+      <book-title>A synthetic review series</book-title>
+    </book-title-group>
+    <publisher>
+      <publisher-name>A university press</publisher-name>
+      <publisher-loc>A city</publisher-loc>
+    </publisher>
+    <permissions>
+      <copyright-statement>Copyright © 1993-2026, Synthetic Authors.</copyright-statement>
+      <copyright-year>2026</copyright-year>
+      <license license-type="open-access" xlink:href="https://example.test/books/NBK900000/terms/">
+        <license-p>Synthetic usage terms: this fixture may be reproduced without restriction.</license-p>
+      </license>
+    </permissions>
+  </book-meta>
+  <book-part book-part-type="chapter" id="chapter1" xml:lang="en">
+    <book-part-meta>
+      <book-part-id book-part-id-type="nbk">NBK900001</book-part-id>
+      <title-group>
+        <title>A synthetic chapter</title>
+      </title-group>
+      <contrib-group>
+        <contrib contrib-type="author">
+          <name>
+            <surname>Doe</surname>
+            <given-names>Jane</given-names>
+          </name>
+        </contrib>
+      </contrib-group>
+      <pub-history>
+        <date date-type="created">
+          <day>23</day>
+          <month>3</month>
+          <year>2010</year>
+        </date>
+        <date date-type="revised">
+          <day>4</day>
+          <month>1</month>
+          <year>2024</year>
+        </date>
+      </pub-history>
+      <abstract>
+        <p>A synthetic summary of an invented condition.</p>
+      </abstract>
+    </book-part-meta>
+    <body>
+      <sec id="chapter1.s1">
+        <title>Summary</title>
+        <sec id="chapter1.s1.1">
+          <title>Clinical characteristics</title>
+          <p>The invented condition presents with three imaginary findings. No real clinical content is described.</p>
+        </sec>
+        <sec id="chapter1.s1.2">
+          <title>Diagnosis</title>
+          <p>The diagnosis is established in a proband with a synthetic variant in a fictional gene.</p>
+        </sec>
+      </sec>
+      <sec id="chapter1.s2">
+        <title>Management</title>
+        <p>Management is entirely hypothetical.</p>
+      </sec>
+    </body>
+  </book-part>
+</book-part-wrapper>

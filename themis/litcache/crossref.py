@@ -1,38 +1,32 @@
-"""Crossref → `PubmedArticle` mapping for DOI-only papers (no PubMed record).
+"""Crossref: a DOI's work record, whole, for a paper PubMed does not index.
 
-When a paper has a DOI but no PMID, the efetch path finds nothing, so its
-bibliographic metadata comes from Crossref instead. `metadata.pb` stays a
-pubmed_proto `PubmedArticle`, so a Crossref `works` response is mapped by hand onto a
-`PubmedArticle` — bespoke and lossy: only the fields Crossref reliably carries are
-mapped (title, journal, volume/issue, authors, issue date, DOI). PubMed-specific
-fields with no Crossref source are left at their honest empty/unspecified values —
-the record is publisher-supplied, not MEDLINE-indexed (`status=Publisher`), and
-carries no PMID.
+When a paper has a DOI but no PMID, the efetch path finds nothing, so its bibliographic record
+comes from Crossref's `works` endpoint and is stored as the envelope's `crossref` field, in
+Crossref's own schema (`crossref.proto`, a mirror of the JSON) and loaded strictly
+(`themis.litcache.mirror`). Two shapes the mirror's header names are wrapped before the parse:
+`date-parts`, an array of arrays, becomes one `DateParts` per inner array, less the trailing null
+Crossref states an unknown date with; `relation`, an object whose values are arrays, becomes a
+`RelationList` per key. A null element of any other array, which proto3-JSON cannot hold, is
+dropped.
 
-The DOI populates the record's `article_id_list` and the manifest `ExternalIds`. The
-publisher is returned alongside, for the orchestrator to build the manifest's
-`Licensed` access when the paper is not free-to-read.
+The DOI populates the manifest `ExternalIds`. The publisher is returned alongside, for the
+orchestrator to build the manifest's `Licensed` access when the paper is not free-to-read.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import datetime
 import urllib.parse
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 import httpx2
-from google.protobuf import timestamp_pb2
-from pubmed_proto import pubmed_pb2
 
 from themis.common import constants
-from themis.litcache import efetch
-from themis.litcache.models import litcache_pb2
+from themis.litcache import mirror, paper_metadata
+from themis.litcache.models import crossref_pb2, litcache_pb2
 
 _CROSSREF_URL = 'https://api.crossref.org/works'
-
-# Crossref date fields in preference order: the canonical issue date first.
-_DATE_FIELDS = ('issued', 'published', 'published-online', 'published-print')
+INDEX = 'crossref'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -40,11 +34,10 @@ class CrossrefResult:
     """The bibliographic outputs of resolving one DOI-only paper via Crossref.
 
     Attributes:
-        metadata: The canonical `metadata.pb` bytes (a mapped `PubmedArticle`).
-        external_ids: The cross-ids for the manifest (DOI only — Crossref carries
-            no PMID/PMCID).
-        publisher: The Crossref `publisher`, for the manifest `Licensed` access;
-            `None` if absent.
+        metadata: The canonical `metadata.pb` bytes (a `PaperMetadata` envelope with the work in
+            its `crossref` field).
+        external_ids: The cross-ids for the manifest (DOI only — Crossref carries no PMID/PMCID).
+        publisher: The Crossref `publisher`, for the manifest `Licensed` access; `None` if absent.
     """
 
     metadata: bytes
@@ -52,123 +45,78 @@ class CrossrefResult:
     publisher: str | None
 
 
-def _first(value: object) -> str | None:
-    """First entry of a Crossref string array (`title`, `container-title`)."""
-    if isinstance(value, Sequence) and not isinstance(value, str) and value:
-        first = value[0]
-        return first if isinstance(first, str) else None
-    return None
+def wrap(document: Mapping[str, object]) -> dict[str, object]:
+    """Wrap a `works` message object into the shapes the mirror declares (see the module docstring).
 
-
-def _as_str(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
-def _pub_date(work: Mapping[str, object], doi: str) -> timestamp_pb2.Timestamp:
-    """Build the issue-date `Timestamp` from the first present Crossref date field.
-
-    Crossref dates are `{"date-parts": [[year, month?, day?]]}`; month/day default
-    to 1. `FromDatetime` reads the naive datetime as UTC.
+    Anything else passes through untouched, so a shape the mirror does not hold fails the strict
+    parse rather than being coerced here.
     """
-    for field in _DATE_FIELDS:
-        candidate = work.get(field)
-        if not isinstance(candidate, Mapping):
-            continue
-        parts = candidate.get('date-parts')
-        if not (isinstance(parts, Sequence) and parts and isinstance(parts[0], Sequence) and parts[0]):
-            continue
-        ymd = parts[0]
-        # Crossref emits `date-parts: [[null]]` for a record with no known date; a
-        # null part is as good as an absent field, so skip to the next candidate
-        # rather than let `int(None)` abort the whole fallback.
-        if not all(isinstance(v, int) for v in ymd[:3]):
-            continue
-        year, month, day = ymd[0], ymd[1] if len(ymd) > 1 else 1, ymd[2] if len(ymd) > 2 else 1
-        pub_date = timestamp_pb2.Timestamp()
-        pub_date.FromDatetime(datetime.datetime(year, month, day))  # noqa: DTZ001 — naive read as UTC
-        return pub_date
-    raise ValueError(f'Crossref work {doi} has no usable publication date')
+    wrapped = _wrap_dates(document)
+    relation = wrapped.get('relation')
+    if isinstance(relation, Mapping):
+        wrapped['relation'] = {kind: {'items': items} for kind, items in relation.items()}
+    return wrapped
 
 
-def _author(a: Mapping[str, object]) -> pubmed_pb2.Author | None:
-    """Map one Crossref author, or None when it names nobody.
+def _wrap_dates(document: Mapping[str, object]) -> dict[str, object]:
+    return {
+        key: _wrap_date_parts(value) if key == 'date-parts' else _wrap_value(value) for key, value in document.items()
+    }
 
-    A personal author has `family`/`given`; a consortium or organization is a
-    name-only `{"name": "…"}` (DDD, gnomAD, GTEx, ClinGen …), which maps to the
-    proto's `collective_name` rather than being dropped.
+
+def _wrap_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _wrap_dates(value)
+    if isinstance(value, list):
+        return [_wrap_value(item) for item in value if item is not None]
+    return value
+
+
+def _wrap_date_parts(value: object) -> object:
+    if not isinstance(value, list):
+        return value
+    return [{'parts': _without_trailing_nulls(inner)} if isinstance(inner, list) else inner for inner in value]
+
+
+def _without_trailing_nulls(parts: list[object]) -> list[object]:
+    # `[[null]]` is Crossref's unknown date; a null between stated parts is not a date, and stays
+    # for the strict parse to charge as drift rather than shifting the parts after it.
+    end = len(parts)
+    while end and parts[end - 1] is None:
+        end -= 1
+    return parts[:end]
+
+
+def parse_work(document: Mapping[str, object]) -> crossref_pb2.Work:
+    """Load a `works` message object into the mirror.
+
+    Raises:
+        mirror.SchemaDriftError: If the record carries a key the mirror lacks, or a value of a shape
+            its field cannot hold.
     """
-    family, given = _as_str(a.get('family')), _as_str(a.get('given'))
-    if family or given:
-        return pubmed_pb2.Author(last_name=family, fore_name=given)
-    name = _as_str(a.get('name'))
-    if name:
-        return pubmed_pb2.Author(collective_name=pubmed_pb2.CollectiveName(value=name))
-    return None
+    return mirror.parse_strict(wrap(document), crossref_pb2.Work(), index=INDEX)
 
 
-def _author_list(authors: object) -> pubmed_pb2.AuthorList | None:
-    """Map Crossref `author[]` onto an `AuthorList`, preserving collective authors."""
-    if not isinstance(authors, Sequence) or not authors:
-        return None
-    mapped: list[pubmed_pb2.Author] = []
-    for a in authors:
-        if isinstance(a, Mapping) and (author := _author(a)) is not None:
-            mapped.append(author)
-    if not mapped:
-        return None
-    return pubmed_pb2.AuthorList(type=pubmed_pb2.AuthorList.TYPE_AUTHORS, author=mapped)
-
-
-def from_crossref_work(work: Mapping[str, object]) -> CrossrefResult:
-    """Map a Crossref `works` message onto a `PubmedArticle` + cross-ids + publisher.
+def from_crossref_work(document: Mapping[str, object]) -> CrossrefResult:
+    """Resolve a `works` message object to `metadata.pb` bytes + cross-ids + publisher.
 
     Args:
-        work: The `message` object of a Crossref `works` response.
+        document: The `message` object of a Crossref `works` response.
 
     Returns:
         The `CrossrefResult`.
 
     Raises:
-        ValueError: If the work has no DOI, no title, or no usable issue date —
-            a bibliographic record without these is degenerate, not `unknown`.
+        mirror.SchemaDriftError: If the record does not fit the mirror.
+        ValueError: If the work states no DOI — the record Crossref answers a DOI with names it.
     """
-    doi = work.get('DOI')
-    if not isinstance(doi, str):
-        raise ValueError('Crossref work has no DOI')
-    title = _first(work.get('title'))
-    if not title:  # absent or empty-string title — both degenerate, not `unknown`
-        raise ValueError(f'Crossref work {doi} has no title')
-
-    article = pubmed_pb2.PubmedArticle(
-        medline_citation=pubmed_pb2.MedlineCitation(
-            # Publisher-supplied metadata, not MEDLINE-indexed; no PMID exists.
-            status=pubmed_pb2.MedlineCitation.STATUS_PUBLISHER,
-            pmid=pubmed_pb2.Pmid(version='1'),
-            article=pubmed_pb2.Article(
-                pub_model=pubmed_pb2.Article.PUB_MODEL_UNSPECIFIED,
-                journal=pubmed_pb2.Journal(
-                    journal_issue=pubmed_pb2.JournalIssue(
-                        cited_medium=pubmed_pb2.JournalIssue.CITED_MEDIUM_UNSPECIFIED,
-                        pub_date=_pub_date(work, doi),
-                        volume=_as_str(work.get('volume')),
-                        issue=_as_str(work.get('issue')),
-                    ),
-                    title=_first(work.get('container-title')),
-                ),
-                article_title=pubmed_pb2.ArticleTitle(value=title),
-                author_list=_author_list(work.get('author')),
-            ),
-        ),
-        pubmed_data=pubmed_pb2.PubmedData(
-            # Crossref carries no NLM PublicationStatus; honest empty, not invented.
-            publication_status='',
-            article_id_list=[pubmed_pb2.ArticleId(id_type=pubmed_pb2.ArticleId.ID_TYPE_DOI, value=doi)],
-        ),
-    )
+    work = parse_work(document)
+    if not work.doi:
+        raise ValueError('Crossref work states no DOI')
     return CrossrefResult(
-        metadata=efetch.to_canonical_bytes(article),
-        external_ids=litcache_pb2.ExternalIds(doi=doi),
-        publisher=_as_str(work.get('publisher')),
+        metadata=paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(crossref=work)),
+        external_ids=litcache_pb2.ExternalIds(doi=work.doi),
+        publisher=work.publisher if work.HasField('publisher') else None,
     )
 
 

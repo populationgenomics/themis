@@ -1,0 +1,62 @@
+<?xml version="1.0" ?>
+<!DOCTYPE PubmedArticleSet PUBLIC "-//NLM//DTD PubMedArticle, 1st January 2025//EN" "https://dtd.nlm.nih.gov/ncbi/pubmed/out/pubmed_250101.dtd">
+<PubmedArticleSet>
+<PubmedBookArticle>
+  <BookDocument>
+    <PMID Version="1">30000010</PMID>
+    <ArticleIdList>
+      <ArticleId IdType="bookaccession">NBK900001</ArticleId>
+    </ArticleIdList>
+    <Book>
+      <Publisher>
+        <PublisherName>A university press</PublisherName>
+        <PublisherLocation>A city</PublisherLocation>
+      </Publisher>
+      <BookTitle book="synthetic">A synthetic review series</BookTitle>
+      <PubDate>
+        <Year>1993</Year>
+      </PubDate>
+    </Book>
+    <ArticleTitle book="synthetic" part="chapter1">A synthetic chapter</ArticleTitle>
+    <AuthorList Type="authors" CompleteYN="Y">
+      <Author ValidYN="Y">
+        <LastName>Doe</LastName>
+        <ForeName>Jane</ForeName>
+        <Initials>J</Initials>
+      </Author>
+    </AuthorList>
+    <PublicationType UI="D016454">Review</PublicationType>
+    <Abstract>
+      <AbstractText>A synthetic summary.</AbstractText>
+    </Abstract>
+    <Sections>
+      <Section>
+        <SectionTitle book="synthetic" part="chapter1.s1">Summary</SectionTitle>
+      </Section>
+    </Sections>
+    <ContributionDate>
+      <Year>2010</Year>
+      <Month>3</Month>
+      <Day>23</Day>
+    </ContributionDate>
+    <DateRevised>
+      <Year>2024</Year>
+      <Month>1</Month>
+      <Day>4</Day>
+    </DateRevised>
+  </BookDocument>
+  <PubmedBookData>
+    <History>
+      <PubMedPubDate PubStatus="pubmed">
+        <Year>2010</Year>
+        <Month>3</Month>
+        <Day>23</Day>
+      </PubMedPubDate>
+    </History>
+    <PublicationStatus>ppublish</PublicationStatus>
+    <ArticleIdList>
+      <ArticleId IdType="pubmed">30000010</ArticleId>
+    </ArticleIdList>
+  </PubmedBookData>
+</PubmedBookArticle>
+</PubmedArticleSet>

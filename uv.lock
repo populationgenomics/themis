@@ -1733,27 +1733,27 @@ wheels = [
 
 [[package]]
 name = "litdown"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/36/15107701b628c6193adacedfe338535c85b9c4aa1b5f389683a52a3bb65f/litdown-0.5.0.tar.gz", hash = "sha256:fd5f16344145353ae661fe77e262ec227b124d394a88c9c1f1cab69f00fc69e6", size = 67273, upload-time = "2026-08-12T00:50:34.095Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/60/28efcd6af761095bab7343e4d5fa142c77e420bb907564afadee0a21d5df/litdown-0.6.0.tar.gz", hash = "sha256:186d040f30d4911b2b37bd8f6f03960d97902f5f360962a38130dfef09831865", size = 74640, upload-time = "2026-09-02T07:39:41.322Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/9c/21bb532312e0a708cfa363532757c6d18f9dcf33e4532d0915496fb702d6/litdown-0.5.0-py3-none-any.whl", hash = "sha256:ad26a33ff5fcefe78989d6fbed3848d0ee263afa6a0023c601ef0ddece9f71af", size = 53192, upload-time = "2026-08-12T00:50:32.923Z" },
+    { url = "https://files.pythonhosted.org/packages/40/d8/ffb4c9aba2d1dd7555f77a2f1826e24e6183f731050a321c5e04e5639ae2/litdown-0.6.0-py3-none-any.whl", hash = "sha256:8f17823e427429eb1b12149f401fb4c5b56e2563358862c5df9c2eebd9a08847", size = 55999, upload-time = "2026-09-02T07:39:40.085Z" },
 ]
 
 [[package]]
 name = "litfetch"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
     { name = "httpx2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/72/393a5058a3aca8b2618c6f4c57ef75edb85057ccee77bdbe135da7b08bd6/litfetch-0.3.0.tar.gz", hash = "sha256:a440e8b5d977d51adfba7f926b6a94ae1be2920826747542156f41fd3a868d7d", size = 56829, upload-time = "2026-09-01T02:19:40.377Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/1f/be0528001cee8d50b756562fc08f56c71625ee837cd66c651e932449ebc5/litfetch-0.4.0.tar.gz", hash = "sha256:304b3710d8acca96b50bedcf7a4fe4af3fd08beac0de6346c901f121e8b73f44", size = 62318, upload-time = "2026-09-02T07:38:09.685Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/5f/d26d5e5bb92367ee8b1e17af902b584a4036ed977f52cf8c3519a7d78797/litfetch-0.3.0-py3-none-any.whl", hash = "sha256:0fb53e1fa92e728a52f1976a61270ff8611e65526f33a075466a09715a230847", size = 44232, upload-time = "2026-09-01T02:19:39.125Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/14/cba3728966bba67a28c16e05013348c949b5e29653e28074088dec542709/litfetch-0.4.0-py3-none-any.whl", hash = "sha256:66b03b15d609bddfa564de3d431f757f5edd53353e8ba45533a9346661117e6e", size = 46742, upload-time = "2026-09-02T07:38:08.344Z" },
 ]
 
 [[package]]
@@ -3749,8 +3749,8 @@ convert-worker = [
     { name = "anthropic" },
     { name = "google-auth" },
     { name = "google-cloud-storage" },
-    { name = "litdown", specifier = "==0.5.0" },
-    { name = "litfetch", specifier = "==0.3.0" },
+    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litfetch", specifier = "==0.4.0" },
     { name = "pillow" },
     { name = "protobuf" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
@@ -3765,8 +3765,8 @@ dataflow = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.5.0" },
-    { name = "litfetch", specifier = "==0.3.0" },
+    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -3834,8 +3834,8 @@ lint = [
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.5.0" },
-    { name = "litfetch", specifier = "==0.3.0" },
+    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "lxml-stubs" },
     { name = "pg8000" },
@@ -3864,8 +3864,8 @@ litcache = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.5.0" },
-    { name = "litfetch", specifier = "==0.3.0" },
+    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -3927,8 +3927,8 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.5.0" },
-    { name = "litfetch", specifier = "==0.3.0" },
+    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },

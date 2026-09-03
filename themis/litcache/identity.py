@@ -12,7 +12,9 @@ future sources are transcribed is the converter's concern, not identity's.
 The id set is `{scheme}:{value}` keys — `doi:`, `pmcid:`, `pmid:`, `pii:`, or,
 when no external scheme is recognised, a `binhash:` content-hash fallthrough
 derived from Docling's `origin.binary_hash`. A paper with neither an external id
-nor a binary hash cannot be placed and fails loud.
+nor a binary hash cannot be placed and fails loud. One more scheme, `bookid:` (a
+Bookshelf accession), is minted by the pipeline from the paper's resolved record,
+never classified from a key: no seed is keyed by an accession.
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ class ExternalId:
     """One classified external identifier.
 
     Attributes:
-        scheme: The id scheme — `doi`, `pmcid`, `pmid`, `pii`, or `binhash`.
+        scheme: The id scheme — `doi`, `pmcid`, `pmid`, `bookid`, `pii`, or `binhash`.
         value: The decoded identifier, without the scheme prefix.
     """
 

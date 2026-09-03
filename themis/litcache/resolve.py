@@ -1,11 +1,15 @@
-"""Resolve a paper's identifier to its `metadata.pb` (a pubmed_proto `PubmedArticle`).
+"""Resolve a paper's identifier to its `metadata.pb` (a `PaperMetadata` envelope).
 
-Two entry points:
+The envelope carries the resolving index's record whole, in that index's own schema: PubMed's
+journal or book record as efetch answers a PMID, in the envelope's `pubmed` field, or a Crossref
+or OpenAlex record in its own field for a paper PubMed does not index. Two entry points:
 
 - `resolve_metadata` — the per-paper ladder: a PMID resolves through PubMed efetch
   (`themis.litcache.efetch`), else the DOI falls to Crossref (`themis.litcache.crossref`).
-  A full miss raises `MetadataUnresolvedError` — `PubmedArticle`'s required title /
-  `pub_date` cannot be satisfied without inventing data.
+  A full miss raises `MetadataUnresolvedError`: no index has a record, so there is nothing
+  to put in the envelope. A PMID efetch answers with a record that fails the store's
+  precondition raises `efetch.RecordPreconditionError`; Crossref is not tried in its place.
+  A Crossref record that does not fit its mirror raises `mirror.SchemaDriftError`.
 - `resolve_batch` — the bulk entry point the ingestion pipeline uses, fully batched to
   eliminate the per-paper rate domain. PMIDs go through batched efetch; DOI-only papers
   take an all-batched DOI path (`_resolve_doi_batch`): litfetch's batched resolver
@@ -13,9 +17,14 @@ Two entry points:
   discovered pmid routes back into efetch for a PubMed-native record; the no-pmid
   residual takes an OpenAlex (`themis.litcache.openalex`) bibliographic record. It does
   *not* use per-DOI Crossref (un-batchable, rate-limited), and returns partial results
-  (an unresolved paper is absent, not raised — a batch is not failed by one member).
+  (an unresolved paper is absent, not raised — a batch is not failed by one member). A
+  paper efetch answers with a record that fails the store's precondition is a
+  `RecordPreconditionFailure` carrying the reason: the record exists, so no other source is
+  tried in its place. An OpenAlex record that does not fit its mirror is a `SchemaDriftFailure`
+  carrying the parser's message, charged to its paper alone.
 
-efetch harvests the cross-ids (DOI↔PMID↔PMCID) from the record's own id list.
+efetch harvests the cross-ids from the record's own id lists: DOI↔PMID↔PMCID for a
+journal record, PMID and the Bookshelf accession for a book record.
 """
 
 from __future__ import annotations
@@ -51,7 +60,8 @@ class MetadataUnresolvedError(Exception):
     """Neither efetch nor Crossref resolved a paper — it is fully unknown.
 
     Carries the identifiers tried so the orchestrator can surface the paper in the
-    `unknown`-metadata diagnostics rather than invent a record.
+    `unknown`-metadata diagnostics rather than invent a record: no index answered, so
+    there is no record to put in the envelope.
     """
 
     def __init__(self, *, pmid: str | None, doi: str | None) -> None:
@@ -65,18 +75,50 @@ class ResolvedPaper:
     """The bibliographic outputs of resolving one paper through the ladder.
 
     Attributes:
-        metadata: The canonical `metadata.pb` bytes (serialized pubmed_proto
-            `PubmedArticle`).
+        metadata: The canonical `metadata.pb` bytes (a serialized `PaperMetadata`
+            envelope carrying the resolving index's record).
         external_ids: The cross-ids harvested for the manifest. The efetch rung
-            harvests doi/pmid/pmcid from the record; the Crossref rung carries the
-            DOI only.
-        publisher: The Crossref publisher (for `Licensed` access); `None` on the
-            efetch rung (PubMed records carry no publisher in this mapping).
+            harvests doi/pmid/pmcid from a journal record and pmid/bookid (and any
+            DOI) from a book record; the Crossref rung carries the DOI only; the
+            OpenAlex rung carries the DOI and the pmid/pmcid the work states.
+        publisher: The Crossref or OpenAlex publisher (for `Licensed` access); `None`
+            on the efetch rung (a PubMed record states none).
     """
 
     metadata: bytes
     external_ids: litcache_pb2.ExternalIds
     publisher: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class RecordPreconditionFailure:
+    """A paper whose efetch record fails the store's precondition (`efetch.RecordPreconditionError`).
+
+    The record exists and converts, so the paper is not unknown and no other source is tried in
+    its place; the fault is in the record, to be reviewed, and no `metadata.pb` is written for it.
+
+    Attributes:
+        reason: Which precondition the record fails, as `efetch.parse_response` states it.
+    """
+
+    reason: str
+
+
+@dataclasses.dataclass(frozen=True)
+class SchemaDriftFailure:
+    """A paper whose index record does not fit its mirror (`mirror.SchemaDriftError`).
+
+    The record exists, so the paper is not unknown and no other source is tried in its place; the
+    fault is the mirror's lag, repaired by its field, and no `metadata.pb` is written until then.
+
+    Attributes:
+        reason: The parser's message naming the key, as `mirror.SchemaDriftError.detail` states it.
+    """
+
+    reason: str
+
+
+type Outcome = ResolvedPaper | RecordPreconditionFailure | SchemaDriftFailure
 
 
 def _retry_after_seconds(response: httpx2.Response, attempt: int) -> float:
@@ -120,14 +162,20 @@ async def resolve_metadata(*, pmid: str | None, doi: str | None, http_client: ht
 
     Raises:
         MetadataUnresolvedError: If neither rung resolves the paper (fully unknown).
+        efetch.RecordPreconditionError: If efetch answers the PMID with a record that fails the
+            store's precondition; the record exists, so the DOI rung is not tried in its place.
+        mirror.SchemaDriftError: If Crossref's record does not fit its mirror; the record exists,
+            so nothing else is tried in its place.
         httpx2.HTTPStatusError: On a non-404 transport failure from either source
             (a transient error the caller retries — distinct from a clean miss).
     """
     if pmid is not None:
-        resolved = await efetch.resolve([pmid], http_client=http_client)
-        record = resolved.get(pmid)
+        response = await efetch.resolve([pmid], http_client=http_client)
+        record = response.resolved.get(pmid)
         if record is not None:
             return ResolvedPaper(metadata=record.metadata, external_ids=record.external_ids, publisher=None)
+        if pmid in response.precondition_failed:
+            raise efetch.RecordPreconditionError(response.precondition_failed[pmid])
 
     if doi is not None:
         result = await _crossref_or_none(doi, http_client=http_client)
@@ -159,9 +207,35 @@ def _chunk(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
         yield items[start : start + size]
 
 
+async def _efetch_batched(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> efetch.ParsedResponse:
+    """Resolve `pmids` through efetch in chunks of `_ID_CALL_LIMIT`, merging the chunks' answers."""
+    resolved: dict[str, efetch.ResolvedMetadata] = {}
+    precondition_failed: dict[str, str] = {}
+    for chunk in _chunk(pmids, _ID_CALL_LIMIT):
+        response = await efetch.resolve(chunk, http_client=http_client)
+        resolved.update(response.resolved)
+        precondition_failed.update(response.precondition_failed)
+    return efetch.ParsedResponse(resolved=resolved, precondition_failed=precondition_failed)
+
+
+def _efetch_outcome(
+    efetched: efetch.ParsedResponse, pmid: str | None
+) -> ResolvedPaper | RecordPreconditionFailure | None:
+    """What efetch's answer settles for `pmid`: resolved, a failed precondition, or `None` (not answered)."""
+    if pmid is None:
+        return None
+    record = efetched.resolved.get(pmid)
+    if record is not None:
+        return ResolvedPaper(metadata=record.metadata, external_ids=record.external_ids, publisher=None)
+    reason = efetched.precondition_failed.get(pmid)
+    if reason is not None:
+        return RecordPreconditionFailure(reason=reason)
+    return None
+
+
 async def resolve_batch(
     requests: Sequence[ResolveRequest], *, http_client: httpx2.AsyncClient, session: litfetch.Session
-) -> dict[str, ResolvedPaper]:
+) -> dict[str, Outcome]:
     """Resolve a batch of papers by identifier, batching the NCBI calls.
 
     The batched analogue of `resolve_metadata`, fully batched to eliminate the
@@ -174,7 +248,10 @@ async def resolve_batch(
     Unlike `resolve_metadata`, a paper resolvable by no path is simply absent from the
     result — the caller's `unknown`, surfaced when the write stage finds no entry for
     its `claim_key`, never raised here (a batch is not failed by one unresolvable
-    member).
+    member). Likewise a paper efetch answers with a record that fails the store's
+    precondition is a `RecordPreconditionFailure` in the result, not raised: the fault is that
+    record's alone, and the DOI path is not tried in its place. Likewise a paper whose OpenAlex
+    record does not fit its mirror is a `SchemaDriftFailure`, charged to it alone.
 
     Args:
         requests: The papers to resolve (deduplicated on identifier internally).
@@ -184,39 +261,39 @@ async def resolve_batch(
             NCBI / Europe PMC / OpenAlex lookups on.
 
     Returns:
-        A mapping of `claim_key` → `ResolvedPaper` for each resolved paper. A paper
-        resolved through efetch (directly or via a discovered pmid) carries efetch's
-        harvested cross-ids; the non-PubMed residual carries OpenAlex's doi/pmid/pmcid.
+        A mapping of `claim_key` → the paper's outcome: a `ResolvedPaper`, a
+        `RecordPreconditionFailure` carrying the reason, or a `SchemaDriftFailure` naming the
+        key. A paper resolved through efetch (directly or via a discovered pmid) carries
+        efetch's harvested cross-ids; the non-PubMed residual carries OpenAlex's doi/pmid/pmcid.
 
     Raises:
         httpx2.HTTPStatusError: On a non-404 transport failure (transient; the caller
             retries the batch).
+        ValueError: If an efetch answer does not read as one record per PMID
+            (`efetch.parse_set`) — then the parse itself is not trustworthy, and the
+            chunk fails rather than any one paper.
     """
-    resolved: dict[str, ResolvedPaper] = {}
+    outcomes: dict[str, Outcome] = {}
 
     pmids = sorted({r.pmid for r in requests if r.pmid is not None})
-    efetched: dict[str, efetch.ResolvedMetadata] = {}
-    for chunk in _chunk(pmids, _ID_CALL_LIMIT):
-        efetched.update(await efetch.resolve(chunk, http_client=http_client))
+    efetched = await _efetch_batched(pmids, http_client=http_client)
 
     doi_requests: list[ResolveRequest] = []
     for request in requests:
-        record = efetched.get(request.pmid) if request.pmid is not None else None
-        if record is not None:
-            resolved[request.claim_key] = ResolvedPaper(
-                metadata=record.metadata, external_ids=record.external_ids, publisher=None
-            )
+        outcome = _efetch_outcome(efetched, request.pmid)
+        if outcome is not None:
+            outcomes[request.claim_key] = outcome
         elif request.doi is not None:
             doi_requests.append(request)
 
     if doi_requests:
-        resolved.update(await _resolve_doi_batch(doi_requests, http_client=http_client, session=session))
-    return resolved
+        outcomes.update(await _resolve_doi_batch(doi_requests, http_client=http_client, session=session))
+    return outcomes
 
 
 async def _resolve_doi_batch(
     requests: Sequence[ResolveRequest], *, http_client: httpx2.AsyncClient, session: litfetch.Session
-) -> dict[str, ResolvedPaper]:
+) -> dict[str, Outcome]:
     """Resolve DOI-keyed papers, batched throughout — no per-DOI Crossref.
 
     litfetch's batched resolver (NCBI ID Converter → Europe PMC → OpenAlex) fills each
@@ -224,7 +301,9 @@ async def _resolve_doi_batch(
     a PubMed-native record; a DOI with no pmid at all (a preprint) takes an OpenAlex
     bibliographic record — a second, metadata-only OpenAlex call scoped to that
     residual, since litfetch's resolver returns ids, not the record. A DOI neither the
-    resolver nor OpenAlex resolves is absent.
+    resolver nor OpenAlex resolves is absent; one whose discovered pmid efetch answers
+    with a record that fails the store's precondition is a `RecordPreconditionFailure`; one
+    whose OpenAlex record does not fit its mirror is a `SchemaDriftFailure`.
     """
     dois = sorted({r.doi for r in requests if r.doi is not None})
     bundles = [litfetch.ArticleIds(doi=doi) for doi in dois]
@@ -237,30 +316,27 @@ async def _resolve_doi_batch(
     cross_ids = {bundle.doi: bundle for bundle in enriched}
 
     pmids = sorted({bundle.pmid for bundle in enriched if bundle.pmid is not None})
-    efetched: dict[str, efetch.ResolvedMetadata] = {}
-    for chunk in _chunk(pmids, _ID_CALL_LIMIT):
-        efetched.update(await efetch.resolve(chunk, http_client=http_client))
+    efetched = await _efetch_batched(pmids, http_client=http_client)
 
     residual = [doi for doi in dois if cross_ids[doi].pmid is None]
-    works = await openalex.resolve(residual, http_client=http_client) if residual else {}
+    parsed = await openalex.resolve(residual, http_client=http_client) if residual else openalex.ParsedWorks({}, {})
 
-    resolved: dict[str, ResolvedPaper] = {}
+    outcomes: dict[str, Outcome] = {}
     for request in requests:
         if request.doi is None:
             continue
-        pmid = cross_ids[request.doi].pmid
-        record = efetched.get(pmid) if pmid is not None else None
-        if record is not None:
-            resolved[request.claim_key] = ResolvedPaper(
-                metadata=record.metadata, external_ids=record.external_ids, publisher=None
-            )
+        outcome = _efetch_outcome(efetched, cross_ids[request.doi].pmid)
+        if outcome is not None:
+            outcomes[request.claim_key] = outcome
             continue
-        work = works.get(request.doi)
+        work = parsed.works.get(request.doi)
         if work is not None:
-            pmcid = cross_ids[request.doi].pmcid or work.pmcid
-            resolved[request.claim_key] = ResolvedPaper(
-                metadata=openalex.to_pubmed_article(work),
-                external_ids=litcache_pb2.ExternalIds(doi=request.doi, pmid=work.pmid, pmcid=pmcid),
-                publisher=work.publisher,
+            pmcid = cross_ids[request.doi].pmcid or openalex.bare_pmcid(work)
+            outcomes[request.claim_key] = ResolvedPaper(
+                metadata=openalex.to_metadata(work),
+                external_ids=litcache_pb2.ExternalIds(doi=request.doi, pmid=openalex.bare_pmid(work), pmcid=pmcid),
+                publisher=openalex.publisher(work),
             )
-    return resolved
+        elif request.doi in parsed.drifted:
+            outcomes[request.claim_key] = SchemaDriftFailure(reason=parsed.drifted[request.doi])
+    return outcomes

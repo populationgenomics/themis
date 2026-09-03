@@ -18,15 +18,18 @@ mint) from inside the workers:
    (`resolve.resolve_batch`, which chunks the ids into per-call batches internally). One
    key ⇒ no fan-out ⇒ the global NCBI request rate is bounded regardless of the job's
    worker count; batching keeps the call count tiny (⌈ids/200⌉), so serial resolution is
-   cheap. Emits `(claim_key, ResolvedPaper)`.
+   cheap. Emits `(claim_key, resolve.Outcome)`.
 3. `_WritePaperFn` — per paper, the write half: `CoGroupByKey` joins each paper's work
    with its resolution on `claim_key`; the worker re-reads the seed and runs
    `ingest_paper`. Per-paper failure is isolated, not fatal: a paper with no resolution
-   (counted `paper_unresolved`) and a paper whose write half raises (counted
-   `paper_failed`, the exception recorded as the reason) are both dead-lettered under the
-   run's own prefix (`dead_letter_paths`) and the run carries on — one bad paper never
-   aborts a full-seed pass. `report_run` consolidates that run's records into one text
-   file, so a re-run against the same bucket reports its own failures, not the history.
+   (counted `paper_unresolved`), a paper whose record fails the store's precondition
+   (counted `paper_precondition_failed`, the failed precondition recorded as the reason), a
+   paper whose index record does not fit its mirror (counted `paper_schema_drift`, the key
+   recorded as the reason) and a paper whose write half raises (counted `paper_failed`, the exception recorded as
+   the reason) are all dead-lettered under the run's own prefix (`dead_letter_paths`) and
+   the run carries on — one bad paper never aborts a full-seed pass. `report_run`
+   consolidates that run's records into one text file, so a re-run against the same
+   bucket reports its own failures, not the history.
 
 Backends reach the workers as factories, not instances: the driver and each worker live
 in different processes, so a `Bucket` / Postgres connection / HTTP transport is built
@@ -38,7 +41,8 @@ reverse) is logged and excluded, a data-quality signal the diagnostics report su
 never a per-paper crash.
 
 Per-stage counts are emitted as Beam metrics under `METRICS_NAMESPACE` (`papers_seen`,
-`doc_id_minted` / `doc_id_adopted`, `paper_written` / `paper_skipped`).
+`doc_id_minted` / `doc_id_adopted`, `paper_written` / `paper_skipped`, `paper_unresolved` /
+`paper_precondition_failed` / `paper_schema_drift` / `paper_failed`).
 
 `report_run` is the post-run step (call after `wait_until_finish`): it builds and logs
 the diagnostics report. Deleting the transient seed prefix is a separate manual operator
@@ -86,12 +90,15 @@ _COUNTER_NAMES = (
     'paper_written',
     'paper_skipped',
     'paper_unresolved',
+    'paper_precondition_failed',
+    'paper_schema_drift',
     'paper_failed',
 )
 
-# Papers that could not be ingested — unresolved metadata, or a write-half failure — are
-# recorded here (one JSON blob per paper, keyed by the url-encoded key, carrying the reason)
-# instead of failing the run. `report_run` consolidates them into a text summary.
+# Papers that could not be ingested — unresolved metadata, a record failing the store's
+# precondition, or a write-half failure — are recorded here (one JSON blob per paper, keyed
+# by the url-encoded key, carrying the reason) instead of failing the run. `report_run`
+# consolidates them into a text summary.
 _DEAD_LETTER_ROOT = 'diagnostics/dead_letters/'
 
 _JSON_SUFFIX = '.json'
@@ -265,8 +272,8 @@ def _write_dead_letter(
         prefix: The run's record prefix, from `dead_letter_paths`.
         key: The paper's identifier — its `claim_key` once identity is known, or the seed
             object key when extraction itself failed; url-encoded, it names the record blob.
-        reason: Why it was dead-lettered — the exception (`type: message`) or
-            `'metadata unresolved'`.
+        reason: Why it was dead-lettered — the exception (`type: message`),
+            `'metadata unresolved'`, or `'precondition failed: <reason>'`.
         pmid: The paper's PMID, when identity was classified.
         doi: The paper's DOI, when identity was classified.
     """
@@ -348,9 +355,11 @@ class _ResolveBatchFn(beam.DoFn):
     """Resolve the collected papers' bibliographic metadata in bulk.
 
     Runs `resolve.resolve_batch` over the `GroupByKey` group (it chunks the ids into
-    per-call batches), emitting `(claim_key, ResolvedPaper)` for the papers that
-    resolved (an unresolved paper is absent — the write stage fails it loud). The HTTP
-    transport is built per worker.
+    per-call batches), emitting `(claim_key, outcome)` for each paper it settles: a
+    `ResolvedPaper`, a `RecordPreconditionFailure` for a record that fails the store's
+    precondition, or a `SchemaDriftFailure` for a record its mirror does not hold (an unresolved
+    paper is absent — the write stage dead-letters all three). The
+    HTTP transport is built per worker.
     """
 
     def __init__(self, *, transport_factory: TransportFactory | None) -> None:
@@ -361,14 +370,12 @@ class _ResolveBatchFn(beam.DoFn):
         self._transport = self._transport_factory() if self._transport_factory is not None else None
 
     @override
-    def process(
-        self, batch: tuple[int, Iterable[resolve.ResolveRequest]]
-    ) -> Iterator[tuple[str, resolve.ResolvedPaper]]:
+    def process(self, batch: tuple[int, Iterable[resolve.ResolveRequest]]) -> Iterator[tuple[str, resolve.Outcome]]:
         _shard, requests = batch
-        resolved = asyncio.run(self._resolve(list(requests)))
-        yield from resolved.items()
+        outcomes = asyncio.run(self._resolve(list(requests)))
+        yield from outcomes.items()
 
-    async def _resolve(self, requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.ResolvedPaper]:
+    async def _resolve(self, requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.Outcome]:
         # The batched id-resolver runs on a litfetch Session; a test transport is
         # injected via its client_factory, else litfetch builds its live default client.
         client_factory = (
@@ -444,7 +451,8 @@ class _WritePaperFn(beam.DoFn):
     The crosswalk connection is one per worker process (`_MintConnection` via
     `beam.utils.shared.Shared`), opened lazily on the first mint — a bundle of only
     unresolved papers never opens one. Counts `doc_id_minted`/`doc_id_adopted`,
-    `paper_written`/`paper_skipped`, `paper_unresolved`/`paper_failed`.
+    `paper_written`/`paper_skipped`, `paper_unresolved`/`paper_precondition_failed`/`paper_schema_drift`/
+    `paper_failed`.
     """
 
     def __init__(
@@ -472,6 +480,8 @@ class _WritePaperFn(beam.DoFn):
         self._written = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_written')
         self._skipped = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_skipped')
         self._unresolved = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_unresolved')
+        self._precondition_failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_precondition_failed')
+        self._schema_drift = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_schema_drift')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
 
     @override
@@ -504,14 +514,26 @@ class _WritePaperFn(beam.DoFn):
     def process(self, joined: tuple[str, dict[str, list[object]]]) -> Iterator[str]:
         _claim_key, grouped = joined
         works = [work for work in grouped['work'] if isinstance(work, _PaperWork)]
-        resolutions = [r for r in grouped['resolved'] if isinstance(r, resolve.ResolvedPaper)]
-        resolved = resolutions[0] if resolutions else None
+        outcomes = [
+            r
+            for r in grouped['resolved']
+            if isinstance(r, resolve.ResolvedPaper | resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure)
+        ]
+        outcome = outcomes[0] if outcomes else None
         for work in works:
-            if resolved is None:
+            if outcome is None:
                 # No metadata resolvable: dead-letter the paper (record it for review)
                 # and carry on, rather than failing the bundle and aborting the run.
                 self._dead_letter(work.ident, reason='metadata unresolved')
                 self._unresolved.inc()
+                continue
+            if isinstance(outcome, resolve.RecordPreconditionFailure):
+                self._dead_letter(work.ident, reason=f'precondition failed: {outcome.reason}')
+                self._precondition_failed.inc()
+                continue
+            if isinstance(outcome, resolve.SchemaDriftFailure):
+                self._dead_letter(work.ident, reason=f'schema drift: {outcome.reason}')
+                self._schema_drift.inc()
                 continue
             # Outside the handler, as in the identity stage: a failed seed read is transient
             # and worth Beam's retries, not a permanent dead-letter.
@@ -526,7 +548,7 @@ class _WritePaperFn(beam.DoFn):
                     self._mint,
                     seed,
                     work.ident,
-                    resolved,
+                    outcome,
                     self._licence,
                     now=self._now,
                     fetchers=self._fetchers,

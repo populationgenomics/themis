@@ -18,7 +18,6 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import ids
-from pubmed_proto import pubmed_pb2
 
 from themis.litcache import oa, ocr, outcome, produce, writer
 from themis.litcache.models import litcache_pb2
@@ -35,9 +34,9 @@ _JATS = (
 
 
 def _metadata() -> bytes:
-    article = pubmed_pb2.PubmedArticle()
-    article.medline_citation.pmid.value = '29089047'
-    return article.SerializeToString()
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.pubmed.article.medline_citation.pmid.value = '29089047'
+    return metadata.SerializeToString()
 
 
 def _pdf_source() -> writer.SourceInput:
@@ -195,6 +194,24 @@ def test_produce_fetches_and_commits_oa_full_text(gcs_bucket: gcs.Bucket) -> Non
     rendering = next(iter(manifest.renderings.values()))
     assert rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
+
+
+def test_produce_hands_the_fetcher_a_manifests_bookshelf_accession(gcs_bucket: gcs.Bucket) -> None:
+    # A chapter's manifest carries its accession; the fetch bundle carries it too, which is what
+    # lets the Bookshelf rung fire for a paper with no PMCID.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(pmid='30000010', bookid='NBK900001'))
+    captured: dict[str, ids.ArticleIds] = {}
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(_oa_source(), captured),
+            convert_pdf=_ocr_boom,
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.READY
+    assert captured['ids'] == ids.ArticleIds(pmid='30000010', bookid='NBK900001')
 
 
 def test_produce_is_a_noop_when_a_rendering_exists(gcs_bucket: gcs.Bucket) -> None:

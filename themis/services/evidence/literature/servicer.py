@@ -9,9 +9,10 @@ an unqualified, malformed or oversized batch / a variant request nothing resolve
 INVALID_ARGUMENT — and so is a discovery upstream's own refusal of the request as issued
 (``errors.InvalidRequestError``), which as UNKNOWN would have the guest's retry helper reissue a
 request that cannot come back different. A rendering the manifest lists but the store cannot produce
-is INTERNAL — the store broke its own invariant — and a quote against a PDF is UNIMPLEMENTED while no
-producer resolves one. A quote that does not locate is a modelled ``not_located`` result, not an
-error, and so is a paper whose text the store cannot serve, an id the store holds no paper for, and
+is INTERNAL — the store broke its own invariant — and so is a ``metadata.pb`` that does not read as
+its envelope; a quote against a PDF is UNIMPLEMENTED while no producer resolves one. A quote that does
+not locate is a modelled ``not_located`` result, not an error, and so is a paper whose text the store
+cannot serve, an id the store holds no paper for, and
 an entity set the index holds nothing for.
 
 ``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: the papers it resolves
@@ -110,6 +111,8 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
             return await self._backend.describe_paper(request.doc_id)
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, errors.clipped(f'unknown doc_id {request.doc_id!r}'))
+        except literature_backend.CorruptMetadataError as e:
+            await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
     @override
     async def GetMarkdown(

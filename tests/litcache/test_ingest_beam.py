@@ -542,6 +542,124 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
         del _BUCKETS[token]
 
 
+_BOOK_PMID = '30000010'
+
+
+def _precondition_failing_efetch_transport() -> httpx2.MockTransport:
+    """A transport where efetch answers the book PMID with a record stating no Bookshelf accession."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if 'efetch' in request.url.path:
+            record_set = (_FIXTURES / 'bookshelf' / 'efetch.xml').read_bytes()
+            content = record_set.replace(b'<ArticleId IdType="bookaccession">NBK900001</ArticleId>', b'')
+            return httpx2.Response(200, content=content)
+        raise AssertionError(f'unexpected resolve request: {request.url}')
+
+    return httpx2.MockTransport(handler)
+
+
+def _drifting_openalex_transport() -> httpx2.MockTransport:
+    """A transport where OpenAlex answers each DOI with a work carrying a key its mirror lacks."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if 'openalex' in request.url.host:
+            flt = request.url.params.get('filter', '')
+            dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
+            results = [
+                {'doi': f'https://doi.org/{doi}', 'title': 'Drifted', 'ids': {}, 'is_zpac': True} for doi in dois
+            ]
+            return httpx2.Response(
+                200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode()
+            )
+        if 'idconv' in request.url.path:
+            return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
+        raise AssertionError(f'unexpected resolve request: {request.url}')
+
+    return httpx2.MockTransport(handler)
+
+
+def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    # A paper whose OpenAlex record carries a key the mirror lacks is dead-lettered as schema drift
+    # naming the key — nothing thinned is written — and the run completes without a crosswalk
+    # connection.
+    token = request.node.name
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.drift.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.drift.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _BUCKETS[token] = gcs_bucket
+    try:
+        with test_pipeline.TestPipeline(options=_options()) as root:
+            ingest_beam.build_pipeline(
+                root,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=_forbidden_conn,
+                licence=_licence(),
+                now=_NOW,
+                fetchers_factory=_no_fetchers,
+                transport_factory=_drifting_openalex_transport,
+            )
+        result = root.result
+
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        reason = str(records[0]['reason'])
+        assert reason.startswith('schema drift: ')
+        assert 'is_zpac' in reason
+        assert _manifests(gcs_bucket) == []
+
+        rep = ingest_beam.report_run(
+            ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
+        )
+        assert rep.dead_lettered == 1
+        assert rep.counters['paper_schema_drift'] == 1
+        assert rep.counters['paper_unresolved'] == 0
+    finally:
+        del _BUCKETS[token]
+
+
+def test_build_pipeline_dead_letters_a_record_failing_the_precondition(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    # A paper whose PMID efetch answers with a record that fails the store's precondition is
+    # dead-lettered with that reason — distinct from 'metadata unresolved' — and the run completes
+    # without opening a crosswalk connection.
+    token = request.node.name
+    gcs_bucket.blob(f'ingest/{_BOOK_PMID}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+    gcs_bucket.blob(f'ingest/{_BOOK_PMID}.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _BUCKETS[token] = gcs_bucket
+    try:
+        with test_pipeline.TestPipeline(options=_options()) as root:
+            ingest_beam.build_pipeline(
+                root,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=_forbidden_conn,
+                licence=_licence(),
+                now=_NOW,
+                fetchers_factory=_no_fetchers,
+                transport_factory=_precondition_failing_efetch_transport,
+            )
+        result = root.result
+
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        reason = str(records[0]['reason'])
+        assert reason.startswith('precondition failed: ')
+        assert 'no Bookshelf accession' in reason
+        assert records[0]['pmid'] == _BOOK_PMID
+        assert _manifests(gcs_bucket) == []
+
+        rep = ingest_beam.report_run(
+            ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
+        )
+        assert rep.dead_lettered == 1
+        # Counted under its own name, not as unresolved: the record exists.
+        assert rep.counters['paper_precondition_failed'] == 1
+        assert rep.counters['paper_unresolved'] == 0
+    finally:
+        del _BUCKETS[token]
+
+
 def _failing_conn() -> pg8000.dbapi.Connection:
     """A connection whose first use raises — forces the write half (mint) to fail."""
 

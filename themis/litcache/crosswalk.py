@@ -60,7 +60,7 @@ _UNIQUE_VIOLATION = '23505'
 # stored rows are folded by SQL (`litcache_crosswalk_case_fold`) that has to agree exactly.
 _ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 _ASCII_UPPER = str.maketrans(string.ascii_lowercase, string.ascii_uppercase)
-_CASE_FOLDS = {'doi': _ASCII_LOWER, 'pmcid': _ASCII_UPPER}
+_CASE_FOLDS = {'doi': _ASCII_LOWER, 'pmcid': _ASCII_UPPER, 'bookid': _ASCII_UPPER}
 
 
 def normalise_key(external_id: str) -> str:

@@ -1,8 +1,9 @@
 """The OA branch: fetch a paper's full-text XML source and its access terms.
 
-The conversion rule is "if the paper is in PMC / otherwise OA and XML is obtainable
-via the litfetch ladder, convert the XML with litdown (`xml-faithful`); otherwise
-render the seed Docling json (`pdf-derived`)." This module is the OA side: it walks
+The conversion rule is "if the paper is in PMC / otherwise OA — or is a Bookshelf
+chapter, which Europe PMC serves under its accession — and XML is obtainable via the
+litfetch ladder, convert the XML with litdown (`xml-faithful`); otherwise render the
+seed Docling json (`pdf-derived`)." This module is the OA side: it walks
 the litfetch ladder, and on an XML body returns the bytes (the `convert.convert_jats`
 input) together with the provenance (`Source.kind`, `origin_url`) and the
 licence/access terms litfetch read from those bytes (mapped by `from_source_metadata`).
@@ -32,13 +33,13 @@ from litfetch import artifacts, ids, resolvers, source_metadata
 from themis.litcache import identity
 from themis.litcache.models import litcache_pb2
 
-# litdown converts both dialects; either body media type is "XML obtainable" for
-# the xml-faithful branch.
+# litdown renders a JATS article, a BITS book part (served as JATS), and Elsevier's XML;
+# either body media type is "XML obtainable" for the xml-faithful branch.
 _XML_MEDIA_TYPES = frozenset({artifacts.JATS_XML, artifacts.ELSEVIER_XML})
 
 # Identity schemes litfetch's `ArticleIds` can fetch against; `pii`/`binhash` have
 # no litfetch equivalent, so a paper carrying only those is never OA-fetchable.
-_FETCHABLE_SCHEMES = frozenset({'doi', 'pmid', 'pmcid'})
+_FETCHABLE_SCHEMES = frozenset({'doi', 'pmid', 'pmcid', 'bookid'})
 
 # litfetch's access string is the artifact `open-access` flag or Unpaywall's raw
 # `oa_status`. These tokens mark the work openly readable → `free-to-read`;
@@ -60,6 +61,7 @@ _SOURCE_KINDS: dict[str, litcache_pb2.SourceKind] = {
     'europe_pmc': litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC,
     'elsevier_oa': litcache_pb2.SourceKind.SOURCE_KIND_ELSEVIER_OA,
     'biorxiv': litcache_pb2.SourceKind.SOURCE_KIND_BIORXIV,
+    'europe_pmc_bookshelf': litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC_BOOKSHELF,
 }
 
 
@@ -127,9 +129,9 @@ def _licence_basis(raw_basis: str) -> litcache_pb2.LicenceBasis:
 
 def _access(meta: artifacts.SourceMetadata) -> litcache_pb2.Access:
     # An artifact basis means litfetch read the licence from bytes it fetched off
-    # its OA ladder (PMC-OA / Europe PMC / Elsevier OA), so the work is
-    # free-to-read even when the JATS `license-type` carried no explicit `open`
-    # flag and left the access string None.
+    # its OA ladder (PMC-OA / Europe PMC / Bookshelf / Elsevier OA), so the work
+    # is free-to-read even when the JATS `license-type` carried no explicit
+    # `open` flag and left the access string None.
     if meta.basis == _ARTIFACT_BASIS or meta.access in _FREE_TO_READ_TOKENS:
         return litcache_pb2.Access(free_to_read=litcache_pb2.FreeToRead())
     return litcache_pb2.Access(unknown=litcache_pb2.UnknownAccess())
@@ -196,14 +198,19 @@ def article_ids(external_ids: Sequence[identity.ExternalId]) -> ids.ArticleIds |
         external_ids: The identity ids (`themis.litcache.identity`), any scheme.
 
     Returns:
-        An `ArticleIds` carrying the doi / pmid / pmcid present, or `None` when the
-        paper carries no litfetch-fetchable id (only `pii` / `binhash`) — there is
-        no OA fetch to attempt.
+        An `ArticleIds` carrying the doi / pmid / pmcid / bookid present, or `None`
+        when the paper carries no litfetch-fetchable id (only `pii` / `binhash`) —
+        there is no OA fetch to attempt.
     """
     fetchable = {eid.scheme: eid.value for eid in external_ids if eid.scheme in _FETCHABLE_SCHEMES}
     if not fetchable:
         return None
-    return ids.ArticleIds(doi=fetchable.get('doi'), pmid=fetchable.get('pmid'), pmcid=fetchable.get('pmcid'))
+    return ids.ArticleIds(
+        doi=fetchable.get('doi'),
+        pmid=fetchable.get('pmid'),
+        pmcid=fetchable.get('pmcid'),
+        bookid=fetchable.get('bookid'),
+    )
 
 
 def article_ids_for_fetch(
@@ -211,11 +218,12 @@ def article_ids_for_fetch(
 ) -> ids.ArticleIds | None:
     """Build the OA-fetch id bundle from identity plus the resolved cross-ids.
 
-    The PMC fetchers key on `pmcid`; `article_ids` alone rarely carries one (the seed
-    is DOI/PMID). Resolution supplies it — efetch harvests it from the PubMed record,
-    idconv maps it from a DOI — so the fetch bundle is the identity's fetchable ids
-    unioned with the resolved doi/pmid/pmcid, identity taking precedence. This is why
-    the OA fetch needs no live resolver: the `pmcid` is already resolved.
+    The PMC fetchers key on `pmcid` and the Bookshelf fetcher on `bookid`; `article_ids`
+    alone rarely carries either (the seed is DOI/PMID). Resolution supplies them — efetch
+    harvests them from the PubMed record, idconv maps a `pmcid` from a DOI — so the fetch
+    bundle is the identity's fetchable ids unioned with the resolved ids, identity taking
+    precedence. This is why the OA fetch needs no live resolver: the ids the fetchers key
+    on are already resolved.
 
     Args:
         external_ids: The paper's identity ids (any scheme).
@@ -223,16 +231,17 @@ def article_ids_for_fetch(
             idconv-mapped); unset fields are the empty string.
 
     Returns:
-        An `ArticleIds` carrying every doi / pmid / pmcid known, or `None` when none
-        is (no OA fetch to attempt).
+        An `ArticleIds` carrying every doi / pmid / pmcid / bookid known, or `None` when
+        none is (no OA fetch to attempt).
     """
     fetchable = {eid.scheme: eid.value for eid in external_ids if eid.scheme in _FETCHABLE_SCHEMES}
     doi = fetchable.get('doi') or resolved.doi or None
     pmid = fetchable.get('pmid') or resolved.pmid or None
     pmcid = fetchable.get('pmcid') or resolved.pmcid or None
-    if doi is None and pmid is None and pmcid is None:
+    bookid = fetchable.get('bookid') or resolved.bookid or None
+    if doi is None and pmid is None and pmcid is None and bookid is None:
         return None
-    return ids.ArticleIds(doi=doi, pmid=pmid, pmcid=pmcid)
+    return ids.ArticleIds(doi=doi, pmid=pmid, pmcid=pmcid, bookid=bookid)
 
 
 async def fetch_supplementary(

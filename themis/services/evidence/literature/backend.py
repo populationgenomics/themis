@@ -56,6 +56,14 @@ class MissingRenderingBlobError(Exception):
     """
 
 
+class CorruptMetadataError(Exception):
+    """The paper's ``metadata.pb`` does not read as a ``PaperMetadata`` envelope meeting its constraints — INTERNAL.
+
+    The writer validates every envelope it writes, so bytes that fail to read are the store's own
+    fault. An absent ``metadata.pb`` is a paper without metadata and never raises this.
+    """
+
+
 class RepresentationUnavailableError(Exception):
     """The paper has no rendering in the requested representation — FAILED_PRECONDITION."""
 

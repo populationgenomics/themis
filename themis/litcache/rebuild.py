@@ -90,14 +90,14 @@ def _load_manifests(bucket: gcs.Bucket, prefix: str) -> list[litcache_pb2.Manife
 def _external_id_keys(external_ids: litcache_pb2.ExternalIds) -> list[str]:
     """Map an `ExternalIds` to its `{scheme}:{value}` crosswalk keys (only the set fields).
 
-    The scheme names are the proto field names, so presence is `HasField` — proto3
-    `optional string` distinguishes an unset id from an empty one.
+    The schemes are `ExternalIds`' field names, read off the descriptor so an id field added
+    to the proto is inverted without a change here; presence is `HasField` — every field is a
+    proto3 `optional string`, which distinguishes an unset id from an empty one.
     """
-    schemes = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
     return [
-        crosswalk.normalise_key(f'{scheme}:{getattr(external_ids, scheme)}')
-        for scheme in schemes
-        if external_ids.HasField(scheme)
+        crosswalk.normalise_key(f'{field.name}:{getattr(external_ids, field.name)}')
+        for field in litcache_pb2.ExternalIds.DESCRIPTOR.fields
+        if external_ids.HasField(field.name)
     ]
 
 

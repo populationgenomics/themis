@@ -16,7 +16,6 @@ import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
-from pubmed_proto import pubmed_pb2
 
 from themis.litcache import writer
 from themis.litcache.models import litcache_pb2
@@ -34,9 +33,9 @@ _XML_HASH = hashlib.sha256(_XML_BYTES).hexdigest()
 
 
 def _metadata(pmid: str = '29089047') -> bytes:
-    article = pubmed_pb2.PubmedArticle()
-    article.medline_citation.pmid.value = pmid
-    return article.SerializeToString()
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.pubmed.article.medline_citation.pmid.value = pmid
+    return metadata.SerializeToString()
 
 
 def _access() -> litcache_pb2.Access:
@@ -338,8 +337,14 @@ def test_blob_without_extension_fails_loud(gcs_bucket: gcs.Bucket) -> None:
 
 
 def test_invalid_metadata_proto_fails_loud(gcs_bucket: gcs.Bucket) -> None:
-    with pytest.raises(ValueError, match='not a valid PubmedArticle'):
+    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
         writer.write_paper(gcs_bucket, _paper(metadata=b'\x08'))
+
+
+def test_metadata_with_no_record_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+    # An envelope with no arm set is a corrupt blob, never a paper without metadata.
+    with pytest.raises(ValueError, match='no record set'):
+        writer.write_paper(gcs_bucket, _paper(metadata=litcache_pb2.PaperMetadata().SerializeToString()))
 
 
 def test_metadata_is_written_verbatim(gcs_bucket: gcs.Bucket) -> None:

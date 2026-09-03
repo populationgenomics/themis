@@ -2,7 +2,8 @@
 
 Two branches: the non-OA branch renders the synthetic `nonoa/docling.json` via
 docling-core (`pdf-derived`); the OA branch renders the real `oa/fulltext.xml`
-JATS via litdown (`xml-faithful`).
+JATS and the synthetic `bookshelf/chapter.xml` BITS wrapper via litdown
+(`xml-faithful`).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from themis.litcache.models import litcache_pb2
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _NONOA = _FIXTURES / 'nonoa' / 'docling.json'
 _OA_JATS = _FIXTURES / 'oa' / 'fulltext.xml'
+_BOOKSHELF_XML = _FIXTURES / 'bookshelf' / 'chapter.xml'
 _CREATED_AT = datetime.datetime(2026, 6, 25, 12, 0, tzinfo=datetime.UTC)
 # The hash of the source revision the markdown is produced from — convert records
 # it verbatim (the writer is what verifies it against the source it writes).
@@ -106,6 +108,15 @@ def test_jats_rendering_record_fields() -> None:
     assert rendering.from_revision == _FROM_REVISION
     assert not rendering.HasField('model')  # litdown is not a model-driven converter
     assert rendering.created_at.ToDatetime(tzinfo=datetime.UTC) == _CREATED_AT
+
+
+def test_book_part_wrapper_renders_markdown() -> None:
+    # A Bookshelf chapter arrives as a BITS wrapper; litdown heads it with the chapter's title.
+    conversion = convert.convert_jats(
+        _BOOKSHELF_XML.read_bytes(), from_source='xml', from_revision=_FROM_REVISION, created_at=_CREATED_AT
+    )
+    assert conversion.markdown.startswith('# A synthetic chapter')
+    assert conversion.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
 
 
 def test_jats_empty_conversion_fails_loud() -> None:

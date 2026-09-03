@@ -56,6 +56,26 @@ def test_rebuild_inverts_external_ids(conn: pg8000.dbapi.Connection, gcs_bucket:
     assert _doc_ids(conn) == {'doi:10.1/a': 'doc-a', 'pmid:1': 'doc-a', 'doi:10.1/b': 'doc-b'}
 
 
+def test_every_external_id_field_is_an_optional_string_scheme() -> None:
+    # The rebuild (and the producer) read `ExternalIds`' field names as `{scheme}:` prefixes and test
+    # presence with `HasField`; a field of any other shape would be inverted as garbage or not at all.
+    for field in litcache_pb2.ExternalIds.DESCRIPTOR.fields:
+        assert field.type == field.TYPE_STRING, field.name
+        assert field.has_presence, field.name
+
+
+def test_rebuild_inverts_every_external_id_field(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
+    # Every id the manifest models reaches the crosswalk — the property the rebuild's "claimed iff in the
+    # manifest" invariant rests on — for whatever fields the proto declares.
+    ids = {field.name: str(n) for n, field in enumerate(litcache_pb2.ExternalIds.DESCRIPTOR.fields, start=1)}
+    _write_manifest(gcs_bucket, 'doc-a', ids)
+
+    result = rebuild.rebuild(conn, gcs_bucket)
+
+    assert result.external_ids == len(ids)
+    assert _doc_ids(conn) == {f'{scheme}:{value}': 'doc-a' for scheme, value in ids.items()}
+
+
 def test_rebuild_matches_a_freshly_minted_table(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
     # Mint two papers and a cross-paper link, capture the table, then rebuild
     # from manifests that reflect that minted state and compare.
@@ -78,11 +98,17 @@ def test_rebuild_matches_a_freshly_minted_table(conn: pg8000.dbapi.Connection, g
 def test_rebuild_folds_a_manifests_case_variant_key(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
     # A manifest holds its DOI as harvested, so rebuild must fold on the way in — otherwise the
     # rebuilt table keys a row the mint path could never have written, and the two disagree.
-    _write_manifest(gcs_bucket, 'doc-a', {'doi': '10.1016/S0140-6736(20)30183-5', 'pmcid': 'pmc12345'})
+    _write_manifest(
+        gcs_bucket, 'doc-a', {'doi': '10.1016/S0140-6736(20)30183-5', 'pmcid': 'pmc12345', 'bookid': 'nbk900001'}
+    )
 
     rebuild.rebuild(conn, gcs_bucket)
 
-    assert _doc_ids(conn) == {'doi:10.1016/s0140-6736(20)30183-5': 'doc-a', 'pmcid:PMC12345': 'doc-a'}
+    assert _doc_ids(conn) == {
+        'doi:10.1016/s0140-6736(20)30183-5': 'doc-a',
+        'pmcid:PMC12345': 'doc-a',
+        'bookid:NBK900001': 'doc-a',
+    }
 
 
 def test_rebuild_rejects_two_manifests_whose_dois_differ_only_in_case(

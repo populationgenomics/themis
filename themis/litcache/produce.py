@@ -48,9 +48,10 @@ from themis.litcache.models import litcache_pb2
 _XML_HANDLE = 'xml'
 _LITDOWN_VERSION = importlib.metadata.version('litdown')
 
-# ExternalIds fields carrying a litfetch-classifiable id, mapped to `identity.ExternalId` schemes
-# (matching names); `oa.article_ids` keeps only the fetchable subset (doi/pmid/pmcid).
-_ID_FIELDS = ('doi', 'pmid', 'pmcid', 'arxiv', 'biorxiv')
+# ExternalIds' fields, each an id whose name is its `identity.ExternalId` scheme; read off the
+# descriptor so an id field added to the proto reaches the fetch bundle without a change here.
+# `oa.article_ids` keeps only the fetchable subset.
+_ID_FIELDS = tuple(field.name for field in litcache_pb2.ExternalIds.DESCRIPTOR.fields)
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
 

@@ -12,6 +12,7 @@ import protovalidate
 import pytest
 from pubmed_proto import pubmed_pb2
 
+from themis.litcache import paper_metadata
 from themis.litcache.models import crossref_pb2, litcache_pb2
 
 
@@ -96,24 +97,38 @@ def _journal_record() -> litcache_pb2.PubmedRecord:
     return litcache_pb2.PubmedRecord(article=pubmed_pb2.PubmedArticle())
 
 
-@pytest.mark.parametrize(
-    'envelope',
-    [
-        litcache_pb2.PaperMetadata(pubmed=_journal_record()),
-        litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
-        litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
-        litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
-    ],
-)
+_ENVELOPES_HOLDING_A_RECORD = [
+    litcache_pb2.PaperMetadata(pubmed=_journal_record()),
+    litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
+    litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
+    litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
+]
+_ENVELOPES_HOLDING_NO_RECORD = [
+    litcache_pb2.PaperMetadata(),
+    litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()),
+]
+
+
+@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_A_RECORD)
 def test_an_envelope_holding_a_record_is_valid(envelope: litcache_pb2.PaperMetadata) -> None:
     protovalidate.validate(envelope)  # does not raise
 
 
-def test_an_envelope_holding_no_record_is_invalid() -> None:
+@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_NO_RECORD)
+def test_an_envelope_holding_no_record_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
     with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(litcache_pb2.PaperMetadata())
+        protovalidate.validate(envelope)
 
 
-def test_a_pubmed_record_in_neither_kind_is_invalid() -> None:
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()))
+@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_A_RECORD + _ENVELOPES_HOLDING_NO_RECORD)
+def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_pb2.PaperMetadata) -> None:
+    # The proto declares the constraints; `paper_metadata.check` enforces them at the boundary in
+    # code. Both must settle every envelope the same way, or the declaration and the enforcement
+    # have drifted.
+    try:
+        protovalidate.validate(envelope)
+    except protovalidate.ValidationError:
+        with pytest.raises(ValueError, match=r'no record set|neither of its kinds'):
+            paper_metadata.check(envelope)
+    else:
+        paper_metadata.check(envelope)  # does not raise

@@ -5,8 +5,9 @@ manifest.pb``, picks the canonical rendering (xml-faithful over pdf-derived), an
 object for a rendering, the current PDF revision, or an associated file — or serves the canonical
 rendering's text itself, up to a per-read budget. ``locate``/``validate`` run
 anchorite's quote-to-offset location over the rendering bytes — manifest +
-rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, and its
-absence falls back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-only
+rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, decoded as
+the ``PaperMetadata`` envelope and titled by whichever index's record states one; its absence falls
+back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-only
 paper is reported unknown-not-checked, never a false "not located".
 
 Readiness and provenance are derived from the layout, never stored: readiness by
@@ -37,10 +38,9 @@ import anchorite
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage
 from google.protobuf import message as _message
-from pubmed_proto import pubmed_pb2
 
 from themis.common import sql
-from themis.litcache import crosswalk, enqueue, outcome, writer
+from themis.litcache import crosswalk, enqueue, outcome, paper_metadata, writer
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
@@ -433,10 +433,17 @@ def _media_type_for(name: str) -> str:
 
 
 def _title(metadata: bytes | None, manifest: litcache_pb2.Manifest, doc_id: str) -> str:
-    """The bibliographic title, falling back to an external id then the doc_id if unavailable."""
+    """The bibliographic title, falling back to an external id then the doc_id if unavailable.
+
+    Raises:
+        literature_backend.CorruptMetadataError: If ``metadata`` does not read as an envelope
+            meeting its constraints.
+    """
     if metadata is not None:
-        article = _parse(pubmed_pb2.PubmedArticle(), metadata)
-        title = article.medline_citation.article.article_title.value
+        try:
+            title = paper_metadata.title(paper_metadata.parse(metadata))
+        except ValueError as e:
+            raise literature_backend.CorruptMetadataError(f'{doc_id}: {e}') from e
         if title:
             return title
     external = manifest.external_ids

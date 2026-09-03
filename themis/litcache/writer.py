@@ -11,7 +11,7 @@ assembles the `Manifest` (see `docs/design/litcache-manifest.md`).
 Layout written under `papers/{doc_id}/`:
 
     manifest.pb                         # the commit, written last
-    metadata.pb                         # bibliographic (pubmed_proto PubmedArticle)
+    metadata.pb                         # bibliographic (a PaperMetadata envelope)
     sources/{handle}/{hex}.{ext}        # raw source bytes, content-addressed
     renderings/{hex}.md                 # rendering markdown, keyed by its hash
     renderings/{hex}.docling.json       # structured docling output (converter=docling)
@@ -44,10 +44,10 @@ from collections.abc import Sequence
 
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
-from google.protobuf import message, timestamp_pb2
-from pubmed_proto import pubmed_pb2
+from google.protobuf import timestamp_pb2
 
 from themis.common import storage
+from themis.litcache import paper_metadata
 from themis.litcache.models import litcache_pb2
 
 _PAPERS_PREFIX = 'papers'
@@ -184,8 +184,9 @@ class PaperInput:
 
     `external_ids`, `claim_key`, `equivalence`, and `retraction` come from
     identity and the crosswalk mapped into the manifest shape; `metadata` is the
-    bibliographic `metadata.pb` bytes (a serialized pubmed_proto `PubmedArticle`).
-    The writer adds only placement: content-addressed paths and hashes.
+    bibliographic `metadata.pb` bytes (a serialized `PaperMetadata` envelope
+    carrying the resolving index's record). The writer adds only placement:
+    content-addressed paths and hashes.
     """
 
     doc_id: str
@@ -250,7 +251,8 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             present, a rendering carrying (or missing) `model` against its
             converter, two renderings with the same markdown hash, a source with
             an unknown media type, a blob with an unknown role or a name without an
-            extension, or `metadata` that is not a valid `PubmedArticle` proto.
+            extension, or `metadata` that is not a `PaperMetadata` envelope meeting its
+            constraints (`paper_metadata.parse`).
     """
     root = paper_dir(paper.doc_id)
     manifest_key = manifest_path(paper.doc_id)
@@ -534,7 +536,4 @@ def _write_files(bucket: gcs.Bucket, root: str, files: Sequence[FileInput]) -> l
 
 
 def _validate_metadata(metadata: bytes) -> None:
-    try:
-        pubmed_pb2.PubmedArticle.FromString(metadata)
-    except message.DecodeError as e:
-        raise ValueError('metadata is not a valid PubmedArticle proto') from e
+    paper_metadata.parse(metadata)

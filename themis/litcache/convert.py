@@ -93,10 +93,11 @@ def convert_jats(jats_xml: bytes, *, from_source: str, from_revision: str, creat
 
     The OA branch: the XML body has been fetched from the litfetch ladder (see
     `themis.litcache.oa.fetch_oa_source`) and is converted with litdown, which sniffs the
-    root element to dispatch between the JATS and Elsevier dialects.
+    root element to dispatch between the dialects it renders: a JATS `<article>`, a BITS
+    `<book-part-wrapper>` (a Bookshelf chapter), or Elsevier's retrieval response.
 
     Args:
-        jats_xml: The full-text XML bytes (JATS or Elsevier `ce:`/`ja:`).
+        jats_xml: The full-text XML bytes (JATS, BITS, or Elsevier `ce:`/`ja:`).
         from_source: The `Source.handle` the markdown is produced from — the xml
             lineage (e.g. `xml`).
         from_revision: The hash of the source revision's bytes the markdown was
@@ -109,9 +110,8 @@ def convert_jats(jats_xml: bytes, *, from_source: str, from_revision: str, creat
         (`converter=litdown`).
 
     Raises:
-        ValueError: If the XML root is neither JATS nor Elsevier (litdown rejects
-            it rather than returning empty), or the conversion produces empty
-            markdown.
+        ValueError: If the XML root is none litdown renders (it rejects one rather
+            than returning empty), or the conversion produces empty markdown.
     """
     markdown = litdown.convert(jats_xml)
     if not markdown.strip():

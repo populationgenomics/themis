@@ -18,6 +18,8 @@ the docling json *is* the extracted full text.
 | `nonoa/` | synthetic | S7, S8 | non-OA branch: docling json + text pdf |
 | `image_only/source.pdf` | synthetic | S10 | image-only pdf, no text layer |
 | `ids/*` | synthetic | S7 | mixed-id keys; filename == bucket-style key |
+| `bookshelf/` | synthetic | S9, S11b-1 | a Bookshelf chapter: PubMed's book record + the chapter's BITS XML |
+| `preprint/` | real, CC0 metadata | S11b-2 | a bioRxiv preprint PubMed does not index: Crossref's and OpenAlex's records |
 
 ### `oa/` — real OA paper (CC-BY 4.0)
 
@@ -46,8 +48,13 @@ the docling json *is* the extracted full text.
   needs no live fetch. Redistributable as the article's CC-BY record.
 - `crossref.json` — the Crossref `works` response for DOI
   `10.1186/s13073-017-0482-5` (`api.crossref.org/works/<doi>`). Deterministic input
-  for S11b-2 (Crossref → `PubmedArticle` mapping); the response carries no PMID, so
-  it exercises the DOI-only path. Crossref metadata is CC0, so redistributable.
+  for S11b-2 (the record loaded whole into the Crossref mirror, and the mirror's
+  round-trip gate); the response carries no PMID, so it exercises the DOI-only path.
+  Crossref metadata is CC0, so redistributable.
+- `openalex.json` — the OpenAlex `works` response for the same DOI
+  (`api.openalex.org/works?filter=doi:<doi>`), one result. Deterministic input for the
+  OpenAlex mirror and its round-trip gate; the work states the paper's PMID and PMCID.
+  OpenAlex data is CC0.
 
 ### `nonoa/` — synthetic non-OA paper
 
@@ -85,6 +92,42 @@ Each file is named with the **bucket-style encoded key** (the GCS object name in
 
 Real bucket counts at capture time (2026-06): ~38k keys — mostly DOIs, 4432 bare
 PMIDs, 2 Elsevier PII, 3 double-encoded DOIs.
+
+### `bookshelf/` — synthetic Bookshelf chapter
+
+A PMID that names a chapter of a book NCBI hosts on its Bookshelf (a GeneReviews
+chapter, say) answers with PubMed's *book* record, and the chapter's text is served
+by Europe PMC under its Bookshelf accession (`NBK…`) rather than a PMCID. Both
+halves are synthetic and share the accession `NBK900001` under PMID `30000010`:
+
+- `efetch.xml` — a `PubmedArticleSet` holding one `PubmedBookArticle`, structurally
+  complete in the DTD's element order (the converter reads a record whole or not
+  at all). The accession sits in the document's own id list, where PubMed states
+  it. Input for the efetch parse (book arm of the `PaperMetadata` envelope, the
+  harvested `bookid`), the resolver's PMID rung, and the pipeline's Bookshelf
+  ingestion.
+- `chapter.xml` — the chapter's BITS `<book-part-wrapper>` as Europe PMC's
+  `/{bookid}/bookXML` endpoint shapes one: a `<book-meta>` carrying the book's
+  `<permissions>` and one `<book-part>`. The licence is a usage-terms URL flagged
+  `license-type="open-access"` — the shape GeneReviews states its terms in, not a
+  CC licence — so litfetch reads it off the bytes with `basis='artifact'`. Input
+  for the xml→litdown conversion (S9) and the OA-branch access terms.
+
+### `preprint/` — a bioRxiv preprint (CC0 metadata)
+
+> Parisy B, Schmidt NM, Cirtwill AR, *et al.* "Opportunistic partner choice among
+> arctic plants and root-associated fungi is driven by environmental conditions."
+> bioRxiv 2024. DOI `10.1101/2024.09.14.613029`; no PMID. Licensed CC-BY-ND 4.0.
+
+A paper PubMed does not index, so its record comes from an index of its own: the
+DOI-only path with no efetch rung to prefer.
+
+- `crossref.json` — the Crossref `works` response: a `posted-content` record with the
+  `posted`/`accepted` dates, an `institution` and a `subtype`, the shapes a journal
+  record never carries. Crossref metadata is CC0.
+- `openalex.json` — the OpenAlex `works` response, one `preprint` result with an
+  `abstract_inverted_index` (the object-of-arrays shape the loader wraps). OpenAlex
+  data is CC0.
 
 ## Regenerating the synthetic fixtures
 

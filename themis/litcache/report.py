@@ -140,6 +140,8 @@ def render_report(report: IngestReport) -> str:
         f'  counters: {dict(report.counters)}',
         f'  dead-lettered: {report.dead_lettered}',
         f'  unresolved (dead-lettered): {report.counters.get("paper_unresolved", 0)}',
+        f'  precondition failed (dead-lettered): {report.counters.get("paper_precondition_failed", 0)}',
+        f'  schema drift (dead-lettered): {report.counters.get("paper_schema_drift", 0)}',
         f'  failed (dead-lettered): {report.counters.get("paper_failed", 0)}',
         f'  unpaired seed objects: {len(report.unpaired_seeds)}',
         f'  no_text_layer: {len(report.flagged)}',

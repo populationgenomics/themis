@@ -48,7 +48,7 @@ screenshot = ["google-cloud-storage"]
 # task. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.3.0", "litdown==0.5.0", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.4.0", "litdown==0.6.0", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -120,8 +120,8 @@ convert_worker = [
     "google-cloud-storage",
     "protobuf",
     "requests",
-    "litfetch==0.3.0",
-    "litdown==0.5.0",
+    "litfetch==0.4.0",
+    "litdown==0.6.0",
     "pubmed_proto==0.3.0",
     "anthropic",
     "pypdfium2",

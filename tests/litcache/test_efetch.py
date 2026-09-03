@@ -1,9 +1,10 @@
 """PubMed efetch → canonical metadata.pb + harvested cross-ids.
 
-The pure parse is exercised against a committed efetch fixture (the OA paper, PMID
-29089047 — CC-BY, so its record is redistributable on the public mirror); the fetch
-path is driven by an httpx2 `MockTransport` so the offline suite stays deterministic.
-A live efetch is integration-gated on `LITCACHE_EFETCH_LIVE_PMID`.
+The pure parse is exercised against two committed efetch fixtures: the OA paper's journal
+record (PMID 29089047 — CC-BY, so its record is redistributable on the public mirror) and a
+synthetic book record (`bookshelf/efetch.xml`). The fetch path is driven by an httpx2
+`MockTransport` so the offline suite stays deterministic. A live efetch is integration-gated
+on `LITCACHE_EFETCH_LIVE_PMID`.
 """
 
 from __future__ import annotations
@@ -15,47 +16,38 @@ import urllib.parse
 from collections.abc import Callable
 
 import httpx2
-import pubmed_proto
 import pytest
+from lxml import etree
 
 from themis.litcache import efetch
 from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _EFETCH_XML = _FIXTURES / 'oa' / 'efetch.xml'
+_BOOK_EFETCH_XML = _FIXTURES / 'bookshelf' / 'efetch.xml'
 _PMID = '29089047'
-_BOOK_PMID = '20301288'
-# A synthetic `PubmedBookArticle`, structurally complete in the schema's element order: the converter
-# reads a record whole or not at all.
-_BOOK_XML = (
-    b'<PubmedBookArticle><BookDocument>'
-    b'<PMID Version="1">20301288</PMID>'
-    b'<ArticleIdList><ArticleId IdType="bookaccession">NBK900001</ArticleId></ArticleIdList>'
-    b'<Book>'
-    b'<Publisher><PublisherName>A university press</PublisherName>'
-    b'<PublisherLocation>A city</PublisherLocation></Publisher>'
-    b'<BookTitle book="synthetic">A synthetic review series</BookTitle>'
-    b'<PubDate><Year>1993</Year></PubDate>'
-    b'</Book>'
-    b'<ArticleTitle book="synthetic" part="chapter1">A synthetic chapter</ArticleTitle>'
-    b'<AuthorList Type="authors" CompleteYN="Y">'
-    b'<Author ValidYN="Y"><LastName>Doe</LastName><ForeName>Jane</ForeName><Initials>J</Initials></Author>'
-    b'</AuthorList>'
-    b'<PublicationType UI="D016454">Review</PublicationType>'
-    b'<Abstract><AbstractText>A synthetic summary.</AbstractText></Abstract>'
-    b'<Sections><Section><SectionTitle book="synthetic" part="chapter1.s1">Summary</SectionTitle></Section></Sections>'
-    b'<ContributionDate><Year>2010</Year><Month>3</Month><Day>23</Day></ContributionDate>'
-    b'<DateRevised><Year>2024</Year><Month>1</Month><Day>4</Day></DateRevised>'
-    b'</BookDocument><PubmedBookData>'
-    b'<History><PubMedPubDate PubStatus="pubmed"><Year>2010</Year><Month>3</Month><Day>23</Day></PubMedPubDate>'
-    b'</History>'
-    b'<PublicationStatus>ppublish</PublicationStatus>'
-    b'<ArticleIdList>'
-    b'<ArticleId IdType="bookaccession">NBK900001</ArticleId>'
-    b'<ArticleId IdType="pubmed">20301288</ArticleId>'
-    b'</ArticleIdList>'
-    b'</PubmedBookData></PubmedBookArticle>'
-)
+_BOOK_PMID = '30000010'
+_BOOKID = 'NBK900001'
+# The record's two id lists: the accession sits in the document's own (where NLM states it), the
+# `pubmed` id in PubmedBookData's.
+_BOOK_ACCESSION_ID = b'<ArticleId IdType="bookaccession">NBK900001</ArticleId>'
+_PUBMED_ID = b'<ArticleId IdType="pubmed">30000010</ArticleId>'
+_CHAPTER_TITLE = b'<ArticleTitle book="synthetic" part="chapter1">A synthetic chapter</ArticleTitle>'
+_DOI = '10.1234/synthetic.chapter'
+
+
+def _book_record() -> bytes:
+    """The synthetic book record alone, out of its set: the tests compose sets of their own around it."""
+    record = etree.fromstring(_BOOK_EFETCH_XML.read_bytes()).find('PubmedBookArticle')
+    assert record is not None
+    return etree.tostring(record, with_tail=False)
+
+
+_BOOK_XML = _book_record()
+
+
+def _doi_id(doi: str) -> bytes:
+    return b'<ArticleId IdType="doi">' + doi.encode() + b'</ArticleId>'
 
 
 def _set(*records: bytes) -> bytes:
@@ -68,22 +60,29 @@ def _oa_set_with(*records: bytes) -> bytes:
 
 
 def _book_under(pmid: bytes) -> bytes:
-    return _BOOK_XML.replace(b'<PMID Version="1">20301288</PMID>', b'<PMID Version="1">' + pmid + b'</PMID>', 1)
+    return _BOOK_XML.replace(b'<PMID Version="1">30000010</PMID>', b'<PMID Version="1">' + pmid + b'</PMID>', 1)
+
+
+def _record(metadata: bytes) -> litcache_pb2.PaperMetadata:
+    return litcache_pb2.PaperMetadata.FromString(metadata)
 
 
 def test_parse_response_validates_and_keys_by_pmid() -> None:
-    resolved = efetch.parse_response(_EFETCH_XML.read_bytes())
+    response = efetch.parse_response(_EFETCH_XML.read_bytes())
 
-    assert set(resolved) == {_PMID}
-    # the metadata.pb bytes parse straight back to a PubmedArticle.
-    article = pubmed_proto.pubmed_pb2.PubmedArticle.FromString(resolved[_PMID].metadata)
+    assert set(response.resolved) == {_PMID}
+    assert response.precondition_failed == {}
+    # the metadata.pb bytes parse straight back to the envelope, the journal record in PubMed's field.
+    paper = _record(response.resolved[_PMID].metadata)
+    assert paper.pubmed.WhichOneof('kind') == 'article'
+    article = paper.pubmed.article
     assert article.medline_citation.pmid.value == _PMID
     title = article.medline_citation.article.article_title.value
     assert 'Whole exome sequencing' in title
 
 
 def test_cross_ids_harvested_from_own_id_list() -> None:
-    resolved = efetch.parse_response(_EFETCH_XML.read_bytes())
+    resolved = efetch.parse_response(_EFETCH_XML.read_bytes()).resolved
     # DOI + PMCID from PubmedData.ArticleIdList, PMID from MedlineCitation; the
     # reference-list citation ids in the record are not harvested.
     assert resolved[_PMID].external_ids == litcache_pb2.ExternalIds(
@@ -100,14 +99,84 @@ def test_parse_set_keys_each_record_kind_by_the_pmid_it_states() -> None:
     assert set(parsed.book_articles) == {_BOOK_PMID}
     book = parsed.book_articles[_BOOK_PMID]
     assert book.book_document.pmid.value == _BOOK_PMID
-    assert [i.value for i in book.book_document.article_id_list] == ['NBK900001']
+    assert [i.value for i in book.book_document.article_id_list] == [_BOOKID]
     assert book.book_document.article_title.value == 'A synthetic chapter'
     assert book.pubmed_book_data.publication_status == 'ppublish'
 
 
-def test_parse_response_resolves_journal_records_only() -> None:
-    # `metadata.pb` is a `PubmedArticle`: a book record resolves nothing on the store's path.
-    assert set(efetch.parse_response(_oa_set_with(_BOOK_XML))) == {_PMID}
+def test_parse_response_resolves_a_book_record_in_the_envelopes_book_arm() -> None:
+    resolved = efetch.parse_response(_oa_set_with(_BOOK_XML)).resolved
+
+    assert set(resolved) == {_PMID, _BOOK_PMID}
+    paper = _record(resolved[_BOOK_PMID].metadata)
+    assert paper.pubmed.WhichOneof('kind') == 'book_article'
+    assert paper.pubmed.book_article.book_document.article_title.value == 'A synthetic chapter'
+    # The accession is the chapter's own id, harvested beside the PMID; a book part has no PMCID.
+    assert resolved[_BOOK_PMID].external_ids == litcache_pb2.ExternalIds(pmid=_BOOK_PMID, bookid=_BOOKID)
+
+
+def test_a_whole_book_record_resolves_without_a_chapter_title() -> None:
+    # A record for a book rather than one of its chapters states no ArticleTitle; the book's title is
+    # the one the record carries.
+    resolved = efetch.parse_response(_set(_BOOK_XML.replace(_CHAPTER_TITLE, b''))).resolved
+
+    document = _record(resolved[_BOOK_PMID].metadata).pubmed.book_article.book_document
+    assert not document.HasField('article_title')
+    assert document.book.book_title.value == 'A synthetic review series'
+    assert resolved[_BOOK_PMID].external_ids.bookid == _BOOKID
+
+
+@pytest.mark.parametrize(
+    'record',
+    [
+        pytest.param(_BOOK_XML.replace(_PUBMED_ID, _PUBMED_ID + _doi_id(_DOI)), id='in-pubmed-book-data'),
+        pytest.param(_BOOK_XML.replace(_BOOK_ACCESSION_ID, _BOOK_ACCESSION_ID + _doi_id(_DOI)), id='in-book-document'),
+        pytest.param(
+            _BOOK_XML.replace(_PUBMED_ID, _PUBMED_ID + _doi_id(_DOI)).replace(
+                _BOOK_ACCESSION_ID, _BOOK_ACCESSION_ID + _doi_id(_DOI)
+            ),
+            id='in-both',
+        ),
+    ],
+)
+def test_a_book_records_doi_is_harvested_from_either_id_list(record: bytes) -> None:
+    resolved = efetch.parse_response(_set(record)).resolved
+    assert resolved[_BOOK_PMID].external_ids == litcache_pb2.ExternalIds(doi=_DOI, pmid=_BOOK_PMID, bookid=_BOOKID)
+
+
+@pytest.mark.parametrize(
+    ('record', 'message'),
+    [
+        pytest.param(_BOOK_XML.replace(b'NBK900001', b'nbk900001'), 'not canonical', id='lower-case-accession'),
+        pytest.param(_BOOK_XML.replace(b'NBK900001', b'NBX900001'), 'not canonical', id='not-an-accession'),
+        pytest.param(_BOOK_XML.replace(_BOOK_ACCESSION_ID, b''), 'no Bookshelf accession', id='no-accession'),
+        pytest.param(
+            # Only the document's own list is read for the accession; one stated elsewhere is not NLM's.
+            _BOOK_XML.replace(_BOOK_ACCESSION_ID, b'').replace(_PUBMED_ID, _PUBMED_ID + _BOOK_ACCESSION_ID),
+            'no Bookshelf accession',
+            id='accession-only-in-pubmed-book-data',
+        ),
+        pytest.param(
+            _BOOK_XML.replace(_BOOK_ACCESSION_ID, _BOOK_ACCESSION_ID + _BOOK_ACCESSION_ID.replace(b'1<', b'2<')),
+            'several Bookshelf accessions',
+            id='two-accessions',
+        ),
+        pytest.param(
+            _BOOK_XML.replace(_PUBMED_ID, _PUBMED_ID + _doi_id('10.1234/a')).replace(
+                _BOOK_ACCESSION_ID, _BOOK_ACCESSION_ID + _doi_id('10.1234/b')
+            ),
+            'two DOIs',
+            id='dois-disagree-across-lists',
+        ),
+    ],
+)
+def test_a_book_record_failing_the_id_precondition_costs_its_paper_alone(record: bytes, message: str) -> None:
+    # The journal record fetched beside it resolves, and nothing raises: the fault is that record's.
+    response = efetch.parse_response(_oa_set_with(record))
+
+    assert set(response.resolved) == {_PMID}
+    assert set(response.precondition_failed) == {_BOOK_PMID}
+    assert message in response.precondition_failed[_BOOK_PMID]
 
 
 def test_a_deletion_notice_names_pmids_nothing_is_indexed_under() -> None:
@@ -132,7 +201,7 @@ def test_a_comment_in_the_set_is_not_a_member() -> None:
         pytest.param(_set(_BOOK_XML, _BOOK_XML), 'answered twice', id='book-twice'),
         pytest.param(_oa_set_with(_book_under(_PMID.encode())), 'answered twice', id='article-and-book-under-one-pmid'),
         pytest.param(_set(_book_under(b'')), 'not canonical', id='book-stating-no-pmid'),
-        pytest.param(_set(_book_under(b'0020301288')), 'not canonical', id='book-under-a-padded-pmid'),
+        pytest.param(_set(_book_under(b'0030000010')), 'not canonical', id='book-under-a-padded-pmid'),
         pytest.param(
             _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1"> 333 </PMID></DeleteCitation>'),
             'not canonical',
@@ -140,9 +209,9 @@ def test_a_comment_in_the_set_is_not_a_member() -> None:
         ),
         pytest.param(
             _set(
-                b'<PubmedBookArticle><BookDocument><PMID Version="1">20301288</PMID></BookDocument></PubmedBookArticle>'
+                b'<PubmedBookArticle><BookDocument><PMID Version="1">30000010</PMID></BookDocument></PubmedBookArticle>'
             ),
-            r'<PubmedBookArticle> \(PMID 20301288\) does not convert',
+            r'<PubmedBookArticle> \(PMID 30000010\) does not convert',
             id='truncated-book-names-its-pmid',
         ),
         pytest.param(
@@ -156,12 +225,12 @@ def test_a_comment_in_the_set_is_not_a_member() -> None:
             id='truncated-article-names-its-pmid',
         ),
         pytest.param(
-            _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1">20301288</PMID></DeleteCitation>'),
+            _set(_BOOK_XML, b'<DeleteCitation><PMID Version="1">30000010</PMID></DeleteCitation>'),
             'answered twice',
             id='record-then-deletion-under-one-pmid',
         ),
         pytest.param(
-            _set(b'<DeleteCitation><PMID Version="1">20301288</PMID></DeleteCitation>', _BOOK_XML),
+            _set(b'<DeleteCitation><PMID Version="1">30000010</PMID></DeleteCitation>', _BOOK_XML),
             'answered twice',
             id='deletion-then-record-under-one-pmid',
         ),
@@ -180,7 +249,7 @@ def test_a_set_that_does_not_read_as_one_record_per_pmid_fails_loud(xml: bytes, 
 
 def test_empty_set_yields_no_record() -> None:
     # efetch returns an empty set for an unknown PMID — the caller's `unknown`.
-    assert efetch.parse_response(b'<PubmedArticleSet></PubmedArticleSet>') == {}
+    assert efetch.parse_response(b'<PubmedArticleSet></PubmedArticleSet>') == efetch.ParsedResponse({}, {})
 
 
 def test_unexpected_root_fails_loud() -> None:
@@ -229,11 +298,11 @@ def test_resolve_drives_efetch_and_parses() -> None:
         seen.update(dict(urllib.parse.parse_qsl(request.content.decode())))
         return httpx2.Response(200, content=body)
 
-    async def run() -> dict[str, efetch.ResolvedMetadata]:
+    async def run() -> efetch.ParsedResponse:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
             return await efetch.resolve([_PMID], http_client=client)
 
-    resolved = asyncio.run(run())
+    resolved = asyncio.run(run()).resolved
 
     assert seen['db'] == 'pubmed'
     assert seen['id'] == _PMID
@@ -248,13 +317,13 @@ def test_resolve_drives_efetch_and_parses() -> None:
 def test_live_efetch() -> None:
     pmid = os.environ['LITCACHE_EFETCH_LIVE_PMID']
 
-    async def run() -> dict[str, efetch.ResolvedMetadata]:
+    async def run() -> efetch.ParsedResponse:
         async with httpx2.AsyncClient(timeout=30.0) as client:
             return await efetch.resolve([pmid], http_client=client)
 
-    resolved = asyncio.run(run())
+    resolved = asyncio.run(run()).resolved
     assert pmid in resolved
-    pubmed_proto.pubmed_pb2.PubmedArticle.FromString(resolved[pmid].metadata)
+    assert _record(resolved[pmid].metadata).pubmed.WhichOneof('kind') is not None
 
 
 def _counting_handler(

@@ -92,6 +92,7 @@ def test_lookup_rejects_an_empty_batch(conn: pg8000.dbapi.Connection) -> None:
 def test_normalise_key_folds_the_case_insensitive_schemes() -> None:
     assert crosswalk.normalise_key('doi:10.1/AbC') == 'doi:10.1/abc'
     assert crosswalk.normalise_key('pmcid:pmc99') == 'pmcid:PMC99'
+    assert crosswalk.normalise_key('bookid:nbk1116') == 'bookid:NBK1116'
 
 
 @pytest.mark.parametrize(

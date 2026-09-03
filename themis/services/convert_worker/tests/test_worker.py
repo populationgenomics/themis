@@ -25,7 +25,6 @@ from anthropic.lib import credentials as anthropic_credentials
 from google.api_core import exceptions as api_exceptions
 from google.auth import credentials
 from google.cloud import storage
-from pubmed_proto import pubmed_pb2
 
 from themis.litcache import anthropic_ocr, ocr, writer
 from themis.litcache import outcome as outcome_mod
@@ -160,8 +159,8 @@ def _pdf_source() -> writer.SourceInput:
 
 
 def _write_pdf_paper(bucket: storage.Bucket) -> None:
-    article = pubmed_pb2.PubmedArticle()
-    article.medline_citation.pmid.value = '29089047'
+    metadata = litcache_pb2.PaperMetadata()
+    metadata.pubmed.article.medline_citation.pmid.value = '29089047'
     writer.write_paper(
         bucket,
         writer.PaperInput(
@@ -172,7 +171,7 @@ def _write_pdf_paper(bucket: storage.Bucket) -> None:
             retraction=litcache_pb2.Retraction(),
             sources=[_pdf_source()],
             renderings=[],
-            metadata=article.SerializeToString(),
+            metadata=metadata.SerializeToString(),
         ),
     )
 

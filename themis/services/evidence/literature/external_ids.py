@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from themis.services.evidence.literature import pmids
 
-# Crosswalk keys are `{scheme}:{value}`. Ingestion mints under further schemes (`pii:`, `binhash:`),
-# but only these three are a spelling a caller holds a paper by, so only these resolve one here.
+# Crosswalk keys are `{scheme}:{value}`. Ingestion mints under further schemes (`pii:`, `binhash:`,
+# and `bookid:` for a Bookshelf chapter), but only these three are a spelling a caller holds a paper
+# by, so only these resolve one here; whether the door should take `bookid:` too is an open question
+# (docs/design/literature-evidence-layer.md).
 SCHEMES = frozenset({'doi', 'pmid', 'pmcid'})
 
 

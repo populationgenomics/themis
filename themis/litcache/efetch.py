@@ -8,11 +8,14 @@ pubmed_proto's generated converter turns each into its proto record directly:
 
 A trailing `DeleteCitation` names PMIDs whose records PubMed has withdrawn: nothing is indexed
 under them, and the set states so rather than leaving it to be noticed as an omission.
-`parse_set` is that parse, both kinds; `parse_response` is the store's view of it — journal
-records only, as `metadata.pb` (a serialized `PubmedArticle`) plus the cross-ids
-(DOI↔PMID↔PMCID) that fall out of the record's own `pubmed_data.article_id_list`, harvested
-into the litcache manifest's `ExternalIds` with no separate id-conversion call. A paper with a
-DOI but no PubMed record is resolved from Crossref (`themis.litcache.crossref`) instead.
+`parse_set` is that parse, both kinds; `parse_response` is the store's view of it — each record
+as `metadata.pb` (a serialized `PaperMetadata` envelope, the record in its `pubmed` field in the
+arm of its kind) plus the cross-ids that fall out of the record's own id lists — DOI and PMCID for
+a journal record, the Bookshelf accession (and any DOI) for a book record — harvested into the
+litcache manifest's `ExternalIds` with no separate id-conversion call. A record that converts but whose id lists fail
+the store's precondition is charged to its own PMID, with the reason, so it costs its paper and
+not the batch it was fetched in. A paper with a DOI but no PubMed record is resolved from Crossref
+(`themis.litcache.crossref`) instead.
 Batch-first: the id list is POSTed in the request body so one path serves any batch size
 (NCBI's GET path caps the inline `id=` list near 200 UIDs; POST has no such ceiling).
 """
@@ -30,6 +33,7 @@ import pubmed_proto
 from lxml import etree
 
 from themis.common import constants
+from themis.litcache import paper_metadata
 from themis.litcache.models import litcache_pb2
 
 _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
@@ -52,8 +56,20 @@ _PARSER = etree.XMLParser(
     resolve_entities=False, no_network=True, load_dtd=False, remove_comments=True, remove_pis=True
 )
 # A PMID as PubMed states one: digits, no leading zero. The parse reads the index's statement and
-# refuses a non-canonical one rather than normalising it.
+# refuses a non-canonical one rather than normalising it. Likewise a Bookshelf accession: `NBK`
+# and digits, as the index states it.
 _CANONICAL_PMID = re.compile(r'[1-9][0-9]*')
+_CANONICAL_BOOKID = re.compile(r'NBK[0-9]+')
+
+
+class RecordPreconditionError(Exception):
+    """A record that converts as the schema states but fails the store's precondition on its ids.
+
+    The store holds a record only if its own id lists address it and agree: a book record states one
+    Bookshelf accession, canonical (`NBK` and digits), and at most one DOI. The fault is one record's,
+    pinned to the PMID it states, so `parse_response` charges it to that paper alone; a set that does
+    not read as one record per PMID is `parse_set`'s `ValueError`, and fails the batch.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -61,8 +77,8 @@ class ResolvedMetadata:
     """The bibliographic outputs of resolving one paper.
 
     Attributes:
-        metadata: The canonical `metadata.pb` bytes (serialized pubmed_proto
-            `PubmedArticle`).
+        metadata: The canonical `metadata.pb` bytes (a serialized `PaperMetadata`
+            envelope, the record in its `pubmed` field).
         external_ids: The cross-ids harvested from the record, for the manifest.
     """
 
@@ -70,8 +86,8 @@ class ResolvedMetadata:
     external_ids: litcache_pb2.ExternalIds
 
 
-def _harvest_external_ids(article: pubmed_proto.pubmed_pb2.PubmedArticle) -> litcache_pb2.ExternalIds:
-    """Harvest the manifest cross-ids from a record's own id list.
+def _harvest_article_ids(article: pubmed_proto.pubmed_pb2.PubmedArticle) -> litcache_pb2.ExternalIds:
+    """Harvest the manifest cross-ids from a journal record's own id list.
 
     The PMID is authoritative from `MedlineCitation`; the DOI and PMCID come from
     `PubmedData.ArticleIdList` (the article's own ids — reference-list citation ids
@@ -93,13 +109,48 @@ def _harvest_external_ids(article: pubmed_proto.pubmed_pb2.PubmedArticle) -> lit
     )
 
 
-def to_canonical_bytes(article: pubmed_proto.pubmed_pb2.PubmedArticle) -> bytes:
-    """Serialize a `PubmedArticle` proto to litcache's canonical `metadata.pb` bytes.
+def _harvest_book_ids(book: pubmed_proto.pubmed_pb2.PubmedBookArticle) -> litcache_pb2.ExternalIds:
+    """Harvest the manifest cross-ids from a book record's own id lists.
 
-    The serialized proto is the at-rest format (docs/design/proto.md): write-once,
-    overwritten from a fresh conversion, never read-modify-written.
+    The PMID and the Bookshelf accession (`bookid`) are authoritative from `BookDocument`: NLM
+    states the accession in the document's own `ArticleIdList` (`PubmedBookData.ArticleIdList`,
+    the counterpart of a journal record's `PubmedData`, carries the `pubmed` id). A DOI, where a
+    record carries one, is read from either list. A book part has no PMCID.
+
+    Raises:
+        RecordPreconditionError: If the document's id list states no accession (the accession is how a
+            chapter's text is addressed, so a record without one cannot be fetched) or several,
+            if the accession is not canonical (`NBK` and digits), or if the record states two
+            different DOIs.
     """
-    return article.SerializeToString()
+    pmid = book.book_document.pmid.value
+    accessions = {i.value for i in book.book_document.article_id_list if i.id_type == _ArticleId.ID_TYPE_BOOKACCESSION}
+    if not accessions:
+        raise RecordPreconditionError(
+            f'the book record for PMID {pmid} states no Bookshelf accession in its document id list'
+        )
+    if len(accessions) > 1:
+        raise RecordPreconditionError(
+            f'the book record for PMID {pmid} states several Bookshelf accessions: {sorted(accessions)}'
+        )
+    bookid = accessions.pop()
+    if not _CANONICAL_BOOKID.fullmatch(bookid):
+        raise RecordPreconditionError(
+            f'the book record for PMID {pmid} states a Bookshelf accession that is not canonical '
+            f'(NBK and digits): {bookid!r}'
+        )
+    dois = {
+        i.value
+        for i in (*book.book_document.article_id_list, *book.pubmed_book_data.article_id_list)
+        if i.id_type == _ArticleId.ID_TYPE_DOI
+    }
+    if len(dois) > 1:
+        raise RecordPreconditionError(f'the book record for PMID {pmid} states two DOIs: {sorted(dois)}')
+    return litcache_pb2.ExternalIds(doi=next(iter(dois), None), pmid=pmid, bookid=bookid)
+
+
+def _envelope(record: litcache_pb2.PubmedRecord) -> bytes:
+    return paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(pubmed=record))
 
 
 async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attempts: int = _MAX_FETCH_ATTEMPTS) -> bytes:
@@ -237,19 +288,53 @@ def _canonical_unanswered_pmid(pmid: str, tag: str, *answered: Container[str]) -
     return pmid
 
 
-def parse_response(xml: bytes) -> dict[str, ResolvedMetadata]:
+class ParsedResponse(NamedTuple):
+    """The store's view of one efetch `PubmedArticleSet`, keyed by the PMID each record states.
+
+    `resolved` holds every record that meets the store's precondition; `precondition_failed` holds
+    the reason for every record that does not (`RecordPreconditionError`). No PMID is in both. A
+    PMID efetch did not answer, or one its `DeleteCitation` names, is in neither — the caller's
+    `unknown`.
+    """
+
+    resolved: dict[str, ResolvedMetadata]
+    precondition_failed: dict[str, str]
+
+
+def parse_response(xml: bytes) -> ParsedResponse:
     """Parse an efetch `PubmedArticleSet` into per-PMID resolved metadata (see `parse_set`).
 
-    Journal records only: `metadata.pb` is a `PubmedArticle`, so a book record in the set resolves
-    nothing here and its PMID is absent from the result, as a deleted PMID is.
+    A record of either kind resolves: its `metadata.pb` is the `PaperMetadata` envelope with the
+    record in its `pubmed` field, in the arm of its kind, and its cross-ids are the ones its own id lists state. A book
+    record that fails the store's precondition on its ids is charged to its PMID with the reason,
+    and the other records in the set resolve regardless.
+
+    Raises:
+        ValueError: As `parse_set` — the set does not read as one record per PMID.
     """
-    return {
-        pmid: ResolvedMetadata(metadata=to_canonical_bytes(article), external_ids=_harvest_external_ids(article))
-        for pmid, article in parse_set(xml).articles.items()
+    parsed = parse_set(xml)
+    resolved = {
+        pmid: ResolvedMetadata(
+            metadata=_envelope(litcache_pb2.PubmedRecord(article=article)),
+            external_ids=_harvest_article_ids(article),
+        )
+        for pmid, article in parsed.articles.items()
     }
+    precondition_failed: dict[str, str] = {}
+    for pmid, book in parsed.book_articles.items():
+        try:
+            external_ids = _harvest_book_ids(book)
+        except RecordPreconditionError as e:
+            precondition_failed[pmid] = str(e)
+            continue
+        resolved[pmid] = ResolvedMetadata(
+            metadata=_envelope(litcache_pb2.PubmedRecord(book_article=book)),
+            external_ids=external_ids,
+        )
+    return ParsedResponse(resolved=resolved, precondition_failed=precondition_failed)
 
 
-async def resolve(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, ResolvedMetadata]:
-    """Resolve a batch of PMIDs to `metadata.pb` + cross-ids via efetch."""
+async def resolve(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> ParsedResponse:
+    """Resolve a batch of PMIDs to `metadata.pb` + cross-ids via efetch (see `parse_response`)."""
     xml = await fetch(pmids, http_client=http_client)
     return parse_response(xml)
