@@ -309,10 +309,11 @@ def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
     Args:
         bucket: The cache bucket.
         doc_id: The paper whose record is written.
-        metadata: The serialized `PaperMetadata` envelope.
+        metadata: The `metadata.pb` bytes — a serialized `PaperMetadata` envelope.
 
     Raises:
-        ValueError: If `metadata` is not a `PaperMetadata` envelope meeting its constraints.
+        ValueError: If `metadata` is not a `PaperMetadata` envelope meeting its constraints
+            (`paper_metadata.parse`).
     """
     _validate_metadata(metadata)
     bucket.blob(metadata_path(doc_id)).upload_from_string(metadata)

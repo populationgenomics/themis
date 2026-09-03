@@ -2,9 +2,10 @@
 
 Run the litcache seed-ingestion pipeline on Dataflow against the full-text store — to complete a pass that left papers
 behind, or to rebuild the corpus after a stored artifact changed shape. The corpus and its layout:
-[`literature-cache.md`](../plans/literature-cache.md) (the seed is `gs://<project>-fulltext/ingest/`, ~38k papers; the
-cache is `papers/` beside it). The pipeline: [`ingest_beam.py`](../../themis/litcache/ingest_beam.py). The launcher,
-whose docstring is the flag reference: [`launch_dataflow.py`](../../tools/litcache/launch_dataflow.py).
+[`literature-cache.md`](../plans/literature-cache.md) (the seed is `gs://<project>-fulltext/ingest/`; the cache is
+`papers/` beside it; for its size, take the listing's count — the refresh's dry run below prints it — rather than a
+remembered figure). The pipeline: [`ingest_beam.py`](../../themis/litcache/ingest_beam.py). The launcher, whose
+docstring is the flag reference: [`launch_dataflow.py`](../../tools/litcache/launch_dataflow.py).
 
 Every command below reads these; set them once.
 
@@ -33,9 +34,10 @@ probes for its manifest ([`pipeline.ingest_paper`](../../themis/litcache/pipelin
   ([`writer.py`](../../themis/litcache/writer.py)).
 
 So a plain re-run over the whole seed is idempotent and does one thing: it completes the papers that have no manifest —
-those dead-lettered last time (unresolved metadata, a write-half exception, an oversized pdf) and those a crash left
-claimed but uncommitted. Each is re-done under the `doc_id` its crosswalk row already holds. Nothing else changes —
-though a skip is not free: the write stage downloads a paper's seed json and pdf before it learns the manifest exists
+those dead-lettered last time (unresolved metadata, a record failing the store's precondition or its mirror, a
+write-half exception, an oversized pdf) and those a crash left claimed but uncommitted. Each is re-done under the
+`doc_id` its crosswalk row already holds. Nothing else changes — though a skip is not free: the write stage downloads a
+paper's seed json and pdf before it learns the manifest exists
 ([`ingest_beam._WritePaperFn`](../../themis/litcache/ingest_beam.py)), so a full re-run still moves the whole seed.
 
 There is no flag that forces reprocessing. To redo a committed paper, remove its directory and re-run:
@@ -54,25 +56,44 @@ Delete the whole directory, not a file in it — with one exception. The skip ke
 missing a rendering blob or a source is skipped for good and nothing regenerates it; the ingestion run has no notion of
 repairing a committed paper's artifacts, and `rebuild.py` rebuilds the crosswalk table, not the bucket. The exception is
 `metadata.pb`: it derives from the paper's identifiers, not from anything else in the directory, so it can be
-regenerated without re-converting. To refresh the bibliographic records and keep every conversion — the path for a
-change to the record's shape, such as the metadata envelope — delete the `metadata.pb` objects and run
+regenerated without re-converting
+([`litcache-manifest.md` § The bibliographic record](../design/litcache-manifest.md#the-bibliographic-record-metadatapb)).
+
+### Refreshing the bibliographic records
+
+To refresh the records and keep every conversion — the path for a change to the record itself, such as the
+`PaperMetadata` envelope — delete the `metadata.pb` objects and run
 [`refresh_metadata.py`](../../tools/litcache/refresh_metadata.py), which resolves every committed paper without one
-through the same batched ladder ingestion uses, in this process, with no Dataflow:
+through the same batched ladder ingestion uses (efetch for a PMID; litfetch's DOI resolution, then OpenAlex, for the
+rest), in this process, with no Dataflow. Delete before you refresh, and as soon as the reader of the new shape is
+deployed: the evidence service's `describe_paper`
+([`literature/litcache.py`](../../themis/services/evidence/literature/litcache.py)), the record's only reader, titles a
+paper with no `metadata.pb` by its DOI or PMID, but raises `CorruptMetadataError` on one that does not read as an
+envelope — and a pre-envelope record may instead decode as an envelope carrying nonsense. The bucket is versioned with a
+30-day noncurrent window, so the deletion is recoverable for that long.
 
 ```sh
 gcloud storage rm "gs://$FULLTEXT/papers/*/metadata.pb"
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT" --dry-run
+uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT" --limit 500   # a canary
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT"
 ```
 
-It never touches a `metadata.pb` that exists, so it is safe to re-run until it exits 0; a non-zero exit lists each paper
-it could not refresh and why (an unreadable manifest, no pmid or doi to resolve on, a resolver miss). Until it
-completes, the evidence service's `describe_paper` titles an affected paper by its DOI or PMID
-([`literature/litcache.py`](../../themis/services/evidence/literature/litcache.py)) — the only reader of the record.
+The dry run prints the listing's count — the manifests under `papers/` and how many are due — and the request each due
+paper makes; `--limit` refreshes the first N due in `doc_id` order, a canary before the whole corpus. The refresh never
+touches a `metadata.pb` that exists, so re-run it until it exits 0. A non-zero exit lists each paper it did not refresh
+and why, and the reasons are of two kinds. A transport failure ends the run with what is written kept, and a resolver
+miss (`metadata unresolved`) can be litfetch's batched resolver abandoning a lookup it could not complete in time; both
+are re-run. The rest stay on the list however often it runs and are reviewed, not retried: a manifest with neither pmid
+nor doi (nothing to resolve on), an unreadable manifest, a record that fails the store's precondition
+(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record its mirror does not hold
+(`schema drift:`, repaired by adding the field to the mirror). A miss that persists is a paper no index has a record
+for.
 
-A **full rebuild** is the same operation over the whole prefix. It is what a destructive change to a stored artifact
-needs — the condition [`migrations.md` §How it runs](../design/migrations.md#how-it-runs) puts on such a change — and
-the choice is whether to keep the crosswalk:
+A **full rebuild** is the same operation over the whole prefix — the path when the conversions themselves must change,
+since nothing regenerates a committed paper's sources or renderings in place. It is a destructive change to a stored
+artifact, under the condition [`migrations.md` §How it runs](../design/migrations.md#how-it-runs) puts on such a change,
+and the choice is whether to keep the crosswalk:
 
 - **Keep it** — clear `papers/` only. Every paper is rewritten under its existing `doc_id`, so anything holding a
   `doc_id` still resolves afterwards. Until the pass completes, the evidence service's lookup
@@ -167,11 +188,12 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 
 It exercises everything the real run does — the image, the subnet, the SA, the Cloud SQL mint, live NCBI and OA egress —
 and stays cheap. Read the report it prints at the end: `counters` is the per-stage tally for this run (`papers_seen`
-should equal `paper_written + paper_skipped + paper_unresolved + paper_failed`); `dead-lettered` is the count of records
-under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside it with a `reason` per paper;
-`no_text_layer` lists pdf-derived papers with no recoverable character layer, a data-quality signal rather than a
-failure. A second staged run reports every paper it wrote the first time as `paper_skipped` — that is the idempotency
-check.
+should equal
+`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_failed`);
+`dead-lettered` is the count of records under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside
+it with a `reason` per paper; `no_text_layer` lists pdf-derived papers with no recoverable character layer, a
+data-quality signal rather than a failure. A second staged run reports every paper it wrote the first time as
+`paper_skipped` — that is the idempotency check.
 
 The isolation is storage only. The crosswalk is the shared one, so a staged run mints rows whose manifests live in the
 scratch bucket. That is harmless to the direct run — it adopts the row and, finding no manifest in the store, writes the
@@ -191,9 +213,9 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 ```
 
 Then the whole corpus. Two defaults are sized for a sample: `--max-workers` (2) caps the autoscaled write stage, and
-`--max-dead-letters` (0) makes any dead letter an exit 1. Over ~38k papers some dead letters are expected — the corpus
-has a handful of 200–450 MB pdfs the identity stage refuses by size, and some ids will not resolve — so set a tolerance
-you are prepared to review rather than treat the exit code as the verdict:
+`--max-dead-letters` (0) makes any dead letter an exit 1. Over the whole corpus some dead letters are expected — it has
+a handful of 200–450 MB pdfs the identity stage rejects by size, and some ids will not resolve — so set a tolerance you
+are prepared to review rather than treat the exit code as the verdict:
 
 ```sh
 uv run --group dataflow python -m tools.litcache.launch_dataflow \

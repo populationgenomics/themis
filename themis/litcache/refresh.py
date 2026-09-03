@@ -11,8 +11,10 @@ would leave the gap in place.
 identifiers make. `refresh` resolves the requests in chunks and writes each record as
 its chunk resolves. Nothing is skipped quietly — a manifest that cannot be read, one
 whose `doc_id` disagrees with its directory, one that names no identifier the resolver
-takes, and a paper the resolver returns nothing for are each a `Failure` with its
-reason, and the caller decides what a non-empty failure list means.
+takes, a paper the resolver returns nothing for, and a paper it settles with a failure
+of its own (a record failing the store's precondition, a record its mirror does not
+hold) are each a `Failure` with its reason, and the caller decides what a non-empty
+failure list means.
 
 The prefix listed and the objects written are both the writer's layout, so the refresh
 cannot read one tree and write another.
@@ -32,8 +34,8 @@ from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger(__name__)
 
-# Resolves a batch of requests to the papers that resolved, keyed by `claim_key`
-# (`resolve.resolve_batch` over its live clients, or a stub).
+# Resolves a batch of requests to each settled paper's outcome, keyed by `claim_key`; a
+# paper no rung resolves is absent (`resolve.resolve_batch` over its live clients, or a stub).
 Resolver = Callable[[Sequence[resolve.ResolveRequest]], Awaitable[Mapping[str, resolve.Outcome]]]
 
 PAPERS_PREFIX = f'{writer.PAPERS_DIR}/'
@@ -49,7 +51,9 @@ class Failure:
     Attributes:
         doc_id: The paper, by its directory name.
         reason: What stopped it — an unreadable manifest, a `doc_id` disagreeing with
-            its directory, no resolvable identifier, or a resolver miss.
+            its directory, no resolvable identifier, a resolver miss, or the resolver's
+            own failure for the paper: a record failing the store's precondition, or
+            one that does not fit its mirror.
     """
 
     doc_id: str
@@ -168,7 +172,9 @@ async def refresh(
 
     Requests are keyed by `doc_id`, so two papers sharing an identifier each receive
     a record. A paper present in the plan and absent from the resolver's result is a
-    failure, never a silent skip. The due papers are resolved in chunks and each chunk
+    failure, never a silent skip; so is one the resolver settles with a failure of its
+    own — a record failing the store's precondition, or one its mirror does not hold —
+    carrying that failure's reason. The due papers are resolved in chunks and each chunk
     written before the next is resolved: a resolver transport error propagates, the
     records written so far stay (each is valid on its own), and a re-run resumes with
     the papers still lacking one.
@@ -185,8 +191,8 @@ async def refresh(
 
     Raises:
         ValueError: If `limit` or `chunk_size` is not positive, or the resolver returns
-            bytes that are not a valid `PaperMetadata` envelope (a resolver defect, not a
-            per-paper condition).
+            bytes that are not a `PaperMetadata` envelope meeting its constraints (a
+            resolver defect, not a per-paper condition).
         Exception: Whatever the resolver raises on transport failure propagates.
     """
     if chunk_size <= 0:
@@ -195,22 +201,29 @@ async def refresh(
     failures = list(found.failures)
     refreshed: list[str] = []
     for chunk in _chunks(found.due, chunk_size):
-        resolved = await resolver(chunk)
+        outcomes = await resolver(chunk)
         for request in chunk:
-            outcome = resolved.get(request.claim_key)
-            if outcome is None:
-                reason = f'metadata unresolved (pmid={request.pmid!r}, doi={request.doi!r})'
-                failures.append(Failure(doc_id=request.claim_key, reason=reason))
-                continue
-            if not isinstance(outcome, resolve.ResolvedPaper):
-                # A record that exists but fails the store's precondition or its mirror: the same
-                # per-paper dead letter ingestion records, with the resolver's reason.
-                failures.append(Failure(doc_id=request.claim_key, reason=f'{type(outcome).__name__}: {outcome.reason}'))
-                continue
-            writer.write_metadata(bucket, request.claim_key, outcome.metadata)
-            refreshed.append(request.claim_key)
+            outcome = outcomes.get(request.claim_key)
+            if isinstance(outcome, resolve.ResolvedPaper):
+                writer.write_metadata(bucket, request.claim_key, outcome.metadata)
+                refreshed.append(request.claim_key)
+            else:
+                failures.append(Failure(doc_id=request.claim_key, reason=_failure_reason(request, outcome)))
     _LOG.info('refreshed %d of %d due paper(s); %d failure(s)', len(refreshed), len(found.due), len(failures))
     return RefreshReport(manifests=found.manifests, refreshed=refreshed, failures=failures)
+
+
+def _failure_reason(
+    request: resolve.ResolveRequest, outcome: resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure | None
+) -> str:
+    """Why the paper was not refreshed, worded as ingestion's dead letters word the same outcome."""
+    match outcome:
+        case None:
+            return f'metadata unresolved (pmid={request.pmid!r}, doi={request.doi!r})'
+        case resolve.RecordPreconditionFailure(reason=reason):
+            return f'precondition failed: {reason}'
+        case resolve.SchemaDriftFailure(reason=reason):
+            return f'schema drift: {reason}'
 
 
 def render_failures(failures: Iterable[Failure]) -> str:

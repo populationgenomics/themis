@@ -14,8 +14,9 @@ GCS call; only the due manifests are downloaded.
 
 ``--dry-run`` prints the requests a run would make and writes nothing; it already reports
 the papers a run could not attempt (an unreadable manifest, a ``doc_id`` disagreeing with
-its directory, no pmid and no doi). A live run adds the resolver's misses. Any failure
-exits non-zero — the refresh is complete only when a run exits 0. Resolution is chunked
+its directory, no pmid and no doi). A live run adds what the resolver settles against a
+paper: a miss, a record failing the store's precondition, a record its mirror does not hold.
+Any failure exits non-zero — the refresh is complete only when a run exits 0. Resolution is chunked
 and each chunk written before the next, so a transport failure loses nothing already
 written and a re-run resumes.
 

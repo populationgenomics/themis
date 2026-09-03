@@ -207,8 +207,8 @@ def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_b
 
     assert report.refreshed == []
     assert {f.doc_id: f.reason for f in report.failures} == {
-        _A: 'RecordPreconditionFailure: no article title',
-        _B: 'SchemaDriftFailure: unknown key "foo"',
+        _A: 'precondition failed: no article title',
+        _B: 'schema drift: unknown key "foo"',
     }
     assert _read(gcs_bucket, writer.metadata_path(_A)) is None
     assert _read(gcs_bucket, writer.metadata_path(_B)) is None
