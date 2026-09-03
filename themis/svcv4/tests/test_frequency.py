@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 import pytest
 
-from themis.rpc import clinvar_pb2, gene_disease_pb2, gnomad_pb2
+from themis.evidence.models import evidence_pb2
+from themis.rpc import clinvar_pb2, gnomad_pb2
 from themis.svcv4 import clinvar_classification, frequency, provenance, reference
 from themis.svcv4.tests import responses
 
@@ -811,13 +812,13 @@ def test_a_bare_eligible_count_stays_admissible(ref: reference.Reference) -> Non
 @pytest.mark.parametrize(
     ('mode', 'expected'),
     [
-        (gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT, frequency.Inheritance.MONOALLELIC),
-        (gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE, frequency.Inheritance.BIALLELIC),
-        (gene_disease_pb2.INHERITANCE_X_LINKED, frequency.Inheritance.XLINKED),
+        (evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT, frequency.Inheritance.MONOALLELIC),
+        (evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE, frequency.Inheritance.BIALLELIC),
+        (evidence_pb2.INHERITANCE_X_LINKED, frequency.Inheritance.XLINKED),
     ],
 )
 def test_a_curated_mode_reaches_the_calculators_own_partition(
-    mode: gene_disease_pb2.Inheritance, expected: frequency.Inheritance
+    mode: evidence_pb2.Inheritance, expected: frequency.Inheritance
 ) -> None:
     assert frequency.daft_inheritance(mode) == expected
 
@@ -826,7 +827,7 @@ def test_x_linked_resolves_and_is_then_refused_by_the_calculator_itself() -> Non
     # SM3's own routing: the mode is curated, and the method it reaches is the binning tables.
     with pytest.raises(ValueError, match='binning method'):
         frequency.daft_calculator(
-            frequency.daft_inheritance(gene_disease_pb2.INHERITANCE_X_LINKED),
+            frequency.daft_inheritance(evidence_pb2.INHERITANCE_X_LINKED),
             prevalence_denominator=10000,
             genetic_heterogeneity=D('1'),
             allelic_heterogeneity=D('1'),
@@ -837,21 +838,21 @@ def test_x_linked_resolves_and_is_then_refused_by_the_calculator_itself() -> Non
 @pytest.mark.parametrize(
     ('mapping', 'mode'),
     [
-        (frequency.daft_inheritance, gene_disease_pb2.INHERITANCE_SEMIDOMINANT),
-        (frequency.daft_inheritance, gene_disease_pb2.INHERITANCE_MITOCHONDRIAL),
-        (frequency.daft_inheritance, gene_disease_pb2.INHERITANCE_UNDETERMINED),
-        (frequency.hmz_inheritance, gene_disease_pb2.INHERITANCE_Y_LINKED),
-        (frequency.hmz_inheritance, gene_disease_pb2.INHERITANCE_UNSPECIFIED),
-        (frequency.binning_tables_for, gene_disease_pb2.INHERITANCE_MITOCHONDRIAL),
-        (frequency.binning_tables_for, gene_disease_pb2.INHERITANCE_UNSPECIFIED),
+        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_SEMIDOMINANT),
+        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_MITOCHONDRIAL),
+        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_UNDETERMINED),
+        (frequency.hmz_inheritance, evidence_pb2.INHERITANCE_Y_LINKED),
+        (frequency.hmz_inheritance, evidence_pb2.INHERITANCE_UNSPECIFIED),
+        (frequency.binning_tables_for, evidence_pb2.INHERITANCE_MITOCHONDRIAL),
+        (frequency.binning_tables_for, evidence_pb2.INHERITANCE_UNSPECIFIED),
     ],
 )
 def test_a_mode_the_framework_has_no_route_for_is_refused(
-    mapping: Callable[[gene_disease_pb2.Inheritance], object], mode: gene_disease_pb2.Inheritance
+    mapping: Callable[[evidence_pb2.Inheritance], object], mode: evidence_pb2.Inheritance
 ) -> None:
     # Naming the mode: the alternative is resolving to the nearest route, which answers the gate
     # right and the frequency arithmetic wrong.
-    with pytest.raises(ValueError, match=gene_disease_pb2.Inheritance.Name(mode)):
+    with pytest.raises(ValueError, match=evidence_pb2.Inheritance.Name(mode)):
         mapping(mode)
 
 
@@ -859,10 +860,10 @@ def test_a_mode_the_framework_has_no_route_for_is_refused(
     'mapping', [frequency.daft_inheritance, frequency.hmz_inheritance, frequency.binning_tables_for]
 )
 def test_a_mode_composed_as_something_other_than_the_enum_is_refused(
-    mapping: Callable[[gene_disease_pb2.Inheritance], object],
+    mapping: Callable[[evidence_pb2.Inheritance], object],
 ) -> None:
     # A bool hashes equal to AUTOSOMAL_DOMINANT, so membership alone would admit it.
-    with pytest.raises(ValueError, match=r'must be a gene_disease_pb2\.Inheritance'):
+    with pytest.raises(ValueError, match=r'must be an evidence_pb2\.Inheritance'):
         mapping(True)  # type: ignore[arg-type] — the code-mode case
 
 
@@ -886,7 +887,7 @@ def test_the_hmz_rows_the_reference_weighs_are_the_ones_a_mode_reaches(ref: refe
         assert scored.points < 0
 
 
-def _refusal(mapping: Callable[[gene_disease_pb2.Inheritance], object], mode: gene_disease_pb2.Inheritance) -> str:
+def _refusal(mapping: Callable[[evidence_pb2.Inheritance], object], mode: evidence_pb2.Inheritance) -> str:
     """The message the mapping refused `mode` with, or the empty string where it routed it."""
     try:
         mapping(mode)
@@ -899,13 +900,13 @@ def _refusal(mapping: Callable[[gene_disease_pb2.Inheritance], object], mode: ge
     'mapping', [frequency.daft_inheritance, frequency.hmz_inheritance, frequency.binning_tables_for]
 )
 def test_every_mode_the_contract_curates_is_mapped_or_named_as_unroutable(
-    mapping: Callable[[gene_disease_pb2.Inheritance], object],
+    mapping: Callable[[evidence_pb2.Inheritance], object],
 ) -> None:
     """No mode falls through: a member added to the contract reaches a route or a refusal naming it."""
-    for value in gene_disease_pb2.Inheritance.values():
-        mode = typing.cast('gene_disease_pb2.Inheritance', value)
+    for value in evidence_pb2.Inheritance.values():
+        mode = typing.cast('evidence_pb2.Inheritance', value)
         refusal = _refusal(mapping, mode)
-        assert not refusal or gene_disease_pb2.Inheritance.Name(value) in refusal
+        assert not refusal or evidence_pb2.Inheritance.Name(value) in refusal
 
 
 def _pool_faf(value: str) -> frequency.Faf:

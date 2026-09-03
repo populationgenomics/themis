@@ -1,0 +1,171 @@
+// What one curator records against one SVCv4 workflow, and the two worksheet-level sections that
+// bracket the workflows (curation-surface.md). Stored serialized in `curation.drafts` while a
+// worksheet is in progress and in `curation.assessments` once submitted, so both tiers carry one
+// message and one set of buf checks.
+//
+// No points, totals or bands appear here by design: the worksheet records the curator's selection,
+// and `themis.svcv4` owns the arithmetic. `cell_id` is the framework's own name for the cell a
+// curator chose.
+//
+// The three framework vocabularies a curator answers in — consequence, mode of inheritance, class —
+// are declared once, where every other side of the comparison already reads them:
+// themis/evidence/models/evidence.proto and themis/svcv4/models/svcv4.proto. A curator's answer and
+// a run's are comparable only if they are the same enum.
+
+syntax = "proto3";
+
+package themis.curation.models.curation;
+
+import "buf/validate/validate.proto";
+import "themis/evidence/models/evidence.proto";
+import "themis/svcv4/models/svcv4.proto";
+
+// Whether the curator scored the workflow, and if not, which kind of not. The three are different
+// findings and a run is judged on matching which one — `NOT_APPLICABLE` is the framework's own
+// precondition barring the code, `NO_DATA` is a code that applies with nothing to assess it on. A
+// cell reading zero is SCORED: the calculator carries a zero option, and assessing to it is a
+// judgement rather than an absence.
+enum AssessmentStatus {
+  ASSESSMENT_STATUS_UNSPECIFIED = 0;
+  ASSESSMENT_STATUS_SCORED = 1;
+  ASSESSMENT_STATUS_NOT_APPLICABLE = 2;
+  ASSESSMENT_STATUS_NO_DATA = 3;
+}
+
+// How open the curator considers the call. A reader treats a divergence inside the stated envelope
+// as the curator's own uncertainty rather than as a defect.
+enum Confidence {
+  CONFIDENCE_UNSPECIFIED = 0;
+  CONFIDENCE_SETTLED = 1;
+  CONFIDENCE_LEANING = 2;
+  CONFIDENCE_OPEN = 3;
+}
+
+// One control's value, and the framework cell it answers. Uniform across the two shapes the
+// calculator's workflows use: a radio group (`value` is the chosen option's id) and a per-row count
+// of applicable individuals (`value` is the number as typed). Both are a cell of a decision tree
+// with something recorded against it, so both are one message.
+//
+// `cell_id` is the framework's own name for the cell, empty only for a control the framework names
+// no cell for. `label` is the control's wording as rendered, stored beside the ids so a reader can
+// reconstruct the question after the transcription changes.
+//
+// A typed number is carried as text, exactly as entered. Parsing it here would lose the distinction
+// between what the curator wrote and what a float round-trips to, and nothing here computes with it.
+message FieldValue {
+  string field_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 128
+  }];
+  string cell_id = 2 [(buf.validate.field).string.max_len = 128];
+  string label = 3 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 2048
+  }];
+  string value = 4 [(buf.validate.field).string.max_len = 4096];
+}
+
+// The curator's capture for one SVCv4 workflow: what they concluded, and everything that makes a
+// divergence from it adjudicable rather than merely visible.
+message WorkflowAssessment {
+  AssessmentStatus status = 1 [(buf.validate.field).enum.defined_only = true];
+
+  // The controls the curator filled. Empty where `status` is not SCORED.
+  repeated FieldValue fields = 2 [(buf.validate.field).repeated.max_items = 64];
+
+  // Why the workflow was not scored. Carried only for NOT_APPLICABLE and NO_DATA, where the reason
+  // is the whole of what the curator decided.
+  string status_reason = 3 [(buf.validate.field).string.max_len = 20000];
+
+  // What the call rests on: PMIDs, the database and its version, the values read. The fact-recovery
+  // half, kept apart from `rationale` so a reader can tell different facts from different reasoning.
+  string evidence = 4 [(buf.validate.field).string.max_len = 20000];
+
+  // Why this cell, given that evidence: the assessment half. Required where `status` is SCORED —
+  // submission refuses a scored workflow without one.
+  string rationale = 5 [(buf.validate.field).string.max_len = 20000];
+
+  // The nearest cell not chosen, and what ruled it out. Optional: a call sometimes has no near
+  // miss.
+  FieldValue nearest_alternative = 6;
+  string nearest_alternative_reason = 7 [(buf.validate.field).string.max_len = 20000];
+
+  Confidence confidence = 8 [(buf.validate.field).enum.defined_only = true];
+  string confidence_note = 9 [(buf.validate.field).string.max_len = 20000];
+}
+
+// The case the curator worked from: the facts that bear on several workflows at once, recorded
+// once here rather than retyped into each workflow's evidence.
+//
+// Named slots of prose, not a data model, so two curators put the same fact in the same place;
+// `other` takes what the named slots do not cover.
+message CaseAssessment {
+  // The presentation, in the referring clinician's words.
+  string proband_narrative = 1 [(buf.validate.field).string.max_len = 20000];
+
+  // What was sequenced and analysed — the input to "all relevant genes for disorder tested".
+  string testing_performed = 2 [(buf.validate.field).string.max_len = 20000];
+
+  // A variant observed with this one: its identity, its phase, how the phase was established, and
+  // its own classification. Referenced by the affected, unaffected and alternate-cause workflows
+  // alike, which is why it is here rather than in any one of them.
+  string co_observed_variant = 3 [(buf.validate.field).string.max_len = 20000];
+
+  // Family observations: who carries it, who is affected, how the relationships were confirmed.
+  string segregation = 4 [(buf.validate.field).string.max_len = 20000];
+
+  // Functional and RNA assays, their controls and their calibration.
+  string assays = 5 [(buf.validate.field).string.max_len = 20000];
+
+  // Anything the named slots do not cover.
+  string other = 6 [(buf.validate.field).string.max_len = 20000];
+}
+
+// The routing the curator states before any workflow applies: which entity, which inheritance,
+// which consequence class. A run that routes differently is not disagreeing about codes, so this is
+// recorded and reasoned about in its own right.
+//
+// The entity is registered on the variant and restated here as the curator read it, so the two can
+// differ, and that difference is signal rather than an error to reconcile. Consequence class and
+// mode of inheritance have no registered counterpart: they are the curator's alone, chosen on the
+// worksheet, where UNSPECIFIED means not yet chosen and the workflows the choice routes between do
+// not apply.
+message RoutingAssessment {
+  themis.evidence.models.Inheritance inheritance = 1 [(buf.validate.field).enum.defined_only = true];
+  themis.evidence.models.Consequence consequence_class = 2 [(buf.validate.field).enum.defined_only = true];
+  string entity = 3 [(buf.validate.field).string.max_len = 1024];
+  string mondo_id = 4 [(buf.validate.field).string.max_len = 64];
+  string rationale = 5 [(buf.validate.field).string.max_len = 20000];
+}
+
+// The curator's classification and its reasoning. No total and no band: the class is stated, not
+// derived, because the worksheet collects no points to derive it from.
+message VerdictAssessment {
+  themis.svcv4.models.Classification classification = 1 [(buf.validate.field).enum.defined_only = true];
+  string rationale = 2 [(buf.validate.field).string.max_len = 20000];
+
+  // The workflow ids whose calls the curator considers class-determinative — what says whether a
+  // divergence could have moved the answer at all.
+  repeated string class_determinative = 3 [(buf.validate.field).repeated = {
+    max_items: 64
+    items: {
+      string: {
+        min_len: 1
+        max_len: 128
+      }
+    }
+  }];
+}
+
+// One stored row of a worksheet, in either tier. The `workflow_id` column addresses it; this
+// message carries what was recorded there.
+message Assessment {
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+
+    WorkflowAssessment workflow = 1;
+    RoutingAssessment routing = 2;
+    VerdictAssessment verdict = 3;
+    CaseAssessment case_context = 4;
+  }
+}

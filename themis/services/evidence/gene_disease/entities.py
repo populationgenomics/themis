@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 
+from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.upstreams import clingen_validity, gencc
@@ -24,24 +25,24 @@ from themis.svcv4 import gene_disease_validity
 # ClinGen's MOI codes and GenCC's HPO moi_curie terms onto the one harmonised mode; both sets are the
 # whole vocabulary their published tables use. The X-linked spellings fold together: ClinGen curates a
 # single XL, and the SVCv4 rules downstream (SM3's DAFT, SM7's POP_HMZ) take one X-linked mode.
-_CLINGEN_MOI: Mapping[str, gene_disease_pb2.Inheritance] = {
-    'AD': gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
-    'AR': gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE,
-    'XL': gene_disease_pb2.INHERITANCE_X_LINKED,
-    'SD': gene_disease_pb2.INHERITANCE_SEMIDOMINANT,
-    'MT': gene_disease_pb2.INHERITANCE_MITOCHONDRIAL,
-    'UD': gene_disease_pb2.INHERITANCE_UNDETERMINED,
+_CLINGEN_MOI: Mapping[str, evidence_pb2.Inheritance] = {
+    'AD': evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+    'AR': evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE,
+    'XL': evidence_pb2.INHERITANCE_X_LINKED,
+    'SD': evidence_pb2.INHERITANCE_SEMIDOMINANT,
+    'MT': evidence_pb2.INHERITANCE_MITOCHONDRIAL,
+    'UD': evidence_pb2.INHERITANCE_UNDETERMINED,
 }
-_GENCC_MOI: Mapping[str, gene_disease_pb2.Inheritance] = {
-    'HP:0000006': gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
-    'HP:0000007': gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE,
-    'HP:0001417': gene_disease_pb2.INHERITANCE_X_LINKED,
-    'HP:0001419': gene_disease_pb2.INHERITANCE_X_LINKED,  # X-linked recessive
-    'HP:0001423': gene_disease_pb2.INHERITANCE_X_LINKED,  # X-linked dominant
-    'HP:0001450': gene_disease_pb2.INHERITANCE_Y_LINKED,
-    'HP:0001427': gene_disease_pb2.INHERITANCE_MITOCHONDRIAL,
-    'HP:0032113': gene_disease_pb2.INHERITANCE_SEMIDOMINANT,
-    'HP:0000005': gene_disease_pb2.INHERITANCE_UNDETERMINED,  # GenCC's "Unknown"
+_GENCC_MOI: Mapping[str, evidence_pb2.Inheritance] = {
+    'HP:0000006': evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+    'HP:0000007': evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE,
+    'HP:0001417': evidence_pb2.INHERITANCE_X_LINKED,
+    'HP:0001419': evidence_pb2.INHERITANCE_X_LINKED,  # X-linked recessive
+    'HP:0001423': evidence_pb2.INHERITANCE_X_LINKED,  # X-linked dominant
+    'HP:0001450': evidence_pb2.INHERITANCE_Y_LINKED,
+    'HP:0001427': evidence_pb2.INHERITANCE_MITOCHONDRIAL,
+    'HP:0032113': evidence_pb2.INHERITANCE_SEMIDOMINANT,
+    'HP:0000005': evidence_pb2.INHERITANCE_UNDETERMINED,  # GenCC's "Unknown"
 }
 
 # MONDO's own id grammar. A curated term outside it cannot stand in a subclass relation to a
@@ -51,8 +52,8 @@ _MONDO_ID = re.compile(r'MONDO:\d{7}')
 
 
 def _inheritance(
-    mode: str, vocabulary: Mapping[str, gene_disease_pb2.Inheritance], source: str
-) -> gene_disease_pb2.Inheritance:
+    mode: str, vocabulary: Mapping[str, evidence_pb2.Inheritance], source: str
+) -> evidence_pb2.Inheritance:
     """The harmonised mode a source's own term names.
 
     Raises:
@@ -132,7 +133,7 @@ def _merged(assertions: Sequence[gene_disease_pb2.CuratedEntity]) -> gene_diseas
 
 def _by_entity(assertions: Iterable[gene_disease_pb2.CuratedEntity]) -> list[gene_disease_pb2.CuratedEntity]:
     """One source's assertions grouped onto the entities they are about, in first-seen order."""
-    grouped: dict[tuple[str, gene_disease_pb2.Inheritance], list[gene_disease_pb2.CuratedEntity]] = {}
+    grouped: dict[tuple[str, evidence_pb2.Inheritance], list[gene_disease_pb2.CuratedEntity]] = {}
     for assertion in assertions:
         grouped.setdefault(_key(assertion), []).append(assertion)
     return [_merged(group) for group in grouped.values()]
@@ -161,7 +162,7 @@ def entities(
     return curated
 
 
-def _key(entity: gene_disease_pb2.CuratedEntity) -> tuple[str, gene_disease_pb2.Inheritance]:
+def _key(entity: gene_disease_pb2.CuratedEntity) -> tuple[str, evidence_pb2.Inheritance]:
     return entity.mondo_id, entity.inheritance
 
 
@@ -174,16 +175,16 @@ def _listed(candidates: Iterable[gene_disease_pb2.CuratedEntity]) -> str:
 
 
 def _under_requested_mode(
-    candidates: Sequence[gene_disease_pb2.CuratedEntity], inheritance: gene_disease_pb2.Inheritance
+    candidates: Sequence[gene_disease_pb2.CuratedEntity], inheritance: evidence_pb2.Inheritance
 ) -> list[gene_disease_pb2.CuratedEntity]:
     """The candidates curated under the requested mode; every candidate when none was requested."""
-    if inheritance == gene_disease_pb2.INHERITANCE_UNSPECIFIED:
+    if inheritance == evidence_pb2.INHERITANCE_UNSPECIFIED:
         return list(candidates)
     return [entity for entity in candidates if entity.inheritance == inheritance]
 
 
 def terms_needing_closure(
-    curated: Sequence[gene_disease_pb2.CuratedEntity], mondo_id: str, inheritance: gene_disease_pb2.Inheritance
+    curated: Sequence[gene_disease_pb2.CuratedEntity], mondo_id: str, inheritance: evidence_pb2.Inheritance
 ) -> list[str]:
     """The curated terms whose ancestry `resolve` reads, or none where it reads none.
 
@@ -212,7 +213,7 @@ def _resolution(
     matched: Sequence[gene_disease_pb2.CuratedEntity],
     *,
     requested_mondo_id: str,
-    requested_inheritance: gene_disease_pb2.Inheritance,
+    requested_inheritance: evidence_pb2.Inheritance,
     relation: gene_disease_pb2.TermRelation,
 ) -> gene_disease_pb2.EntityResolution:
     return gene_disease_pb2.EntityResolution(
@@ -226,7 +227,7 @@ def _resolution(
 
 
 def _on_requested_term(
-    curated: Sequence[gene_disease_pb2.CuratedEntity], mondo_id: str, inheritance: gene_disease_pb2.Inheritance
+    curated: Sequence[gene_disease_pb2.CuratedEntity], mondo_id: str, inheritance: evidence_pb2.Inheritance
 ) -> gene_disease_pb2.EntityResolution:
     """Resolve against the curations of the requested term itself.
 
@@ -278,7 +279,7 @@ def _descendants(
 def _below_requested_term(
     curated: Sequence[gene_disease_pb2.CuratedEntity],
     mondo_id: str,
-    inheritance: gene_disease_pb2.Inheritance,
+    inheritance: evidence_pb2.Inheritance,
     ancestors: Mapping[str, Sequence[str]],
 ) -> gene_disease_pb2.EntityResolution:
     """Resolve against the curations whose term is a MONDO subclass descendant of the requested one.
@@ -316,7 +317,7 @@ def _below_requested_term(
 def resolve(
     curated: Sequence[gene_disease_pb2.CuratedEntity],
     mondo_id: str,
-    inheritance: gene_disease_pb2.Inheritance,
+    inheritance: evidence_pb2.Inheritance,
     ancestors: Mapping[str, Sequence[str]],
 ) -> gene_disease_pb2.EntityResolution:
     """Which curated entity the requested MONDO term names.

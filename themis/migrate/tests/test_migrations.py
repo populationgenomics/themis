@@ -98,6 +98,31 @@ def test_analysis_inputs_migration_runs_in_the_only_order_that_works() -> None:
     ]
 
 
+def test_curation_vocabulary_migration_snapshots_before_it_drops() -> None:
+    vocabulary = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'curation_vocabulary')
+    assert '${' not in vocabulary.sql  # no substitutions — the web SA reads no snapshot
+    # Order, not just presence: the variant copy is taken for the column the drop after it removes, so
+    # an inversion leaves the only record of that column nowhere. A count passes on the inversion.
+    assert [_command(s) for s in migrate.split_statements(vocabulary.sql)][:4] == [
+        'CREATE TABLE curation.assessments_v1 AS SELECT * FROM curation.assessments',
+        'CREATE TABLE curation.drafts_v1 AS SELECT * FROM curation.drafts',
+        'CREATE TABLE curation.variants_v1 AS SELECT * FROM curation.variants',
+        'ALTER TABLE curation.variants DROP COLUMN inheritance',
+    ]
+
+
+def test_curation_vocabulary_migration_keeps_the_trigger_body_whole() -> None:
+    """The function body is a single-quoted string carrying `;` of its own.
+
+    The splitter has no error path, so a body split at one of them would surface only when the deploy
+    sends the fragments; the trigger then has to follow the function it names.
+    """
+    vocabulary = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'curation_vocabulary')
+    trailing = [_command(s) for s in migrate.split_statements(vocabulary.sql)][4:]
+    assert [' '.join(c.split()[:2]) for c in trailing] == ['CREATE FUNCTION', 'COMMENT ON', 'CREATE TRIGGER']
+    assert trailing[0].endswith("END'")
+
+
 def test_deploy_provides_every_migration_substitution() -> None:
     """A `${VAR}` in a committed migration has an entry in every `THEMIS_MIGRATE_SUBSTITUTIONS` deploy passes."""
     workflow = yaml.safe_load(_DEPLOY_WORKFLOW.read_text('utf-8'))

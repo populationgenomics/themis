@@ -102,9 +102,12 @@ generated-code-is-committed policy buys that.
 ```
 schema/proto/                     # hand-authored .proto — the source of truth
   themis/rpc/                     # internal gRPC service contracts (auth, store, hello)
+  themis/evidence/models/         # the value types and routing vocabularies the interfaces share
+  themis/svcv4/models/            # the framework's own output vocabulary (the class ladder)
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
   themis/litcache/models/         # at-rest domain contracts (the manifest, the bibliographic record + the mirrors it embeds)
+  themis/curation/models/         # what a curator records on one worksheet
   themis/sheaf/models/            # at-rest: the sheaf ref document
   clinvar_proto/                  # copy of an upstream's published schema (below)
   pubmed_proto/                   # copy of an upstream's published schema (below)
@@ -377,8 +380,9 @@ stubs for the internal protos the browser never calls), and it is preferred to t
 
 ## Protos in Cloud SQL columns
 
-One at-rest proto is designed: `analyses.inputs`, an `AnalysisInputs` an Analysis is created from
-([`analysis-scenarios.md`](analysis-scenarios.md) — the column lands with migration `0008`, unmerged). Other durable
+Two protos are stored in Cloud SQL columns: `AnalysisInputs`, the scenario and fields an Analysis is created from
+([`analysis-scenarios.md`](analysis-scenarios.md) §Storage), and the curation worksheet's `Assessment`, one row per
+workflow in both its draft and its submitted tier ([`curation-surface.md`](curation-surface.md) §Storage). Other durable
 artifacts are GCS blobs. Three shapes, in order of preference:
 
 1. **GCS pointer, metadata in SQL (default for anything large).** The row stores a pointer (path/generation) to a binary

@@ -1,13 +1,16 @@
-// The value types every evidence interface of the evidence image shares: where a fact came from, the
-// routing consequence, and the genomic interval a fact is placed on. Types live here rather than in
-// one service's contract because several interfaces exchange them — the window a ClinVar search ran
-// on and one exon of a transcript are the same kind of interval, and every rpc stamps its own
-// provenance.
+// The value types the evidence interfaces share, and the two vocabularies anything speaking about a
+// variant routes on: where a fact came from, the molecular consequence, the mode of inheritance, and
+// the genomic interval a fact is placed on. They live here rather than in one contract because
+// several exchange them — the window a ClinVar search ran on and one exon of a transcript are the
+// same kind of interval, every rpc stamps its own provenance, and a retrieved routing and a curator's
+// stated one are comparable only if they are the same vocabulary.
 //
 // Modelled from:
 //   SVCv4 variant-type workflows (docs/design/evidence-interfaces.md § "place the variant, and route
 //     it to a decision tree"): `Consequence` is the partition its decision trees select on; VEP's
 //     term is re-encoded onto it.
+//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, harmonised onto one set:
+//     `Inheritance`.
 //   This interface's own design: `Provenance`, `GenomicSpan`.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
@@ -29,7 +32,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/evidence/models/evidence.proto.
  */
 export const file_themis_evidence_models_evidence: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvZXZpZGVuY2UvbW9kZWxzL2V2aWRlbmNlLnByb3RvEhZ0aGVtaXMuZXZpZGVuY2UubW9kZWxzIncKClByb3ZlbmFuY2USDgoGc291cmNlGAEgASgJEhgKEGRhdGFzZXRfdmVyc2lvbnMYAiADKAkSDQoFcXVlcnkYAyABKAkSMAoMcmV0cmlldmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIpCgtHZW5vbWljU3BhbhINCgVzdGFydBgBIAEoAxILCgNlbmQYAiABKAMqhQMKC0NvbnNlcXVlbmNlEhsKF0NPTlNFUVVFTkNFX1VOU1BFQ0lGSUVEEAASGAoUQ09OU0VRVUVOQ0VfTUlTU0VOU0UQARIYChRDT05TRVFVRU5DRV9OT05TRU5TRRACEhoKFkNPTlNFUVVFTkNFX0ZSQU1FU0hJRlQQAxIgChxDT05TRVFVRU5DRV9DQU5PTklDQUxfU1BMSUNFEAQSGAoUQ09OU0VRVUVOQ0VfSU5UUk9OSUMQBRIaChZDT05TRVFVRU5DRV9TWU5PTllNT1VTEAYSHQoZQ09OU0VRVUVOQ0VfSU5GUkFNRV9JTkRFTBAHEhoKFkNPTlNFUVVFTkNFX1NUQVJUX0xPU1QQCBIZChVDT05TRVFVRU5DRV9TVE9QX0xPU1QQCRIdChlDT05TRVFVRU5DRV9FWE9OX0RFTEVUSU9OEAoSIAocQ09OU0VRVUVOQ0VfRVhPTl9EVVBMSUNBVElPThALEhoKFkNPTlNFUVVFTkNFX05PTl9DT0RJTkcQDGIGcHJvdG8z", [file_google_protobuf_timestamp]);
+  fileDesc("CiV0aGVtaXMvZXZpZGVuY2UvbW9kZWxzL2V2aWRlbmNlLnByb3RvEhZ0aGVtaXMuZXZpZGVuY2UubW9kZWxzIncKClByb3ZlbmFuY2USDgoGc291cmNlGAEgASgJEhgKEGRhdGFzZXRfdmVyc2lvbnMYAiADKAkSDQoFcXVlcnkYAyABKAkSMAoMcmV0cmlldmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIpCgtHZW5vbWljU3BhbhINCgVzdGFydBgBIAEoAxILCgNlbmQYAiABKAMqhQMKC0NvbnNlcXVlbmNlEhsKF0NPTlNFUVVFTkNFX1VOU1BFQ0lGSUVEEAASGAoUQ09OU0VRVUVOQ0VfTUlTU0VOU0UQARIYChRDT05TRVFVRU5DRV9OT05TRU5TRRACEhoKFkNPTlNFUVVFTkNFX0ZSQU1FU0hJRlQQAxIgChxDT05TRVFVRU5DRV9DQU5PTklDQUxfU1BMSUNFEAQSGAoUQ09OU0VRVUVOQ0VfSU5UUk9OSUMQBRIaChZDT05TRVFVRU5DRV9TWU5PTllNT1VTEAYSHQoZQ09OU0VRVUVOQ0VfSU5GUkFNRV9JTkRFTBAHEhoKFkNPTlNFUVVFTkNFX1NUQVJUX0xPU1QQCBIZChVDT05TRVFVRU5DRV9TVE9QX0xPU1QQCRIdChlDT05TRVFVRU5DRV9FWE9OX0RFTEVUSU9OEAoSIAocQ09OU0VRVUVOQ0VfRVhPTl9EVVBMSUNBVElPThALEhoKFkNPTlNFUVVFTkNFX05PTl9DT0RJTkcQDCqCAgoLSW5oZXJpdGFuY2USGwoXSU5IRVJJVEFOQ0VfVU5TUEVDSUZJRUQQABIiCh5JTkhFUklUQU5DRV9BVVRPU09NQUxfRE9NSU5BTlQQARIjCh9JTkhFUklUQU5DRV9BVVRPU09NQUxfUkVDRVNTSVZFEAISGAoUSU5IRVJJVEFOQ0VfWF9MSU5LRUQQAxIYChRJTkhFUklUQU5DRV9ZX0xJTktFRBAEEh0KGUlOSEVSSVRBTkNFX01JVE9DSE9ORFJJQUwQBRIcChhJTkhFUklUQU5DRV9TRU1JRE9NSU5BTlQQBhIcChhJTkhFUklUQU5DRV9VTkRFVEVSTUlORUQQB2IGcHJvdG8z", [file_google_protobuf_timestamp]);
 
 /**
  * Where a fact came from, so every claim is reproducible without a mirror (PRODUCT §6). For a live
@@ -103,7 +106,8 @@ export const GenomicSpanSchema: GenMessage<GenomicSpan> = /*@__PURE__*/
 
 /**
  * The SVCv4 routing key: molecular consequence selects the variant-type decision tree. Absent =
- * the caller must resolve it first (that is what Variant.Normalize is for).
+ * nothing has stated it yet, whether by resolving the variant (that is what Variant.Normalize is
+ * for) or by an analyst saying which class they take it to be.
  *
  * @generated from enum themis.evidence.models.Consequence
  */
@@ -179,4 +183,69 @@ export enum Consequence {
  */
 export const ConsequenceSchema: GenEnum<Consequence> = /*@__PURE__*/
   enumDesc(file_themis_evidence_models_evidence, 0);
+
+/**
+ * The mode of inheritance of the entity under analysis, harmonised across the vocabularies the
+ * sources publish: ClinGen's MOI codes and GenCC's HPO moi_curie both land here, and a curated entity
+ * carries the source's own term verbatim beside it. The X-linked spellings fold onto one member —
+ * ClinGen curates a single XL, and the downstream SVCv4 rules (SM3's DAFT, SM7's POP_HMZ) take one
+ * X-linked mode. A source mode outside this set fails the rpc rather than landing anywhere: the mode
+ * is half of what identifies an entity, so a value nothing harmonises cannot be matched, dropped or
+ * defaulted. Several SVCv4 rules select on it, and not every member is one they select on: the
+ * AD/AR/X-linked splits have no branch for a Y-linked, mitochondrial or undetermined mode.
+ *
+ * @generated from enum themis.evidence.models.Inheritance
+ */
+export enum Inheritance {
+  /**
+   * Nothing has stated a mode — a request narrowing by term alone, an analysis not yet routed.
+   * Never a curated entity, which always carries one.
+   *
+   * @generated from enum value: INHERITANCE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: INHERITANCE_AUTOSOMAL_DOMINANT = 1;
+   */
+  AUTOSOMAL_DOMINANT = 1,
+
+  /**
+   * @generated from enum value: INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
+   */
+  AUTOSOMAL_RECESSIVE = 2,
+
+  /**
+   * @generated from enum value: INHERITANCE_X_LINKED = 3;
+   */
+  X_LINKED = 3,
+
+  /**
+   * @generated from enum value: INHERITANCE_Y_LINKED = 4;
+   */
+  Y_LINKED = 4,
+
+  /**
+   * @generated from enum value: INHERITANCE_MITOCHONDRIAL = 5;
+   */
+  MITOCHONDRIAL = 5,
+
+  /**
+   * @generated from enum value: INHERITANCE_SEMIDOMINANT = 6;
+   */
+  SEMIDOMINANT = 6,
+
+  /**
+   * the curator states the mode is not determined (ClinGen UD, GenCC HP:0000005)
+   *
+   * @generated from enum value: INHERITANCE_UNDETERMINED = 7;
+   */
+  UNDETERMINED = 7,
+}
+
+/**
+ * Describes the enum themis.evidence.models.Inheritance.
+ */
+export const InheritanceSchema: GenEnum<Inheritance> = /*@__PURE__*/
+  enumDesc(file_themis_evidence_models_evidence, 1);
 

@@ -60,14 +60,14 @@ _MODULE_FILES = ('buf.yaml', 'buf.lock')
 # except the copied upstream schema, whose field numbers are positional, so a pin bump rewrites it
 # wholesale for as long as we carry it. Paths are relative to _PROTO_DIR, and a renamed or deleted
 # contract keeps its old path listed until the baseline no longer carries it — a path here is never
-# compared, present or not.
+# compared, present or not. A listed path is unlinked from both sides, so nothing a *gated* proto
+# imports may be listed: the import would not resolve and the module would fail to build.
 _PRE_RELEASE = frozenset(
     {
         'clinvar_proto/clinvar.proto',
         'themis/litcache/models/litcache.proto',
         'themis/litcache/models/crossref.proto',
         'themis/litcache/models/openalex.proto',
-        'themis/evidence/models/evidence.proto',
         'themis/rpc/clinvar.proto',
         'themis/rpc/cspec.proto',
         'themis/rpc/gene_disease.proto',

@@ -25,6 +25,17 @@ class Consequence(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CONSEQUENCE_EXON_DELETION: _ClassVar[Consequence]
     CONSEQUENCE_EXON_DUPLICATION: _ClassVar[Consequence]
     CONSEQUENCE_NON_CODING: _ClassVar[Consequence]
+
+class Inheritance(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    INHERITANCE_UNSPECIFIED: _ClassVar[Inheritance]
+    INHERITANCE_AUTOSOMAL_DOMINANT: _ClassVar[Inheritance]
+    INHERITANCE_AUTOSOMAL_RECESSIVE: _ClassVar[Inheritance]
+    INHERITANCE_X_LINKED: _ClassVar[Inheritance]
+    INHERITANCE_Y_LINKED: _ClassVar[Inheritance]
+    INHERITANCE_MITOCHONDRIAL: _ClassVar[Inheritance]
+    INHERITANCE_SEMIDOMINANT: _ClassVar[Inheritance]
+    INHERITANCE_UNDETERMINED: _ClassVar[Inheritance]
 CONSEQUENCE_UNSPECIFIED: Consequence
 CONSEQUENCE_MISSENSE: Consequence
 CONSEQUENCE_NONSENSE: Consequence
@@ -38,6 +49,14 @@ CONSEQUENCE_STOP_LOST: Consequence
 CONSEQUENCE_EXON_DELETION: Consequence
 CONSEQUENCE_EXON_DUPLICATION: Consequence
 CONSEQUENCE_NON_CODING: Consequence
+INHERITANCE_UNSPECIFIED: Inheritance
+INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance
+INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance
+INHERITANCE_X_LINKED: Inheritance
+INHERITANCE_Y_LINKED: Inheritance
+INHERITANCE_MITOCHONDRIAL: Inheritance
+INHERITANCE_SEMIDOMINANT: Inheritance
+INHERITANCE_UNDETERMINED: Inheritance
 
 class Provenance(_message.Message):
     __slots__ = ("source", "dataset_versions", "query", "retrieved_at")

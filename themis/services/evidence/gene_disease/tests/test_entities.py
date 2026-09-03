@@ -12,15 +12,16 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
+from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import entities as gene_disease
 from themis.services.evidence.upstreams import clingen_validity, gencc
 
-_AD = gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT
-_AR = gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE
-_XL = gene_disease_pb2.INHERITANCE_X_LINKED
-_UNSTATED = gene_disease_pb2.INHERITANCE_UNSPECIFIED
+_AD = evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT
+_AR = evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE
+_XL = evidence_pb2.INHERITANCE_X_LINKED
+_UNSTATED = evidence_pb2.INHERITANCE_UNSPECIFIED
 
 # One curated subtype and its parent term, plus a sibling subtype under the same parent.
 _PARENT = 'MONDO:0000100'

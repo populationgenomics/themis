@@ -97,7 +97,8 @@ import decimal
 import enum
 from collections.abc import Iterable, Mapping, Sequence
 
-from themis.rpc import clinvar_pb2, gene_disease_pb2, gnomad_pb2
+from themis.evidence.models import evidence_pb2
+from themis.rpc import clinvar_pb2, gnomad_pb2
 from themis.svcv4 import clinvar_classification, payload, provenance, reference
 
 # SM3: a founder/outlier variant is "significantly higher in frequency than other P/LP variants
@@ -503,24 +504,24 @@ class HmzInheritance(enum.Enum):
     XLINKED = 'xlinked'
 
 
-_DAFT_INHERITANCE: dict[gene_disease_pb2.Inheritance, Inheritance] = {
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance.MONOALLELIC,
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance.BIALLELIC,
-    gene_disease_pb2.INHERITANCE_X_LINKED: Inheritance.XLINKED,
+_DAFT_INHERITANCE: dict[evidence_pb2.Inheritance, Inheritance] = {
+    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance.MONOALLELIC,
+    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance.BIALLELIC,
+    evidence_pb2.INHERITANCE_X_LINKED: Inheritance.XLINKED,
 }
 
-_HMZ_INHERITANCE: dict[gene_disease_pb2.Inheritance, HmzInheritance] = {
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: HmzInheritance.AD,
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: HmzInheritance.AR,
-    gene_disease_pb2.INHERITANCE_SEMIDOMINANT: HmzInheritance.SEMIDOMINANT,
-    gene_disease_pb2.INHERITANCE_X_LINKED: HmzInheritance.XLINKED,
+_HMZ_INHERITANCE: dict[evidence_pb2.Inheritance, HmzInheritance] = {
+    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: HmzInheritance.AD,
+    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: HmzInheritance.AR,
+    evidence_pb2.INHERITANCE_SEMIDOMINANT: HmzInheritance.SEMIDOMINANT,
+    evidence_pb2.INHERITANCE_X_LINKED: HmzInheritance.XLINKED,
 }
 
-_BINNING_TABLES: dict[gene_disease_pb2.Inheritance, tuple[BinningTable, ...]] = {
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: (BinningTable.AUTOSOMAL_DOMINANT,),
-    gene_disease_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: (BinningTable.AUTOSOMAL_RECESSIVE,),
-    gene_disease_pb2.INHERITANCE_SEMIDOMINANT: (BinningTable.AUTOSOMAL_DOMINANT, BinningTable.AUTOSOMAL_RECESSIVE),
-    gene_disease_pb2.INHERITANCE_X_LINKED: (
+_BINNING_TABLES: dict[evidence_pb2.Inheritance, tuple[BinningTable, ...]] = {
+    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: (BinningTable.AUTOSOMAL_DOMINANT,),
+    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: (BinningTable.AUTOSOMAL_RECESSIVE,),
+    evidence_pb2.INHERITANCE_SEMIDOMINANT: (BinningTable.AUTOSOMAL_DOMINANT, BinningTable.AUTOSOMAL_RECESSIVE),
+    evidence_pb2.INHERITANCE_X_LINKED: (
         BinningTable.X_LINKED_MALE,
         BinningTable.X_LINKED_DOMINANT_FEMALE,
         BinningTable.X_LINKED_RECESSIVE_FEMALE,
@@ -529,14 +530,14 @@ _BINNING_TABLES: dict[gene_disease_pb2.Inheritance, tuple[BinningTable, ...]] = 
 }
 
 
-def _mode_name(mode: gene_disease_pb2.Inheritance) -> str:
+def _mode_name(mode: evidence_pb2.Inheritance) -> str:
     """Name an inheritance mode for an error message, however it was composed."""
-    if type(mode) is int and mode in gene_disease_pb2.Inheritance.values():
-        return gene_disease_pb2.Inheritance.Name(mode)
+    if type(mode) is int and mode in evidence_pb2.Inheritance.values():
+        return evidence_pb2.Inheritance.Name(mode)
     return repr(mode)
 
 
-def _curated(mode: gene_disease_pb2.Inheritance) -> gene_disease_pb2.Inheritance:
+def _curated(mode: evidence_pb2.Inheritance) -> evidence_pb2.Inheritance:
     """The mode, held to the contract's enum.
 
     Checked at runtime because the model composes this untyped in code mode, where a bool, a float
@@ -544,13 +545,13 @@ def _curated(mode: gene_disease_pb2.Inheritance) -> gene_disease_pb2.Inheritance
     """
     if type(mode) is not int:
         raise ValueError(
-            f'the inheritance mode must be a gene_disease_pb2.Inheritance value, got a {type(mode).__name__}; '
+            f'the inheritance mode must be an evidence_pb2.Inheritance value, got a {type(mode).__name__}; '
             'it is what `GeneDisease.DescribeGene` states per curated entity'
         )
     return mode
 
 
-def daft_inheritance(mode: gene_disease_pb2.Inheritance) -> Inheritance:
+def daft_inheritance(mode: evidence_pb2.Inheritance) -> Inheritance:
     """The DAFT calculator's inheritance for a curated entity's mode of inheritance.
 
     Args:
@@ -576,7 +577,7 @@ def daft_inheritance(mode: gene_disease_pb2.Inheritance) -> Inheritance:
     return resolved
 
 
-def hmz_inheritance(mode: gene_disease_pb2.Inheritance) -> HmzInheritance:
+def hmz_inheritance(mode: evidence_pb2.Inheritance) -> HmzInheritance:
     """The POP_HMZ weighting row for a curated entity's mode of inheritance (SM3 Table 7).
 
     Args:
@@ -595,7 +596,7 @@ def hmz_inheritance(mode: gene_disease_pb2.Inheritance) -> HmzInheritance:
     return resolved
 
 
-def binning_tables_for(mode: gene_disease_pb2.Inheritance) -> tuple[BinningTable, ...]:
+def binning_tables_for(mode: evidence_pb2.Inheritance) -> tuple[BinningTable, ...]:
     """The SM3 binning tables a curated entity's mode of inheritance admits.
 
     A set rather than one table: SM3 separates X-linked dominant from recessive and male from female

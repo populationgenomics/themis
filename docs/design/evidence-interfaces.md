@@ -946,12 +946,15 @@ The contract is **one `.proto` per interface** under [`schema/proto/themis/rpc/`
 in package `themis.rpc.<source>`, plus [`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto) for
 the value types they exchange.
 
-**A type sits in the shared file only where several interfaces exchange it.** Provenance, the routing consequence and a
-genomic span qualify — a ClinVar record and a transcript exon are placed by the same coordinates — so housing them in
-any one source's file would make the other eight import that source's contract to name a coordinate. The
-coding-coordinate types and the transcript-namespace enum have one exchanger each, so they live with it: the c.
-coordinate types in `clinvar.proto` and the namespace enum in `transcript.proto`. The shared file declares no service
-and imports no rpc file, so the dependency runs one way.
+**A type sits in the shared file only where more than one contract exchanges it.** Two kinds of type qualify. Provenance
+and a genomic span are exchanged by most of the interfaces — a ClinVar record and a transcript exon are placed by the
+same coordinates — so housing them in one source's file would make every other contract import that source's to name a
+coordinate. The two routing vocabularies, molecular consequence and mode of inheritance, cross a wider seam: an evidence
+interface answers them about a variant or a curated entity, and a curator states them on a worksheet, and a run's answer
+and a curator's are comparable only as one enum ([`curation-surface.md`](curation-surface.md) §One vocabulary per
+concept). The coding-coordinate types and the transcript-namespace enum have one exchanger each, so they live with it:
+the c. coordinate types in `clinvar.proto` and the namespace enum in `transcript.proto`. The shared file declares no
+service and imports no rpc file, so the dependency runs one way.
 
 **Every response layers the same three things**: the typed load-bearing fields, then the upstream material, then the
 provenance list. Typing only the load-bearing fields and passing the rest through is the "external data" posture

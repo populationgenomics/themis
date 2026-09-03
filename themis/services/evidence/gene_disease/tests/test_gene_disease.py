@@ -12,6 +12,7 @@ import grpc.aio
 import pytest
 
 from themis.clients.auth import session as session_mod
+from themis.evidence.models import evidence_pb2
 from themis.rpc import auth_pb2, gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -92,7 +93,7 @@ def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expec
         (gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:007947'), 'MONDO curie'),
         (
             gene_disease_pb2.DescribeGeneRequest(
-                hgnc_id='HGNC:1100', inheritance=gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT
+                hgnc_id='HGNC:1100', inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT
             ),
             'narrows nothing',
         ),
@@ -100,7 +101,7 @@ def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expec
         # comes back as a statement about the gene's curations.
         (
             gene_disease_pb2.DescribeGeneRequest(
-                hgnc_id='HGNC:1100', mondo_id='MONDO:0011450', inheritance=cast('gene_disease_pb2.Inheritance', 99)
+                hgnc_id='HGNC:1100', mondo_id='MONDO:0011450', inheritance=cast('evidence_pb2.Inheritance', 99)
             ),
             'takes inheritance',
         ),
@@ -129,7 +130,7 @@ def test_the_gene_disease_fixture_key_names_the_entity_asked_about() -> None:
     entity = gene_disease_pb2.DescribeGeneRequest(
         hgnc_id='HGNC:1100',
         mondo_id='MONDO:0011450',
-        inheritance=gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+        inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
     )
     seeded = gene_disease_pb2.DescribeGeneResponse(
         resolution=gene_disease_pb2.EntityResolution(requested_mondo_id='MONDO:0011450')

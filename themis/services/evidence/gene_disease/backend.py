@@ -56,7 +56,7 @@ def gene_key(request: gene_disease_pb2.DescribeGeneRequest) -> str:
     """
     if not request.mondo_id:
         return request.hgnc_id
-    return f'{request.hgnc_id}:{request.mondo_id}:{gene_disease_pb2.Inheritance.Name(request.inheritance)}'
+    return f'{request.hgnc_id}:{request.mondo_id}:{evidence_pb2.Inheritance.Name(request.inheritance)}'
 
 
 class FixtureBackend(GeneDiseaseBackend):

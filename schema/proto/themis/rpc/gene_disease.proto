@@ -11,8 +11,8 @@
 //   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
 //     is keyed by — docs/design/evidence-interfaces.md § "is the gene-disease relationship valid, and
 //     by what mechanism?".
-//   This interface's own design: `DescribeGeneRequest`, `DescribeGeneResponse`, `EntityResolution`,
-//     `GeneCoverage`, and `Inheritance` — the sources' mode vocabularies harmonised onto one set.
+//   This interface's own design: `DescribeGeneRequest`, `DescribeGeneResponse`, `EntityResolution`
+//     and `GeneCoverage`.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
 // thresholds and code names may change before publication, so the SVCv4 codes named throughout
@@ -22,7 +22,8 @@
 // Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
 // metadata and resolves via themis.clients.auth; it is never a message field.
 //
-// The shared value types (Provenance, GenomicSpan, the routing Consequence):
+// The shared value types (Provenance, GenomicSpan) and the two routing vocabularies (Consequence,
+// Inheritance — the sources' mode vocabularies harmonised onto one set):
 // themis/evidence/models/evidence.proto.
 
 syntax = "proto3";
@@ -53,23 +54,6 @@ option (themis.rpc.agent_exposed) = true;
 // NO source emits the 4-level Established/Likely/Suspected/Uncertain mechanism scale — the model
 // makes that call from these signals plus the mechanism narrative the literature service supplies.
 // Uncertain (x0) is the floor when undeterminable, not a default fired by an absent score.
-
-// A curated entity's mode of inheritance, harmonised across the sources' vocabularies: ClinGen's MOI
-// codes and GenCC's HPO moi_curie both land here, and each element also carries the source's own
-// term verbatim. The X-linked spellings fold onto one member — ClinGen curates a single XL, and the
-// downstream SVCv4 rules (SM3's DAFT, SM7's POP_HMZ) take one X-linked mode. A source mode outside
-// this set fails the rpc rather than landing anywhere: the mode is half of what identifies an
-// entity, so a value nothing harmonises cannot be matched, dropped or defaulted.
-enum Inheritance {
-  INHERITANCE_UNSPECIFIED = 0;  // a request narrowing by term alone; never an entity, which always carries a mode
-  INHERITANCE_AUTOSOMAL_DOMINANT = 1;
-  INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
-  INHERITANCE_X_LINKED = 3;
-  INHERITANCE_Y_LINKED = 4;
-  INHERITANCE_MITOCHONDRIAL = 5;
-  INHERITANCE_SEMIDOMINANT = 6;
-  INHERITANCE_UNDETERMINED = 7;  // the curator states the mode is not determined (ClinGen UD, GenCC HP:0000005)
-}
 
 // The gate level a validity classification reads as. Not the classification vocabulary: four of the
 // published classifications are not gate levels, so this is the value themis.svcv4.classify takes —
@@ -114,7 +98,7 @@ message DescribeGeneRequest {
   // The entity's mode of inheritance, which is half of what identifies it (SM21: one gene's MDEs can
   // differ in mode alone). Unset narrows by term only, which is ambiguous — and so refused — where
   // the term is curated under more than one mode.
-  Inheritance inheritance = 3;
+  themis.evidence.models.Inheritance inheritance = 3;
 }
 // What the reference tables hold for the gene, with the entity scope and the gene scope kept apart.
 message DescribeGeneResponse {
@@ -137,7 +121,7 @@ message CuratedEntity {
   string source = 1;         // "ClinGen Gene Validity" | "GenCC"
   string disease_label = 2;  // the curator's own label for the entity
   string mondo_id = 3;       // the MONDO term curated, which the label is one alias of
-  Inheritance inheritance = 4;
+  themis.evidence.models.Inheritance inheritance = 4;
   // The source's own mode string, verbatim ("AD", "Autosomal dominant"); where a source spells one
   // harmonised mode several ways, the first it uses for this entity.
   string inheritance_term = 5;
@@ -161,9 +145,11 @@ message GenccSubmission {
 // Which of the gene's curated entities the requested MONDO id names, and how the two terms relate.
 message EntityResolution {
   string requested_mondo_id = 1;
-  Inheritance requested_inheritance = 2;  // echoed; UNSPECIFIED where the request narrowed by term alone
-  string mondo_id = 3;                    // the curated term: the requested one, or a descendant of it
-  Inheritance inheritance = 4;            // the mode the resolved entities are curated under
+  // echoed; UNSPECIFIED where the request narrowed by term alone
+  themis.evidence.models.Inheritance requested_inheritance = 2;
+  string mondo_id = 3;  // the curated term: the requested one, or a descendant of it
+  // the mode the resolved entities are curated under
+  themis.evidence.models.Inheritance inheritance = 4;
   TermRelation relation = 5;
   // The resolved entities themselves, one per source that curates this (term, inheritance) — so a
   // caller reads them without re-filtering `entities`, which still carries the gene's others. Where

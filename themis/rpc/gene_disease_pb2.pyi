@@ -10,17 +10,6 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class Inheritance(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    INHERITANCE_UNSPECIFIED: _ClassVar[Inheritance]
-    INHERITANCE_AUTOSOMAL_DOMINANT: _ClassVar[Inheritance]
-    INHERITANCE_AUTOSOMAL_RECESSIVE: _ClassVar[Inheritance]
-    INHERITANCE_X_LINKED: _ClassVar[Inheritance]
-    INHERITANCE_Y_LINKED: _ClassVar[Inheritance]
-    INHERITANCE_MITOCHONDRIAL: _ClassVar[Inheritance]
-    INHERITANCE_SEMIDOMINANT: _ClassVar[Inheritance]
-    INHERITANCE_UNDETERMINED: _ClassVar[Inheritance]
-
 class GateLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     GATE_LEVEL_UNSPECIFIED: _ClassVar[GateLevel]
@@ -43,14 +32,6 @@ class GeneCoverage(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     GENE_COVERAGE_CURATED: _ClassVar[GeneCoverage]
     GENE_COVERAGE_NO_VALIDITY_ASSERTION: _ClassVar[GeneCoverage]
     GENE_COVERAGE_ABSENT: _ClassVar[GeneCoverage]
-INHERITANCE_UNSPECIFIED: Inheritance
-INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance
-INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance
-INHERITANCE_X_LINKED: Inheritance
-INHERITANCE_Y_LINKED: Inheritance
-INHERITANCE_MITOCHONDRIAL: Inheritance
-INHERITANCE_SEMIDOMINANT: Inheritance
-INHERITANCE_UNDETERMINED: Inheritance
 GATE_LEVEL_UNSPECIFIED: GateLevel
 GATE_LEVEL_DEFINITIVE: GateLevel
 GATE_LEVEL_STRONG: GateLevel
@@ -73,8 +54,8 @@ class DescribeGeneRequest(_message.Message):
     INHERITANCE_FIELD_NUMBER: _ClassVar[int]
     hgnc_id: str
     mondo_id: str
-    inheritance: Inheritance
-    def __init__(self, hgnc_id: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[Inheritance, str]] = ...) -> None: ...
+    inheritance: _evidence_pb2.Inheritance
+    def __init__(self, hgnc_id: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ...) -> None: ...
 
 class DescribeGeneResponse(_message.Message):
     __slots__ = ("entities", "resolution", "gene_scoped", "coverage", "raw", "provenance")
@@ -106,13 +87,13 @@ class CuratedEntity(_message.Message):
     source: str
     disease_label: str
     mondo_id: str
-    inheritance: Inheritance
+    inheritance: _evidence_pb2.Inheritance
     inheritance_term: str
     validity_classification: str
     gate_level: GateLevel
     submissions: _containers.RepeatedCompositeFieldContainer[GenccSubmission]
     mechanism_statements: _containers.RepeatedCompositeFieldContainer[MechanismStatement]
-    def __init__(self, source: _Optional[str] = ..., disease_label: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[Inheritance, str]] = ..., inheritance_term: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[GateLevel, str]] = ..., submissions: _Optional[_Iterable[_Union[GenccSubmission, _Mapping]]] = ..., mechanism_statements: _Optional[_Iterable[_Union[MechanismStatement, _Mapping]]] = ...) -> None: ...
+    def __init__(self, source: _Optional[str] = ..., disease_label: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., inheritance_term: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[GateLevel, str]] = ..., submissions: _Optional[_Iterable[_Union[GenccSubmission, _Mapping]]] = ..., mechanism_statements: _Optional[_Iterable[_Union[MechanismStatement, _Mapping]]] = ...) -> None: ...
 
 class GenccSubmission(_message.Message):
     __slots__ = ("submitter", "validity_classification", "mechanism_note")
@@ -133,12 +114,12 @@ class EntityResolution(_message.Message):
     RELATION_FIELD_NUMBER: _ClassVar[int]
     ENTITIES_FIELD_NUMBER: _ClassVar[int]
     requested_mondo_id: str
-    requested_inheritance: Inheritance
+    requested_inheritance: _evidence_pb2.Inheritance
     mondo_id: str
-    inheritance: Inheritance
+    inheritance: _evidence_pb2.Inheritance
     relation: TermRelation
     entities: _containers.RepeatedCompositeFieldContainer[CuratedEntity]
-    def __init__(self, requested_mondo_id: _Optional[str] = ..., requested_inheritance: _Optional[_Union[Inheritance, str]] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[Inheritance, str]] = ..., relation: _Optional[_Union[TermRelation, str]] = ..., entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ...) -> None: ...
+    def __init__(self, requested_mondo_id: _Optional[str] = ..., requested_inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., relation: _Optional[_Union[TermRelation, str]] = ..., entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ...) -> None: ...
 
 class GeneScopedSignals(_message.Message):
     __slots__ = ("haploinsufficiency_score", "mode_of_pathogenicity", "mode_of_inheritance", "mechanism_statements", "sources_holding_the_gene")

@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 import httpx2
 import pytest
 
+from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -251,7 +252,7 @@ def test_gene_disease_resolving_the_curated_term_reads_no_ontology() -> None:
                 gene_disease_pb2.DescribeGeneRequest(
                     hgnc_id='HGNC:1100',
                     mondo_id=_CURATED_TERM,
-                    inheritance=gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+                    inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
                 )
             )
 
@@ -282,7 +283,7 @@ def test_gene_disease_resolving_a_parent_term_reads_the_subclass_closure(monkeyp
             gene_disease_pb2.DescribeGeneRequest(
                 hgnc_id='HGNC:1100',
                 mondo_id=_PARENT_TERM,
-                inheritance=gene_disease_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+                inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
             )
         ),
     )

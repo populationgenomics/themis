@@ -57,8 +57,11 @@ from 1. The unit tests run the committed set through it, so a gap or a duplicate
 `0004`) fails CI rather than reordering silently; the deploy is the backstop. An applied migration is never edited; a
 new privilege, column, or table is a new file.
 
-Objects land in `public` unless a domain owns a schema of its own — litcache's crosswalk sits in a `litcache` schema
-created by its migration.
+Objects land in `public` unless a domain owns a schema of its own. A schema is worth taking where a domain's tables are
+granted, owned and changed as one, so that all three can be stated about the domain rather than table by table:
+litcache's crosswalk sits in a `litcache` schema and the curation worksheet's tables
+([`curation-surface.md`](curation-surface.md) §Storage) in a `curation` schema, each created by the first migration that
+needs it.
 
 ### Applying
 

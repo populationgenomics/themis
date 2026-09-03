@@ -7,6 +7,7 @@ from typing import override
 import grpc
 
 from themis.clients.auth import session as session_mod
+from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -41,12 +42,11 @@ class Servicer(gene_disease_pb2_grpc.GeneDiseaseServicer, serving.EvidenceServic
         requests.require_hgnc_id('DescribeGene', request.hgnc_id)
         if request.mondo_id:
             requests.require_mondo_id('DescribeGene', request.mondo_id)
-        if request.inheritance not in gene_disease_pb2.Inheritance.values():
+        if request.inheritance not in evidence_pb2.Inheritance.values():
             raise errors.InvalidRequestError(
-                f'DescribeGene takes inheritance from {gene_disease_pb2.Inheritance.keys()}; '
-                f'got {request.inheritance!r}'
+                f'DescribeGene takes inheritance from {evidence_pb2.Inheritance.keys()}; got {request.inheritance!r}'
             )
-        if request.inheritance != gene_disease_pb2.INHERITANCE_UNSPECIFIED and not request.mondo_id:
+        if request.inheritance != evidence_pb2.INHERITANCE_UNSPECIFIED and not request.mondo_id:
             raise errors.InvalidRequestError(
                 'DescribeGene takes inheritance as half of the entity mondo_id names; got an inheritance with no '
                 'mondo_id, which narrows nothing'

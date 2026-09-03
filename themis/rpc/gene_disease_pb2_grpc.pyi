@@ -14,8 +14,8 @@ Modelled from:
   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
     is keyed by — docs/design/evidence-interfaces.md § "is the gene-disease relationship valid, and
     by what mechanism?".
-  This interface's own design: `DescribeGeneRequest`, `DescribeGeneResponse`, `EntityResolution`,
-    `GeneCoverage`, and `Inheritance` — the sources' mode vocabularies harmonised onto one set.
+  This interface's own design: `DescribeGeneRequest`, `DescribeGeneResponse`, `EntityResolution`
+    and `GeneCoverage`.
 
 EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
 thresholds and code names may change before publication, so the SVCv4 codes named throughout
@@ -25,7 +25,8 @@ classification composed from these facts is not a clinical variant classificatio
 Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
 metadata and resolves via themis.clients.auth; it is never a message field.
 
-The shared value types (Provenance, GenomicSpan, the routing Consequence):
+The shared value types (Provenance, GenomicSpan) and the two routing vocabularies (Consequence,
+Inheritance — the sources' mode vocabularies harmonised onto one set):
 themis/evidence/models/evidence.proto.
 """
 

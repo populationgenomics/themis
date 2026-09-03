@@ -1,0 +1,36 @@
+// The answer SVCv4 gives about a variant: the class it lands in. One vocabulary, whether the class
+// was reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate —
+// two sides that answer in different vocabularies cannot be compared, and a run's class is read
+// against a curator's stated one (docs/design/curation-surface.md).
+//
+// Modelled from:
+//   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
+//   SVCv4 SM18's gate, whose two terminal levels end in a result string rather than a class —
+//     `Reference.gate[…].result`, returned as `scoring.GateOutcome.final_class`.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
+// thresholds and code names may change before publication. Nothing here is validated for clinical or
+// diagnostic use, and a classification composed under it is not a clinical variant classification.
+
+syntax = "proto3";
+
+package themis.svcv4.models;
+
+// Everything a classification can come out as: the five ordered classes, the two outcomes the
+// gene-disease-validity gate substitutes for a class, and the curator's own "none established".
+enum Classification {
+  CLASSIFICATION_UNSPECIFIED = 0;
+  CLASSIFICATION_PATHOGENIC = 1;
+  CLASSIFICATION_LIKELY_PATHOGENIC = 2;
+  CLASSIFICATION_VUS = 3;
+  CLASSIFICATION_LIKELY_BENIGN = 4;
+  CLASSIFICATION_BENIGN = 5;
+  // No class established. The curator's own finding, not an unanswered field and not a gate outcome:
+  // UNSPECIFIED is what an unanswered one reads as.
+  CLASSIFICATION_NOT_ESTABLISHED = 6;
+  // The gate's result for a gene-disease relationship below Limited validity ("Variant in Gene of
+  // Uncertain Significance"). Terminal: it overrides the computed class in either direction.
+  CLASSIFICATION_VARIANT_IN_GENE_OF_UNCERTAIN_SIGNIFICANCE = 7;
+  // The gate's result for a Disputed or Refuted relationship ("Do not report"). Terminal likewise.
+  CLASSIFICATION_DO_NOT_REPORT = 8;
+}
