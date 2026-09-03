@@ -190,8 +190,8 @@ class ResolveRequest:
     """One paper's identifiers to resolve, tagged by the key results join back on.
 
     Attributes:
-        claim_key: The paper's join key (identity's precedence-primary id); the
-            result map is keyed by it.
+        claim_key: The key results join back on; the result map is keyed by it
+            (ingestion: the identity claim key; a metadata refresh: the `doc_id`).
         pmid: The paper's PMID, or `None`.
         doi: The paper's DOI, or `None`.
     """

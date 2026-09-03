@@ -56,8 +56,6 @@ _READINESS_STATE: dict[outcome.Readiness | None, literature_pb2.FullTextState] =
     outcome.Readiness.FAILED: literature_pb2.FULL_TEXT_STATE_FAILED,
 }
 
-_METADATA = 'metadata.pb'
-
 # Server errors that are facts about the service rather than its load, so they are checked ahead of
 # the transient base they sit under.
 _PERMANENT_SERVER_ERRORS = (api_exceptions.MethodNotImplemented, api_exceptions.DataLoss)
@@ -251,7 +249,7 @@ class Store:
 
     def _read_for_describe(self, doc_id: str) -> tuple[_Paper, bytes | None]:
         """The manifest and the ``metadata.pb`` bytes (absent ⇒ the title falls back)."""
-        return self._read_manifest(doc_id), self._download(f'{writer.paper_dir(doc_id)}/{_METADATA}')
+        return self._read_manifest(doc_id), self._download(writer.metadata_path(doc_id))
 
     def _read_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
         paper = self._read_manifest(doc_id)

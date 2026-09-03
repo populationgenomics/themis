@@ -396,18 +396,20 @@ crosswalk claimed — that is what keeps the crosswalk rebuildable from the mani
 like the others rather than merely recorded.
 
 **What is deliberately not here: a migration, or a dual-read window.** Every `metadata.pb` in the store is re-derivable
-from its source — PubMed's XML, Crossref's or OpenAlex's JSON — so the corpus is rebuilt once — the bucket's `papers/`
-prefix and the crosswalk table cleared and the seed set re-ingested — and a reader parses envelopes only. The rebuild is
-also what un-maps the Crossref- and OpenAlex-resolved papers: their raw records were never kept, so no rewrite of the
-stored bytes could recover them, and a re-fetch is the only route; a rebuild that re-fetches every paper anyway makes it
-free, where a later one would pay it again. A rewrite in place is not available either way: a pre-envelope blob may
-decode as an envelope without error, so nothing can tell one from a valid envelope, and ingestion skips a paper whose
-manifest exists; until the rebuild completes, every pre-envelope `metadata.pb` reads as garbage or fails. That is a
-destructive change to a stored artifact, allowed on the condition [`migrations.md`](migrations.md#how-it-runs) puts on a
-destructive migration: the environment holds no data worth keeping and no users to fail, and the doc names what breaks
-and until when — the window opens when the envelope reader deploys, and the rebuild closes it. A read-side fallback is
-the cost of rewriting a corpus that has users; paying it here would leave a second decode path in every reader for a
-state that ceases to exist the moment the rebuild completes.
+from its source — PubMed's XML, Crossref's or OpenAlex's JSON — through the resolver ladder, from the identifiers the
+manifest already holds. So the records are rebuilt once, without touching a source or a rendering: every `metadata.pb`
+is deleted and [`refresh_metadata.py`](../../tools/litcache/refresh_metadata.py) re-derives one for each manifest that
+lacks it, and a reader parses envelopes only. `metadata.pb` is the one artifact that may be regenerated after the commit
+— the manifest holds no hash of it, and the writer's only skip keys on the manifest — which is what makes "absent" a
+reliable trigger where "pre-envelope" is not: a pre-envelope blob may decode as an envelope without error, so nothing
+can tell one from a valid envelope, and a rewrite in place is not available. The rebuild is also what un-maps the
+Crossref- and OpenAlex-resolved papers: their raw records were never kept, so re-resolving is the only route, and
+re-resolving is all the refresh does. Until it completes, every pre-envelope `metadata.pb` reads as garbage or fails.
+That is a destructive change to a stored artifact, allowed on the condition [`migrations.md`](migrations.md#how-it-runs)
+puts on a destructive migration: the environment holds no data worth keeping and no users to fail, and the doc names
+what breaks and until when — the window opens when the envelope reader deploys, and the rebuild closes it. A read-side
+fallback is the cost of rewriting a corpus that has users; paying it here would leave a second decode path in every
+reader for a state that ceases to exist the moment the rebuild completes.
 
 ## Reference / anchor types
 

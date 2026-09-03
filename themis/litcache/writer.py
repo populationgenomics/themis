@@ -27,6 +27,11 @@ manifest already exists; that manifest is the resumability checkpoint, not the
 crosswalk row. The commit itself is create-only (`if_generation_match=0`), so if two
 workers race past the skip check the first to commit wins and the loser adopts it.
 
+`metadata.pb` is the one artifact re-creatable after the commit (`write_metadata`, an
+idempotent overwrite; `themis.litcache.refresh` drives it) — the manifest holds no hash
+of it and its bytes derive from the paper's identifiers, not from the directory. See
+`docs/design/litcache-manifest.md` § Path layout.
+
 `add_rendering` and `add_source_and_rendering` are the paths that mutate a
 committed paper. Both use a generation-matched read-modify-write, so a concurrent
 writer is detected and retried rather than clobbered: `add_rendering` adds a
@@ -50,9 +55,10 @@ from themis.common import storage
 from themis.litcache import paper_metadata
 from themis.litcache.models import litcache_pb2
 
-_PAPERS_PREFIX = 'papers'
-_MANIFEST_NAME = 'manifest.pb'
-_METADATA_NAME = 'metadata.pb'
+# The layout's fixed names, for readers that list `papers/` rather than address one paper.
+PAPERS_DIR = 'papers'
+MANIFEST_NAME = 'manifest.pb'
+METADATA_NAME = 'metadata.pb'
 _SOURCES_DIR = 'sources'
 _RENDERINGS_DIR = 'renderings'
 
@@ -73,7 +79,7 @@ _BLOB_DIRS: dict[litcache_pb2.AssociatedFileRole, str] = {
 
 def paper_dir(doc_id: str) -> str:
     """The layout root for `doc_id` — the prefix every one of its objects hangs off."""
-    return posixpath.join(_PAPERS_PREFIX, doc_id)
+    return posixpath.join(PAPERS_DIR, doc_id)
 
 
 def manifest_path(doc_id: str) -> str:
@@ -82,7 +88,12 @@ def manifest_path(doc_id: str) -> str:
     A caller probes this to skip an already-committed paper before doing the
     expensive conversion work `write_paper` would redo.
     """
-    return posixpath.join(paper_dir(doc_id), _MANIFEST_NAME)
+    return posixpath.join(paper_dir(doc_id), MANIFEST_NAME)
+
+
+def metadata_path(doc_id: str) -> str:
+    """The `metadata.pb` key for `doc_id` — the bibliographic record beside the manifest."""
+    return posixpath.join(paper_dir(doc_id), METADATA_NAME)
 
 
 def source_revision_path(doc_id: str, handle: str, revision_hash: str, media_type: litcache_pb2.SourceFormat) -> str:
@@ -261,14 +272,11 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
         existing = litcache_pb2.Manifest.FromString(manifest_blob.download_as_bytes())
         return WriteResult(manifest=existing, written=False)
 
-    _validate_metadata(paper.metadata)
-
+    write_metadata(bucket, paper.doc_id, paper.metadata)
     sources = [_write_source(bucket, root, s) for s in paper.sources]
     revision_hashes = {src.handle: {rev.hash for rev in src.revisions} for src in sources}
     renderings = _write_renderings(bucket, root, revision_hashes, paper.renderings)
     files = _write_files(bucket, root, paper.files)
-
-    bucket.blob(posixpath.join(root, _METADATA_NAME)).upload_from_string(paper.metadata)
 
     manifest = litcache_pb2.Manifest(
         doc_id=paper.doc_id,
@@ -288,6 +296,26 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
         existing = litcache_pb2.Manifest.FromString(bucket.blob(manifest_key).download_as_bytes())
         return WriteResult(manifest=existing, written=False)
     return WriteResult(manifest=manifest, written=True)
+
+
+def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
+    """Write `doc_id`'s `metadata.pb`, replacing whatever is there.
+
+    Called by `write_paper` before the commit, and by a metadata refresh after it. An
+    overwrite, not a create: the manifest neither names nor hashes this object, so
+    there is no generation for a concurrent writer to invalidate and nothing a re-run
+    can leave inconsistent.
+
+    Args:
+        bucket: The cache bucket.
+        doc_id: The paper whose record is written.
+        metadata: The serialized `PaperMetadata` envelope.
+
+    Raises:
+        ValueError: If `metadata` is not a `PaperMetadata` envelope meeting its constraints.
+    """
+    _validate_metadata(metadata)
+    bucket.blob(metadata_path(doc_id)).upload_from_string(metadata)
 
 
 _MANIFEST_RMW_ATTEMPTS = 5

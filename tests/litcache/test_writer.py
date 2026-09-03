@@ -353,6 +353,40 @@ def test_metadata_is_written_verbatim(gcs_bucket: gcs.Bucket) -> None:
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, 'metadata.pb')) == metadata
 
 
+def test_invalid_metadata_leaves_no_artifact_behind(gcs_bucket: gcs.Bucket) -> None:
+    # The metadata check runs before anything is written, so a paper it rejects has no directory.
+    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
+        writer.write_paper(gcs_bucket, _paper(metadata=b'\x08'))
+    assert not list(gcs_bucket.list_blobs(prefix=writer.paper_dir(_DOC_ID)))
+
+
+def test_write_metadata_replaces_a_committed_papers_record(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper(metadata=_metadata(pmid='1')))
+    manifest_before = _read(gcs_bucket, writer.manifest_path(_DOC_ID))
+
+    writer.write_metadata(gcs_bucket, _DOC_ID, _metadata(pmid='2'))
+
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata(pmid='2')
+    # The manifest neither names nor hashes the record, so the commit is untouched.
+    assert _read(gcs_bucket, writer.manifest_path(_DOC_ID)) == manifest_before
+
+
+def test_write_metadata_recreates_a_deleted_record(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()
+
+    writer.write_metadata(gcs_bucket, _DOC_ID, _metadata(pmid='2'))
+
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata(pmid='2')
+
+
+def test_write_metadata_rejects_an_invalid_record(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
+        writer.write_metadata(gcs_bucket, _DOC_ID, b'\x08')
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+
+
 _MD2 = '# Title\n\nA second rendering.\n'
 _MD2_HASH = hashlib.sha256(_MD2.encode('utf-8')).hexdigest()
 

@@ -6,25 +6,25 @@ all differences live in `Pulumi.<stack>.yaml`.
 
 ## Layout
 
-| Path                          | What                                                                                                                                                                 |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Pulumi.yaml`                 | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                          |
-| `Pulumi.<stack>.yaml`         | Per-environment config + `gcpkms` secrets provider.                                                                                                                  |
-| `__main__.py`                 | Entrypoint: read config, compose the modules, export outputs.                                                                                                        |
-| `themis_infra/baseline.py`    | Enabled GCP services + the shared Artifact Registry.                                                                                                                 |
-| `themis_infra/web.py`         | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                   |
-| `themis_infra/auth.py`        | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                           |
-| `themis_infra/store.py`       | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                          |
-| `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                |
-| `themis_infra/storage.py`     | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                          |
-| `themis_infra/convert.py`     | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                |
-| `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                             |
-| `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                            |
-| `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants.                                                                                         |
-| `themis_infra/sandbox.py`     | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret. |
-| `themis_infra/clu.py`         | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                            |
-| `themis_infra/deploy_iam.py`  | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                               |
-| `bootstrap/bootstrap.sh`      | One-time substrate setup (below). Run locally, never CI.                                                                                                             |
+| Path                          | What                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pulumi.yaml`                 | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                                               |
+| `Pulumi.<stack>.yaml`         | Per-environment config + `gcpkms` secrets provider.                                                                                                                                       |
+| `__main__.py`                 | Entrypoint: read config, compose the modules, export outputs.                                                                                                                             |
+| `themis_infra/baseline.py`    | Enabled GCP services + the shared Artifact Registry.                                                                                                                                      |
+| `themis_infra/web.py`         | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                                        |
+| `themis_infra/auth.py`        | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                                                |
+| `themis_infra/store.py`       | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                                               |
+| `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                     |
+| `themis_infra/storage.py`     | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                               |
+| `themis_infra/convert.py`     | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                     |
+| `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                                                  |
+| `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                                                 |
+| `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md). |
+| `themis_infra/sandbox.py`     | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret.                      |
+| `themis_infra/clu.py`         | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                                                 |
+| `themis_infra/deploy_iam.py`  | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                                                    |
+| `bootstrap/bootstrap.sh`      | One-time substrate setup (below). Run locally, never CI.                                                                                                                                  |
 
 Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
 
