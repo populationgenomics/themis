@@ -1,6 +1,6 @@
-# themis
+# Themis
 
-Themis — agentic rare-disease curation platform (placeholder name).
+An agentic rare-disease curation platform.
 
 ## Repositories
 
