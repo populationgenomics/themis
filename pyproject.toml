@@ -135,9 +135,10 @@ convert_worker = [
 dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "google-auth", "standardwebhooks"]
 # sheaf (themis/sheaf): git over object storage — an append-only pack store plus one
 # compare-and-swap ref document. google-cloud-storage is the GCS backend, whose
-# `ifGenerationMatch` on the ref document is the whole concurrency control. The one dep: sheaf
-# shells out to a stock `git` binary, so its other requirement is `git` on PATH, not a wheel.
-sheaf = ["google-cloud-storage"]
+# `ifGenerationMatch` on the ref document is the whole concurrency control; protobuf is the ref
+# document's own at-rest encoding, listed rather than taken transitively as the storage client's.
+# Its remaining requirement is not a wheel at all: sheaf shells out to a stock `git` binary.
+sheaf = ["google-cloud-storage", "protobuf"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
@@ -195,9 +196,9 @@ target-version = "py313"
 # Generated code (buf generate; tools/schema/regen.py): committed, never hand-edited,
 # so linting it is noise (buf plugin output is not lint-clean) and a reformat would
 # fight the freshness gate. `themis/rpc`, `themis/evidence/models`, `themis/litcache/models`,
-# `themis/workbench/models` and `themis/workbench/rpc` are the generated proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The pre-commit
+# `themis/sheaf/models`, `themis/workbench/models` and `themis/workbench/rpc` are the generated proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The pre-commit
 # ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["themis/evidence/models", "themis/litcache/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "buf"]
+extend-exclude = ["themis/evidence/models", "themis/litcache/models", "themis/sheaf/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"

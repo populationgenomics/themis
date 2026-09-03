@@ -1,10 +1,13 @@
 """The pre-receive hook: the one place sheaf gets a say in a push.
 
-Git has validated the objects and checked fast-forwardness by the time this runs, and no ref has
-moved yet, so the hook's whole job is to pack the new objects, upload them, and compare-and-swap the
-ref document against the generation the client's view was built from. Exiting non-zero makes git
+Git has validated the objects by the time this runs, and no ref has moved yet. The hook refuses
+anything that would rewrite or delete history, writes the reflog entry for what remains, packs the
+new objects, uploads them, and compare-and-swaps the ref document against the generation the
+client's view was built from. Exiting non-zero makes git
 discard the quarantine and leave every ref untouched, so a rejection here cannot leave the bare repo
-disagreeing with the store.
+disagreeing with the store. The converse has to hold too: anything git would refuse *after* this hook
+— a ref name that collides with an existing one as a directory — must be refused here, or the store
+commits what the mirror can never write.
 
 `pre-receive` rather than `update`: it sees the whole push at once, so a multi-ref push maps onto a
 single compare-and-swap. Design: `docs/design/sheaf.md`.
@@ -17,7 +20,7 @@ import sys
 
 from themis.sheaf import backends, errors
 from themis.sheaf import store as store_mod
-from themis.sheaf.wire import bare, protect
+from themis.sheaf.wire import bare, protect, reflog
 
 # An all-zero object id means "absent". Both widths, because git sends the zero oid at the
 # repository's own hash length.
@@ -25,7 +28,6 @@ ZERO_OIDS = frozenset({'0' * 40, '0' * 64})
 # git sends `<old> <new> <ref>` per line.
 FIELDS_PER_LINE = 3
 SYNC_STATE_ENV = 'SHEAF_SYNC_STATE'
-AUTHOR_ENV = 'SHEAF_AUTHOR'
 # git sets GIT_DIR for hooks, but the server passes an absolute path so the hook never depends on
 # the working directory it was invoked in.
 GIT_DIR_ENV = 'SHEAF_GIT_DIR'
@@ -80,11 +82,15 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         A process exit status: zero to accept the push, non-zero to refuse it.
 
+    Anything the store refuses — a lost race, a non-fast-forward, a name git cannot hold — is a
+    refusal message to the client, never a traceback.
+
     Raises:
         KeyError: If the sync state the server wrote is missing a field.
         FileNotFoundError: If the path it names does not exist.
         ValueError: If the backend descriptor names a kind this build has no backend for.
         RuntimeError: If git fails while the pack of new objects is being built.
+        SheafError: If the store cannot be read or written for a reason that is not a refusal.
     """
     del argv
     state_path = os.environ.get(SYNC_STATE_ENV)
@@ -106,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     # also lost a race — otherwise the pusher is told to retry something that can never succeed.
     refusals = protect.violations(repo, updates, protect.Protection.from_env())
     if refusals:
-        return _refuse(refusals, 'revert the protected path and push again.')
+        return _refuse(refusals, 'history here is append-only: fast-forward the ref, and revert any protected path.')
 
     # The client built its push against the refs advertised at `state.generation`. Anything else
     # there now means somebody landed in between, and the push has to be rebuilt rather than merged
@@ -114,14 +120,22 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = store.read()
     if snapshot.generation != state.generation:
         return _refuse([_MOVED], _MOVED_HINT)
-    new_shas = [update.new for update in updates.values() if update.new]
-    packs = [repo.pack_for(new_shas)] if new_shas else []
+    # Every update is a create or a fast-forward by now, so each has a new tip to log. The reflog
+    # commit is written into git's quarantine alongside the pushed objects and travels in the same
+    # pack and the same compare-and-swap; a refusal discards it with the rest.
+    transitions = [
+        reflog.Transition(ref, update.old, update.new) for ref, update in sorted(updates.items()) if update.new
+    ]
+    entry = reflog.record(repo.git, snapshot.tip(reflog.REF), transitions)
+    ref_updates = {**updates, reflog.REF: store_mod.RefUpdate(snapshot.tip(reflog.REF), entry)}
+    packs = [repo.pack_for([entry])]
 
     try:
-        store.publish(
-            snapshot,
-            store_mod.Intent(ref_updates=updates, packs=packs, author=os.environ.get(AUTHOR_ENV, 'agent')),
-        )
+        store.publish(snapshot, store_mod.Intent(ref_updates=ref_updates, packs=packs))
+    except errors.InvalidRefName as exc:
+        # Git's own check for this runs in the ref transaction, after this hook, so it has to be
+        # refused here or the store commits a ref set the mirror can never write.
+        return _refuse([str(exc)], 'rename the ref and push again.')
     except (errors.RaceLost, errors.RefConflict) as exc:
         # Same refusal, different guidance: a race is retryable, a non-fast-forward needs a merge.
         raced = isinstance(exc, errors.RaceLost)

@@ -13,9 +13,9 @@ from collections.abc import Iterator
 import pytest
 
 from themis import sheaf
-from themis.sheaf import gc
+from themis.sheaf import orphans
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import bare, server
+from themis.sheaf.wire import bare, reflog, server
 
 REPO = 'projects/demo'
 REF = 'refs/heads/main'
@@ -26,7 +26,7 @@ REVIEWER = conftest.Author('Reviewer One', 'reviewer.one@example.org')
 @pytest.fixture
 def git_server(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> Iterator[server.SheafGitServer]:
     """A running loopback git server backed by the sheaf store."""
-    instance = server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}, author='agent@example.org')
+    instance = server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO})
     with instance:
         yield instance
 
@@ -114,7 +114,7 @@ def test_stopping_a_server_that_never_started_returns(backend: sheaf.LocalBacken
     with no diagnostic at all. Run on a thread so a regression fails the test rather than hanging
     the suite.
     """
-    instance = server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}, author='agent@example.org')
+    instance = server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO})
     stopping = threading.Thread(target=instance.stop, daemon=True)
 
     stopping.start()
@@ -129,14 +129,15 @@ def _pack_object_count(pack: bytes) -> int:
     return int.from_bytes(pack[8:12], 'big')
 
 
-def test_creating_a_ref_at_a_published_commit_packs_nothing(
+def test_creating_a_ref_at_a_published_commit_packs_only_the_reflog_entry(
     git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
 ) -> None:
-    """A push whose new sha the store already holds introduces no objects.
+    """A push whose new sha the store already holds introduces no objects of its own.
 
     The exclusion set is the mirror's refs, and a pushed sha already among them is one of the
     published values; excluding it is what bounds the rev list. Unbounded, `pack-objects --revs`
-    re-uploads the whole object database on a push that carries nothing.
+    re-uploads the whole object database on a push that carries nothing. The one object every push
+    does add is its reflog entry.
     """
     work = _clone(git_server, tmp_path, 'work')
     # Two pushes, so the history is spread over two packs: a re-pack of everything reachable would
@@ -154,7 +155,7 @@ def test_creating_a_ref_at_a_published_commit_packs_nothing(
     assert snapshot.refs['refs/heads/feature'] == snapshot.refs[REF]
     added = [ident for ident in snapshot.packs if ident not in published]
     assert len(added) == 1, 'the push should have landed exactly one pack'
-    assert _pack_object_count(store.fetch_pack(added[0])) == 0
+    assert _pack_object_count(store.fetch_pack(added[0])) == 1, 'the reflog commit, and nothing else'
 
 
 def test_a_stale_push_is_rejected_and_the_retry_converges(
@@ -252,30 +253,126 @@ def test_a_push_git_rejects_uploads_nothing(
     conftest.run_git('push', 'origin', 'main', cwd=second, check=False)
 
     store = sheaf.Store(backend, REPO)
-    report = gc.find_orphans(store, grace=0)
-    assert report.orphans == ()
+    assert orphans.measure(store).orphans == ()
 
 
-def test_force_push_is_honoured_and_that_is_deliberate(
-    git_server: server.SheafGitServer, tmp_path: pathlib.Path
+def test_a_force_push_is_refused_and_the_store_is_untouched(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
 ) -> None:
-    """Compare-and-swap prevents accidental loss, not intentional overwriting.
+    """History is append-only: a non-fast-forward is refused by the hook, not by receive-pack.
 
-    A force-push tells git to accept a non-fast-forward, and the hook's precondition still holds
-    because the mirror synced immediately before. Anyone reading this design as an authorization
-    control is reading it wrong.
+    `receive.denyNonFastForwards` would refuse it too, but only after the pre-receive hook has run
+    — by which point the hook would have published the rewrite. So the hook checks ancestry itself,
+    and the refusal reads as git's own so the client's ordinary recovery (`pull --rebase`, push)
+    applies.
     """
     first = _clone(git_server, tmp_path, 'first')
     second = _clone(git_server, tmp_path, 'second')
-
     _commit(first, 'a.md', 'a\n', 'add a')
     conftest.run_git('push', 'origin', 'main', cwd=first)
-    _commit(second, 'b.md', 'b\n', 'add b')
-    conftest.run_git('push', '--force', 'origin', 'main', cwd=second)
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
 
+    _commit(second, 'b.md', 'b\n', 'add b')
+    pushed = conftest.run_git('push', '--force', 'origin', 'main', cwd=second, check=False)
+
+    assert pushed.returncode != 0
+    assert 'may only fast-forward' in pushed.stderr
+    assert store.read().generation == before.generation
     final = _clone(git_server, tmp_path, 'final')
-    assert (final / 'b.md').exists()
-    assert not (final / 'a.md').exists()
+    assert (final / 'a.md').exists()
+    assert not (final / 'b.md').exists()
+
+
+def test_a_branch_deletion_is_refused(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+    conftest.run_git('push', 'origin', 'main:refs/heads/side', cwd=work)
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
+
+    pushed = conftest.run_git('push', 'origin', '--delete', 'side', cwd=work, check=False)
+
+    assert pushed.returncode != 0
+    assert 'may not be deleted' in pushed.stderr
+    assert store.read().generation == before.generation
+
+
+def test_a_tag_may_not_be_moved_or_deleted_either(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    """`receive.denyNonFastForwards` and `receive.denyDeletes` cover branches only; the hook covers every ref."""
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('tag', 'v1', cwd=work)
+    conftest.run_git('push', 'origin', 'main', 'v1', cwd=work)
+    # An unrelated root, so the retagged commit does not descend from the published one: a tag
+    # moved to a descendant is a fast-forward, which is allowed.
+    conftest.run_git('checkout', '-q', '--orphan', 'other', cwd=work)
+    _commit(work, 'c.md', 'c\n', 'add c')
+    conftest.run_git('tag', '-f', 'v1', cwd=work)
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
+
+    moved = conftest.run_git('push', '--force', 'origin', 'v1', cwd=work, check=False)
+    deleted = conftest.run_git('push', 'origin', ':refs/tags/v1', cwd=work, check=False)
+
+    assert moved.returncode != 0
+    assert deleted.returncode != 0
+    assert store.read().generation == before.generation
+
+
+def test_a_push_to_the_reflog_ref_is_refused(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    """A fast-forward of the reflog ref is a forgery, so the whole namespace is sheaf's alone."""
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
+
+    pushed = conftest.run_git('push', 'origin', 'main:refs/sheaf/anything', cwd=work, check=False)
+
+    assert pushed.returncode != 0
+    assert 'written by sheaf' in pushed.stderr
+    assert store.read().generation == before.generation
+
+
+def test_every_push_writes_a_reflog_entry_that_keeps_its_tip_reachable(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    """One reflog commit per push, parented on the tips it set, in the same compare-and-swap.
+
+    The parents are what make every commit ever pushed reachable from a ref, so a repack keeps it;
+    the message is what says which commit was the tip when.
+    """
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+    first_tip = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+    _commit(work, 'b.md', 'b\n', 'add b')
+    conftest.run_git('push', 'origin', 'main', 'main:refs/heads/side', cwd=work)
+    second_tip = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+
+    store = sheaf.Store(backend, REPO)
+    snapshot = store.read()
+    entry = snapshot.tip(reflog.REF)
+    assert entry is not None
+    mirror = bare.BareRepo(store, tmp_path / 'mirror')
+    mirror.sync()
+    entries = reflog.read(mirror.git, entry)
+
+    assert entries == [
+        [reflog.Transition(REF, first_tip, second_tip), reflog.Transition('refs/heads/side', None, second_tip)],
+        [reflog.Transition(REF, None, first_tip)],
+    ]
+    parents = mirror.git('rev-list', '--parents', '-n', '1', entry).decode().split()[1:]
+    assert set(parents) >= {second_tip}, 'the new tip is a parent, so it stays reachable from the reflog'
+    assert mirror.git('merge-base', '--is-ancestor', first_tip, entry) == b''
 
 
 def test_two_divergent_appends_merge_without_a_conflict(
@@ -377,3 +474,82 @@ def test_a_malformed_object_is_refused_before_the_hook_runs(
     assert 'sheaf:' not in refused.stderr, 'the hook must never have been reached'
     after = sheaf.Store(backend, REPO).read()
     assert after.generation == accepted.generation, 'nothing may have been published'
+
+
+def test_a_push_creating_a_directory_of_an_existing_ref_is_refused_by_the_hook(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    """Git's own check for this runs after the hook, so the hook has to make it, or the store commits first.
+
+    Verified the other way round before the check existed: git refused the push, the store already
+    held both names, and every later sync of the mirror failed.
+    """
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('push', 'origin', 'main:refs/heads/a', cwd=work)
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
+
+    pushed = conftest.run_git('push', 'origin', 'main:refs/heads/a/b', cwd=work, check=False)
+
+    assert pushed.returncode != 0
+    assert 'cannot both exist' in pushed.stderr
+    assert 'Traceback' not in pushed.stderr
+    assert store.read().generation == before.generation
+    other = _clone(git_server, tmp_path, 'other')
+    assert (other / 'a.md').exists(), 'the mirror must still serve'
+
+
+def test_a_mirror_syncs_across_a_directory_file_swap(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> None:
+    """A mirror holding `refs/heads/feature/x` the store does not, when the store gains `refs/heads/feature`.
+
+    The store never deletes a ref, so the mirror only has one to drop after a push that bypassed the
+    hook — the case `ensure` repairs. One update-ref transaction refuses the pair as a collision even
+    though it deletes one of them, so the mirror runs the deletes first, or it could never sync again.
+    """
+    store = sheaf.Store(backend, REPO)
+    writer = conftest.GitRepo.open(backend, REPO, tmp_path / 'writer.git')
+    tip = writer.append_line(ref=REF, path=LOG, line='one', author=REVIEWER, message='one').tip(REF)
+    assert tip is not None
+    mirror = bare.BareRepo(store, tmp_path / 'mirror')
+    mirror.sync()
+    mirror.git('update-ref', 'refs/heads/feature/x', tip)
+    writer.append_line(ref='refs/heads/feature', path=LOG, line='two', author=REVIEWER, message='two')
+
+    mirror.sync()
+
+    assert 'refs/heads/feature' in mirror.local_refs()
+    assert 'refs/heads/feature/x' not in mirror.local_refs()
+
+
+@pytest.mark.parametrize(
+    'forged',
+    [
+        'sheaf: refs/heads/main\n\nnot a transition line at all',
+        'sheaf: refs/heads/main',
+        f'sheaf: refs/heads/main\n\nrefs/heads/main {"0" * 40} {"d" * 40}\n',
+    ],
+    ids=['raises on a bad body', 'phantom empty entry', 'forged transition'],
+)
+def test_a_root_commit_shaped_like_an_entry_cannot_reach_the_reader(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path, forged: str
+) -> None:
+    """The pushing side controls its commit messages, so the chain must end on a commit sheaf wrote.
+
+    Each of these three root commits fooled a reader that stopped on a subject prefix. The chain is
+    now rooted on a parentless entry, so the walk never reaches the pushed history at all.
+    """
+    work = _clone(git_server, tmp_path, 'work')
+    (work / 'a.md').write_text('a\n', 'utf-8')
+    conftest.run_git('add', 'a.md', cwd=work)
+    conftest.run_git('commit', '-m', forged, cwd=work)
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+    tip = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+
+    store = sheaf.Store(backend, REPO)
+    entry = store.read().tip(reflog.REF)
+    assert entry is not None
+    mirror = bare.BareRepo(store, tmp_path / 'mirror')
+    mirror.sync()
+
+    assert reflog.read(mirror.git, entry) == [[reflog.Transition(REF, None, tip)]]

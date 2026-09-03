@@ -94,16 +94,18 @@ class LocalBackend(backend.Backend):
 
     @override
     def put_immutable(self, key: str, data: bytes) -> None:
-        """Write an immutable object, leaving an existing one untouched."""
+        """Write an immutable object unless one is already at `key`."""
         path = self._immutable_path(key)
-        # Present means done — the key is the hash of these bytes. Rewriting would move the mtime
-        # `list_immutable` reports as the creation time, which is the age a sweep judges.
-        if path.exists():
-            return
         handle, temp = tempfile.mkstemp(dir=self._immutable, prefix='.tmp-')
         with os.fdopen(handle, 'wb') as fh:
             fh.write(data)
-        os.replace(temp, path)
+        try:
+            # `link` fails on an existing target where `replace` would overwrite: create-if-absent.
+            os.link(temp, path)
+        except FileExistsError:
+            pass
+        finally:
+            os.unlink(temp)
 
     @override
     def get_immutable(self, key: str) -> bytes:
@@ -127,10 +129,4 @@ class LocalBackend(backend.Backend):
             key = urllib.parse.unquote(path.name)
             if not key.startswith(prefix):
                 continue
-            stat = path.stat()
-            yield backend.ObjectInfo(key=key, size=stat.st_size, created_at=stat.st_mtime)
-
-    @override
-    def delete_immutable(self, key: str) -> None:
-        """Remove an immutable object."""
-        self._immutable_path(key).unlink(missing_ok=True)
+            yield backend.ObjectInfo(key=key, size=path.stat().st_size)

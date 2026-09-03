@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 import subprocess
 
@@ -10,6 +9,7 @@ import pytest
 
 from themis import sheaf
 from themis.sheaf import refdoc
+from themis.sheaf.models import refdoc_pb2
 from themis.sheaf.tests import conftest
 from themis.sheaf.wire import bare
 
@@ -29,18 +29,22 @@ def test_empty_repository_reads_as_absent(backend: sheaf.LocalBackend) -> None:
 def test_publish_creates_the_repository(backend: sheaf.LocalBackend) -> None:
     store = sheaf.Store(backend, 'p')
     base = store.read()
-    after = store.publish(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
-    assert after.head(REF) == SHA_A
-    assert after.doc.sequence == 1
-    assert store.read().head(REF) == SHA_A
+    after = store.publish(base, conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
+    assert after.tip(REF) == SHA_A
+    assert after.doc.head == sheaf.SymbolicTarget(REF), 'the first publish records where a clone starts'
+    assert store.read().tip(REF) == SHA_A
 
 
 def test_wrong_expected_value_is_a_conflict_not_a_race(backend: sheaf.LocalBackend) -> None:
     """A non-fast-forward must never be retried away: it needs a merge, not a replay."""
     store = sheaf.Store(backend, 'p')
-    store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
     with pytest.raises(sheaf.RefConflict) as caught:
-        store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_C)}))
+        store.publish(
+            store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_C)}))
+        )
     assert caught.value.ref == REF
     assert caught.value.actual == SHA_A
 
@@ -48,33 +52,40 @@ def test_wrong_expected_value_is_a_conflict_not_a_race(backend: sheaf.LocalBacke
 def test_stale_snapshot_is_a_race(backend: sheaf.LocalBackend) -> None:
     store = sheaf.Store(backend, 'p')
     stale = store.read()
-    store.publish(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    store.publish(stale, conftest.logged(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
     with pytest.raises(sheaf.RaceLost):
-        store.publish(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
+        store.publish(
+            stale, conftest.logged(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
+        )
 
 
 def test_independent_refs_do_not_starve(backend: sheaf.LocalBackend) -> None:
     """Coarse compare-and-swap on one document must not turn disjoint ref writes into failures."""
     store = sheaf.Store(backend, 'p')
     stale = store.read()
-    store.publish(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    store.publish(stale, conftest.logged(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
 
     def build(snapshot: sheaf.Snapshot) -> sheaf.Intent:
-        return sheaf.Intent(ref_updates={'refs/heads/side': sheaf.RefUpdate(snapshot.head('refs/heads/side'), SHA_B)})
+        return conftest.logged(
+            snapshot,
+            sheaf.Intent(ref_updates={'refs/heads/side': sheaf.RefUpdate(snapshot.tip('refs/heads/side'), SHA_B)}),
+        )
 
     after = store.transact(build)
-    assert after.head(REF) == SHA_A
-    assert after.head('refs/heads/side') == SHA_B
+    assert after.tip(REF) == SHA_A
+    assert after.tip('refs/heads/side') == SHA_B
 
 
 def test_transact_propagates_conflicts_without_retrying(backend: sheaf.LocalBackend) -> None:
     store = sheaf.Store(backend, 'p')
-    store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
     calls = []
 
-    def build(_snapshot: sheaf.Snapshot) -> sheaf.Intent:
+    def build(snapshot: sheaf.Snapshot) -> sheaf.Intent:
         calls.append(1)
-        return sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_C)})
+        return conftest.logged(snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_C)}))
 
     with pytest.raises(sheaf.RefConflict):
         store.transact(build)
@@ -88,8 +99,10 @@ def test_transact_gives_up_rather_than_spinning(backend: sheaf.LocalBackend) -> 
     def build(snapshot: sheaf.Snapshot) -> sheaf.Intent:
         # Advance the document behind the builder's back, so every attempt is doomed.
         ref = f'refs/heads/noise-{next(noise)}'
-        store.publish(snapshot, sheaf.Intent(ref_updates={ref: sheaf.RefUpdate(None, SHA_C)}))
-        return sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(snapshot.head(REF), SHA_A)})
+        store.publish(
+            snapshot, conftest.logged(snapshot, sheaf.Intent(ref_updates={ref: sheaf.RefUpdate(None, SHA_C)}))
+        )
+        return conftest.logged(snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(snapshot.tip(REF), SHA_A)}))
 
     with pytest.raises(sheaf.RetriesExhausted):
         store.transact(build, retries=3)
@@ -98,14 +111,18 @@ def test_transact_gives_up_rather_than_spinning(backend: sheaf.LocalBackend) -> 
 def test_manifest_accumulates_and_dedupes_by_content(backend: sheaf.LocalBackend) -> None:
     store = sheaf.Store(backend, 'p')
     snapshot = store.publish(
-        store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])),
     )
-    assert snapshot.packs == (sheaf.pack_id(b'PACK-1'),)
+    assert set(snapshot.packs) == {sheaf.pack_id(b'PACK-1')}
     snapshot = store.publish(
         snapshot,
-        sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, SHA_B)}, packs=[b'PACK-1', b'PACK-2']),
+        conftest.logged(
+            snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, SHA_B)}, packs=[b'PACK-1', b'PACK-2'])
+        ),
     )
-    assert snapshot.packs == (sheaf.pack_id(b'PACK-1'), sheaf.pack_id(b'PACK-2'))
+    assert set(snapshot.packs) == {sheaf.pack_id(b'PACK-1'), sheaf.pack_id(b'PACK-2')}
+    assert list(snapshot.packs) == sorted(snapshot.packs), 'a set, so stored in one order'
 
 
 def test_no_ref_names_an_object_before_its_pack_exists(
@@ -121,62 +138,46 @@ def test_no_ref_names_an_object_before_its_pack_exists(
         return original_cas(key, data, expected)
 
     monkeypatch.setattr(backend, 'cas_mutable', recording_cas)
-    store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1']))
+    store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])),
+    )
     assert seen == [('cas', [store.pack_key(sheaf.pack_id(b'PACK-1'))])]
 
 
-def test_a_generation_from_a_newer_format_is_not_silently_dropped(backend: sheaf.LocalBackend) -> None:
-    """A document this code is too old to parse is unreadable history, not absent history.
+def test_a_field_this_build_does_not_model_survives_a_publish(backend: sheaf.LocalBackend) -> None:
+    """An older build must not delete a newer one's state by writing over it.
 
-    `gc.live_packs` is the only caller, and it treats every retained document as naming live packs,
-    so the argument against dropping a damaged one does not depend on why the document was
-    unreadable: once the format moves, an older sweep would miss the packs the newer generations
-    name and delete them past grace.
+    Every publish is a read-modify-write of the whole document, and retained generations are
+    immutable, so a build that dropped what it could not name would corrupt the history it shares
+    with every other build. This is the property the at-rest binary encoding is chosen for
+    (`docs/design/proto.md`).
     """
     store = sheaf.Store(backend, 'p')
-    published = store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
-    ahead = json.dumps({'format': sheaf.RefDoc().format + 1, 'refs': {}, 'packs': []}).encode()
-    backend.cas_mutable(store.ref_key, ahead, published.generation)
+    published = store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
+    # Field 111, varint, value 42 — what a later build's added field looks like to this one.
+    from_the_future = b'\xf8\x06\x2a'
+    backend.cas_mutable(store.ref_key, published.doc.to_bytes() + from_the_future, published.generation)
 
-    with pytest.raises(sheaf.UnsupportedFormat):
-        store.transitions()
+    after = store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, SHA_B)}))
+    )
+
+    assert after.tip(REF) == SHA_B, 'the publish itself must still land'
+    assert from_the_future in backend.get_mutable(store.ref_key).data
 
 
-@pytest.mark.parametrize(
-    ('damaged', 'match'),
-    [
-        (b'not json at all', r'JSON|Expecting'),
-        # Well-formed JSON of the right format, complete but for the manifest: the variant that
-        # would parse rather than raise, into a document naming no packs at all. Every other field
-        # is present, so nothing but the absent `packs` can be what raises.
-        (
-            json.dumps(
-                {
-                    'format': refdoc.FORMAT_VERSION,
-                    'refs': {REF: SHA_A},
-                    'sequence': 1,
-                    'updated_by': 'test',
-                    'updated_at': 0.0,
-                }
-            ).encode(),
-            r"missing 'packs'",
-        ),
-    ],
-    ids=['unparseable', 'well-formed but incomplete'],
-)
-def test_a_damaged_generation_is_not_silently_dropped(backend: sheaf.LocalBackend, damaged: bytes, match: str) -> None:
-    """Garbage collection treats every retained document as naming live packs.
-
-    Skipping a damaged one is how a sweep concludes history needs nothing and deletes a pack an
-    older ref state cannot be hydrated without. A document that parses to an *empty* manifest is
-    the same loss by a quieter route: it contributes nothing to the live set instead of stopping
-    the sweep, and `retention_gap` does not catch it either.
-    """
+def test_a_damaged_generation_is_not_silently_dropped(backend: sheaf.LocalBackend) -> None:
+    """A reader of the ref-state log that quietly skipped a generation would misreport what the refs were."""
     store = sheaf.Store(backend, 'p')
-    published = store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
-    backend.cas_mutable(store.ref_key, damaged, published.generation)
+    published = store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
+    backend.cas_mutable(store.ref_key, b'not a ref document at all', published.generation)
 
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(sheaf.CorruptRepository, match='not a RefDoc'):
         store.transitions()
 
 
@@ -192,6 +193,7 @@ BAD_REF_NAMES = [
     'refs/heads/name.lock',
     'refs/heads/at@{0}',
     'refs/heads/bell\x07',
+    'refs/heads/open[bracket',
 ]
 
 
@@ -205,18 +207,23 @@ def test_a_ref_name_git_cannot_parse_is_refused(backend: sheaf.LocalBackend, ref
     """
     store = sheaf.Store(backend, 'p')
     with pytest.raises(sheaf.InvalidRefName):
-        store.publish(store.read(), sheaf.Intent(ref_updates={ref: sheaf.RefUpdate(None, SHA_A)}))
+        store.publish(
+            store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={ref: sheaf.RefUpdate(None, SHA_A)}))
+        )
     assert store.read().generation is None, 'nothing may be published'
 
 
 # The trailing newline is the case a `$`-anchored pattern admits, and the one that wedges
 # `update-ref --stdin` — its input is newline-terminated.
-@pytest.mark.parametrize('oid', ['', 'zz', SHA_A[:39], SHA_A.upper(), f'{SHA_A} extra', f'{SHA_A}\n'])
+# A 64-hex id is well-formed for SHA-256 and refused by the SHA-1 mirror's `update-ref` all the same.
+@pytest.mark.parametrize('oid', ['', 'zz', SHA_A[:39], SHA_A.upper(), f'{SHA_A} extra', f'{SHA_A}\n', 'f' * 64])
 def test_a_malformed_object_id_is_refused(backend: sheaf.LocalBackend, oid: str) -> None:
     """A bad object id wedges `update-ref` exactly as a bad name does."""
     store = sheaf.Store(backend, 'p')
     with pytest.raises(sheaf.InvalidRefName):
-        store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, oid)}))
+        store.publish(
+            store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, oid)}))
+        )
 
 
 def test_validation_happens_before_anything_is_uploaded(backend: sheaf.LocalBackend) -> None:
@@ -225,7 +232,10 @@ def test_validation_happens_before_anything_is_uploaded(backend: sheaf.LocalBack
     with pytest.raises(sheaf.InvalidRefName):
         store.publish(
             store.read(),
-            sheaf.Intent(ref_updates={'refs/heads/bad name': sheaf.RefUpdate(None, SHA_A)}, packs=[b'P']),
+            conftest.logged(
+                store.read(),
+                sheaf.Intent(ref_updates={'refs/heads/bad name': sheaf.RefUpdate(None, SHA_A)}, packs=[b'P']),
+            ),
         )
     assert list(backend.list_immutable(store.pack_prefix)) == []
 
@@ -237,11 +247,17 @@ def test_a_refused_name_cannot_wedge_the_mirror(backend: sheaf.LocalBackend, tmp
 
     store = sheaf.Store(backend, 'p')
     with pytest.raises(sheaf.InvalidRefName):
-        store.publish(store.read(), sheaf.Intent(ref_updates={'refs/heads/two words': sheaf.RefUpdate(None, SHA_B)}))
+        store.publish(
+            store.read(),
+            conftest.logged(
+                store.read(), sheaf.Intent(ref_updates={'refs/heads/two words': sheaf.RefUpdate(None, SHA_B)})
+            ),
+        )
 
     mirror = bare.BareRepo(store, tmp_path / 'mirror')
     mirror.sync()
-    assert list(mirror.local_refs()) == [REF]
+    assert REF in mirror.local_refs()
+    assert not any(' ' in ref for ref in mirror.local_refs())
 
 
 @pytest.mark.parametrize(
@@ -288,14 +304,252 @@ def test_the_validator_never_accepts_a_name_git_rejects(ref: str) -> None:
         assert accepted_by_git, f'{ref!r}: accepted here, rejected by git'
 
 
-@pytest.mark.parametrize('ref', ['foo/bar', 'heads/main', 'notes/commits'])
-def test_only_full_qualification_is_stricter_than_git(ref: str) -> None:
-    """The one deliberate divergence, pinned so it cannot widen unnoticed.
+@pytest.mark.parametrize(
+    ('ref', 'reason'),
+    [
+        ('foo/bar', 'fully qualified'),
+        ('heads/main', 'fully qualified'),
+        ('notes/commits', 'fully qualified'),
+        ('refs/heads/' + 'x' * 251, 'too long'),
+    ],
+)
+def test_the_two_ways_this_is_stricter_than_git(ref: str, reason: str) -> None:
+    """The deliberate divergences, pinned so they cannot widen unnoticed.
 
-    A name outside `refs/` would sit in the ref document where no ordinary ref enumeration looks,
-    so it is refused even though git's own format check accepts it.
+    A name outside `refs/` would sit in the ref document where no ordinary ref enumeration looks. A
+    component over 250 bytes passes `check-ref-format` but the files backend cannot create its
+    `.lock`, so `update-ref` refuses it and the repository is wedged.
     """
     accepted_by_git = subprocess.run(['git', 'check-ref-format', ref], capture_output=True, check=False).returncode
     assert accepted_by_git == 0, f'{ref!r} is meant to be a name git accepts'
-    with pytest.raises(sheaf.InvalidRefName, match='fully qualified'):
+    with pytest.raises(sheaf.InvalidRefName, match=reason):
         refdoc.validate_ref_name(ref)
+
+
+@pytest.mark.parametrize('ref', ['refs/heads/close]bracket', 'refs/heads/nbsp\xa0here', 'refs/heads/ünïcode'])
+def test_a_name_git_accepts_is_accepted(ref: str) -> None:
+    """The other direction of the differential: refusing a legal name is a bug too, if a smaller one."""
+    assert subprocess.run(['git', 'check-ref-format', ref], capture_output=True, check=False).returncode == 0
+    assert refdoc.validate_ref_name(ref) == ref
+
+
+def test_a_ref_that_is_a_directory_of_another_is_refused(backend: sheaf.LocalBackend) -> None:
+    """Each name is fine alone; git refuses the pair in the ref transaction, which runs after the hook.
+
+    So a publish that admitted both would be committed before git refused the push, and the mirror
+    could never write the ref set again.
+    """
+    store = sheaf.Store(backend, 'p')
+    snapshot = store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={'refs/heads/a': sheaf.RefUpdate(None, SHA_A)})),
+    )
+
+    with pytest.raises(sheaf.InvalidRefName, match='cannot both exist'):
+        store.publish(
+            snapshot,
+            conftest.logged(snapshot, sheaf.Intent(ref_updates={'refs/heads/a/b': sheaf.RefUpdate(None, SHA_A)})),
+        )
+    with pytest.raises(sheaf.InvalidRefName, match='cannot both exist'):
+        store.publish(
+            snapshot,
+            conftest.logged(
+                snapshot,
+                sheaf.Intent(
+                    ref_updates={
+                        'refs/heads/x/y': sheaf.RefUpdate(None, SHA_A),
+                        'refs/heads/x/y/z': sheaf.RefUpdate(None, SHA_A),
+                    }
+                ),
+            ),
+        )
+    assert store.read().generation == snapshot.generation
+
+
+def test_deleting_a_ref_is_refused(backend: sheaf.LocalBackend) -> None:
+    """History is append-only, and the store is where that holds for a writer that is not git."""
+    store = sheaf.Store(backend, 'p')
+    snapshot = store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
+
+    with pytest.raises(sheaf.RefDeletionRefused, match='append-only'):
+        store.publish(
+            snapshot, conftest.logged(snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, None)}))
+        )
+    with pytest.raises(sheaf.RefDeletionRefused):
+        # Refused even where the deletion is of a ref that does not exist.
+        store.publish(
+            snapshot,
+            conftest.logged(snapshot, sheaf.Intent(ref_updates={'refs/heads/never': sheaf.RefUpdate(None, None)})),
+        )
+    assert store.read().refs[REF] == SHA_A
+
+
+def test_a_first_push_of_only_a_tag_leaves_head_on_an_unborn_main(backend: sheaf.LocalBackend) -> None:
+    """A tag as HEAD clones detached with no branch, and nothing later would move it."""
+    store = sheaf.Store(backend, 'p')
+    tagged = store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={'refs/tags/v1': sheaf.RefUpdate(None, SHA_A)})),
+    )
+    assert tagged.doc.head == sheaf.SymbolicTarget('refs/heads/main')
+
+    branched = store.publish(
+        tagged, conftest.logged(tagged, sheaf.Intent(ref_updates={'refs/heads/develop': sheaf.RefUpdate(None, SHA_A)}))
+    )
+    assert branched.doc.head == sheaf.SymbolicTarget('refs/heads/develop'), 'the first branch to exist becomes HEAD'
+
+    with_main = store.publish(
+        branched, conftest.logged(branched, sheaf.Intent(ref_updates={'refs/heads/main': sheaf.RefUpdate(None, SHA_B)}))
+    )
+    assert with_main.doc.head == sheaf.SymbolicTarget('refs/heads/develop'), 'a HEAD that resolves is not re-guessed'
+
+
+@pytest.mark.parametrize('keep', ['nothing', 'everything but HEAD'])
+def test_a_document_naming_no_head_is_refused(backend: sheaf.LocalBackend, keep: str) -> None:
+    """Both of these are valid encodings, and one is a document naming refs and packs but no HEAD.
+
+    Every stored document names a HEAD, because `publish` will not write one that does not, and HEAD
+    carries the highest field number — so a truncation loses it first, leaving exactly the second
+    case: a manifest intact and the mark of a complete write gone.
+    """
+    store = sheaf.Store(backend, 'p')
+    published = store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])),
+    )
+    whole = published.doc.to_bytes()
+    headless = refdoc_pb2.RefDoc.FromString(whole)
+    headless.ClearField('head')
+    boundary = len(headless.SerializeToString(deterministic=True))
+    assert whole[:boundary] == headless.SerializeToString(deterministic=True), 'HEAD must be the trailing field'
+    damaged = whole[:boundary] if keep == 'everything but HEAD' else b''
+    if damaged:
+        assert refdoc_pb2.RefDoc.FromString(damaged).packs, 'the manifest must survive, or this tests a decode error'
+    backend.cas_mutable(store.ref_key, damaged, published.generation)
+
+    with pytest.raises(sheaf.CorruptRepository, match='names no HEAD'):
+        store.transitions()
+
+
+def test_documents_equal_under_unmodelled_fields_hash_alike() -> None:
+    """Message equality compares the unknown-field set as a set; serialising it emits parse order.
+
+    So a hash taken over the bytes disagrees with `==` for two documents that carry the same
+    unmodelled fields in different orders — which is the multi-build history this type exists to
+    survive, not a contrived case.
+    """
+    base = refdoc_pb2.RefDoc(head=refdoc_pb2.RefTarget(ref='refs/heads/main')).SerializeToString()
+    first, second = b'\xf8\x06\x2a', b'\x80\x07\x2a'
+
+    one = refdoc.RefDoc.from_bytes(base + first + second)
+    other = refdoc.RefDoc.from_bytes(base + second + first)
+
+    assert one == other
+    assert one.to_bytes() != other.to_bytes(), 'the orders must really differ, or this proves nothing'
+    assert hash(one) == hash(other)
+    assert len({one, other}) == 1
+
+
+def test_a_ref_naming_another_ref_is_refused() -> None:
+    """The encoding admits it and git allows it; no reader here resolves one.
+
+    Answering with the rest of the refs would drop a ref that exists from a set callers treat as
+    complete — a mirror hydrated from it would be missing a branch with nothing raised.
+    """
+    message = refdoc_pb2.RefDoc(head=refdoc_pb2.RefTarget(ref=REF))
+    message.refs[REF].oid = SHA_A
+    message.refs['refs/heads/alias'].ref = REF
+
+    with pytest.raises(ValueError, match='names another ref'):
+        _ = refdoc.RefDoc.from_bytes(message.SerializeToString()).refs
+
+
+def test_a_target_naming_neither_an_object_nor_a_ref_is_refused() -> None:
+    """A present-but-empty target is what a later build's third arm looks like to this one.
+
+    Both arms unset reads as an empty string in either, so a build that guessed would hand out `''`
+    as an object id and wedge the git invocation it reached.
+    """
+    message = refdoc_pb2.RefDoc(packs=['x'])
+    message.head.SetInParent()
+
+    with pytest.raises(ValueError, match='neither an object nor a ref'):
+        refdoc.RefDoc.from_bytes(message.SerializeToString())
+
+
+@pytest.mark.parametrize(
+    'head',
+    [
+        refdoc.SymbolicTarget('heads/main'),
+        refdoc.SymbolicTarget('refs/heads/has a space'),
+        refdoc.DirectTarget('nonsense'),
+    ],
+    ids=['unqualified', 'illegal character', 'not an object id'],
+)
+def test_a_head_git_cannot_parse_is_refused(backend: sheaf.LocalBackend, head: refdoc.Target) -> None:
+    """HEAD reaches git as a ref name like any other, so it is validated like one — before uploading.
+
+    A caller's HEAD is checked ahead of the packs because a publish that uploaded first and then
+    refused would leave litter for a mistake that was knowable up front.
+    """
+    store = sheaf.Store(backend, 'p')
+
+    with pytest.raises(sheaf.InvalidRefName):
+        store.publish(
+            store.read(),
+            conftest.logged(
+                store.read(),
+                sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'], head=head),
+            ),
+        )
+
+    assert not list(backend.list_immutable(store.pack_prefix))
+
+
+def test_a_field_this_build_does_not_model_inside_a_target_survives_and_is_seen() -> None:
+    """The interesting place for a later build to put a field is on a ref's target, not the document.
+
+    An unknown-field set belongs to the message that carried it, so a top-level check sees nothing
+    of a map value's. It has to survive `advance`, which rewrites the map, and it has to count as
+    unmodelled state, or a sweep would act on a document it cannot fully read.
+    """
+    message = refdoc_pb2.RefDoc(head=refdoc_pb2.RefTarget(ref=REF))
+    message.refs[REF].oid = SHA_A
+    on_target = message.refs[REF].SerializeToString() + b'\xf8\x06\x2a'
+    message.refs[REF].ParseFromString(on_target)
+
+    doc = refdoc.RefDoc.from_bytes(message.SerializeToString())
+    advanced = doc.advance(refs={REF: SHA_B}, packs=['x'], head=refdoc.SymbolicTarget(REF))
+
+    assert doc.carries_unmodelled_state
+    assert advanced.carries_unmodelled_state
+    assert refdoc_pb2.RefDoc.FromString(advanced.to_bytes()).refs[REF].SerializeToString().endswith(b'\xf8\x06\x2a')
+    assert advanced.refs == {REF: SHA_B}
+
+
+def test_a_publish_that_moves_a_ref_without_the_reflog_is_refused(backend: sheaf.LocalBackend) -> None:
+    """The reflog is a second thing for a writer to remember, and forgetting it fails silently otherwise."""
+    store = sheaf.Store(backend, 'p')
+
+    with pytest.raises(sheaf.ReflogRequired, match='refs/heads/main'):
+        store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    assert store.read().generation is None, 'nothing may be published'
+
+
+def test_a_stale_reflog_old_value_is_a_lost_race_not_a_conflict(backend: sheaf.LocalBackend) -> None:
+    """Every publish touches the reflog ref, so its `old` is stale whenever the document is.
+
+    That must stay a lost race and not a conflict, or every race would be an unretryable rejection.
+    It does, because the conflict check is against the writer's own snapshot — which its reflog `old`
+    was derived from — and only the compare-and-swap sees the live document.
+    """
+    store = sheaf.Store(backend, 'p')
+    stale = store.read()
+    store.publish(stale, conftest.logged(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
+
+    with pytest.raises(sheaf.RaceLost):
+        store.publish(
+            stale, conftest.logged(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
+        )

@@ -5,7 +5,7 @@ there. So these tests assert three independent things:
 
 * every line survives, exactly once — the property a caller cares about;
 * the branch has one commit per append — no attempt vanished into an overwritten tree;
-* the ref document's sequence numbers form a dense chain with no gaps or repeats — proof that the
+* one retained generation per accepted write, with none lost or shared — proof that the
   compare-and-swap, not luck, is what serialised the writers.
 """
 
@@ -127,8 +127,9 @@ def _assert_all_survived(backend: sheaf.LocalBackend, git_dir: pathlib.Path, exp
     assert len(reader.history(REF)) == len(expected), 'a commit was lost'
 
     store = sheaf.Store(backend, 'projects/demo')
-    sequences = sorted(doc.sequence for doc in store.transitions())
-    assert sequences == list(range(1, len(expected) + 1)), f'ref document sequence is not dense: {sequences}'
+    # One accepted write per append and no more: a writer that clobbered another would leave the
+    # log complete above and the transition count short.
+    assert len(store.transitions()) == len(expected), 'a transition was lost or shared'
 
 
 class LastWriteWinsBackend(sheaf.LocalBackend):
@@ -146,6 +147,7 @@ class LastWriteWinsBackend(sheaf.LocalBackend):
 
 
 def test_the_harness_can_actually_fail(tmp_path: pathlib.Path) -> None:
+    REF_ONE, REF_TWO = 'refs/heads/one', 'refs/heads/two'  # noqa: N806
     """Negative control: drop the precondition and a write really does vanish.
 
     Without this, a green concurrency suite proves only that the tests never raced.
@@ -154,18 +156,28 @@ def test_the_harness_can_actually_fail(tmp_path: pathlib.Path) -> None:
 
     sound = sheaf.Store(sheaf.LocalBackend(tmp_path / 'sound'), 'p')
     base = sound.read()
-    sound.publish(base, sheaf.Intent(ref_updates={'refs/heads/one': sheaf.RefUpdate(None, sha_a)}))
+    sound.publish(
+        base, conftest.logged(base, sheaf.Intent(ref_updates={'refs/heads/one': sheaf.RefUpdate(None, sha_a)}))
+    )
     try:
-        sound.publish(base, sheaf.Intent(ref_updates={'refs/heads/two': sheaf.RefUpdate(None, sha_b)}))
+        sound.publish(
+            base, conftest.logged(base, sheaf.Intent(ref_updates={'refs/heads/two': sheaf.RefUpdate(None, sha_b)}))
+        )
     except sheaf.RaceLost:
         pass
     else:
         raise AssertionError('a stale publish was accepted')
-    assert sound.read().refs == {'refs/heads/one': sha_a}
+    assert sound.read().refs[REF_ONE] == sha_a
+    assert REF_TWO not in sound.read().refs
 
     broken = sheaf.Store(LastWriteWinsBackend(tmp_path / 'broken'), 'p')
     base = broken.read()
-    broken.publish(base, sheaf.Intent(ref_updates={'refs/heads/one': sheaf.RefUpdate(None, sha_a)}))
-    broken.publish(base, sheaf.Intent(ref_updates={'refs/heads/two': sheaf.RefUpdate(None, sha_b)}))
+    broken.publish(
+        base, conftest.logged(base, sheaf.Intent(ref_updates={'refs/heads/one': sheaf.RefUpdate(None, sha_a)}))
+    )
+    broken.publish(
+        base, conftest.logged(base, sheaf.Intent(ref_updates={'refs/heads/two': sheaf.RefUpdate(None, sha_b)}))
+    )
     # The second writer built on a snapshot that predated the first, so the first ref is simply gone.
-    assert broken.read().refs == {'refs/heads/two': sha_b}
+    assert REF_ONE not in broken.read().refs
+    assert broken.read().refs[REF_TWO] == sha_b

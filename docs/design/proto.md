@@ -105,6 +105,7 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
   themis/litcache/models/         # at-rest domain contracts (the manifest)
+  themis/sheaf/models/            # at-rest: the sheaf ref document
   clinvar_proto/                  # copy of an upstream's published schema (below)
   pubmed_proto/                   # copy of an upstream's published schema (below)
 buf.yaml                          # module, lint rules, buf breaking config, deps
@@ -156,7 +157,9 @@ package/directory rules are excepted — see `buf.yaml`):
   concern — enums are integer on the wire, and the single codec maps int↔name on each side.
 - **Sum types are a `oneof`** over variant messages, so a cross-field "X iff Y" invariant is structural. Mark the field
   `[(buf.validate.field).required = true]` and the oneof `option (buf.validate.oneof).required = true` so an absent or
-  empty variant is rejected.
+  empty variant is rejected. Where nothing runs `protovalidate` over the message — an at-rest document whose only reader
+  validates in code, as the sheaf ref document does — the options are left off, since an annotation nothing enforces
+  claims a check that is not made.
 - **Declared-field constraints are protovalidate options** — `repeated.min_items`, `string.min_len`, message-level `cel`
   for cross-field rules — enforced by `protovalidate.validate` at the boundary.
 - **Document with leading `//` comments** on messages, fields, enums, and rpcs. The `.proto` is the source of truth and
@@ -298,11 +301,12 @@ than the deletion itself: an implementation or a caller that outlived the declar
 Deleting a **message** stays gated outside the service trees, because nothing above would notice. The risk there is
 bytes already written rather than code still calling, and the type-checkers fall silent exactly when the last reader is
 deleted. `litcache.proto` is the obvious at-rest contract, and pre-release today, so it is out of the compared module
-anyway; it rejoins a gate that still holds. The less obvious one is `themis/workbench/models`, which is bucket 2 on the
-wire but holds `AnalysisInputs` — the message `analyses.inputs` stores as bytes. It also declares the Workbench
-service's request and reply types, which by their nature belong under `themis/workbench/rpc`; while they sit alongside a
-persisted message, retiring a browser rpc leaves them behind rather than deleting them. An unused message costs a
-generated type; a deleted one costs the rows.
+anyway; it rejoins a gate that still holds. `themis/sheaf/models` is a second and is compared: the ref document a sheaf
+repository's whole state lives in, whose noncurrent generations are read long after they stop being current. The less
+obvious one is `themis/workbench/models`, which is bucket 2 on the wire but holds `AnalysisInputs` — the message
+`analyses.inputs` stores as bytes. It also declares the Workbench service's request and reply types, which by their
+nature belong under `themis/workbench/rpc`; while they sit alongside a persisted message, retiring a browser rpc leaves
+them behind rather than deleting them. An unused message costs a generated type; a deleted one costs the rows.
 
 None of this settles the *transition window*, which stays a reviewer's judgement: rolling deploys keep several
 generations live, so an rpc with no surviving caller in this repo may still have one in flight.

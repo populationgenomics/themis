@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import time
 from collections.abc import Callable, Mapping, Sequence
 
 from themis.sheaf import backend as backend_mod
@@ -38,7 +37,7 @@ class Snapshot:
         """Pack ids that make up the object database."""
         return self.doc.packs
 
-    def head(self, ref: str) -> str | None:
+    def tip(self, ref: str) -> str | None:
         """Return the commit `ref` points at, or None if the ref is absent."""
         return self.doc.refs.get(ref)
 
@@ -47,7 +46,9 @@ class Snapshot:
 class RefUpdate:
     """A compare-and-swap on a single ref.
 
-    `old` is None to require that the ref be absent; `new` is None to delete it.
+    `old` is None to require that the ref be absent. `new` is None to delete it, which the store
+    refuses: history here is append-only. The field stays because a push arrives as `<old> <new>`
+    lines and a deletion has to be representable to be refused with its name.
     """
 
     old: str | None
@@ -60,7 +61,10 @@ class Intent:
 
     ref_updates: Mapping[str, RefUpdate]
     packs: Sequence[bytes] = dataclasses.field(default_factory=tuple)
-    author: str = 'sheaf'
+    # None carries the document's existing HEAD over. A repository's first publish has none to carry,
+    # so it must name one: nothing on a push tells the server which ref the client considers primary,
+    # and a mirror left to guess re-guesses on every hydrate.
+    head: refdoc.Target | None = None
 
 
 def pack_id(data: bytes) -> str:
@@ -72,18 +76,50 @@ def pack_id(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+_BRANCH_PREFIX = 'refs/heads/'
+_DEFAULT_BRANCH = 'refs/heads/main'
+
+
+def _head_for(refs: Mapping[str, str]) -> refdoc.Target:
+    """Choose a HEAD from the refs a publish leaves behind.
+
+    Nothing on a push says which ref the client considers primary — receive-pack sees ref updates,
+    not the client's HEAD — so the branches that exist are the best evidence available, and `main`
+    wins where several do. With no branch at all, HEAD is an unborn `main`, which is what `git init`
+    does; a tag is never HEAD, because a clone of one lands detached. The guess is made once and
+    recorded, rather than re-derived on every hydrate by whatever build is running, with different
+    builds free to disagree about the same repository. A caller that knows better says so through
+    `Intent.head`.
+    """
+    branches = sorted(ref for ref in refs if ref.startswith(_BRANCH_PREFIX))
+    if not branches or _DEFAULT_BRANCH in branches:
+        return refdoc.SymbolicTarget(_DEFAULT_BRANCH)
+    return refdoc.SymbolicTarget(branches[0])
+
+
+def _carry_head(head: refdoc.Target | None, refs: Mapping[str, str]) -> refdoc.Target | None:
+    """Carry `head` over, unless it is unborn and a branch now exists to take it.
+
+    Refs are never deleted, so the only HEAD that does not resolve is the unborn `main` a repository
+    with no branch was given. Once a branch exists, a clone should land on it.
+    """
+    dangling = isinstance(head, refdoc.SymbolicTarget) and head.ref not in refs
+    if dangling and any(ref.startswith(_BRANCH_PREFIX) for ref in refs):
+        return None
+    return head
+
+
 class Store:
     """A single sheaf repository living under one key prefix."""
 
-    def __init__(self, backend: backend_mod.Backend, repo: str, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, backend: backend_mod.Backend, repo: str) -> None:
         self.backend = backend
         self.repo = repo.strip('/')
-        self._clock = clock
 
     @property
     def ref_key(self) -> str:
         """Key of the one mutable object."""
-        return f'{self.repo}/refs.json'
+        return f'{self.repo}/refs.pb'
 
     def pack_key(self, ident: str) -> str:
         """Key of a packfile."""
@@ -95,12 +131,26 @@ class Store:
         return f'{self.repo}/packs/'
 
     def read(self) -> Snapshot:
-        """Read the ref document, or an empty snapshot if the repository does not exist yet."""
+        """Read the ref document, or an empty snapshot if the repository does not exist yet.
+
+        Raises:
+            CorruptRepository: If the stored document is structurally not one this code wrote — no
+                HEAD, a target naming neither arm, a ref that is symbolic. Names and ids are
+                validated at publish, not here (`docs/design/sheaf.md`, Consequences).
+        """
         try:
             blob = self.backend.get_mutable(self.ref_key)
         except errors.NotFound:
             return Snapshot(doc=refdoc.RefDoc(), generation=None)
-        return Snapshot(doc=refdoc.RefDoc.from_bytes(blob.data), generation=blob.generation)
+        return Snapshot(doc=self._decode(blob.data), generation=blob.generation)
+
+    def _decode(self, data: bytes) -> refdoc.RefDoc:
+        try:
+            doc = refdoc.RefDoc.from_bytes(data)
+            _ = doc.refs
+        except ValueError as exc:
+            raise errors.CorruptRepository(f'{self.ref_key}: {exc}') from exc
+        return doc
 
     def fetch_pack(self, ident: str) -> bytes:
         """Download one packfile.
@@ -120,35 +170,52 @@ class Store:
             Every retained document, newest first.
 
         Raises:
-            ValueError: If any retained generation cannot be parsed, whether it is damaged or was
-                written by a format this code does not implement. Neither is skipped: garbage
-                collection treats every retained document as naming live packs, so dropping one is
-                how a sweep concludes history needs nothing and deletes a pack an older ref state
-                cannot be hydrated without. A reader that can survive a gap — displaying the audit
-                log, say — catches `UnsupportedFormat` for itself.
+            CorruptRepository: If any retained generation cannot be read. Not skipped: a reader of
+                the audit log that could tolerate a gap catches it for itself, and one that quietly
+                dropped a generation would misreport what the refs were.
         """
-        return [refdoc.RefDoc.from_bytes(blob.data) for blob in self.backend.history_mutable(self.ref_key)]
+        return [self._decode(blob.data) for blob in self.backend.history_mutable(self.ref_key)]
 
     def publish(self, base: Snapshot, intent: Intent) -> Snapshot:
         """Attempt one publish against the state in `base`.
 
         Raises:
-            InvalidRefName: If a ref name or object id in `intent` is one git would reject.
-                Checked before anything is uploaded.
-            RefConflict: If a ref being updated does not hold its expected value in `base`.
+            InvalidRefName: If a ref name or object id in `intent`, or the HEAD it names, is one git
+                would reject, or two names in the resulting ref set cannot coexist. Checked before
+                anything is uploaded.
+            RefDeletionRefused: If an update deletes a ref. Whether an update rewrites one is not
+                checkable here — the store holds no objects — so that is the writer's contract: the
+                hook checks ancestry, and a direct writer builds its commit on the tip it publishes
+                against, which is a fast-forward by construction.
+            ReflogRequired: If an update moves a ref outside sheaf's own namespace without also
+                advancing the reflog ref. That the entry's parents include the new tips is the
+                writer's contract, like fast-forwardness; that an entry exists is checked here.
+            RefConflict: If a ref being updated does not hold its expected value in `base`. Compared
+                against `base` and not the live document, so a writer deriving every `old` from the
+                snapshot it publishes against — the reflog's included — never sees this, and a stale
+                snapshot surfaces as `RaceLost` from the compare-and-swap instead.
             RaceLost: If the ref document advanced since `base` was read.
         """
+        if intent.head is not None:
+            refdoc.validate_target(intent.head)
         refs = dict(base.doc.refs)
         for ref, update in intent.ref_updates.items():
             refdoc.validate_ref_name(ref)
+            if update.new is None:
+                raise errors.RefDeletionRefused(ref)
             for oid in (update.old, update.new):
                 if oid is not None:
                     refdoc.validate_object_id(oid)
             actual = refs.get(ref)
             if actual != update.old:
                 raise errors.RefConflict(ref, update.old, actual)
+            refs[ref] = update.new
+        refdoc.validate_ref_set(refs)
+        moved = sorted(ref for ref in intent.ref_updates if not ref.startswith(refdoc.SHEAF_NAMESPACE))
+        if moved and refdoc.REFLOG_REF not in intent.ref_updates:
+            raise errors.ReflogRequired(moved)
 
-        # Objects before refs, always. A pack no ref names is litter `themis.sheaf.gc` reclaims.
+        # Objects before refs, always. A pack no ref names is inert litter, counted by `themis.sheaf.orphans`.
         new_packs: list[str] = []
         for data in intent.packs:
             ident = pack_id(data)
@@ -156,47 +223,37 @@ class Store:
             if ident not in base.doc.packs and ident not in new_packs:
                 new_packs.append(ident)
 
-        for ref, update in intent.ref_updates.items():
-            if update.new is None:
-                refs.pop(ref, None)
-            else:
-                refs[ref] = update.new
+        head = intent.head or _carry_head(base.doc.head, refs) or _head_for(refs)
 
-        doc = base.doc.advance(
-            refs=refs,
-            packs=(*base.doc.packs, *new_packs),
-            updated_by=intent.author,
-            updated_at=self._clock(),
-        )
+        doc = base.doc.advance(refs=refs, packs=(*base.doc.packs, *new_packs), head=head)
         try:
             generation = self.backend.cas_mutable(self.ref_key, doc.to_bytes(), base.generation)
         except errors.PreconditionFailed as exc:
             raise errors.RaceLost(str(exc)) from exc
         return Snapshot(doc=doc, generation=generation)
 
-    def replace_packs(self, base: Snapshot, packs: Sequence[bytes], *, author: str = 'compaction') -> Snapshot:
+    def replace_packs(self, base: Snapshot, packs: Sequence[bytes]) -> Snapshot:
         """Publish a pack set that replaces the manifest rather than extending it.
 
         Compaction's write half. Refs are carried over untouched, and the compare-and-swap is made
         against `base`: a pack set built from an older snapshot would leave the ref document naming
-        a commit that no pack contains. Superseded packs are left in place, so a reader mid-hydrate
-        against the old manifest is unaffected.
+        a commit that no pack contains. Superseded packs stay where they are — nothing is ever deleted
+        — so a reader mid-hydrate against the old manifest is unaffected.
 
         Raises:
+            ValueError: If the document names no HEAD, which a compaction cannot supply.
             RaceLost: If the ref document advanced since `base` was read.
         """
+        head = base.doc.head
+        if head is None:
+            raise ValueError(f'{self.ref_key}: cannot compact a document that names no HEAD')
         idents = []
         for data in packs:
             ident = pack_id(data)
             self.backend.put_immutable(self.pack_key(ident), data)
             idents.append(ident)
 
-        doc = base.doc.advance(
-            refs=dict(base.doc.refs),
-            packs=tuple(idents),
-            updated_by=author,
-            updated_at=self._clock(),
-        )
+        doc = base.doc.advance(refs=dict(base.doc.refs), packs=tuple(idents), head=head)
         try:
             generation = self.backend.cas_mutable(self.ref_key, doc.to_bytes(), base.generation)
         except errors.PreconditionFailed as exc:

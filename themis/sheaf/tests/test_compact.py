@@ -13,9 +13,9 @@ import subprocess
 import pytest
 
 from themis import sheaf
-from themis.sheaf import compact, gc
+from themis.sheaf import compact, orphans
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import bare, server
+from themis.sheaf.wire import bare, reflog, server
 
 REPO, REF = 'projects/case', 'refs/heads/main'
 SIDE_REF = 'refs/heads/side'
@@ -116,17 +116,21 @@ def test_compaction_collapses_the_manifest_and_keeps_the_content(
 def test_superseded_packs_are_left_in_place(
     backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo
 ) -> None:
-    """The safe half. Only `themis.sheaf.gc` deletes, and only behind a grace period."""
+    """Nothing deletes, compaction included; the packs it supersedes leave the manifest and stay put.
+
+    A reader mid-hydrate on the old manifest is unaffected, and the bytes are the bill the orphan
+    meter reports.
+    """
     del seeded
     store = sheaf.Store(backend, REPO)
     before = set(store.read().packs)
 
     compact.compact(store, _mirror(backend, tmp_path))
 
-    keys = {info.key for info in backend.list_immutable(store.pack_prefix)}
-    assert {store.pack_key(i) for i in before} <= keys
-    # Retained transitions still name them, so gc considers them live.
-    assert before <= gc.live_packs(store)
+    report = orphans.measure(store)
+    assert set(report.orphans) == before, 'superseded packs are orphans, and all still there'
+    assert not before & set(report.live)
+    assert report.orphan_bytes == sum(len(store.fetch_pack(ident)) for ident in before)
 
 
 def test_a_reader_mid_hydrate_is_unaffected(
@@ -143,7 +147,7 @@ def test_a_reader_mid_hydrate_is_unaffected(
     reader = _mirror(backend, tmp_path, 'reader')
     reader.ensure()
     reader.install(stale.packs)
-    head = stale.head(REF)
+    head = stale.tip(REF)
     assert head is not None
     assert bare.git('cat-file', '-t', head, cwd=reader.path).strip() == b'commit'
     assert bare.git('cat-file', '-p', f'{head}:{LOG}', cwd=reader.path).decode().splitlines()[0] == '{"code":"C0"}'
@@ -206,23 +210,20 @@ def test_a_sync_with_nothing_to_collapse_is_not_a_replacement(
 def test_a_raced_compaction_leaves_the_mirror_hydratable(
     backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`repack` discards what the mirror's refs do not reach, so a lost race must not keep the markers.
+    """`repack -d` deletes the packs it consolidated, so after a lost race the mirror holds none the manifest names.
 
-    A ref deleted in the store goes unreachable in the mirror, and `git repack -a -d` drops its
-    objects for good. The store still holds them — a manifest only ever gains packs — so the mirror
-    can heal by re-fetching. It only does that if the markers stop claiming those packs are already
-    installed, and the marker update used to sit on the success path alone. Restoring the ref is
-    what needs them back: it names a commit the store already published, so no new pack arrives.
+    The markers are what let it recover: each is a second link to the consolidated pack's bytes, so
+    the next sync re-indexes from disk. A lost race must therefore leave the markers alone — they
+    used to be dropped on the success path only, which is the right place, and this pins it.
     """
     del seeded
     store = sheaf.Store(backend, REPO)
     writer = conftest.GitRepo.open(backend, REPO, tmp_path / 'writer.git')
     side = writer.append_line(ref=SIDE_REF, path=LOG, line='{"code":"SIDE"}', author=REVIEWER, message='review SIDE')
-    tip = side.head(SIDE_REF)
+    tip = side.tip(SIDE_REF)
     assert tip is not None
     mirror = _mirror(backend, tmp_path, 'compactor')
     mirror.sync()
-    store.publish(store.read(), sheaf.Intent(ref_updates={SIDE_REF: sheaf.RefUpdate(tip, None)}))
 
     original = mirror.repack
 
@@ -234,9 +235,10 @@ def test_a_raced_compaction_leaves_the_mirror_hydratable(
     monkeypatch.setattr(mirror, 'repack', repack_then_get_overtaken)
     assert compact.compact(store, mirror).outcome is compact.Outcome.RACED
 
-    # The store never lost the objects, so restoring the ref publishes no pack of its own.
-    store.publish(store.read(), sheaf.Intent(ref_updates={SIDE_REF: sheaf.RefUpdate(None, tip)}))
-    assert mirror.sync().head(SIDE_REF) == tip
+    synced = mirror.sync()
+    assert synced.tip(SIDE_REF) == tip
+    assert set(mirror.installed()) == set(synced.packs)
+    assert bare.git('cat-file', '-t', tip, cwd=mirror.path).strip() == b'commit'
 
 
 def test_a_raced_compaction_repairs_the_mirror_without_the_store(
@@ -251,11 +253,10 @@ def test_a_raced_compaction_repairs_the_mirror_without_the_store(
     store = sheaf.Store(backend, REPO)
     writer = conftest.GitRepo.open(backend, REPO, tmp_path / 'writer.git')
     side = writer.append_line(ref=SIDE_REF, path=LOG, line='{"code":"SIDE"}', author=REVIEWER, message='review SIDE')
-    tip = side.head(SIDE_REF)
+    tip = side.tip(SIDE_REF)
     assert tip is not None
     mirror = _mirror(backend, tmp_path, 'compactor')
     mirror.sync()
-    store.publish(store.read(), sheaf.Intent(ref_updates={SIDE_REF: sheaf.RefUpdate(tip, None)}))
 
     original = mirror.repack
 
@@ -267,7 +268,6 @@ def test_a_raced_compaction_repairs_the_mirror_without_the_store(
     held = set(store.read().packs)
     monkeypatch.setattr(mirror, 'repack', repack_then_get_overtaken)
     assert compact.compact(store, mirror).outcome is compact.Outcome.RACED
-    store.publish(store.read(), sheaf.Intent(ref_updates={SIDE_REF: sheaf.RefUpdate(None, tip)}))
 
     fetched: list[str] = []
     original_fetch = mirror.store.fetch_pack
@@ -278,7 +278,7 @@ def test_a_raced_compaction_repairs_the_mirror_without_the_store(
 
     monkeypatch.setattr(mirror.store, 'fetch_pack', recording_fetch)
 
-    assert mirror.sync().head(SIDE_REF) == tip
+    assert mirror.sync().tip(SIDE_REF) == tip
     assert held, 'the mirror must have been holding something for this to prove anything'
     assert not held & set(fetched), 'the repack discarded these, and the markers still held them'
 
@@ -354,3 +354,106 @@ def test_head_tracks_the_store_not_the_host(
     snapshot = mirror.sync()
     assert bare.git('symbolic-ref', 'HEAD', cwd=mirror.path).decode().strip() == REF
     assert REF in snapshot.refs
+
+
+def test_an_unborn_head_survives_the_round_trip(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> None:
+    """A HEAD naming a branch with no commits is git's state after `init`, not an invalid document.
+
+    Requiring HEAD to resolve would forbid the state every repository starts in, and it is the one
+    case where no branch exists for a mirror to infer a default from.
+    """
+    store = sheaf.Store(backend, REPO)
+    published = store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={}, head=sheaf.SymbolicTarget('refs/heads/trunk'))),
+    )
+
+    assert published.doc.head == sheaf.SymbolicTarget('refs/heads/trunk')
+    assert published.refs == {}
+    mirror = _mirror(backend, tmp_path, 'unborn')
+    mirror.sync()
+    assert bare.git('symbolic-ref', 'HEAD', cwd=mirror.path).decode().strip() == 'refs/heads/trunk'
+
+
+def test_a_detached_head_does_not_move_the_branch(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo
+) -> None:
+    """Written with `--no-deref`: an ordinary ref update follows the symref and rewrites the branch."""
+    del seeded
+    store = sheaf.Store(backend, REPO)
+    snapshot = store.read()
+    tip = snapshot.tip(REF)
+    assert tip is not None
+    store.publish(snapshot, conftest.logged(snapshot, sheaf.Intent(ref_updates={}, head=sheaf.DirectTarget(tip))))
+
+    mirror = _mirror(backend, tmp_path, 'detached')
+    mirror.sync()
+
+    assert bare.git('rev-parse', 'HEAD', cwd=mirror.path).decode().strip() == tip
+    assert bare.git('rev-parse', REF, cwd=mirror.path).decode().strip() == tip
+    assert 'not a symbolic ref' in _symbolic_ref_error(mirror)
+
+
+def _symbolic_ref_error(mirror: bare.BareRepo) -> str:
+    try:
+        bare.git('symbolic-ref', 'HEAD', cwd=mirror.path)
+    except RuntimeError as exc:
+        return str(exc)
+    return ''
+
+
+def test_a_missing_pack_is_corruption(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo
+) -> None:
+    """Nothing is ever deleted, so a pack the manifest names being absent is damage, never timing."""
+    del seeded
+    store = sheaf.Store(backend, REPO)
+    conftest.remove_object(backend, store.pack_key(store.read().packs[0]))
+
+    with pytest.raises(sheaf.CorruptRepository):
+        _mirror(backend, tmp_path, 'fresh').sync()
+
+
+def test_a_failed_fetch_stops_the_ones_still_queued(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once one pack of a manifest is gone the manifest is superseded; asking for the rest is wasted."""
+    del seeded
+    store = sheaf.Store(backend, REPO)
+    reader = bare.BareRepo(store, tmp_path / 'reader', concurrency=1)
+    packs = store.read().packs
+    assert len(packs) >= 4
+    original = backend.get_immutable
+    fetched: list[str] = []
+
+    def fail_the_second(key: str) -> bytes:
+        fetched.append(key)
+        if len(fetched) == 2:
+            raise sheaf.NotFound(key)
+        return original(key)
+
+    monkeypatch.setattr(backend, 'get_immutable', fail_the_second)
+
+    with pytest.raises(sheaf.CorruptRepository):
+        reader.sync()
+
+    assert len(fetched) == 2, 'the fetches queued behind the failure must be cancelled'
+
+
+def test_compaction_keeps_every_tip_the_reflog_names(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, seeded: conftest.GitRepo
+) -> None:
+    """`repack -a -d` keeps what a ref reaches, and the reflog ref reaches every commit that was ever a tip."""
+    del seeded
+    store = sheaf.Store(backend, REPO)
+    mirror = _mirror(backend, tmp_path, 'compactor')
+    assert compact.compact(store, mirror).replaced
+
+    entry = store.read().tip(reflog.REF)
+    assert entry is not None
+    fresh = _mirror(backend, tmp_path, 'fresh')
+    fresh.sync()
+    tips = [t.new for entries in reflog.read(fresh.git, entry) for t in entries]
+    assert len(tips) == APPENDS + 1, 'one entry per publish, each with the tip it set'
+    for tip in tips:
+        assert fresh.git('cat-file', '-t', tip).strip() == b'commit'

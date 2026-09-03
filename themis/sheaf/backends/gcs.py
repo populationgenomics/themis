@@ -21,6 +21,9 @@ from themis.sheaf import backend, errors
 MUST_NOT_EXIST = 0
 
 
+_READ_ATTEMPTS = 8
+
+
 def _generation_of(blob: storage.Blob) -> backend.Generation:
     """The generation the server assigned `blob`.
 
@@ -32,20 +35,6 @@ def _generation_of(blob: storage.Blob) -> backend.Generation:
     if blob.generation is None:
         raise errors.SheafError(f'{blob.name}: the storage client reported no generation')
     return blob.generation
-
-
-def _created_at_of(blob: storage.Blob) -> float:
-    """The blob's creation time as a POSIX timestamp.
-
-    Raises:
-        SheafError: If the client carries none. Garbage collection measures its grace window from
-            this, and the grace window is the only thing standing between a sweep and a pack an
-            in-flight publish is about to name — so a default would read as an object old enough to
-            delete, which is the one answer that cannot be taken back.
-    """
-    if blob.time_created is None:
-        raise errors.SheafError(f'{blob.name}: the storage client reported no creation time')
-    return blob.time_created.timestamp()
 
 
 def _size_of(blob: storage.Blob) -> int:
@@ -78,14 +67,20 @@ class GcsBackend(backend.Backend):
             NotFound: If the object does not exist.
             SheafError: If the client reports no generation for it.
         """
-        blob = self.bucket.get_blob(self._key(key))
-        if blob is None:
-            raise errors.NotFound(key)
-        generation = _generation_of(blob)
-        # Pin the download to the generation just observed, so the bytes and the token agree even if
-        # another writer lands mid-read.
-        data = blob.download_as_bytes(if_generation_match=generation)
-        return backend.StoredBlob(data=data, generation=generation)
+        for _ in range(_READ_ATTEMPTS):
+            blob = self.bucket.get_blob(self._key(key))
+            if blob is None:
+                raise errors.NotFound(key)
+            generation = _generation_of(blob)
+            # Pin the download to the generation just observed, so the bytes and the token agree
+            # even if another writer lands mid-read. On an unversioned bucket that overwrite makes
+            # the pinned generation unfetchable, so the read starts over.
+            try:
+                data = blob.download_as_bytes(if_generation_match=generation)
+            except (api_exceptions.NotFound, api_exceptions.PreconditionFailed):
+                continue
+            return backend.StoredBlob(data=data, generation=generation)
+        raise errors.SheafError(f'{key}: overwritten on every one of {_READ_ATTEMPTS} reads')
 
     @override
     def cas_mutable(self, key: str, data: bytes, expected: backend.Generation | None) -> backend.Generation:
@@ -101,7 +96,7 @@ class GcsBackend(backend.Backend):
         try:
             blob.upload_from_string(
                 data,
-                content_type='application/json',
+                content_type='application/x-protobuf',
                 if_generation_match=precondition,
             )
         except api_exceptions.PreconditionFailed as exc:
@@ -132,16 +127,17 @@ class GcsBackend(backend.Backend):
 
     @override
     def put_immutable(self, key: str, data: bytes) -> None:
-        """Upload an immutable object, treating "already there" as success."""
-        blob = self.bucket.blob(self._key(key))
+        """Upload an immutable object unless one is already at `key`.
+
+        `if_generation_match=0` is GCS's create-if-absent; the failed precondition is the existing
+        object, which content addressing makes identical. One request, and the precondition puts the
+        upload under the client's default retry policy.
+        """
         try:
-            blob.upload_from_string(
-                data,
-                content_type='application/x-git-packed-objects',
-                if_generation_match=MUST_NOT_EXIST,
+            self.bucket.blob(self._key(key)).upload_from_string(
+                data, content_type='application/x-git-packed-objects', if_generation_match=0
             )
         except api_exceptions.PreconditionFailed:
-            # Keys are content-addressed, so whoever got there first wrote these same bytes.
             return
 
     @override
@@ -162,16 +158,4 @@ class GcsBackend(backend.Backend):
         """Enumerate immutable objects under `prefix`."""
         offset = len(self.prefix) + 1 if self.prefix else 0
         for blob in self.bucket.list_blobs(prefix=self._key(prefix)):
-            yield backend.ObjectInfo(
-                key=blob.name[offset:],
-                size=_size_of(blob),
-                created_at=_created_at_of(blob),
-            )
-
-    @override
-    def delete_immutable(self, key: str) -> None:
-        """Remove an immutable object, treating an absent one as success."""
-        try:
-            self.bucket.blob(self._key(key)).delete()
-        except api_exceptions.NotFound:
-            return
+            yield backend.ObjectInfo(key=blob.name[offset:], size=_size_of(blob))

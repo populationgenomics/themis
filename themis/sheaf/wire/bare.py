@@ -13,10 +13,11 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
 from collections.abc import Iterable, Mapping
 from concurrent import futures
 
-from themis.sheaf import backends
+from themis.sheaf import backends, errors, refdoc
 from themis.sheaf import store as store_mod
 
 SYNC_STATE_FILE = 'sheaf-sync.json'
@@ -64,8 +65,16 @@ class SyncState:
         return cls(generation=payload['generation'], repo=payload['repo'], backend=payload['backend'])
 
 
-def git(*args: str, cwd: str | os.PathLike[str], stdin: bytes | None = None) -> bytes:
+def git(
+    *args: str, cwd: str | os.PathLike[str], stdin: bytes | None = None, env: Mapping[str, str] | None = None
+) -> bytes:
     """Run a git command, returning stdout.
+
+    Args:
+        args: The git subcommand and its arguments.
+        cwd: The repository to run in.
+        stdin: Bytes to feed the command.
+        env: Variables to set over the inherited environment.
 
     Raises:
         RuntimeError: If git exits non-zero, with its stderr attached.
@@ -76,6 +85,7 @@ def git(*args: str, cwd: str | os.PathLike[str], stdin: bytes | None = None) -> 
         input=stdin,
         capture_output=True,
         check=False,
+        env={**os.environ, **env} if env else None,
     )
     if result.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {result.stderr.decode(errors="replace")}')
@@ -97,6 +107,10 @@ class BareRepo:
         self.concurrency = max(1, concurrency)
         self._installed_dir = self.path / 'sheaf-installed'
 
+    def git(self, *args: str, stdin: bytes | None = None, env: Mapping[str, str] | None = None) -> bytes:
+        """Run git against this repository, returning stdout; `RuntimeError` on failure."""
+        return git(*args, cwd=self.path, stdin=stdin, env=env)
+
     def ensure(self) -> None:
         """Create and configure the repository, finishing a half-built one.
 
@@ -109,7 +123,9 @@ class BareRepo:
         """
         if not (self.path / 'HEAD').exists():
             self.path.mkdir(parents=True, exist_ok=True)
-            git('init', '--bare', '--quiet', str(self.path), cwd=self.path.parent)
+            # The same default the store records for a repository with no branch yet, so a clone of
+            # an empty repository does not take the host's `init.defaultBranch` instead.
+            git('init', '--bare', '--quiet', '--initial-branch=main', str(self.path), cwd=self.path.parent)
         # Push over HTTP is off by default; a stale push must reach the hook, not a 403.
         git('config', 'http.receivepack', 'true', cwd=self.path)
         # The repo is a per-session cache, so it needs neither a reflog nor auto-gc.
@@ -147,11 +163,14 @@ class BareRepo:
         return sorted(self._installed_dir.iterdir()) if self._installed_dir.is_dir() else []
 
     def sync(self) -> store_mod.Snapshot:
-        """Bring the bare repo up to the store's current state and record the generation."""
-        self.ensure()
-        snapshot = self.store.read()
+        """Bring the bare repo up to the store's current state and record the generation.
 
-        self.install(ident for ident in snapshot.packs if ident not in self.installed())
+        Raises:
+            CorruptRepository: If a pack the document names is absent. Nothing is ever deleted from
+                the pack namespace, so this is a fact about the store, never about timing.
+        """
+        self.ensure()
+        snapshot = self._hydrate()
         self._write_refs(snapshot)
         self._point_head(snapshot)
         state = SyncState(
@@ -160,6 +179,22 @@ class BareRepo:
             backend=backends.descriptor_for(self.store.backend),
         )
         self.sync_state_path.write_text(state.to_json(), 'utf-8')
+        return snapshot
+
+    def _hydrate(self) -> store_mod.Snapshot:
+        """Fetch the packs the document names that this mirror does not hold.
+
+        Raises:
+            CorruptRepository: If a pack the manifest names is absent.
+        """
+        snapshot = self.store.read()
+        # Materialised outside the generator: consumed lazily, it rescans the marker directory once
+        # per pack the manifest names.
+        have = self.installed()
+        try:
+            self.install(ident for ident in snapshot.packs if ident not in have)
+        except errors.NotFound as absent:
+            raise errors.CorruptRepository(f'{self.store.ref_key} names a pack that is gone: {absent}') from absent
         return snapshot
 
     def install(self, idents: Iterable[str]) -> None:
@@ -189,9 +224,28 @@ class BareRepo:
         if len(pending) == 1:
             fetch_and_index(pending[0])
             return
+        # A failed fetch means the store is damaged, so the packs still queued are not worth asking
+        # for. The flag is checked by the worker, because a worker picks up its next task before this
+        # thread has seen the failure.
+        failed = threading.Event()
+
+        def unless_failed(ident: str) -> None:
+            if failed.is_set():
+                return
+            try:
+                fetch_and_index(ident)
+            except BaseException:
+                failed.set()
+                raise
+
         with futures.ThreadPoolExecutor(max_workers=min(self.concurrency, len(pending))) as pool:
-            for done in [pool.submit(fetch_and_index, ident) for ident in pending]:
-                done.result()
+            submitted = [pool.submit(unless_failed, ident) for ident in pending]
+            for done in futures.as_completed(submitted):
+                try:
+                    done.result()
+                except BaseException:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
 
     def adopt(self, packs: Mapping[str, pathlib.Path]) -> None:
         """Point the markers at `packs`, dropping every marker they do not name.
@@ -221,33 +275,41 @@ class BareRepo:
         return self.local_packs()
 
     def _write_refs(self, snapshot: store_mod.Snapshot) -> None:
-        """Force local refs to match the store, deleting any the store no longer has."""
-        commands = []
-        for ref, sha in sorted(snapshot.refs.items()):
-            commands.append(f'update {ref} {sha}\n')
-        for ref in sorted(set(self.local_refs()) - set(snapshot.refs)):
-            commands.append(f'delete {ref}\n')
-        if not commands:
-            return
-        payload = 'start\n' + ''.join(commands) + 'prepare\ncommit\n'
-        git('update-ref', '--stdin', cwd=self.path, stdin=payload.encode())
+        """Force local refs to match the store, deleting any the store no longer has.
+
+        Deletes go in a transaction of their own, ahead of the updates. Git checks a new name against
+        every existing ref, including one the same transaction deletes, so `refs/heads/a/b` replaced
+        by `refs/heads/a` in one batch is refused as a directory/file collision and the mirror can
+        never sync again. The mirror is a cache under a per-repository lock, so the gap between the
+        two is unobservable.
+        """
+        deletes = [f'delete {ref}\n' for ref in sorted(set(self.local_refs()) - set(snapshot.refs))]
+        updates = [f'update {ref} {sha}\n' for ref, sha in sorted(snapshot.refs.items())]
+        for commands in (deletes, updates):
+            if commands:
+                payload = 'start\n' + ''.join(commands) + 'prepare\ncommit\n'
+                git('update-ref', '--stdin', cwd=self.path, stdin=payload.encode())
 
     def _point_head(self, snapshot: store_mod.Snapshot) -> None:
-        """Aim HEAD at a branch the store actually has.
+        """Aim HEAD where the document says, rather than where this host's git would default.
 
-        `git init --bare` picks HEAD from the host's `init.defaultBranch`, so a mirror created on a
-        machine defaulting to `master` advertises a HEAD pointing at nothing, and a client clones
-        the refs and checks out an empty tree with no error at all. Receive-pack sets HEAD on an
-        unborn repository, so this only shows up when hydrating a store that is already populated.
+        `git init --bare` takes HEAD from the host's `init.defaultBranch`, so a mirror built on a
+        machine defaulting to `master` advertises a HEAD pointing at nothing and a client clones the
+        refs and checks out an empty tree with no error at all. The document records the answer, so
+        no mirror has to guess and two builds cannot disagree about one repository.
+
+        A symbolic HEAD is written even when its ref does not resolve: that is git's own state after
+        `init`, and protocol v2 carries it so a clone of an empty repository checks out the intended
+        branch name. A detached HEAD is written with `--no-deref`, because an ordinary ref update
+        would follow the symref and overwrite whichever branch HEAD points at.
         """
-        branches = sorted(ref for ref in snapshot.refs if ref.startswith('refs/heads/'))
-        if not branches:
+        head = snapshot.doc.head
+        if head is None:
             return
-        current = git('symbolic-ref', 'HEAD', cwd=self.path).decode().strip()
-        if current in snapshot.refs:
-            return
-        preferred = 'refs/heads/main' if 'refs/heads/main' in branches else branches[0]
-        git('symbolic-ref', 'HEAD', preferred, cwd=self.path)
+        if isinstance(head, refdoc.SymbolicTarget):
+            git('symbolic-ref', 'HEAD', head.ref, cwd=self.path)
+        else:
+            git('update-ref', '--no-deref', 'HEAD', head.oid, cwd=self.path)
 
     def local_refs(self) -> dict[str, str]:
         """Refs currently in the bare repo."""

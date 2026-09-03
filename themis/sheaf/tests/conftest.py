@@ -14,6 +14,7 @@ working tree, then publishes the result through `Store`. Why the fixtures are an
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import pathlib
 import shutil
@@ -25,8 +26,10 @@ import pytest
 from google.cloud import storage
 
 from themis import sheaf
+from themis.sheaf import refdoc
 from themis.sheaf import store as store_mod
 from themis.sheaf.backends import gcs
+from themis.sheaf.wire import reflog
 
 BLOB_MODE = '100644'
 GITATTRIBUTES = '.gitattributes'
@@ -200,7 +203,7 @@ class GitRepo:
             The file's lines, or an empty list if the ref or the path is absent.
         """
         snapshot = self.store.read()
-        head = snapshot.head(ref)
+        head = snapshot.tip(ref)
         if head is None:
             return []
         self._hydrate(snapshot)
@@ -212,7 +215,7 @@ class GitRepo:
     def history(self, ref: str) -> list[str]:
         """Commit ids on `ref`, first-parent, newest first."""
         snapshot = self.store.read()
-        head = snapshot.head(ref)
+        head = snapshot.tip(ref)
         if head is None:
             return []
         self._hydrate(snapshot)
@@ -223,7 +226,7 @@ class GitRepo:
 
         def build(snapshot: store_mod.Snapshot) -> store_mod.Intent | None:
             self._hydrate(snapshot)
-            head = snapshot.head(ref)
+            head = snapshot.tip(ref)
             entries = self._entries(head) if head is not None else {}
             files = build_files(entries)
             if not files:
@@ -231,13 +234,19 @@ class GitRepo:
             for path, data in files.items():
                 entries[path] = (BLOB_MODE, self._write_blob(data))
             commit = self._commit_tree(self._write_tree(entries), head, author, message)
-            pack = self._pack(commit, snapshot.refs.values())
+            # The writer's half of the reflog contract: the entry rides in the same publish as the
+            # ref it describes, and the pack is rooted at it so it covers the commit too.
+            previous = snapshot.tip(reflog.REF)
+            entry = reflog.record(self._git, previous, [reflog.Transition(ref, head, commit)])
+            pack = self._pack(entry, snapshot.refs.values())
             # Built here, so whether or not this attempt wins, a later hydrate needs none of it.
             self._installed.add(store_mod.pack_id(pack))
             return store_mod.Intent(
-                ref_updates={ref: store_mod.RefUpdate(old=head, new=commit)},
+                ref_updates={
+                    ref: store_mod.RefUpdate(old=head, new=commit),
+                    reflog.REF: store_mod.RefUpdate(old=previous, new=entry),
+                },
                 packs=[pack],
-                author=author.email,
             )
 
         return self.store.transact(build, retries=self._retries)
@@ -314,6 +323,32 @@ class GitRepo:
             RuntimeError: If git exits non-zero, with its stderr attached.
         """
         return _plumb(*args, stdin=stdin, env={'GIT_DIR': str(self.path), **(env or {})})
+
+
+def logged(base: store_mod.Snapshot, intent: store_mod.Intent) -> store_mod.Intent:
+    """`intent` with the reflog update the store requires of every publish that moves a ref.
+
+    For store-level tests, which have no object database: the entry id is synthetic, derived from
+    the transitions so a replay against the same base produces the same intent. A test that is about
+    the reflog itself goes through git and the real `reflog.record`.
+    """
+    moved = {ref: update for ref, update in intent.ref_updates.items() if not ref.startswith(refdoc.SHEAF_NAMESPACE)}
+    if not moved or refdoc.REFLOG_REF in intent.ref_updates:
+        return intent
+    previous = base.tip(refdoc.REFLOG_REF)
+    entry = hashlib.sha1(repr((previous, sorted(moved.items()))).encode()).hexdigest()  # noqa: S324
+    return dataclasses.replace(
+        intent, ref_updates={**intent.ref_updates, refdoc.REFLOG_REF: store_mod.RefUpdate(previous, entry)}
+    )
+
+
+def remove_object(backend: sheaf.LocalBackend, key: str) -> None:
+    """Destroy the object at `key` behind the backend's back.
+
+    No backend can delete — nothing in a sheaf store is ever removed — so a test that needs a
+    missing pack reaches into the local directory to make one.
+    """
+    backend._immutable_path(key).unlink()
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 """Rolling many small packs into one, and the policy deciding when that is worth doing.
 
-Nothing here deletes: a caller can rely on a superseded pack still being fetchable, and reclaiming
-one is `themis.sheaf.gc`'s job. Design: `docs/design/sheaf.md`.
+Nothing here deletes, and nothing anywhere does: a superseded pack stays fetchable for good, and
+`themis.sheaf.orphans` counts what that costs. Design: `docs/design/sheaf.md`.
 """
 
 from __future__ import annotations
@@ -51,6 +51,9 @@ def assess(store: store_mod.Store, snapshot: store_mod.Snapshot, policy: Policy 
     Sizes come from one listing rather than a request per pack, so this is cheap enough to run on
     every publish.
 
+    Raises:
+        CorruptRepository: If the document names a pack the store does not hold.
+
     Args:
         store: The repository the pack sizes are listed from.
         snapshot: The manifest being judged.
@@ -64,7 +67,10 @@ def assess(store: store_mod.Store, snapshot: store_mod.Snapshot, policy: Policy 
         info.key.removeprefix(store.pack_prefix).removesuffix('.pack'): info.size
         for info in store.backend.list_immutable(store.pack_prefix)
     }
-    present = [sizes.get(ident, 0) for ident in live]
+    missing = live - set(sizes)
+    if missing:
+        raise errors.CorruptRepository(f'{store.ref_key} names packs the store does not hold: {sorted(missing)}')
+    present = [sizes[ident] for ident in live]
 
     if len(live) <= 1:
         return Assessment(len(live), sum(present), 0, False, 'already one pack')
@@ -107,7 +113,7 @@ class Compaction:
         return self.outcome is Outcome.REPLACED
 
 
-def compact(store: store_mod.Store, mirror: bare.BareRepo, *, author: str = 'compaction') -> Compaction:
+def compact(store: store_mod.Store, mirror: bare.BareRepo) -> Compaction:
     """Replace the pack set with a single repacked pack.
 
     The compare-and-swap is made against the generation the mirror was synced to, and that is the
@@ -117,11 +123,10 @@ def compact(store: store_mod.Store, mirror: bare.BareRepo, *, author: str = 'com
     Args:
         store: The repository to compact.
         mirror: A bare mirror of `store`, synced and repacked in place.
-        author: Recorded in the ref document as the writer.
 
     Returns:
         What happened, and the state to treat as current. A lost race leaves the repacked pack
-        behind as an orphan for `themis.sheaf.gc` to reclaim.
+        behind as an orphan, which is inert.
     """
     base = mirror.sync()
     if len(base.packs) <= 1:
@@ -131,7 +136,7 @@ def compact(store: store_mod.Store, mirror: bare.BareRepo, *, author: str = 'com
     for path in mirror.repack():
         packs[store_mod.pack_id(path.read_bytes())] = path
     try:
-        after = store.replace_packs(base, [path.read_bytes() for path in packs.values()], author=author)
+        after = store.replace_packs(base, [path.read_bytes() for path in packs.values()])
     except errors.RaceLost:
         # Somebody published during the repack; the next sync picks their state up. The markers are
         # left alone deliberately: the manifest still names the packs the repack consolidated, and
@@ -147,7 +152,6 @@ def compact_if_due(
     mirror: bare.BareRepo,
     *,
     policy: Policy = DEFAULT_POLICY,
-    author: str = 'compaction',
 ) -> Compaction:
     """Compact only when `policy` says it is due.
 
@@ -155,7 +159,6 @@ def compact_if_due(
         store: The repository to compact.
         mirror: A bare mirror of `store`.
         policy: The thresholds the decision is made against.
-        author: Recorded in the ref document as the writer.
 
     Returns:
         What happened. The four cases are distinct on the result, so a caller metering compaction
@@ -164,4 +167,4 @@ def compact_if_due(
     verdict = assess(store, store.read(), policy)
     if not verdict.due:
         return Compaction(Outcome.NOT_DUE)
-    return compact(store, mirror, author=author)
+    return compact(store, mirror)

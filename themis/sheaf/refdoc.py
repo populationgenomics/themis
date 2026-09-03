@@ -1,5 +1,11 @@
 """The ref document: a repository's whole mutable state — refs plus the pack manifest — in one object.
 
+Stored as binary proto, and carried around as the parsed message rather than a projection of it, so
+a field this build does not model survives being read and written back (`docs/design/proto.md`,
+"Read-modify-write and integrity"). Every accepted transition rewrites the document and the backend
+retains the prior generations, so a reader meets documents from every version that has ever run and
+cannot rewrite them.
+
 Also the ref-name and object-id validators every writer passes through. Design:
 `docs/design/sheaf.md`.
 """
@@ -7,30 +13,41 @@ Also the ref-name and object-id validators every writer passes through. Design:
 from __future__ import annotations
 
 import dataclasses
-import json
 import re
+from collections.abc import Iterable, Mapping
+from typing import override
+
+from google.protobuf import message as message_mod
+from google.protobuf import unknown_fields
 
 from themis.sheaf import errors
-
-FORMAT_VERSION = 1
+from themis.sheaf.models import refdoc_pb2
 
 # Characters and sequences git rejects anywhere in a ref name (refs.c: check_refname_format). `\s`
 # covers the two that wedge a repository — space and newline — because `git update-ref --stdin` is
 # whitespace-delimited and newline-terminated.
-_ILLEGAL_IN_REF = re.compile(r'(\.\.)|([:?\[\\^~\s*\]])|(@\{)|([\x00-\x1f\x7f])')
+# `re.ASCII`: git treats only ASCII whitespace as illegal; unicode `\s` would also refuse NBSP.
+_ILLEGAL_IN_REF = re.compile(r'(\.\.)|([:?\[\\^~\s*])|(@\{)|([\x00-\x1f\x7f])', re.ASCII)
 _REF_PREFIX = 'refs/'
+# Refs sheaf writes for itself. A publish that moves any ref outside this namespace must also advance
+# the reflog ref, and nothing but sheaf may write under it.
+SHEAF_NAMESPACE = 'refs/sheaf/'
+REFLOG_REF = SHEAF_NAMESPACE + 'reflog'
+# `check-ref-format` accepts any component length, but the files backend writes `<name>.lock` and
+# NAME_MAX is 255 on every filesystem git is deployed on.
+_MAX_COMPONENT_BYTES = 255 - len('.lock')
 # Matched with `fullmatch`: `$` also matches before a trailing newline, which is the one
 # character that wedges `update-ref --stdin` and so the one this must not admit.
-_OBJECT_ID = re.compile(r'[0-9a-f]{40}|[0-9a-f]{64}')
+_OBJECT_ID = re.compile(r'[0-9a-f]{40}')
 
 
 def validate_ref_name(ref: str) -> str:
     """Return `ref` if it is a ref name sheaf will store.
 
-    Accepts a subset of what `git check-ref-format` does: a name has to be fully qualified under
+    Accepts a subset of what `git check-ref-format` does. A name has to be fully qualified under
     `refs/`, because a ref outside it would sit in the document where no ordinary ref enumeration
-    looks. Nothing else is stricter than git — a name git accepts and this rejects is a caller
-    mistake about qualification, never about format.
+    looks; and a component has to fit a filesystem name once git appends `.lock`, which
+    `check-ref-format` does not check but `update-ref` cannot get past.
 
     Validates the name's format only. Whether the ref exists, and whether the object it is being
     pointed at is in the pack set, cannot be answered without reading packs, so both stay caller
@@ -54,14 +71,39 @@ def validate_ref_name(ref: str) -> str:
         # anchored regex over the whole name would accept `refs/heads/sub/.hidden`.
         if part.startswith('.') or part.endswith('.lock'):
             raise errors.InvalidRefName(f'{ref!r}: component {part!r} is not a valid git ref component')
+        if len(part.encode()) > _MAX_COMPONENT_BYTES:
+            raise errors.InvalidRefName(f'{ref!r}: component {part[:20]!r}... is too long for a lock file')
     return ref
 
 
-def validate_object_id(oid: str) -> str:
-    """Return `oid` if it is a lowercase hexadecimal object id, of either hash length git defines.
+def validate_ref_set(refs: Iterable[str]) -> None:
+    """Raise if two names in `refs` cannot coexist in one repository.
 
-    A format check only: both of git's hash lengths are well-formed here, and whether the object
-    exists in the pack set cannot be answered without reading packs, so it stays a caller contract.
+    Git stores refs as files under directories, so `refs/heads/a` and `refs/heads/a/b` cannot both
+    exist. Each name passes `validate_ref_name` on its own; only the set reveals the conflict. Git
+    detects it in the ref transaction, which runs *after* the pre-receive hook, so a publish that
+    admitted both would already be committed by the time git refused the push.
+
+    Raises:
+        InvalidRefName: If one name is a path prefix of another.
+    """
+    names = set(refs)
+    for name in names:
+        parts = name.split('/')
+        for depth in range(1, len(parts)):
+            parent = '/'.join(parts[:depth])
+            if parent in names:
+                raise errors.InvalidRefName(
+                    f'{name!r} and {parent!r} cannot both exist: one is a directory of the other'
+                )
+
+
+def validate_object_id(oid: str) -> str:
+    """Return `oid` if it is a lowercase hexadecimal SHA-1 object id.
+
+    SHA-1 only: the bare mirror uses git's default object format, and a 64-hex id fed to it is
+    refused by `update-ref`. A format check only — whether the object exists in the pack set cannot
+    be answered without reading packs, so that stays a caller contract.
 
     Raises:
         InvalidRefName: If it is not. A malformed id wedges `update-ref` exactly as a bad name does.
@@ -72,76 +114,209 @@ def validate_object_id(oid: str) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class RefDoc:
-    """Refs plus the pack manifest, as stored.
+class DirectTarget:
+    """A ref naming an object."""
 
-    `sequence` counts accepted transitions and stays dense; the backend generation that guards the
-    compare-and-swap does not.
+    oid: str
+
+
+@dataclasses.dataclass(frozen=True)
+class SymbolicTarget:
+    """A ref naming another ref.
+
+    The named ref need not currently resolve. HEAD on a branch with no commits is git's own state
+    after `init`, and protocol v2 carries it so a clone of an empty repository checks out the
+    intended branch name rather than the server's default.
     """
 
-    refs: dict[str, str] = dataclasses.field(default_factory=dict)
-    packs: tuple[str, ...] = ()
-    sequence: int = 0
-    updated_by: str = ''
-    updated_at: float = 0.0
-    format: int = FORMAT_VERSION
+    ref: str
+
+
+Target = DirectTarget | SymbolicTarget
+
+
+def validate_target(target: Target) -> Target:
+    """Return `target` if git would accept what it names.
+
+    Raises:
+        InvalidRefName: If a symbolic target does not name a ref sheaf stores, or a direct one is
+            not an object id git would accept.
+    """
+    if isinstance(target, SymbolicTarget):
+        validate_ref_name(target.ref)
+    else:
+        validate_object_id(target.oid)
+    return target
+
+
+def _carries_unknown(message: message_mod.Message) -> bool:
+    """Whether `message` or anything nested in it holds a field this build does not model.
+
+    Recursive because the interesting place for a later build to put one is inside a ref's target,
+    and an unknown-field set belongs to the message that carried it — a top-level read sees nothing
+    of a map value's.
+    """
+    # `UnknownFieldSet`, not `Message.UnknownFields()`: the latter is unimplemented under upb.
+    if len(unknown_fields.UnknownFieldSet(message)):
+        return True
+    for field, value in message.ListFields():
+        if field.message_type is None:
+            continue
+        if field.message_type.GetOptions().map_entry:
+            nested = value.values() if field.message_type.fields_by_name['value'].message_type else ()
+        elif field.is_repeated:
+            nested = value
+        else:
+            nested = (value,)
+        if any(_carries_unknown(item) for item in nested):
+            return True
+    return False
+
+
+def _read_target(message: refdoc_pb2.RefTarget) -> Target:
+    """Decode a stored target.
+
+    Raises:
+        ValueError: If neither arm is set, which is a target this code did not write.
+    """
+    which = message.WhichOneof('target')
+    if which == 'oid':
+        return DirectTarget(message.oid)
+    if which == 'ref':
+        return SymbolicTarget(message.ref)
+    raise ValueError('a ref target names neither an object nor a ref')
+
+
+def _write_target(message: refdoc_pb2.RefTarget, target: Target) -> None:
+    """Encode a target into `message`."""
+    if isinstance(target, SymbolicTarget):
+        message.ref = target.ref
+    else:
+        message.oid = target.oid
+
+
+class RefDoc:
+    """Refs, the pack manifest, and where a clone starts, as stored.
+
+    Wraps the stored message rather than copying its fields out, because the fields this build does
+    not know about are the ones worth keeping: they live in the message's unknown-field set and are
+    re-serialised untouched. A projection would drop them, and an older writer would then quietly
+    delete a newer one's state on its next publish.
+    """
+
+    def __init__(self, message: refdoc_pb2.RefDoc | None = None) -> None:
+        self._message = refdoc_pb2.RefDoc()
+        if message is not None:
+            self._message.CopyFrom(message)
+            if self._message.HasField('head'):
+                _read_target(self._message.head)
+
+    @property
+    def refs(self) -> dict[str, str]:
+        """Ref name to the object id it names.
+
+        Raises:
+            ValueError: If a ref names another ref. Git allows it and the encoding admits it, but no
+                writer here produces one and no reader here resolves one — so a document carrying
+                one was written by a build that understands something this one does not, and
+                answering with a partial ref set would be worse than refusing.
+        """
+        refs = {}
+        for name, target in self._message.refs.items():
+            decoded = _read_target(target)
+            if isinstance(decoded, SymbolicTarget):
+                raise ValueError(f'{name} names another ref, which this build does not resolve')
+            refs[name] = decoded.oid
+        return refs
+
+    @property
+    def packs(self) -> tuple[str, ...]:
+        """Every packfile the object database is made of, by content hash."""
+        return tuple(self._message.packs)
+
+    @property
+    def head(self) -> Target | None:
+        """Where a clone should start, or None on the synthesised document of a repository with none."""
+        return _read_target(self._message.head) if self._message.HasField('head') else None
+
+    @property
+    def carries_unmodelled_state(self) -> bool:
+        """Whether the document holds a field this build does not know about.
+
+        Preservation keeps such a field's bytes through a publish, but a reader still cannot act on
+        one — so anything deciding from the document's *contents* has to know it is working from a
+        partial view. Collection is the case that matters: it deletes on the basis of what it did
+        not find, so any new place a reference might live is a new input to it.
+        """
+        return _carries_unknown(self._message)
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, RefDoc) and self._message == other._message
+
+    @override
+    def __hash__(self) -> int:
+        # Over the modelled fields, not the bytes: equality compares the unknown-field set as a set
+        # while serialisation emits it in parse order, so two equal documents carrying the same
+        # unmodelled fields in different orders would hash apart.
+        return hash((tuple(sorted(self._message.refs)), self.packs, self.head))
+
+    @override
+    def __repr__(self) -> str:
+        return f'RefDoc(refs={sorted(self._message.refs)}, packs={self.packs}, head={self.head})'
 
     def to_bytes(self) -> bytes:
-        """Serialise deterministically, so identical state produces identical bytes."""
-        payload: dict[str, object] = {
-            'format': self.format,
-            'sequence': self.sequence,
-            'refs': dict(sorted(self.refs.items())),
-            'packs': list(self.packs),
-            'updated_by': self.updated_by,
-            'updated_at': self.updated_at,
-        }
-        return json.dumps(payload, sort_keys=True, indent=2).encode() + b'\n'
+        """Serialise for storage, unknown fields included."""
+        return self._message.SerializeToString(deterministic=True)
 
     @classmethod
     def from_bytes(cls, data: bytes) -> RefDoc:
         """Parse a stored ref document.
 
-        Every field `to_bytes` writes is required, and an absent one is damage rather than a
-        default. An empty manifest serialises as `[]`, so a document with no `packs` key is not one
-        this code wrote — and defaulting it to empty would make it parse as a repository whose
-        history needs no packs, which is what a sweep deletes against.
+        Every stored document names a HEAD, because `publish` will not write one that does not. That
+        is what separates a document this code wrote from an empty or truncated encoding — both
+        otherwise valid `RefDoc`s naming no packs, which is the shape a sweep deletes against. HEAD
+        carries the highest field number, so a truncation loses it before it loses the manifest.
 
         Raises:
-            UnsupportedFormat: If the document was written by an incompatible format version.
-            ValueError: If the bytes are not the JSON object this writes, which means the document
-                is damaged rather than merely too new.
+            ValueError: If the bytes are not a document this code wrote. Not a version this build is
+                too old for: evolution is additive and unknown fields survive, so there is no version
+                to be too old for.
         """
-        payload = json.loads(data)
-        version = int(payload.get('format', 0))
-        if version != FORMAT_VERSION:
-            raise errors.UnsupportedFormat(f'unsupported ref document format {version}')
+        message = refdoc_pb2.RefDoc()
         try:
-            return cls(
-                refs=dict(payload['refs']),
-                packs=tuple(payload['packs']),
-                sequence=int(payload['sequence']),
-                updated_by=str(payload['updated_by']),
-                updated_at=float(payload['updated_at']),
-                format=version,
-            )
-        except KeyError as e:
-            raise ValueError(f'ref document is missing {e.args[0]!r}') from e
+            message.ParseFromString(data)
+        except message_mod.DecodeError as e:
+            raise ValueError(f'ref document is not a RefDoc: {e}') from e
+        if not message.HasField('head'):
+            raise ValueError('ref document names no HEAD')
+        _read_target(message.head)  # a HEAD naming neither an object nor a ref is not one either
+        return cls(message)
 
-    def advance(
-        self,
-        *,
-        refs: dict[str, str],
-        packs: tuple[str, ...],
-        updated_by: str,
-        updated_at: float,
-    ) -> RefDoc:
-        """Return the successor document for an accepted transition."""
-        return dataclasses.replace(
-            self,
-            refs=refs,
-            packs=packs,
-            sequence=self.sequence + 1,
-            updated_by=updated_by,
-            updated_at=updated_at,
-        )
+    def advance(self, *, refs: Mapping[str, str], packs: Iterable[str], head: Target) -> RefDoc:
+        """Return the successor document for an accepted transition.
+
+        Built by copying this document and overwriting what the transition changes, so anything it
+        carries that this build does not model comes along.
+
+        Args:
+            refs: The whole ref set after the transition, not a delta.
+            packs: The whole manifest after the transition. Stored sorted and deduplicated, since it
+                is a set and identical state should serialise identically.
+            head: Where a clone should start.
+        """
+        message = refdoc_pb2.RefDoc()
+        message.CopyFrom(self._message)
+        # Assigned rather than merged: a ref or a pack the transition drops has to disappear, and
+        # merging a map or a repeated field unions it with what is already there.
+        # Mutated in place, never rebuilt: a map value is a message, and replacing it drops any field
+        # inside it this build does not model — the loss this whole wrapper exists to prevent, one
+        # level down. Setting the arm on an existing entry leaves everything else in it alone.
+        for gone in set(message.refs) - set(refs):
+            del message.refs[gone]
+        for name, oid in refs.items():
+            message.refs[name].oid = oid
+        message.ClearField('packs')
+        message.packs.extend(sorted(set(packs)))
+        _write_target(message.head, head)
+        return RefDoc(message)

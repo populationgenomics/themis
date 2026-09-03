@@ -5,7 +5,7 @@ mutable pointer set, and an object store provides exactly those two primitives â
 compare-and-swap on one key. Nothing here tries to make an object store behave like a POSIX
 filesystem.
 
-This module re-exports the package's public API; `themis.sheaf.compact`, `themis.sheaf.gc` and
+This module re-exports the package's public API; `themis.sheaf.compact`, `themis.sheaf.orphans` and
 `themis.sheaf.wire` are imported directly. Design:
 `docs/design/sheaf.md`.
 """
@@ -15,21 +15,24 @@ from __future__ import annotations
 from themis.sheaf.backend import Backend, Generation, ObjectInfo, StoredBlob
 from themis.sheaf.backends.local import LocalBackend
 from themis.sheaf.errors import (
+    CorruptRepository,
     InvalidRefName,
     NotFound,
     PreconditionFailed,
     RaceLost,
     RefConflict,
-    RetentionUnavailable,
+    RefDeletionRefused,
+    ReflogRequired,
     RetriesExhausted,
     SheafError,
-    UnsupportedFormat,
 )
-from themis.sheaf.refdoc import RefDoc
+from themis.sheaf.refdoc import DirectTarget, RefDoc, SymbolicTarget, Target
 from themis.sheaf.store import Intent, RefUpdate, Snapshot, Store, pack_id
 
 __all__ = [
     'Backend',
+    'CorruptRepository',
+    'DirectTarget',
     'Generation',
     'Intent',
     'InvalidRefName',
@@ -39,14 +42,16 @@ __all__ = [
     'PreconditionFailed',
     'RaceLost',
     'RefConflict',
+    'RefDeletionRefused',
     'RefDoc',
     'RefUpdate',
-    'RetentionUnavailable',
+    'ReflogRequired',
     'RetriesExhausted',
     'SheafError',
     'Snapshot',
     'Store',
     'StoredBlob',
-    'UnsupportedFormat',
+    'SymbolicTarget',
+    'Target',
     'pack_id',
 ]

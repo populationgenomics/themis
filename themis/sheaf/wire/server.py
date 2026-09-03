@@ -23,7 +23,7 @@ from collections.abc import Collection
 from typing import Self, override
 
 from themis.sheaf import backend as backend_mod
-from themis.sheaf import backends
+from themis.sheaf import backends, errors
 from themis.sheaf import store as store_mod
 from themis.sheaf.wire import bare as bare_mod
 from themis.sheaf.wire import protect
@@ -50,7 +50,6 @@ class SheafGitServer:
         repos: Collection[str],
         host: str = '127.0.0.1',
         port: int = 0,
-        author: str = 'agent',
         protection: protect.Protection | None = None,
     ) -> None:
         """Serve repositories from `backend`, keeping bare mirrors under `root`.
@@ -62,7 +61,6 @@ class SheafGitServer:
                 otherwise taken entirely from the request path.
             host: Address to bind.
             port: Port to bind; 0 takes an ephemeral one, which `authority` then reports.
-            author: Recorded in the ref document as the writer of an accepted push.
             protection: Paths the pushing side may not write and refs it may not rewrite. It
                 reaches the hook through the environment rather than the repository, because a
                 tracked config file would be editable in the same push it constrains.
@@ -75,7 +73,6 @@ class SheafGitServer:
         self.backend = backend
         self.root = pathlib.Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-        self.author = author
         self.protection = protection or protect.Protection()
         # A bare string would become a set of characters, and every request would 404.
         if isinstance(repos, str):
@@ -147,7 +144,6 @@ class SheafGitServer:
             'GIT_HTTP_EXPORT_ALL': '1',
             'SHEAF_SYNC_STATE': str(bare.sync_state_path),
             'SHEAF_GIT_DIR': str(bare.path),
-            'SHEAF_AUTHOR': self.author,
         }
 
 
@@ -225,6 +221,12 @@ def _dispatch(server: SheafGitServer, handler: http.server.BaseHTTPRequestHandle
             # Every endpoint, fetch included, or a rejected pusher's `git pull` gets its own stale
             # state back and never converges.
             bare.sync()
+        except errors.CorruptRepository:
+            # Not 503: the store names a pack that does not exist, and no amount of retrying mends
+            # that. Reported apart from an outage so an operator is not told to wait.
+            _logger.exception('corrupt repository %s', repo)
+            handler.send_error(500, 'the sheaf store is corrupt')
+            return
         except Exception:
             # Broad by position, not by indifference: this is the request boundary, and hydration
             # raises from unrelated hierarchies -- the backend's SDK, git through `RuntimeError`,

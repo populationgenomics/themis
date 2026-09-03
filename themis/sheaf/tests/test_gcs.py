@@ -7,9 +7,8 @@ rather than a local-directory stand-in.
 
 One gap is pinned rather than hidden: fake-gcs-server does not implement object versioning
 (`not implemented: fs storage type does not support versioning yet`, and its memory backend accepts
-the setting while retaining nothing). So nothing here covers the durable-reflog half of the design,
-and `test_history_is_unavailable_without_versioning` records that — along with the garbage
-collection guard that exists because of it.
+the setting while retaining nothing), so nothing here covers the ref-state log, and
+`test_history_is_unavailable_without_versioning` fails the day the emulator catches up.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from concurrent import futures
 import pytest
 
 from themis import sheaf
-from themis.sheaf import gc
 from themis.sheaf.backends import gcs
 from themis.sheaf.tests import conftest
 from themis.sheaf.wire import server
@@ -37,9 +35,10 @@ def test_publish_and_read_back(gcs_backend: gcs.GcsBackend) -> None:
     store = sheaf.Store(gcs_backend, REPO)
     assert store.read().generation is None
     after = store.publish(
-        store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1'])),
     )
-    assert after.head(REF) == SHA_A
+    assert after.tip(REF) == SHA_A
     assert store.read().packs == after.packs
 
 
@@ -47,20 +46,25 @@ def test_a_stale_snapshot_loses(gcs_backend: gcs.GcsBackend) -> None:
     """GCS generations are opaque and non-sequential, so this is the case worth checking for real."""
     store = sheaf.Store(gcs_backend, REPO)
     stale = store.read()
-    store.publish(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    store.publish(stale, conftest.logged(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
     with pytest.raises(sheaf.RaceLost):
-        store.publish(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
+        store.publish(
+            stale, conftest.logged(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
+        )
 
 
 def test_generations_are_treated_as_opaque(gcs_backend: gcs.GcsBackend) -> None:
     """A real GCS generation is a microsecond timestamp, not a counter. Nothing may assume otherwise."""
     store = sheaf.Store(gcs_backend, REPO)
-    first = store.publish(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
-    second = store.publish(first, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, SHA_B)}))
+    first = store.publish(
+        store.read(), conftest.logged(store.read(), sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+    )
+    second = store.publish(
+        first, conftest.logged(first, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_A, SHA_B)}))
+    )
     assert second.generation != first.generation
     assert second.generation is not None
     assert second.generation > 1_000_000, 'a GCS generation is not a small dense integer'
-    assert second.doc.sequence == first.doc.sequence + 1, 'the ref document carries the counter that stays dense'
 
 
 def test_a_commit_published_straight_to_the_store(gcs_backend: gcs.GcsBackend, tmp_path: pathlib.Path) -> None:
@@ -93,9 +97,6 @@ def test_no_lost_updates_against_a_real_precondition(gcs_backend: gcs.GcsBackend
     assert len(lines) == len(expected), 'a line was dropped or duplicated'
     assert len(reader.history(REF)) == len(expected)
 
-    store = sheaf.Store(gcs_backend, REPO)
-    assert store.read().doc.sequence == len(expected), 'the sequence must stay dense'
-
 
 def test_history_is_unavailable_without_versioning(gcs_backend: gcs.GcsBackend) -> None:
     """fake-gcs-server does not implement object versioning, so the reflog cannot be covered here.
@@ -106,25 +107,12 @@ def test_history_is_unavailable_without_versioning(gcs_backend: gcs.GcsBackend) 
     snapshot = store.read()
     for sha in (SHA_A, SHA_B):
         snapshot = store.publish(
-            snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(snapshot.head(REF), sha)}, packs=[sha.encode()])
+            snapshot,
+            conftest.logged(
+                snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(snapshot.tip(REF), sha)}, packs=[sha.encode()])
+            ),
         )
     assert len(store.transitions()) == 1, 'if this ever fails, the emulator gained versioning — widen the tests'
-
-
-def test_gc_refuses_to_run_without_retained_history(gcs_backend: gcs.GcsBackend) -> None:
-    """Fail closed: unretained is not the same as unreachable, and only GC can destroy anything."""
-    store = sheaf.Store(gcs_backend, REPO)
-    snapshot = store.read()
-    for sha in (SHA_A, SHA_B):
-        snapshot = store.publish(
-            snapshot, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(snapshot.head(REF), sha)}, packs=[sha.encode()])
-        )
-
-    assert gc.retention_gap(store, store.read()) is not None
-    with pytest.raises(sheaf.RetentionUnavailable):
-        gc.find_orphans(store, grace=0)
-    # An operator who understands the tradeoff can still proceed.
-    assert gc.find_orphans(store, grace=0, require_retention=False).orphans == ()
 
 
 def test_clone_and_push_against_gcs(
@@ -140,7 +128,7 @@ def test_clone_and_push_against_gcs(
     writer.append_line(ref=REF, path=LOG, line='{"code":"PM2"}', author=REVIEWER, message='review PM2')
 
     git = ['git', '-c', 'user.email=agent@x', '-c', 'user.name=Agent', '-c', 'init.defaultBranch=main']
-    with server.SheafGitServer(gcs_backend, tmp_path / 'bare', repos={REPO}, author='agent@x') as instance:
+    with server.SheafGitServer(gcs_backend, tmp_path / 'bare', repos={REPO}) as instance:
         work = tmp_path / 'work'
         subprocess.run(
             [*git, 'clone', '-q', instance.url(REPO), str(work)], capture_output=True, check=True, timeout=180

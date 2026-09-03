@@ -60,11 +60,17 @@ def test_a_push_is_rejected_when_the_store_moved_after_the_sync(
     store = sheaf.Store(backend, REPO)
     mirror = bare.BareRepo(store, tmp_path / 'bare')
     synced = mirror.sync()
-    head = synced.head(REF)
+    head = synced.tip(REF)
 
-    # A concurrent write lands in the window between the advertisement and the swap.
-    _mark(curator, 'PP3')
+    # A concurrent write lands in the window between the advertisement and the swap. It moves a
+    # *different* ref: had it moved `REF`, the non-fast-forward check would refuse the push on its
+    # own and the generation check would go untested.
+    store.publish(
+        store.read(),
+        conftest.logged(store.read(), sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, head)})),
+    )
     assert store.read().generation != synced.generation
+    assert store.read().tip(REF) == head
 
     monkeypatch.setenv(hook.SYNC_STATE_ENV, str(mirror.sync_state_path))
     monkeypatch.setenv(hook.GIT_DIR_ENV, str(mirror.path))

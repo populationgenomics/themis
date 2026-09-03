@@ -36,38 +36,34 @@ def test_patterns_cross_directory_separators() -> None:
 
 
 def test_it_survives_the_trip_through_the_environment() -> None:
-    original = protect.Protection(paths=(ASSERTIONS, '.gitattributes'), refs=('refs/heads/*',))
+    original = protect.Protection(paths=(ASSERTIONS, '.gitattributes'))
     env = original.as_env()
     assert env[protect.PATHS_ENV] == f'{ASSERTIONS}:.gitattributes'
-    assert env[protect.REFS_ENV] == 'refs/heads/*'
     assert protect.Protection.from_env(env) == original
 
 
-@pytest.mark.parametrize(
-    'field',
-    ['paths', 'refs'],
-)
-def test_a_pattern_carrying_the_separator_is_refused(field: str) -> None:
+def test_a_pattern_carrying_the_separator_is_refused() -> None:
     """A colon is legal in a path, and the trip through the environment cannot survive one.
 
     `annotations/a:b.jsonl` would reach the hook as two patterns matching nothing, so the
     protection would be silently absent and a push fabricating the file accepted.
     """
     with pytest.raises(ValueError, match='may not contain'):
-        protect.Protection(**{field: (f'annotations/a{protect.SEPARATOR}b.jsonl',)})
+        protect.Protection(paths=(f'annotations/a{protect.SEPARATOR}b.jsonl',))
 
 
 @pytest.fixture
 def protected(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> Iterator[server.SheafGitServer]:
-    """A server that refuses writes to the assertions log and nothing else.
+    """A server that refuses writes to the assertions log.
 
-    No ref protection: rewriting history is a loss risk, and loss is not what this guards against.
+    History is append-only on every server, so the rewrite route to a protected file — drop the
+    commit that wrote it and force-push — is closed without configuration; only the path half is
+    opted into here.
     """
     instance = server.SheafGitServer(
         backend,
         tmp_path / 'bare',
         repos={REPO},
-        author='agent@example.org',
         protection=protect.Protection(paths=(ASSERTIONS,)),
     )
     with instance:
@@ -203,9 +199,7 @@ def test_a_quoted_path_cannot_dodge_a_glob(
     """
     _sign_off(curator, 'PM2')
     protection = protect.Protection(paths=('annotations/*',))
-    with server.SheafGitServer(
-        backend, tmp_path / 'bare', repos={REPO}, author='agent@example.org', protection=protection
-    ) as instance:
+    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}, protection=protection) as instance:
         work = _clone(instance, tmp_path, 'work')
         smuggled = 'annotations/naïve.jsonl'
         (work / smuggled).write_text('{"code": "PP3", "state": "reviewed", "by": "fabricated"}\n', 'utf-8')
@@ -246,9 +240,9 @@ def test_without_protection_the_same_push_is_accepted(
 ) -> None:
     """Policy lives in the wire layer and is opt-in; the store itself has no opinion."""
     _sign_off(curator, 'PM2')
-    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}, author='agent@example.org') as instance:
+    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}) as instance:
         work = _clone(instance, tmp_path, 'work')
         (work / ASSERTIONS).write_text('{"code": "PP3", "state": "reviewed"}\n', 'utf-8')
         conftest.run_git('commit', '-am', 'write the log', cwd=work)
         conftest.run_git('push', 'origin', 'main', cwd=work)
-    assert sheaf.Store(backend, REPO).read().head(REF) is not None
+    assert sheaf.Store(backend, REPO).read().tip(REF) is not None

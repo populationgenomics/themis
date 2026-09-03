@@ -29,7 +29,6 @@ class ObjectInfo:
 
     key: str
     size: int
-    created_at: float
 
 
 class Backend(abc.ABC):
@@ -80,13 +79,12 @@ class Backend(abc.ABC):
 
     @abc.abstractmethod
     def put_immutable(self, key: str, data: bytes) -> None:
-        """Write `data` at `key`, leaving an existing object untouched.
+        """Write `data` at `key` unless an object is already there, in which case do nothing.
 
-        Keys are content-addressed, so a concurrent write of the same key carries the same bytes
-        and there is nothing to overwrite. An implementation must not refresh the object either:
-        `list_immutable` reports a creation time, garbage collection prices its grace window on it,
-        and a backend that reset it on every re-put would give the two backends different sweep
-        behaviour on the one path that destroys data.
+        Keys are content-addressed, so an existing object carries these same bytes; skipping the
+        write is what makes a replayed compaction cheap, since it would otherwise re-upload a
+        repository-sized pack. Nothing is ever deleted from this namespace, so the object found is
+        the object that will be read.
         """
 
     @abc.abstractmethod
@@ -100,7 +98,3 @@ class Backend(abc.ABC):
     @abc.abstractmethod
     def list_immutable(self, prefix: str) -> Iterator[ObjectInfo]:
         """Enumerate immutable objects under `prefix`."""
-
-    @abc.abstractmethod
-    def delete_immutable(self, key: str) -> None:
-        """Remove an immutable object."""

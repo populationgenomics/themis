@@ -31,7 +31,7 @@ breaking:
   # they refuse every deletion rather than the unsafe ones. proto.md, "Retiring an RPC or a message",
   # names what carries the rpc side instead. Both are ignored under the service trees, where a
   # message is an rpc's request or reply and dies with it. The models trees keep MESSAGE_NO_DELETE:
-  # litcache is at-rest, and themis/workbench/models holds AnalysisInputs, which `analyses.inputs`
+  # litcache and sheaf are at-rest, and themis/workbench/models holds AnalysisInputs, which `analyses.inputs`
   # stores as bytes — a message deleted there is one no reader can parse back.
   # RPC_SAME_IDEMPOTENCY_LEVEL is ignored for the browser service alone: its only consumer is the
   # BFF's own generated client, shipped in the same deploy, so a level change reaches no caller that

@@ -1,7 +1,8 @@
-"""Paths the pushing side may not write, and refs it may not rewrite.
+"""What a push may not do: rewrite or delete history, touch sheaf's own refs, or write a protected path.
 
-A `Protection` is built from the process environment rather than from anything in the repository, so
-a push cannot relax the policy it is being checked against. Design: `docs/design/sheaf.md`.
+The first two hold for every repository and are not configurable. Protected paths are a `Protection`
+built from the process environment rather than from anything in the repository, so a push cannot
+relax the policy it is being checked against. Design: `docs/design/sheaf.md`.
 """
 
 from __future__ import annotations
@@ -11,19 +12,18 @@ import fnmatch
 import os
 
 from themis.sheaf import store as store_mod
-from themis.sheaf.wire import bare
+from themis.sheaf.wire import bare, reflog
 
 PATHS_ENV = 'SHEAF_PROTECTED_PATHS'
-REFS_ENV = 'SHEAF_PROTECTED_REFS'
 SEPARATOR = ':'
 
 
 @dataclasses.dataclass(frozen=True)
 class Protection:
-    """Which paths are off limits, and which refs may not be rewritten.
+    """Which paths are off limits to the pushing side.
 
     Patterns are `fnmatch` globs, so `*` crosses `/`: `annotations/*` covers everything beneath it.
-    Empty means no protection — policy is opt-in, and the storage layer stays free of it.
+    Empty means no protected paths — this half is opt-in, and the storage layer stays free of it.
 
     Raises:
         ValueError: If a pattern contains `SEPARATOR`. Colons are legal in POSIX paths, and the
@@ -33,10 +33,9 @@ class Protection:
     """
 
     paths: tuple[str, ...] = ()
-    refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        splittable = sorted(p for p in (*self.paths, *self.refs) if SEPARATOR in p)
+        splittable = sorted(p for p in self.paths if SEPARATOR in p)
         if splittable:
             raise ValueError(f'a protection pattern may not contain {SEPARATOR!r}: {splittable}')
 
@@ -48,23 +47,16 @@ class Protection:
             env: Mapping to read instead of `os.environ`.
         """
         env = dict(os.environ if env is None else env)
-        return cls(
-            paths=tuple(p for p in env.get(PATHS_ENV, '').split(SEPARATOR) if p),
-            refs=tuple(r for r in env.get(REFS_ENV, '').split(SEPARATOR) if r),
-        )
+        return cls(paths=tuple(p for p in env.get(PATHS_ENV, '').split(SEPARATOR) if p))
 
     def as_env(self) -> dict[str, str]:
         """Render for passing to the hook."""
-        return {PATHS_ENV: SEPARATOR.join(self.paths), REFS_ENV: SEPARATOR.join(self.refs)}
+        return {PATHS_ENV: SEPARATOR.join(self.paths)}
 
     @property
     def active(self) -> bool:
-        """Whether anything is protected at all."""
-        return bool(self.paths or self.refs)
-
-    def guards(self, ref: str) -> bool:
-        """Whether `ref` may not be rewritten."""
-        return any(fnmatch.fnmatch(ref, pattern) for pattern in self.refs)
+        """Whether any path is protected."""
+        return bool(self.paths)
 
     def forbids(self, path: str) -> bool:
         """Whether `path` is off limits."""
@@ -107,22 +99,21 @@ def new_commits(repo: bare.BareRepo, tip: str) -> list[str]:
 def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], protection: Protection) -> list[str]:
     """Return human-readable reasons the push must be refused, empty if it is allowed.
 
-    Two checks, and neither is sufficient alone: what each commit introduces at a protected path,
-    and fast-forward-only on a protected ref. Without the second, a protected file need never be
-    written at all — rebase the commit that added it away and force-push.
+    History first, for every ref: no deletion, no rewrite, and nothing under sheaf's own namespace.
+    These are what make the store append-only, and they are the hook's to enforce rather than
+    receive-pack's — `receive.denyNonFastForwards` and `receive.denyDeletes` are checked *after*
+    the pre-receive hook, and only for branches, so relying on them would publish the rewrite before
+    git refused it. Then protected paths: what each commit introduces at one, compared against every
+    parent so a merge taking the other side's edit verbatim passes.
 
     Raises:
         RuntimeError: If git cannot walk the pushed commits, in which case nothing is decided and
             the push must not be accepted.
     """
-    if not protection.active:
-        return []
-
     reasons = []
     for ref, update in sorted(updates.items()):
-        if protection.guards(ref):
-            reasons.extend(_ancestry_reasons(repo, ref, update))
-        if update.new is None:
+        reasons.extend(history_reasons(repo, ref, update))
+        if update.new is None or not protection.active:
             continue
         for commit in new_commits(repo, update.new):
             offending = sorted(p for p in introduced_paths(repo, commit) if protection.forbids(p))
@@ -131,10 +122,12 @@ def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], pro
     return reasons
 
 
-def _ancestry_reasons(repo: bare.BareRepo, ref: str, update: store_mod.RefUpdate) -> list[str]:
-    """Refuse deleting or rewriting a protected ref."""
+def history_reasons(repo: bare.BareRepo, ref: str, update: store_mod.RefUpdate) -> list[str]:
+    """Refuse deleting or rewriting any ref, and any write under sheaf's own namespace."""
+    if ref.startswith(reflog.NAMESPACE):
+        return [f'{ref} is written by sheaf, not by a push']
     if update.new is None:
-        return [f'{ref} is protected and may not be deleted']
+        return [f'{ref} may not be deleted: history here is append-only']
     if update.old is None:
         return []
     try:
@@ -143,5 +136,5 @@ def _ancestry_reasons(repo: bare.BareRepo, ref: str, update: store_mod.RefUpdate
         # `--is-ancestor` exits 1 for "not an ancestor" and 128 for an unreadable object, and both
         # arrive as one RuntimeError -- so git's own message is carried through rather than
         # reporting an unreadable repository as a rewrite.
-        return [f'{ref} is protected and may only fast-forward (rewriting it would drop commits): {exc}']
+        return [f'{ref} may only fast-forward (rewriting it would drop commits): {exc}']
     return []

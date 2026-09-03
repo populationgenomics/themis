@@ -52,23 +52,37 @@ class InvalidRefName(SheafError):
     """
 
 
-class RetentionUnavailable(SheafError):
-    """The backend is not retaining prior generations of the ref document.
+class RefDeletionRefused(SheafError):
+    """A publish tried to delete a ref. History in a sheaf repository is append-only."""
 
-    Raised by garbage collection, which needs that history to know which packs a historical ref
-    state still needs; unretained is not the same as unreachable.
+    def __init__(self, ref: str) -> None:
+        super().__init__(f'{ref} may not be deleted: history here is append-only')
+        self.ref = ref
+
+
+class ReflogRequired(SheafError):
+    """A publish moved a ref without advancing the reflog ref alongside it.
+
+    The reflog is what says which commit was current when; a publish that forgets it leaves a gap
+    nobody notices until the log is read, so the store refuses rather than trusting every writer to
+    remember.
     """
+
+    def __init__(self, refs: list[str]) -> None:
+        super().__init__(f'a publish moving {", ".join(refs)} must also advance the reflog ref')
+        self.refs = refs
 
 
 class RetriesExhausted(SheafError):
     """A transaction lost the race more times than the retry budget allows."""
 
 
-class UnsupportedFormat(SheafError, ValueError):
-    """A ref document was written by a format version this code does not implement.
+class CorruptRepository(SheafError):
+    """The stored state cannot be served, and retrying cannot help.
 
-    Distinct from a corrupt document, which stays an ordinary parse error, so a reader that can
-    survive a gap in the history can tell "too new to parse" from "damaged" and skip only the first.
-    Nothing skips either today: garbage collection reads the whole history and needs all of it. Also
-    a `ValueError`, so a caller that knows only the standard hierarchy still catches it.
+    Either the ref document is not one this code wrote — no HEAD, a target naming neither arm, a ref
+    that is symbolic — or it names a pack that does not exist. The second is distinct from losing a
+    race with a compaction, which looks the same to a fetch and is benign: a reader that meets a
+    missing pack re-reads the document, and only an *unmoved* document makes the absence a fact about
+    the store rather than about timing.
     """

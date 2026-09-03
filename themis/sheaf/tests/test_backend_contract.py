@@ -11,7 +11,6 @@ local backend, and `test_gcs.py` pins that gap rather than letting a green suite
 
 from __future__ import annotations
 
-import time
 from concurrent import futures
 
 import pytest
@@ -73,43 +72,22 @@ def _try_write(any_backend: sheaf.Backend, base: sheaf.Generation, index: int) -
     return index
 
 
-def test_immutable_put_is_idempotent(any_backend: sheaf.Backend) -> None:
-    any_backend.put_immutable('p/one.pack', b'bytes')
-    any_backend.put_immutable('p/one.pack', b'bytes')
-    assert any_backend.get_immutable('p/one.pack') == b'bytes'
-    assert [info.key for info in any_backend.list_immutable('p/')] == ['p/one.pack']
-    any_backend.delete_immutable('p/one.pack')
-    assert list(any_backend.list_immutable('p/')) == []
+def test_immutable_put_is_create_if_absent(any_backend: sheaf.Backend) -> None:
+    """A second put of the same key is a no-op, and the listing reports the object once with its size.
 
-
-def test_a_listing_reports_a_real_size_and_creation_time(any_backend: sheaf.Backend) -> None:
-    """Garbage collection prices its grace window on `created_at`, and its report on `size`.
-
-    A backend defaulting `created_at` makes a pack uploaded seconds ago read as 1970, which is past
-    every grace window — so the sweep deletes the one thing grace exists to protect, an object an
-    in-flight publish is about to name. Pinning the keys alone leaves that free to regress.
+    Keys are content-addressed, so the second put carries the same bytes by construction; the test
+    sends different ones to show the first write is the one that stands — which is what makes a
+    replayed compaction cheap rather than a repository-sized re-upload.
     """
     any_backend.put_immutable('p/one.pack', b'0123456789')
+    any_backend.put_immutable('p/one.pack', b'not the same bytes')
 
+    assert any_backend.get_immutable('p/one.pack') == b'0123456789'
     (info,) = list(any_backend.list_immutable('p/'))
-
+    assert info.key == 'p/one.pack'
     assert info.size == 10
-    # Generously wide so a container clock offset cannot fail it; 1970 still cannot pass.
-    assert time.time() - info.created_at < 3600
 
 
-def test_re_putting_an_object_does_not_refresh_its_age(any_backend: sheaf.Backend) -> None:
-    """The grace window is measured from the creation time, so a re-put must not reset it.
-
-    Keys are content-addressed, so a publish replaying work already stored writes the same bytes to
-    the same key. If that renewed the age, a pack orphaned long enough to lose grace would regain it
-    by being named again — and the two backends would sweep differently, since one issues a
-    conditional create and the other writes unconditionally.
-    """
-    any_backend.put_immutable('p/one.pack', b'0123456789')
-    ((before),) = list(any_backend.list_immutable('p/'))
-
-    any_backend.put_immutable('p/one.pack', b'0123456789')
-
-    ((after),) = list(any_backend.list_immutable('p/'))
-    assert after.created_at == before.created_at
+def test_a_backend_has_no_way_to_delete_an_immutable_object() -> None:
+    """Nothing in a sheaf store is ever removed, and the seam says so by having no verb for it."""
+    assert not any(name.startswith('delete') for name in dir(sheaf.Backend))
