@@ -22,6 +22,7 @@ cannot read one tree and write another.
 
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
@@ -42,6 +43,11 @@ PAPERS_PREFIX = f'{writer.PAPERS_DIR}/'
 
 # Requests per resolver call; each chunk's records are written before the next resolves.
 DEFAULT_CHUNK_SIZE = 1000
+
+# Due manifests fetched per batch, over `_DOWNLOAD_WORKERS` threads; a batch is held in memory
+# before any of it is prepared.
+DEFAULT_DOWNLOAD_WINDOW = 1000
+_DOWNLOAD_WORKERS = 10  # requests' default connection pool; a thread beyond it re-handshakes per download and warns
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,28 +115,33 @@ def _prepare(doc_id: str, data: bytes) -> resolve.ResolveRequest | Failure:
     return resolve.ResolveRequest(claim_key=doc_id, pmid=pmid, doi=doi)
 
 
-def plan(bucket: gcs.Bucket, *, limit: int | None = None) -> Plan:
+def plan(bucket: gcs.Bucket, *, limit: int | None = None, download_window: int = DEFAULT_DOWNLOAD_WINDOW) -> Plan:
     """Find the committed papers with no `metadata.pb` and prepare their requests.
 
     One listing of `papers/` decides presence for every paper — no per-paper probe —
-    and only the due manifests are downloaded.
+    and only the due manifests are downloaded, concurrently, a window at a time in
+    `doc_id` order.
 
     Args:
         bucket: The cache bucket.
         limit: Cap the requests at the first `limit` due papers in `doc_id` order that
             yield one; a paper that fails preparation is reported and does not consume
             the cap. `None` takes them all.
+        download_window: Manifests downloaded per batch (the concurrency is fixed). A
+            limited run never downloads past the papers it still needs.
 
     Returns:
         The `Plan`.
 
     Raises:
-        ValueError: If `limit` is not positive.
+        ValueError: If `limit` or `download_window` is not positive.
         google.api_core.exceptions.NotFound: If a due manifest vanishes between the
             listing and its download.
     """
     if limit is not None and limit <= 0:
         raise ValueError(f'limit must be positive, got {limit}')
+    if download_window <= 0:
+        raise ValueError(f'download_window must be positive, got {download_window}')
     with_manifest: set[str] = set()
     with_metadata: set[str] = set()
     for blob in bucket.list_blobs(prefix=PAPERS_PREFIX):
@@ -143,17 +154,31 @@ def plan(bucket: gcs.Bucket, *, limit: int | None = None) -> Plan:
         elif name == writer.METADATA_NAME:
             with_metadata.add(doc_id)
 
+    candidates = sorted(with_manifest - with_metadata)
     due: list[resolve.ResolveRequest] = []
     failures: list[Failure] = []
-    for doc_id in sorted(with_manifest - with_metadata):
-        if limit is not None and len(due) == limit:
-            break
-        prepared = _prepare(doc_id, bucket.blob(writer.manifest_path(doc_id)).download_as_bytes())
-        if isinstance(prepared, Failure):
-            failures.append(prepared)
-        else:
-            due.append(prepared)
+    start = 0
+    while start < len(candidates) and (limit is None or len(due) < limit):
+        take = download_window if limit is None else min(download_window, limit - len(due))
+        window = candidates[start : start + take]
+        for doc_id, data in zip(window, _download_manifests(bucket, window), strict=True):
+            prepared = _prepare(doc_id, data)
+            if isinstance(prepared, Failure):
+                failures.append(prepared)
+            else:
+                due.append(prepared)
+        start += len(window)
     return Plan(manifests=len(with_manifest), due=due, failures=failures)
+
+
+def _download_manifests(bucket: gcs.Bucket, doc_ids: Sequence[str]) -> list[bytes]:
+    """The manifest bytes at each `doc_id`'s directory, in `doc_ids` order, downloaded concurrently."""
+
+    def download(doc_id: str) -> bytes:
+        return bucket.blob(writer.manifest_path(doc_id)).download_as_bytes()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_DOWNLOAD_WORKERS) as pool:
+        return list(pool.map(download, doc_ids))
 
 
 def _chunks(items: Sequence[resolve.ResolveRequest], size: int) -> Iterator[Sequence[resolve.ResolveRequest]]:

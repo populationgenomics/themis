@@ -19,6 +19,8 @@ from themis.litcache.models import litcache_pb2
 _A = '1a000000-0000-4000-8000-000000000001'
 _B = '2b000000-0000-4000-8000-000000000002'
 _C = '3c000000-0000-4000-8000-000000000003'
+_D = '4d000000-0000-4000-8000-000000000004'
+_E = '5e000000-0000-4000-8000-000000000005'
 
 
 def _metadata(pmid: str) -> bytes:
@@ -149,6 +151,43 @@ def test_plan_limit_is_not_consumed_by_a_paper_that_cannot_be_prepared(gcs_bucke
 
     assert [r.claim_key for r in found.due] == [_B]
     assert [f.doc_id for f in found.failures] == [_A]
+
+
+def test_plan_reads_every_window_and_tops_a_limited_run_up_across_them(gcs_bucket: gcs.Bucket) -> None:
+    # Five candidates over a two-manifest window; the failure sorts first and consumes no cap.
+    gcs_bucket.blob(writer.manifest_path(_A)).upload_from_string(b'\xff\xff not a manifest')
+    for doc_id in (_B, _C, _D, _E):
+        _commit(gcs_bucket, doc_id, pmid=doc_id[0], metadata=None)
+
+    found = refresh.plan(gcs_bucket, download_window=2)
+    limited = refresh.plan(gcs_bucket, limit=3, download_window=2)
+
+    assert [r.claim_key for r in found.due] == [_B, _C, _D, _E]
+    assert [f.doc_id for f in found.failures] == [_A]
+    assert [r.claim_key for r in limited.due] == [_B, _C, _D]
+    assert [f.doc_id for f in limited.failures] == [_A]
+
+
+def test_plan_limit_stops_a_window_short_so_a_paper_past_the_cap_is_never_read(gcs_bucket: gcs.Bucket) -> None:
+    # _D is unreadable and sorts right after the cap is met: a full plan reports it, a limited one must not
+    # reach it — a failure past the cap would flip the exit code for a paper the run never asked for.
+    for doc_id in (_A, _D):
+        gcs_bucket.blob(writer.manifest_path(doc_id)).upload_from_string(b'\xff\xff not a manifest')
+    for doc_id in (_B, _C, _E):
+        _commit(gcs_bucket, doc_id, pmid=doc_id[0], metadata=None)
+
+    limited = refresh.plan(gcs_bucket, limit=2, download_window=2)
+    found = refresh.plan(gcs_bucket, download_window=2)
+
+    assert [r.claim_key for r in limited.due] == [_B, _C]
+    assert [f.doc_id for f in limited.failures] == [_A]
+    assert [r.claim_key for r in found.due] == [_B, _C, _E]
+    assert [f.doc_id for f in found.failures] == [_A, _D]
+
+
+def test_plan_rejects_a_non_positive_download_window(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(ValueError, match='positive'):
+        refresh.plan(gcs_bucket, download_window=0)
 
 
 def test_plan_rejects_a_non_positive_limit(gcs_bucket: gcs.Bucket) -> None:
