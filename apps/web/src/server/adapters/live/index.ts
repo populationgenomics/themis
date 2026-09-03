@@ -13,18 +13,14 @@ import {
 } from "@/models/workbench";
 import { ResourceNotFoundError } from "../../errors";
 import { kickoffText } from "../../kickoff";
+import { loadSqlConfig } from "../../pg";
 import type {
   AnalysisDataPlane,
   CreateAnalysisInput,
   ProjectMembership,
 } from "../../ports";
 import { AnthropicClient } from "./client";
-import {
-  loadAnthropicConfig,
-  loadGcsConfig,
-  loadKmsConfig,
-  loadSqlConfig,
-} from "./config";
+import { loadAnthropicConfig, loadGcsConfig, loadKmsConfig } from "./config";
 import { hashBearer, KmsSessionTokenDeriver } from "./derive";
 import { Gcs } from "./gcs";
 import { Membership } from "./membership";

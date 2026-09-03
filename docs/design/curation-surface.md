@@ -137,10 +137,12 @@ clean seams instead: a module whose boundaries are explicit can be evolved, abso
 one whose boundaries are implicit can only be negotiated with.
 
 It uses the repository's ordinary machinery and lives in directories of its own inside each: the pages and route
-handlers under `apps/web/src/app/curation/` and `apps/web/src/app/api/curation/`, the module under
-`apps/web/src/curation/`, the contract in [`curation.proto`](../../schema/proto/themis/curation/models/curation.proto),
-the schema in [`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql). A pipeline of its own would buy
-separation the seams already give, and forfeit the repository's checks to get it.
+handlers under [`apps/web/src/app/curation/`](../../apps/web/src/app/curation) and
+[`apps/web/src/app/api/curation/`](../../apps/web/src/app/api/curation), the module under
+[`apps/web/src/curation/`](../../apps/web/src/curation), the contract in
+[`curation.proto`](../../schema/proto/themis/curation/models/curation.proto), the schema in
+[`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql). A pipeline of its own would buy separation the
+seams already give, and forfeit the repository's checks to get it.
 
 The rule for what the module may depend on: infrastructure, yes — the IAP verifier, say; the workbench's domain, no —
 never its `AuthorizedBackend`. Infrastructure is shared by everything and outlives any one caller; a domain coupling has

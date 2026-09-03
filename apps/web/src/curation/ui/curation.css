@@ -1,0 +1,51 @@
+/*
+ * Tokens local to the curation surface. Everything else comes from the app's own palette
+ * (globals.css) — this adds only what the worksheet needs and the workbench has no use for.
+ *
+ * The one idea here: the framework's words and the curator's words are set in different faces.
+ * Transcribed SVCv4 wording stays in the app's grotesque; what the curator writes is serif at
+ * reading size. A curator can tell at a glance which text is theirs, and the framework's half reads
+ * as inert reference rather than as a prompt — the anti-anchoring property the reference depends on.
+ */
+
+@theme static {
+  /* The curator's own voice. Loaded by app/curation/layout.tsx. */
+  --font-curator: var(--font-curator-serif), ui-serif, Georgia, serif;
+
+  /* An answered workflow, a workflow deliberately left unscored, and one not yet reached. Three
+     marks rather than a progress bar: a bar pressures toward completion, and "no data" is an
+     answer. */
+  --color-curation-recorded: #4f8a5b;
+  --color-curation-declined: #8c8881;
+  --color-curation-untouched: #d8d2c8;
+}
+
+/* Framework prose, verbatim from the calculator: notes, applicability conditions, option labels.
+   Tight and quiet — reference text, not an invitation. */
+.framework-voice {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01";
+  letter-spacing: -0.006em;
+}
+
+/* The curator's writing. Wider measure, generous leading, serif. */
+.curator-voice {
+  font-family: var(--font-curator);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+}
+
+.curator-voice::placeholder {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
+/* Section eyebrows over each capture field. */
+.field-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}

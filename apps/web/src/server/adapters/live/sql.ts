@@ -1,12 +1,6 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import {
-  AuthTypes,
-  Connector,
-  IpAddressTypes,
-} from "@google-cloud/cloud-sql-connector";
-import { Pool } from "pg";
-import {
   type Analysis,
   type AnalysisInputs,
   AnalysisInputsSchema,
@@ -17,11 +11,10 @@ import {
   ResourceNotFoundError,
   UndecodableAnalysisError,
 } from "../../errors";
-import type { SqlConfig } from "./config";
+import { getPool, type SqlConfig } from "../../pg";
 
-// Cloud SQL (Postgres) persistence for the analysis-session lifecycle. Connects
-// through the Cloud SQL Node connector with IAM database auth (no password — the
-// connector supplies the IAM credential) over a lazily-built pool.
+// Cloud SQL (Postgres) persistence for the analysis-session lifecycle, over the shared
+// process-wide pool (`server/pg.ts`).
 //
 // The create write is one transaction over two rows: the `analyses` row and the
 // `session_context` row `(token_hash, project_id, analysis_id)` the store resolves
@@ -50,40 +43,10 @@ export interface InsertAnalysisInput {
 }
 
 export class Sql {
-  private poolPromise?: Promise<Pool>;
-  private connector?: Connector;
-
   constructor(private readonly config: SqlConfig) {}
 
-  private async pool(): Promise<Pool> {
-    if (!this.poolPromise) {
-      this.poolPromise = this.buildPool();
-    }
-    return this.poolPromise;
-  }
-
-  private async buildPool(): Promise<Pool> {
-    this.connector = new Connector();
-    const options = await this.connector.getOptions({
-      instanceConnectionName: this.config.connectionName,
-      authType: AuthTypes.IAM,
-      ipType: IpAddressTypes.PUBLIC,
-    });
-    return new Pool({
-      ...options,
-      user: this.config.dbUser,
-      database: this.config.database,
-      max: 5,
-    });
-  }
-
-  /** Close the pool and connector for a clean process shutdown. */
-  async close(): Promise<void> {
-    if (this.poolPromise) {
-      const pool = await this.poolPromise;
-      await pool.end();
-    }
-    this.connector?.close();
+  private async pool() {
+    return getPool(this.config);
   }
 
   private async query<R>(text: string, values: unknown[] = []): Promise<R[]> {

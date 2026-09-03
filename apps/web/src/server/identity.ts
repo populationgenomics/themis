@@ -1,12 +1,16 @@
-import { selectedBackend } from "./adapters";
 import * as fixture from "./adapters/fixture";
 import * as live from "./adapters/live";
+import { selectedBackend } from "./backend";
 
 // Request identity — the seam the routes resolve the caller through. Two
 // implementations selected by `THEMIS_BACKEND`: the fixture dev identity
 // (adapters/fixture/identity.ts; no IAP offline, every request the seed dev user),
 // and the live IAP-JWT verifier (adapters/live/identity.ts), which fails closed on
 // any request it cannot verify.
+
+/** The email every request is attributed to under the fixture backend. Re-exported here so a
+ *  caller needing the offline identity does not reach into the adapter that implements it. */
+export { DEV_USER_EMAIL } from "./adapters/fixture/identity";
 
 type EnvLike = Record<string, string | undefined>;
 

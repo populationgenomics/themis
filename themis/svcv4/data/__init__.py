@@ -79,8 +79,10 @@ def _assemble() -> reference.Reference:
             affected_monoallelic=clinical.CLN_AFF.monoallelic,
             affected_biallelic=clinical.CLN_AFF.biallelic,
             de_novo=clinical.CLN_DNV.table3,
+            case_control=clinical.CLN_CCS.per_determination.rows,
             diagnostic_yield=locus.LOC_PHE.diagnostic_yield_bins,
             cosegregation=locus.LOC_SEG.per_cosegregation.rows,
+            non_segregation=locus.LOC_SEG.non_segregation.per_observation.rows,
         ),
     )
 

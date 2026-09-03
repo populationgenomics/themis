@@ -21,6 +21,18 @@ def addressed_grids(ref: reference.Reference) -> tuple[tuple[str, reference.Obse
     )
 
 
+def addressed_row_tables(ref: reference.Reference) -> tuple[tuple[str, tuple[reference.ObservationRow, ...]], ...]:
+    """Each per-observation table the framework states as a flat list of rows, under its id prefix."""
+    tables = ref.per_observation
+    return (
+        ('POP_HMZ.', (tables.homozygous.dominant, tables.homozygous.other)),
+        ('CLN_CCS.', tables.case_control),
+        ('LOC_PHE.yield.', tables.diagnostic_yield),
+        ('LOC_SEG.', tables.cosegregation),
+        ('LOC_SEG.non_segregation.', tables.non_segregation),
+    )
+
+
 def addresses(cells: Iterable[str], prefix: str, row: str) -> bool:
     """Whether any cell id addresses this row of the grid under `prefix`.
 
@@ -32,17 +44,38 @@ def addresses(cells: Iterable[str], prefix: str, row: str) -> bool:
     return any(cell_id.startswith(addressed) and cell_id[len(addressed) :][:1] in ('', '.', '_') for cell_id in cells)
 
 
-def test_every_row_of_every_per_observation_table_is_priced(ref: reference.Reference) -> None:
-    """A row the reference prices that no cell id addresses is an observation nothing can record.
+def test_every_row_of_every_per_observation_table_is_priced_or_reported_unvalued(ref: reference.Reference) -> None:
+    """A row of the reference that no cell id addresses is an observation nothing can record.
 
-    Both kinds of row: the ones priced per column, and the ones a table prices once for the whole
-    row. Non-empty on both sides rules out a vacuous pass.
+    Every kind of row: the ones priced per column, the ones a table prices once for the whole row,
+    and the flat tables. A row the framework declines to value is addressed too, by `unvalued_cells`
+    — the determination is recordable and only its number is missing, so dropping it would take the
+    determination away rather than leave it unscored. Non-empty on both sides rules out a vacuous
+    pass.
     """
-    cells = observations.cell_points(ref)
+    addressed = observations.cell_points(ref).keys() | observations.unvalued_cells(ref)
     rows = [(prefix, row.cell) for prefix, grid in addressed_grids(ref) for row in (*grid.rows, *grid.collapsed_rows)]
-    assert cells
+    rows += [(prefix, row.cell) for prefix, table in addressed_row_tables(ref) for row in table]
+    assert addressed
     assert rows
-    assert [(prefix, row) for prefix, row in rows if not addresses(cells, prefix, row)] == []
+    assert [(prefix, row) for prefix, row in rows if not addresses(addressed, prefix, row)] == []
+
+
+def test_a_row_the_framework_declines_to_value_is_reported_rather_than_priced(ref: reference.Reference) -> None:
+    # SM4 Figure 1 routes an odds ratio near or below 1.0 to a statistician. Pricing it at zero would
+    # read as a determination worth nothing rather than one the framework gives no number for.
+    assert 'CLN_CCS.or_near_or_below_1' in observations.unvalued_cells(ref)
+    assert 'CLN_CCS.or_near_or_below_1' not in observations.cell_points(ref)
+    with pytest.raises(observations.UnknownCellError):
+        observations.points_for(ref, 'CLN_CCS.or_near_or_below_1')
+
+
+def test_the_independent_families_draw_the_path_code_split(ref: reference.Reference) -> None:
+    # The split decides which codes this module may price at all, and it is the reference's own.
+    assert observations.is_path_code(ref, 'MIS_PRD')
+    assert not observations.is_path_code(ref, 'CLN_AFF')
+    assert not observations.is_path_code(ref, 'LOC_SEG')
+    assert [cell_id for cell_id in observations.cell_points(ref) if observations.is_path_code(ref, cell_id)] == []
 
 
 def test_values_come_from_the_reference_tables(ref: reference.Reference) -> None:

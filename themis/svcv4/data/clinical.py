@@ -1,9 +1,10 @@
 """SM4's clinical observations: the case-control trigger, and the tables priced per individual.
 
-Every table here prices one observed individual, and a code's contribution is that value times how
-many individuals fall in the row — which is what `observations` addresses by cell id and sums. Each
-row keeps the name SM4's transcription gives it beside the fragment the cell id is built from, so a
-row can be matched to the supplement without going through the fragment.
+The tables here price one observed individual, and a code's contribution is that value times how many
+individuals fall in the row — which is what `observations` addresses by cell id and sums. CLN_CCS is
+the exception: a case-control study is one determination about a whole cohort, so its rows are read
+once. Each row keeps the name SM4's transcription gives it beside the fragment the cell id is built
+from, so a row can be matched to the supplement without going through the fragment.
 
 The precondition SM4 states over these tables is scored, not documentation: `CLN_AFF` is withdrawn
 rather than reduced where POP_FRQ took any other value.
@@ -24,6 +25,26 @@ PRECONDITION = reference.PopFrqPrecondition(
 
 
 @dataclasses.dataclass(frozen=True)
+class CaseControlDeterminations:
+    """SM4 Figure 1's three case-control determinations: what each of them is worth.
+
+    Attributes:
+        provenance: The figure the rows were read from, and what its unvalued row rests on.
+        rows: One row per determination the figure routes an odds ratio to.
+    """
+
+    provenance: str
+    rows: tuple[reference.ObservationRow, ...]
+
+
+_DETERMINATION_PROVENANCE = (
+    'SM4 Figure 1, which exists in the supplement only as an image. It routes an odds ratio near or below 1.0 to a '
+    'statistician rather than to a number, so that row is the framework declining to value it rather than a cell '
+    'nobody mapped; the reading is argued in docs/design/curation-surface.md.'
+)
+
+
+@dataclasses.dataclass(frozen=True)
 class CaseControlStudy:
     """CLN_CCS: a case-control odds ratio, and what it does to the other clinical codes.
 
@@ -31,17 +52,33 @@ class CaseControlStudy:
         trigger: The odds ratio that earns the award, and what it earns.
         requires: The study size and quality the award needs.
         effect_when_applied: Which other codes the award withdraws.
+        per_determination: What each determination the figure states is worth.
     """
 
     trigger: str
     requires: tuple[str, ...]
     effect_when_applied: str
+    per_determination: CaseControlDeterminations
 
 
 CLN_CCS = CaseControlStudy(
     trigger='OR > 5.0 -> +4.0',
     requires=('>= 5 case observations', '>= 100 unrelated cases', 'matched controls', 'CI excludes 1.0'),
     effect_when_applied='all other CLN codes = NA except CLN_DNV',
+    per_determination=CaseControlDeterminations(
+        provenance=_DETERMINATION_PROVENANCE,
+        rows=(
+            reference.ObservationRow(
+                cell='or_above_5', description='calculated OR above 5.0', points=decimal.Decimal('4.0')
+            ),
+            reference.ObservationRow(
+                cell='ci_includes_1',
+                description='confidence interval includes 1.0',
+                points=decimal.Decimal('0.0'),
+            ),
+            reference.ObservationRow(cell='or_near_or_below_1', description='OR near to or below 1.0', points=None),
+        ),
+    ),
 )
 
 _MONOALLELIC = reference.ObservationGrid(

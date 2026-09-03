@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { AnalysisSchema, ProjectSchema } from "@/models/workbench";
-import { projectRows } from "./page";
+import { projectRows } from "./projects-panel";
 
 // What each Project card is built from. The failure these guard against is silent: a Project that
 // holds Analyses rendering as though it held none.

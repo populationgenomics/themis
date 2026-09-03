@@ -17,15 +17,6 @@ export interface AnthropicConfig {
   environmentId: string;
 }
 
-/** Cloud SQL connector inputs: the instance the connector dials, the database,
- *  and the IAM DB-user login to authenticate as (no password — the connector
- *  supplies the IAM credential). */
-export interface SqlConfig {
-  connectionName: string;
-  database: string;
-  dbUser: string;
-}
-
 /** The Cloud KMS MAC key version the bearer is derived through. Pinned to a
  *  single `.../cryptoKeyVersions/<n>`: a different version derives different
  *  bearers and would strand every live session. */
@@ -71,17 +62,6 @@ export function loadIapConfig(env: EnvLike = process.env): IapConfig {
   return {
     projectNumber: required(env, "THEMIS_PROJECT_NUMBER"),
     backendServiceId: required(env, "THEMIS_IAP_BACKEND_SERVICE_ID"),
-  };
-}
-
-/** Read + validate the Cloud SQL connection inputs. Membership authorization
- *  queries SQL on every request, independent of the Anthropic/KMS/GCS wiring
- *  a data-plane method touches. */
-export function loadSqlConfig(env: EnvLike = process.env): SqlConfig {
-  return {
-    connectionName: required(env, "THEMIS_SQL_CONNECTION_NAME"),
-    database: required(env, "THEMIS_SQL_DATABASE"),
-    dbUser: required(env, "THEMIS_DB_USER"),
   };
 }
 

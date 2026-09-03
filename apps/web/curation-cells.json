@@ -1,0 +1,2269 @@
+{
+  "workflows_version": "svcv4-pilot-2026-07.5",
+  "cells": [
+    {
+      "workflow": "pop_frq",
+      "code": "POP_FRQ",
+      "cell": "POP_FRQ.bin.lt_1_5x",
+      "label": "Frequency of VBC <(1.5x of DAFT)",
+      "min_multiple": 0,
+      "bars_rarity_gated_codes": false
+    },
+    {
+      "workflow": "pop_frq",
+      "code": "POP_FRQ",
+      "cell": "POP_FRQ.bin.1_5x_to_5x",
+      "label": "Frequency of VBC >=( 1.5x of DAFT ) - <(5x of DAFT )",
+      "min_multiple": 1.5,
+      "bars_rarity_gated_codes": false
+    },
+    {
+      "workflow": "pop_frq",
+      "code": "POP_FRQ",
+      "cell": "POP_FRQ.bin.5x_to_15x",
+      "label": "Frequency of VBC >=(5x of DAFT - <(15x of DAFT)",
+      "min_multiple": 5,
+      "bars_rarity_gated_codes": true
+    },
+    {
+      "workflow": "pop_frq",
+      "code": "POP_FRQ",
+      "cell": "POP_FRQ.bin.ge_15x",
+      "label": "Frequency of VBC >=(15x of DAFT)",
+      "min_multiple": 15,
+      "bars_rarity_gated_codes": true
+    },
+    {
+      "workflow": "pop_hmz_ad",
+      "code": "POP_HMZ",
+      "cell": "POP_HMZ.ad.homozygous",
+      "label": "Homozygous individual — Autosomal Dominant"
+    },
+    {
+      "workflow": "pop_hmz_arxl",
+      "code": "POP_HMZ",
+      "cell": "POP_HMZ.arxl.homozygous_or_hemizygous",
+      "label": "Homozygous or hemizygous individual — Autosomal Recessive or X-linked"
+    },
+    {
+      "workflow": "cln_uaf_ad",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.ad.near_100",
+      "label": "Age-matched penetrance of MDE is near 100%"
+    },
+    {
+      "workflow": "cln_uaf_ad",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.ad.80_100",
+      "label": "Age-matched penetrance of MDE is 80 - 100%"
+    },
+    {
+      "workflow": "cln_uaf_ad",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.ad.lt_80",
+      "label": "Age-matched penetrance of MDE is less than 80%"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.near_100.hom_hemi",
+      "label": "Age-matched penetrance of MDE is near 100% — VBC is homozygous or hemizygous"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.near_100.trans_p",
+      "label": "Age-matched penetrance of MDE is near 100% — VBC is confirmed in trans with a P variant"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.near_100.trans_lp",
+      "label": "Age-matched penetrance of MDE is near 100% — VBC is confirmed in trans with an LP variant"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.80_100.hom_hemi",
+      "label": "Age-matched penetrance of MDE is 80 - 100% — VBC is homozygous or hemizygous"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.80_100.trans_p",
+      "label": "Age-matched penetrance of MDE is 80 - 100% — VBC is confirmed in trans with a P variant"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.80_100.trans_lp",
+      "label": "Age-matched penetrance of MDE is 80 - 100% — VBC is confirmed in trans with an LP variant"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.lt_80.hom_hemi",
+      "label": "Age-matched penetrance of MDE is less than 80% — VBC is homozygous or hemizygous"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.lt_80.trans_p",
+      "label": "Age-matched penetrance of MDE is less than 80% — VBC is confirmed in trans with a P variant"
+    },
+    {
+      "workflow": "cln_uaf_arxl",
+      "code": "CLN_UAF",
+      "cell": "CLN_UAF.arxl.lt_80.trans_lp",
+      "label": "Age-matched penetrance of MDE is less than 80% — VBC is confirmed in trans with an LP variant"
+    },
+    {
+      "workflow": "cln_alt_variant",
+      "code": "CLN_ALT",
+      "cell": "CLN_ALT.variant.more_severe",
+      "label": "Phenotype is more severe than expected for the MDE OR Is the same severity as expected for >1 allele contributing to the presentation (i.e., both alleles contributing to phenotype)"
+    },
+    {
+      "workflow": "cln_alt_variant",
+      "code": "CLN_ALT",
+      "cell": "CLN_ALT.variant.not_more_severe",
+      "label": "Phenotype is NOT more severe than expected for the MDE (i.e., only one allele contributing to phenotype)"
+    },
+    {
+      "workflow": "cln_alt_variant",
+      "code": "CLN_ALT",
+      "cell": "CLN_ALT.variant.not_consistent_recessive",
+      "label": "Phenotype is NOT consistent with that expected for established recessive disease entity, with age-matched penetrance >80%"
+    },
+    {
+      "workflow": "cln_alt_gene",
+      "code": "CLN_ALT",
+      "cell": "CLN_ALT.gene.more_severe",
+      "label": "Phenotype is more severe than expected for the MDE OR Is the same severity as expected for >1 allele contributing to the presentation (i.e., both alleles contributing to phenotype)"
+    },
+    {
+      "workflow": "cln_alt_gene",
+      "code": "CLN_ALT",
+      "cell": "CLN_ALT.gene.not_more_severe",
+      "label": "Phenotype is NOT more severe than expected for the MDE (i.e., only one allele contributing to phenotype)"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.specific_full",
+      "label": "Phenotype is SPECIFIC for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.specific_partial",
+      "label": "Phenotype is SPECIFIC for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.specific_other_variant",
+      "label": "Phenotype is SPECIFIC for MDE AND Additional variant of interest - LP/P variant in trans in same gene OR LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT)"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.consistent_full",
+      "label": "Phenotype is CONSISTENT with MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.consistent_partial",
+      "label": "Phenotype CONSISTENT with MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.consistent_other_variant",
+      "label": "Phenotype is CONSISTENT with MDE AND Additional variant of interest - LP/P variant in trans in same gene OR LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT)"
+    },
+    {
+      "workflow": "cln_aff_ad",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.ad.not_consistent",
+      "label": "Phenotype is NOT CONSISTENT with MDE AND (consider scoring individual under CLN_UAF)"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_lt_0_0001.trans_plp_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Heterozygous VBC is confirmed in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_lt_0_0001.trans_plp_assumed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Heterozygous VBC is assumed^ in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_lt_0_0001.trans_vus_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Heterozygous VBC is confirmed in trans with a VUS variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_lt_0_0001.homozygous",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Homozygous VBC"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_lt_0_0001.no_second_variant",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Heterozygous VBC with NO 2nd variant, or 2nd variant in cis or with unknown phase"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_0_0001_0_01.trans_plp_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is >0.0001- 0.01 — Heterozygous VBC is confirmed in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_0_0001_0_01.trans_plp_assumed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is >0.0001- 0.01 — Heterozygous VBC is assumed^ in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_0_0001_0_01.trans_vus_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is >0.0001- 0.01 — Heterozygous VBC is confirmed in trans with a VUS variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_0_0001_0_01.homozygous",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is >0.0001- 0.01 — Homozygous VBC"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_full_0_0001_0_01.no_second_variant",
+      "label": "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is >0.0001- 0.01 — Heterozygous VBC with NO 2nd variant, or 2nd variant in cis or with unknown phase"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_partial.trans_plp_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified — Heterozygous VBC is confirmed in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_partial.trans_plp_assumed",
+      "label": "Phenotype is CONSISTENT for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified — Heterozygous VBC is assumed^ in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_partial.trans_vus_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified — Heterozygous VBC is confirmed in trans with a VUS variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_partial.homozygous",
+      "label": "Phenotype is CONSISTENT for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified — Homozygous VBC"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_partial.no_second_variant",
+      "label": "Phenotype is CONSISTENT for MDE AND (Not all relevant genes for disorder tested OR High number of unexplained cases) OR Non-genetic etiology cannot be excluded OR Additional plausible VUS in same or different gene identified — Heterozygous VBC with NO 2nd variant, or 2nd variant in cis or with unknown phase"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_other_variant.trans_plp_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND Additional variant of interest - LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT) — Heterozygous VBC is confirmed in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_other_variant.trans_plp_assumed",
+      "label": "Phenotype is CONSISTENT for MDE AND Additional variant of interest - LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT) — Heterozygous VBC is assumed^ in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_other_variant.trans_vus_confirmed",
+      "label": "Phenotype is CONSISTENT for MDE AND Additional variant of interest - LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT) — Heterozygous VBC is confirmed in trans with a VUS variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_other_variant.homozygous",
+      "label": "Phenotype is CONSISTENT for MDE AND Additional variant of interest - LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT) — Homozygous VBC"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.consistent_other_variant.no_second_variant",
+      "label": "Phenotype is CONSISTENT for MDE AND Additional variant of interest - LP/P variant in different gene that explains phenotype (consider scoring individual under CLN_ALT) — Heterozygous VBC with NO 2nd variant, or 2nd variant in cis or with unknown phase"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.not_consistent.trans_plp_confirmed",
+      "label": "Phenotype is NOT CONSISTENT for MDE (consider scoring individual under CLN_UAF) — Heterozygous VBC is confirmed in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.not_consistent.trans_plp_assumed",
+      "label": "Phenotype is NOT CONSISTENT for MDE (consider scoring individual under CLN_UAF) — Heterozygous VBC is assumed^ in trans with a P/LP variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.not_consistent.trans_vus_confirmed",
+      "label": "Phenotype is NOT CONSISTENT for MDE (consider scoring individual under CLN_UAF) — Heterozygous VBC is confirmed in trans with a VUS variant"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.not_consistent.homozygous",
+      "label": "Phenotype is NOT CONSISTENT for MDE (consider scoring individual under CLN_UAF) — Homozygous VBC"
+    },
+    {
+      "workflow": "cln_aff_arxl",
+      "code": "CLN_AFF",
+      "cell": "CLN_AFF.arxl.not_consistent.no_second_variant",
+      "label": "Phenotype is NOT CONSISTENT for MDE (consider scoring individual under CLN_UAF) — Heterozygous VBC with NO 2nd variant, or 2nd variant in cis or with unknown phase"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.specific.confirmed",
+      "label": "Phenotype SPECIFIC for gene (use this row for mono-allelic only) — Denovo with confirmed parental relationships"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.specific.unconfirmed",
+      "label": "Phenotype SPECIFIC for gene (use this row for mono-allelic only) — Denovo with unconfirmed parental relationships"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.consistent.confirmed",
+      "label": "Phenotype CONSISTENT with gene (Use this row for mono- or bi-allelic) — Denovo with confirmed parental relationships"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.consistent.unconfirmed",
+      "label": "Phenotype CONSISTENT with gene (Use this row for mono- or bi-allelic) — Denovo with unconfirmed parental relationships"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.not_consistent.confirmed",
+      "label": "Phenotype not CONSISTENT with gene (consider scoring individual under CLN_UAF) — Denovo with confirmed parental relationships"
+    },
+    {
+      "workflow": "cln_dnv",
+      "code": "CLN_DNV",
+      "cell": "CLN_DNV.not_consistent.unconfirmed",
+      "label": "Phenotype not CONSISTENT with gene (consider scoring individual under CLN_UAF) — Denovo with unconfirmed parental relationships"
+    },
+    {
+      "workflow": "cln_ccs",
+      "code": "CLN_CCS",
+      "cell": "CLN_CCS.or_above_5",
+      "label": "If the calculated OR for the case-control analysis is >5.0"
+    },
+    {
+      "workflow": "cln_ccs",
+      "code": "CLN_CCS",
+      "cell": "CLN_CCS.ci_includes_1",
+      "label": "If the CI includes 1.0 (e.g., OR = 5.5, CI = 0.9–7.4)"
+    },
+    {
+      "workflow": "cln_ccs",
+      "code": "CLN_CCS",
+      "cell": "CLN_CCS.or_near_or_below_1",
+      "label": "OR near to, or less than 1.0 should be evidence of benignity"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.step1.no",
+      "label": "No"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.step1.yes",
+      "label": "Yes"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.yield.ge_82",
+      "label": "≥82%"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.yield.68_82",
+      "label": "≥68-<82%"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.yield.51_68",
+      "label": "≥51-<68%"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.yield.33_51",
+      "label": "≥33-<51%"
+    },
+    {
+      "workflow": "loc_phe",
+      "code": "LOC_PHE",
+      "cell": "LOC_PHE.yield.0_33",
+      "label": "0-<33%"
+    },
+    {
+      "workflow": "loc_seg_ad",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.ad.het_affected",
+      "label": "Autosomal Dominant — Heterozygous — Affected male or female"
+    },
+    {
+      "workflow": "loc_seg_ar",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.ar.hom_or_chet_affected",
+      "label": "Autosomal Recessive — Homozygous or Compound Heterozygous — Affected male or female"
+    },
+    {
+      "workflow": "loc_seg_sd",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.sd.hom_or_chet_severe",
+      "label": "Autosomal Semi-Dominant — Homozygous or Compound Heterozygous — Severely affected male or female"
+    },
+    {
+      "workflow": "loc_seg_sd",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.sd.het_affected",
+      "label": "Autosomal Semi-Dominant — Heterozygous — Affected male or female"
+    },
+    {
+      "workflow": "loc_seg_xl",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.xl.hemi_severe_male",
+      "label": "X-Linked — Hemizygous — Severely affected male"
+    },
+    {
+      "workflow": "loc_seg_xl",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.xl.hom_or_chet_severe_female",
+      "label": "X-Linked — Homozygous or Compound Heterozygous — Severely affected female"
+    },
+    {
+      "workflow": "loc_seg_xl",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.xl.het_affected_female",
+      "label": "X-Linked — Heterozygous — Affected female"
+    },
+    {
+      "workflow": "loc_seg_non_segregation",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.non_segregation.autosomal_dominant",
+      "label": "autosomal dominant inheritance — non-segregations provide robust evidence of benignity"
+    },
+    {
+      "workflow": "loc_seg_non_segregation",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.non_segregation.autosomal_recessive_homozygous",
+      "label": "autosomal recessive inheritance with homozygosity — non-segregations provide robust evidence of benignity"
+    },
+    {
+      "workflow": "loc_seg_non_segregation",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.non_segregation.x_linked",
+      "label": "X-linked inheritance — non-segregations provide robust evidence of benignity"
+    },
+    {
+      "workflow": "loc_seg_non_segregation",
+      "code": "LOC_SEG",
+      "cell": "LOC_SEG.non_segregation.autosomal_recessive_no_benignity",
+      "label": "MDEs with autosomal recessive inheritance — We do not award evidence for benignity for VBCs that show non-segregations"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.mechanism.established",
+      "label": "Established"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.mechanism.likely",
+      "label": "Likely"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.mechanism.suspected",
+      "label": "Suspected"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.mechanism.uncertain",
+      "label": "Uncertain or not LoF"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.exon.all",
+      "label": "Residue is present in ALL clinically relevant transcripts (Full Score)"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.exon.most",
+      "label": "Residue is present in MOST clinically relevant transcripts (Half Score)"
+    },
+    {
+      "workflow": "matrix",
+      "code": "SM18",
+      "cell": "SM18.exon.none",
+      "label": "Residue NOT present in clinically relevant transcripts (No Score)"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.bayesdel",
+      "label": "BayesDel"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.mutpred2",
+      "label": "MutPred2"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.revel",
+      "label": "REVEL"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.vest4",
+      "label": "VEST4"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.alphamissense",
+      "label": "AlphaMissense"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.esm1b",
+      "label": "ESM1b"
+    },
+    {
+      "workflow": "mis_prd",
+      "code": "MIS_PRD",
+      "cell": "MIS_PRD.predictor.varity_r",
+      "label": "VARITY_R"
+    },
+    {
+      "workflow": "mis_fxn",
+      "code": "MIS_FXN",
+      "cell": "MIS_FXN.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "mis_fxn",
+      "code": "MIS_FXN",
+      "cell": "MIS_FXN.no",
+      "label": "No"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.nmd",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame (Introduced PTC upstream of 50 nt upstream of the last exon–exon boundary, NMD predicted) — Removes 100% of protein"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.no_nmd.alt_start",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame. (Introduced PTC not located 50 nt upstream of the last exon–exon boundary, NMD not predicted) — Alternate inframe start downstream of VBC is used in functional transcripts"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.no_nmd.gt50",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame. (Introduced PTC not located 50 nt upstream of the last exon–exon boundary, NMD not predicted) — Removes/alters >50% of protein OR Removes/alters entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.no_nmd.gt25",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame. (Introduced PTC not located 50 nt upstream of the last exon–exon boundary, NMD not predicted) — Removes/alters >25% of protein OR Removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.no_nmd.gt10",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame. (Introduced PTC not located 50 nt upstream of the last exon–exon boundary, NMD not predicted) — Removes/alters >10% of protein OR Removes/alters a functional domain with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.no_nmd.lt10",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site disrupts reading frame. (Introduced PTC not located 50 nt upstream of the last exon–exon boundary, NMD not predicted) — Removes/alters <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.alt_start",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — Alternate inframe start downstream of VBC has demonstrated protein function"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.gt50",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — Removes/alters >50% of protein OR Removes/alters entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.gt25",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — Removes/alters >25% of protein OR Removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.gt10",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — Removes/alters >10% of protein OR Removes/alters a functional domain with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.insilico_damaging",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — In silico inframe predictive tools suggest a damaging impact"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.lt10",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — Removes/alters <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.likely.inframe.insilico_benign",
+      "label": "Splicing change likely — Predicted exon skipping or use of cryptic splice site has no impact on reading frame (NMD not predicted) — In silico inframe predictive tools suggest a benign impact"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.uncertain",
+      "label": "Splicing change uncertain"
+    },
+    {
+      "workflow": "spl_prd",
+      "code": "SPL_PRD",
+      "cell": "SPL_PRD.unlikely",
+      "label": "Splicing change unlikely"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.likely.none",
+      "label": "Splicing data is NOT available for VBC showing an inferred variant-specific impact (compared to controls)"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.likely.concordant.near_complete",
+      "label": "Splicing data is available for VBC showing an inferred variant-specific impact (compared to controls) — Splicing data and PRD are concordant with regards to impact — Proportion of Alternative Transcripts (Inferred to Be) Produced by VBC is near to complete"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.likely.concordant.substantial",
+      "label": "Splicing data is available for VBC showing an inferred variant-specific impact (compared to controls) — Splicing data and PRD are concordant with regards to impact — Proportion of Alternative Transcripts (Inferred to Be) Produced by VBC is near complete to sunstantial"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.likely.concordant.incomplete",
+      "label": "Splicing data is available for VBC showing an inferred variant-specific impact (compared to controls) — Splicing data and PRD are concordant with regards to impact — Proportion of Alternative Transcripts (Inferred to Be) Produced by VBC is incomplete"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.likely.discordant",
+      "label": "Splicing data is available for VBC showing an inferred variant-specific impact (compared to controls) — Splicing data and PRD are NOT concordant with regards to impact — Reconsider SPL_PRD"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.none",
+      "label": "Splicing data NOT available for VBC showing an inferred variant-specific impact (compared to controls)"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.clear",
+      "label": "Splicing data available for VBC showing an inferred variant-specific impact (compared to controls) — Clear evidence of disruptive splice effect"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.some",
+      "label": "Splicing data available for VBC showing an inferred variant-specific impact (compared to controls) — Some evidence of disruptive splice effect"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.unconvincing",
+      "label": "Splicing data available for VBC showing an inferred variant-specific impact (compared to controls) — Unconvincing evidence of splice effect"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.some_no_effect",
+      "label": "Splicing data available for VBC showing an inferred variant-specific impact (compared to controls) — Some evidence of no splice effect"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.uncertain.convincing_no_effect",
+      "label": "Splicing data available for VBC showing an inferred variant-specific impact (compared to controls) — Convincing evidence of no splice effect"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.unlikely.none",
+      "label": "Splicing data NOT available for VBC"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.unlikely.incomplete",
+      "label": "Splicing data available for VBC — Splice products from the assay represent incomplete or no presence of an aberrant product"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.unlikely.low_level",
+      "label": "Splicing data available for VBC — Splice products show only low-level presence of an aberrant product"
+    },
+    {
+      "workflow": "spl_spa",
+      "code": "SPL_SPA",
+      "cell": "SPL_SPA.unlikely.near_complete",
+      "label": "Splicing data available for VBC — Splice products show near to complete or complete presence of an aberrant productt — Reconsider SPL_PRD points"
+    },
+    {
+      "workflow": "spl_fxn",
+      "code": "SPL_FXN",
+      "cell": "SPL_FXN.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "spl_fxn",
+      "code": "SPL_FXN",
+      "cell": "SPL_FXN.no",
+      "label": "No"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.p_first",
+      "label": "P/LP variant in the same donor/acceptor region. The predicted/observed event of the VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — First P Variant"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.lp_first",
+      "label": "P/LP variant in the same donor/acceptor region. The predicted/observed event of the VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — First LP Variant"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.plp_additional",
+      "label": "P/LP variant in the same donor/acceptor region. The predicted/observed event of the VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — Additional P/LP variants"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.vus",
+      "label": "VUS informative variants in the same donor/acceptor motif"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.b_first",
+      "label": "B/LB variant in the same donor/acceptor region with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant. — First B Variant"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.lb_first",
+      "label": "B/LB variant in the same donor/acceptor region with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant. — First LB Variant"
+    },
+    {
+      "workflow": "spl_inf",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.blb_additional",
+      "label": "B/LB variant in the same donor/acceptor region with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant. — Additional B/LB variants"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.no_alt_start",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) No known evidence for alternate functional start codon 3' of VBC — Removes 100% of protein"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.alt_start.retains_function",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Functional data shows that a shorter protein using the alternative inframe start downstream of VBC retains function as compared to the full length transcript"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.alt_start.gt50",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >50% of protein OR Use of alternative start removes/alters an entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.alt_start.gt25",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >25% of protein OR Use of alternative start removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.alt_start.gt10",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >10% of protein OR Use of alternative start removes/alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.nmd.alt_start.lt10",
+      "label": "VBC is more than 50 nt upstream of the last exon–exon boundary ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters <10% of protein OR Use of alternative start impacts region with unknown or no known function in Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.no_nmd.gt50",
+      "label": "VBC located within the last or only exon, gene documented to not undergo NMD, or VBC within 50 nt upstream of the last exon–exon boundary ( NMD not predicted ) — Removes/alters >50% of protein OR Removes/alters entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.no_nmd.gt25",
+      "label": "VBC located within the last or only exon, gene documented to not undergo NMD, or VBC within 50 nt upstream of the last exon–exon boundary ( NMD not predicted ) — Removes/alters >25% of protein OR Removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.no_nmd.gt10",
+      "label": "VBC located within the last or only exon, gene documented to not undergo NMD, or VBC within 50 nt upstream of the last exon–exon boundary ( NMD not predicted ) — Removes/alters >10% of protein OR Removes/alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.no_nmd.lt10",
+      "label": "VBC located within the last or only exon, gene documented to not undergo NMD, or VBC within 50 nt upstream of the last exon–exon boundary ( NMD not predicted ) — Removes/alters <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "nul_fxn",
+      "code": "NUL_FXN",
+      "cell": "NUL_FXN.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "nul_fxn",
+      "code": "NUL_FXN",
+      "cell": "NUL_FXN.no",
+      "label": "No"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.p_first",
+      "label": "P/LP variant in this exon for the same MDE predicted to lead transcript to NMD — First P Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.lp_first",
+      "label": "P/LP variant in this exon for the same MDE predicted to lead transcript to NMD — First LP Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.plp_additional",
+      "label": "P/LP variant in this exon for the same MDE predicted to lead transcript to NMD — Additional P/LP variants"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.b_first",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — First B Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.lb_first",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — First LB Variant test"
+    },
+    {
+      "workflow": "nul_inf_exon_nmd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_nmd.blb_additional",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — Additional B/LB variants"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.p_first",
+      "label": "P/LP variant for the same MDE between VBC and alternative Met start codon — First P Variant"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.lp_first",
+      "label": "P/LP variant for the same MDE between VBC and alternative Met start codon — First LP Variant"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.plp_additional",
+      "label": "P/LP variant for the same MDE between VBC and alternative Met start codon — Additional P/LP variants"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.vus",
+      "label": "VUS variants between VBC and alternative Met for the same MDE"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.b_first",
+      "label": "Bengin / Likely Benign variant for the same MDE between VBC and alternative Met start codon — First B Variant"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.lb_first",
+      "label": "Bengin / Likely Benign variant for the same MDE between VBC and alternative Met start codon — First LB Variant test"
+    },
+    {
+      "workflow": "nul_inf_alt_met_start",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.alt_met_start.blb_additional",
+      "label": "Bengin / Likely Benign variant for the same MDE between VBC and alternative Met start codon — Additional B/LB variants"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.p_first",
+      "label": "P/LP variant in this exon resulting in PTC, downstream of VBC — First P Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.lp_first",
+      "label": "P/LP variant in this exon resulting in PTC, downstream of VBC — First LP Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.plp_additional",
+      "label": "P/LP variant in this exon resulting in PTC, downstream of VBC — Additional P/LP variants"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.vus",
+      "label": "VUS informative variants in this exon"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.b_first",
+      "label": "Bengin / Likely Benign variant in this exon resulting in PTC, upstream of VBC — First B Variant"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.lb_first",
+      "label": "Bengin / Likely Benign variant in this exon resulting in PTC, upstream of VBC — First LB Variant test"
+    },
+    {
+      "workflow": "nul_inf_exon_ptc",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.exon_ptc.blb_additional",
+      "label": "Bengin / Likely Benign variant in this exon resulting in PTC, upstream of VBC — Additional B/LB variants"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_nmd.removes_100",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) No known evidence for alternate functional start codon 3' of VBC — NMD–predicted, removes 100% of protein"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_alternate_start.retains_function",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Functional data shows that a shorter protein using the alternative inframe start downstream of VBC retains function as compared to the full length transcript"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_alternate_start.gt50",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >50% of protein OR Use of alternative start removes/alters an entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_alternate_start.gt25",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >25% of protein OR Use of alternative start removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_alternate_start.gt10",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters >10% of protein OR Use of alternative start removes/alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_alternate_start.lt10",
+      "label": "Introduced PTC is >50 nt upstream of the last exon-exon boundary AND ( NMD predicted ) Putative alternative start codon 3' of VBC with functional or genetic evidence — Removes/alters <10% of protein OR Use of alternative start impacts region with unknown or no known function in Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nmd.gt50",
+      "label": "Introduced PTC located within the last or only exon, gene documented to not undergo NMD, or PTC within 50 nt upstream of the last exon–exon boundary (even if non coding). In all cases, introduced PTC occurs upstream of normal stop codon AND ( NMD is not predicted ) — Removes/alters >50% of protein OR Removes/alters entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nmd.gt25",
+      "label": "Introduced PTC located within the last or only exon, gene documented to not undergo NMD, or PTC within 50 nt upstream of the last exon–exon boundary (even if non coding). In all cases, introduced PTC occurs upstream of normal stop codon AND ( NMD is not predicted ) — Removes/alters >25% of protein OR Removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nmd.gt10",
+      "label": "Introduced PTC located within the last or only exon, gene documented to not undergo NMD, or PTC within 50 nt upstream of the last exon–exon boundary (even if non coding). In all cases, introduced PTC occurs upstream of normal stop codon AND ( NMD is not predicted ) — Removes/alters >10% of protein OR Removes/alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nmd.lt10",
+      "label": "Introduced PTC located within the last or only exon, gene documented to not undergo NMD, or PTC within 50 nt upstream of the last exon–exon boundary (even if non coding). In all cases, introduced PTC occurs upstream of normal stop codon AND ( NMD is not predicted ) — Removes/alters <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_nsd.removes_100",
+      "label": "Introduced PTC is located 3' of the native stop codon (i.e., frameshift variant predicts elongation) Non–stop Decay is Predicted (PolyA site is encountered before an in-frame stop is encountered) — Removes 100% of protein"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nsd.experimentally_implicated",
+      "label": "Introduced PTC is located 3' of the native stop codon (i.e., frameshift variant predicts elongation) Non–stop Decay is not Predicted OR is unknown — Interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus has been experimentally implicated in the molecular mechanism"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nsd.some_evidence_and_extension",
+      "label": "Introduced PTC is located 3' of the native stop codon (i.e., frameshift variant predicts elongation) Non–stop Decay is not Predicted OR is unknown — There is some evidence supporting interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus as a Molecular Mechanism AND Predicted amino acid extension is ≥30 codons past native stop codon"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nsd.some_evidence_or_extension",
+      "label": "Introduced PTC is located 3' of the native stop codon (i.e., frameshift variant predicts elongation) Non–stop Decay is not Predicted OR is unknown — There is some evidence supporting interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus as a Molecular Mechanism OR Predicted amino acid extension is ≥30 codons past native stop codon"
+    },
+    {
+      "workflow": "frame_nul_prd",
+      "code": "NUL_PRD",
+      "cell": "NUL_PRD.frame_no_nsd.unknown_function",
+      "label": "Introduced PTC is located 3' of the native stop codon (i.e., frameshift variant predicts elongation) Non–stop Decay is not Predicted OR is unknown — Addition of non native amino acids to the carboxy terminus has unknown or no known function in the Molecular Mechanism"
+    },
+    {
+      "workflow": "frame_nul_fxn",
+      "code": "NUL_FXN",
+      "cell": "NUL_FXN.frame.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "frame_nul_fxn",
+      "code": "NUL_FXN",
+      "cell": "NUL_FXN.frame.no",
+      "label": "No"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.p_first",
+      "label": "P/LP variant in this exon (nt change) for the same MDE predicted to lead transcript to NMD — First P Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.lp_first",
+      "label": "P/LP variant in this exon (nt change) for the same MDE predicted to lead transcript to NMD — First LP Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.plp_additional",
+      "label": "P/LP variant in this exon (nt change) for the same MDE predicted to lead transcript to NMD — Additional P/LP variants"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.b_first",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — First B Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.lb_first",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — First LB Variant test"
+    },
+    {
+      "workflow": "frame_nul_inf_one",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_one.blb_additional",
+      "label": "B/LB variant in this exon predicted to lead transcript to NMD — Additional B/LB variants"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.p_first",
+      "label": "P/LP PTC variant for the same MDE occurs between the introduced PTC and the alternate start codon — First P Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.lp_first",
+      "label": "P/LP PTC variant for the same MDE occurs between the introduced PTC and the alternate start codon — First LP Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.plp_additional",
+      "label": "P/LP PTC variant for the same MDE occurs between the introduced PTC and the alternate start codon — Additional P/LP variants"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.b_first",
+      "label": "PTC introducted by B/LB variant occurs upstream of alternate start codon — First B Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.lb_first",
+      "label": "PTC introducted by B/LB variant occurs upstream of alternate start codon — First LB Variant test"
+    },
+    {
+      "workflow": "frame_nul_inf_two",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_two.blb_additional",
+      "label": "PTC introducted by B/LB variant occurs upstream of alternate start codon — Additional B/LB variants"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.p_first",
+      "label": "P/LP variant in this exon resulting in PTC that is between the frameshift and the normal stop codon. Similar impact — First P Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.lp_first",
+      "label": "P/LP variant in this exon resulting in PTC that is between the frameshift and the normal stop codon. Similar impact — First LP Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.plp_additional",
+      "label": "P/LP variant in this exon resulting in PTC that is between the frameshift and the normal stop codon. Similar impact — Additional P/LP variants"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.b_first",
+      "label": "B/LB variant in this exon resulting in PTC, upstream of VBC. — First B Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.lb_first",
+      "label": "B/LB variant in this exon resulting in PTC, upstream of VBC. — First LB Variant test"
+    },
+    {
+      "workflow": "frame_nul_inf_three",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_three.blb_additional",
+      "label": "B/LB variant in this exon resulting in PTC, upstream of VBC. — Additional B/LB variants"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.p_first",
+      "label": "P/LP stop loss or frameshift extension variant also predicted to result in NSD — First P Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.lp_first",
+      "label": "P/LP stop loss or frameshift extension variant also predicted to result in NSD — First LP Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.plp_additional",
+      "label": "P/LP stop loss or frameshift extension variant also predicted to result in NSD — Additional P/LP variants"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.b_first",
+      "label": "B/LB variant also predicted to result in NSD — First B Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.lb_first",
+      "label": "B/LB variant also predicted to result in NSD — First LB Variant test"
+    },
+    {
+      "workflow": "frame_nul_inf_four",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_four.blb_additional",
+      "label": "B/LB variant also predicted to result in NSD — Additional B/LB variants"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.p_first",
+      "label": "P/LP frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First P Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.lp_first",
+      "label": "P/LP frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First LP Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.plp_additional",
+      "label": "P/LP frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — Additional P/LP variants"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.b_first",
+      "label": "B/LB frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First B Variant"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.lb_first",
+      "label": "B/LB frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First LB Variant test"
+    },
+    {
+      "workflow": "frame_nul_inf_five",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.frame_five.blb_additional",
+      "label": "B/LB frameshift variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — Additional B/LB variants"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.repetitive.not_polymorphic",
+      "label": "InDel is located in a repetitive region (>5 repetitive units) AND There is NO known Association of Disease and Repeat Length * — Region is not polymorphic"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.repetitive.polymorphic",
+      "label": "InDel is located in a repetitive region (>5 repetitive units) AND There is NO known Association of Disease and Repeat Length * — Repetitve region is polymorphic (mulitple InDels of various repeat lengths in gnomAD)"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.gt50",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — Removes/alters >50% of protein OR Removes entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.gt25",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — Removes/alters >25% of protein OR Removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.gt10",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — Removes/alters >10% of protein OR Removes/alters a functional domain with some evidence in the Molecular Mechanism OR Calibrated in silico inframe predictive tool suggests a damaging impact in the +2 score range"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.damaging",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — In silico inframe predictive tool suggests a damaging impact"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.indeterminate",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — In silico inframe predictive tool suggests indeterminate effect OR no in silico tool result is available"
+    },
+    {
+      "workflow": "cds_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.not_repetitive.benign",
+      "label": "InDel is NOT located in a repetitive region (>5 repetitive units) — In silico inframe predictive tool suggests a benign impact"
+    },
+    {
+      "workflow": "cds_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "cds_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.no",
+      "label": "No"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.p_first",
+      "label": "P/LP variant that is shorter than VBC — First P Variant"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.lp_first",
+      "label": "P/LP variant that is shorter than VBC — First LP Variant"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.plp_additional",
+      "label": "P/LP variant that is shorter than VBC — Additional P/LP variants"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.vus",
+      "label": "VUS informative variants OR P/LP variants that are longer than the VBC OR B/LB variants that are shorter than the VBC"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.b_first",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — First B Variant"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.lb_first",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — First LB Variant test"
+    },
+    {
+      "workflow": "cds_inf_one",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.one.blb_additional",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — Additional B/LB variants"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.p_first",
+      "label": "P/LP variant resulting in similarly altered/removed region — First P Variant"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.lp_first",
+      "label": "P/LP variant resulting in similarly altered/removed region — First LP Variant"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.plp_additional",
+      "label": "P/LP variant resulting in similarly altered/removed region — Additional P/LP variants"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.vus",
+      "label": "VUS informative variants"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.b_first",
+      "label": "B/LB variant resulting in similarly altered/removed region — First B Variant"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.lb_first",
+      "label": "B/LB variant resulting in similarly altered/removed region — First LB Variant test"
+    },
+    {
+      "workflow": "cds_inf_two",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.two.blb_additional",
+      "label": "B/LB variant resulting in similarly altered/removed region — Additional B/LB variants"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "NUL_PRD.whole_gene.removes_100",
+      "label": "Whole gene deletion — Removes 100% of protein Only Molecular Mechanism Score is applied"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "NUL_PRD.nmd_predicted.removes_100",
+      "label": "Single or multi exon deletion disrupts reading frame AND Introduced PTC is more than 50nt upstream of the last exon-exon boundary (NMD-predicted) — Removes 100% of protein"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.nmd_not_predicted.noncoding",
+      "label": "Single or multi exon deletion disrupts reading frame but NMD is NOT predicted OR Single or multi exon deletion has no impact on reading frame — Deleted exon is noncoding"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.nmd_not_predicted.gt50",
+      "label": "Single or multi exon deletion disrupts reading frame but NMD is NOT predicted OR Single or multi exon deletion has no impact on reading frame — Removes/alters >50% of protein OR removes/alters an entire critical functional domain that has been experimentally implicated in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.nmd_not_predicted.gt25",
+      "label": "Single or multi exon deletion disrupts reading frame but NMD is NOT predicted OR Single or multi exon deletion has no impact on reading frame — Removes/alters >25% of protein OR removes/alters a portion of a critical functional domain that has been experimentally implicated in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.nmd_not_predicted.gt10",
+      "label": "Single or multi exon deletion disrupts reading frame but NMD is NOT predicted OR Single or multi exon deletion has no impact on reading frame — Removes/alters >10% of protein OR removes/alters a functional domain with some evidence in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.nmd_not_predicted.lt10",
+      "label": "Single or multi exon deletion disrupts reading frame but NMD is NOT predicted OR Single or multi exon deletion has no impact on reading frame — Removes/alters <10% of protein OR impacts region with unknown or no known function in disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "NUL_PRD.no_alternate_start.no_protein",
+      "label": "No alternate inframe start OR Out of frame alternate start predicted — No translated protein predicted"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.alternate_start.gt50",
+      "label": "Upstream or downstream inframe start predicted and is not in deleted region — Removes/alters >50% of protein OR Use of alternative start removes/alters an entire critical functional domain that has been experimentally implicated in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.alternate_start.gt25",
+      "label": "Upstream or downstream inframe start predicted and is not in deleted region — Removes/alters >25% of protein OR Use of alternative start removes/alters a portion of a critical functional domain that has been experimentally implicated in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.alternate_start.gt10",
+      "label": "Upstream or downstream inframe start predicted and is not in deleted region — Removes/alters >10% of protein OR Use of alternative start removes/alters a functional domain with some evidence in the disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.alternate_start.lt10",
+      "label": "Upstream or downstream inframe start predicted and is not in deleted region — Removes/alters <10% of protein OR Use of alternative start impacts region with unknown or no known function in disease mechanism"
+    },
+    {
+      "workflow": "del_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.functional_alternate_start.rescue",
+      "label": "Upstream or downstream inframe start used in alternate functional transcripts and not in deleted region — Rescue predicted, functional protein translated"
+    },
+    {
+      "workflow": "del_fxn",
+      "code": "NUL_FXN/CDS_FXN",
+      "cell": "NUL_FXN/CDS_FXN.del.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "del_fxn",
+      "code": "NUL_FXN/CDS_FXN",
+      "cell": "NUL_FXN/CDS_FXN.del.no",
+      "label": "No"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.p_first",
+      "label": "Pathogenic / Likely Pathogenic variant in this exon predicted to lead transcript to NMD — First P Variant"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.lp_first",
+      "label": "Pathogenic / Likely Pathogenic variant in this exon predicted to lead transcript to NMD — First LP Variant"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.plp_additional",
+      "label": "Pathogenic / Likely Pathogenic variant in this exon predicted to lead transcript to NMD — Additional P/LP variants"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.b_first",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — First B Variant"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.lb_first",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — First LB Variant test"
+    },
+    {
+      "workflow": "del_inf",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.blb_additional",
+      "label": "Benign / Likely Benign variant in this exon predicted to lead transcript to NMD — Additional B/LB variants"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "NUL_PRD.tandem_cds.nmd.removes_100",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi Exon Duplication Predicted to Disrupt Reading Frame AND Introduced PTC >50 nt Upstream of Last Exon–Exon Boundary (NMD Predicted) — Removes 100% of protein"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.tandem_cds.no_nmd.gt50",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >50% of protein OR Disrupts critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.tandem_cds.no_nmd.gt25",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >25% of protein OR Alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.tandem_cds.no_nmd.gt10",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >10% of protein OR Alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.tandem_cds.no_nmd.lt10",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.tandem_outside_cds.unlikely_lof",
+      "label": "Affects Partial Gene — VBC proved tandem AND Both breakpoints of the VBC are not inside the start or end points of the CDS — Unlikely to lead to LoF"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "NUL_PRD.not_tandem_cds.nmd.removes_100",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or multi exon duplication predicted to disrupt reading frame AND Introduced PTC >50 nt upstream of last exon–exon boundary (NMD predicted) — Removes 100% of protein"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.not_tandem_cds.no_nmd.gt50",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >50% of protein OR Disrupts critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.not_tandem_cds.no_nmd.gt25",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >25% of protein OR Alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.not_tandem_cds.no_nmd.gt10",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates >10% of protein OR Alters a region with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.not_tandem_cds.no_nmd.lt10",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are inside the start and end points of the CDS — Single or Multi exon duplication not predicted to disrupt reading frame OR Single or Multi exon duplication predicted to disrupt reading frame but introduced PTC is not >50 nt Upstream of last exon–exon boundary (NMD not predicted) — Duplicates <10% of protein OR Role of region in protein function is unknown"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.not_tandem_outside_cds.unlikely_lof",
+      "label": "Affects Partial Gene — VBC is NOT a proved tandem AND Both breakpoints of the VBC are not inside the start or end points of the CDS — Unlikely to lead to LoF"
+    },
+    {
+      "workflow": "dup_prd",
+      "code": "NUL_PRD/CDS_PRD",
+      "cell": "CDS_PRD.whole_gene.unlikely_lof",
+      "label": "Whole Gene — Unlikely to lead to LoF Consult dosage sensitivity map"
+    },
+    {
+      "workflow": "dup_fxn",
+      "code": "NUL_FXN/CDS_FXN",
+      "cell": "NUL_FXN/CDS_FXN.dup.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "dup_fxn",
+      "code": "NUL_FXN/CDS_FXN",
+      "cell": "NUL_FXN/CDS_FXN.dup.no",
+      "label": "No"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.p_first",
+      "label": "P/LP variant resulting in NMD overlap some exons — First P Variant"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.lp_first",
+      "label": "P/LP variant resulting in NMD overlap some exons — First LP Variant"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.plp_additional",
+      "label": "P/LP variant resulting in NMD overlap some exons — Additional P/LP variants"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.vus",
+      "label": "VUS informative variants"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.b_first",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — First B Variant"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.lb_first",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — First LB Variant test"
+    },
+    {
+      "workflow": "dup_inf_nmd_overlap",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.nmd_overlap.blb_additional",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — Additional B/LB variants"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.p_first",
+      "label": "P/LP variant resulting in a similarly altered/duplicated region — First P Variant"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.lp_first",
+      "label": "P/LP variant resulting in a similarly altered/duplicated region — First LP Variant"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.plp_additional",
+      "label": "P/LP variant resulting in a similarly altered/duplicated region — Additional P/LP variants"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.vus",
+      "label": "VUS informative variants"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.b_first",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — First B Variant"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.lb_first",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — First LB Variant test"
+    },
+    {
+      "workflow": "dup_inf_similar_region",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.similar_region.blb_additional",
+      "label": "B/LB variant resulting in a similarly altered/duplicated region — Additional B/LB variants"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.p_first",
+      "label": "P/LP duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — First P Variant"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.lp_first",
+      "label": "P/LP duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — First LP Variant"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.plp_additional",
+      "label": "P/LP duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — Additional P/LP variants"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.vus",
+      "label": "VUS informative variants"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.b_first",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — First B Variant"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.lb_first",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — First LB Variant test"
+    },
+    {
+      "workflow": "dup_inf_tandem",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.tandem_confirmed.blb_additional",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be in tandem in prior cases — Additional B/LB variants"
+    },
+    {
+      "workflow": "dup_inf_benign",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.benign_only.reconsider",
+      "label": "P/LP Variants Exist Resulting in Similarly Altered/Removed Region — Reconsider Evidence"
+    },
+    {
+      "workflow": "dup_inf_benign",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.benign_only.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "dup_inf_benign",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.benign_only.b_first",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be tandem in prior cases — First B Variant"
+    },
+    {
+      "workflow": "dup_inf_benign",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.benign_only.lb_first",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be tandem in prior cases — First LB Variant test"
+    },
+    {
+      "workflow": "dup_inf_benign",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.benign_only.blb_additional",
+      "label": "B/LB duplication of the same exons as VBC has been confirmed to be tandem in prior cases — Additional B/LB variants"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "NUL_PRD.no_alt_met.absent_protein",
+      "label": "No alternate inframe MET start codon(s) OR there is an alt MET start codon but there are known P/LP LoF variants between VBC and alt MET — Predicted to result in non funtcion or absent protein"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.alt_met.gt50",
+      "label": "Potential inframe alternative MET start codon and there are no known P/LP variants between VBC and alt MET — Removes/alters >50% of protein OR Use of alternative start removes/alters an entire critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.alt_met.gt25",
+      "label": "Potential inframe alternative MET start codon and there are no known P/LP variants between VBC and alt MET — Removes/alters >25% of protein OR Use of alternative start removes/alters a portion of a critical functional domain that has been experimentally implicated in the Molecular Mechanism"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.alt_met.gt10",
+      "label": "Potential inframe alternative MET start codon and there are no known P/LP variants between VBC and alt MET — Removes/alters >10% of protein OR Use of alternative start removes/alters a functional domain with some evidence in the Molecular Mechanism"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.alt_met.lt10",
+      "label": "Potential inframe alternative MET start codon and there are no known P/LP variants between VBC and alt MET — Removes/alters <10% of protein OR Use of alternative start impacts region with unknown or no known function in Molecular Mechanism"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.functional_alt_start.no_data",
+      "label": "There is evidence that an alternative inframe start produces functional protein — No functional data available for alternative start codon protein product"
+    },
+    {
+      "workflow": "start_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.functional_alt_start.retains_function",
+      "label": "There is evidence that an alternative inframe start produces functional protein — Functional data shows that a shorter protein using the alternative inframe start downstream of VBC retains function as compared to the full length transcript"
+    },
+    {
+      "workflow": "start_lost_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.start_loss.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "start_lost_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.start_loss.no",
+      "label": "No"
+    },
+    {
+      "workflow": "stop_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "NUL_PRD.nsd_predicted.removes_100",
+      "label": "Non–stop Decay is Predicted (PolyA site is encountered before an in-frame stop is encountered) — Non–stop decay predicted, removes 100% of protein"
+    },
+    {
+      "workflow": "stop_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.nsd_not_predicted.experimentally_implicated",
+      "label": "Non–stop Decay is NOT Predicted or is Unknown — Interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus has been experimentally implicated in the molecular mechanism"
+    },
+    {
+      "workflow": "stop_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.nsd_not_predicted.some_evidence_and_extension",
+      "label": "Non–stop Decay is NOT Predicted or is Unknown — There is some evidence supporting interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus as a Molecular Mechanism AND Predicted amino acid extension is >30 codons"
+    },
+    {
+      "workflow": "stop_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.nsd_not_predicted.some_evidence_or_extension",
+      "label": "Non–stop Decay is NOT Predicted or is Unknown — There is some evidence supporting interference of gene or protein function by the addition of non-native amino acids to the carboxy terminus as a Molecular Mechanism OR Predicted amino acid extension is >30 codons"
+    },
+    {
+      "workflow": "stop_lost_prd",
+      "code": "CDS_PRD",
+      "cell": "CDS_PRD.nsd_not_predicted.unknown_function",
+      "label": "Non–stop Decay is NOT Predicted or is Unknown — Addition of non native amino acids to the carboxy terminus has unknown or no known function in the Molecular Mechanism"
+    },
+    {
+      "workflow": "stop_lost_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.stop_loss.assay_consistent_with_controls",
+      "label": "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used"
+    },
+    {
+      "workflow": "stop_lost_fxn",
+      "code": "CDS_FXN",
+      "cell": "CDS_FXN.stop_loss.no",
+      "label": "No"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.p_first",
+      "label": "P/LP stop loss variant also predicted to result in NSD — First P Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.lp_first",
+      "label": "P/LP stop loss variant also predicted to result in NSD — First LP Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.plp_additional",
+      "label": "P/LP stop loss variant also predicted to result in NSD — Additional P/LP variants"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.vus",
+      "label": "VUS informative variants in this exon"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.b_first",
+      "label": "B/LB stop loss variant also predicted to result in NSD — First B Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.lb_first",
+      "label": "B/LB stop loss variant also predicted to result in NSD — First LB Variant test"
+    },
+    {
+      "workflow": "stop_lost_inf_nsd",
+      "code": "NUL_INF",
+      "cell": "NUL_INF.stop_loss_nsd.blb_additional",
+      "label": "B/LB stop loss variant also predicted to result in NSD — Additional B/LB variants"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.p_first",
+      "label": "P/LP stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First P Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.lp_first",
+      "label": "P/LP stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First LP Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.plp_additional",
+      "label": "P/LP stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — Additional P/LP variants"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.vus",
+      "label": "VUS informative variants in this exon"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.b_first",
+      "label": "B/LB stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First B Variant"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.lb_first",
+      "label": "B/LB stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — First LB Variant test"
+    },
+    {
+      "workflow": "stop_lost_inf_extension",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.stop_loss_extension.blb_additional",
+      "label": "B/LB stop loss variant not predicted to result in NSD but predicted to result in an elongation with similar impact as VBC — Additional B/LB variants"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.p_first",
+      "label": "P/LP variant with the same predicted/observed event. The VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — First P Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.lp_first",
+      "label": "P/LP variant with the same predicted/observed event. The VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — First LP Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.plp_additional",
+      "label": "P/LP variant with the same predicted/observed event. The VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — Additional P/LP variants"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.vus",
+      "label": "VUS informative variants in the same ±1,2 dinucleotide or donor/acceptor motif"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.b_first",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — First B Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.lb_first",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — First LB Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_default",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_default.blb_additional",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — Additional B/LB variants"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_unlikely",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_unlikely.p_reconsider",
+      "label": "P/LP variant with the same predicted/observed event. The VBC must precisely match the predicted/observed event of the INF variant AND the strength of the prediction for the VBC event must be of similar or higher score than the INF variant. — Reconsider Evidence"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_unlikely",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_unlikely.vus",
+      "label": "VUS informative variants in the same ±1,2 dinucleotide or donor/acceptor motif"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_unlikely",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_unlikely.b_first",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — First B Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_unlikely",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_unlikely.lb_first",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — First LB Variant"
+    },
+    {
+      "workflow": "spl_inf_gt_ag_unlikely",
+      "code": "SPL_INF",
+      "cell": "SPL_INF.gt_ag_unlikely.blb_additional",
+      "label": "B/LB variant in the same ±1,2 dinucleotide with same predicted splicing impact AND the strength of the prediction for the VBC event must be of similar or lower score than the INF variant — Additional B/LB variants"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_plp.p_first",
+      "label": "Distinct Nucleotide, Same Amino Acid Pathogenic/Likely Pathogenic — First P Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_plp.lp_first",
+      "label": "Distinct Nucleotide, Same Amino Acid Pathogenic/Likely Pathogenic — First LP Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_plp.plp_additional",
+      "label": "Distinct Nucleotide, Same Amino Acid Pathogenic/Likely Pathogenic — Additional P/LP variants"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_plp.p_first",
+      "label": "Distinct Amino Acid Pathogenic/Likely Pathogenic & Grantham Difference of Informative Variant ≤ VBC — First P Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_plp.lp_first",
+      "label": "Distinct Amino Acid Pathogenic/Likely Pathogenic & Grantham Difference of Informative Variant ≤ VBC — First LP Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_plp.plp_additional",
+      "label": "Distinct Amino Acid Pathogenic/Likely Pathogenic & Grantham Difference of Informative Variant ≤ VBC — Additional P/LP variants"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_blb.b_first",
+      "label": "Distinct Amino Acid Benign/Likely Benign & Grantham Difference of Informative Variant ≥ VBC — First B Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_blb.lb_first",
+      "label": "Distinct Amino Acid Benign/Likely Benign & Grantham Difference of Informative Variant ≥ VBC — First LB Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.distinct_aa_blb.blb_additional",
+      "label": "Distinct Amino Acid Benign/Likely Benign & Grantham Difference of Informative Variant ≥ VBC — Additional B/LB variants"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_blb.b_first",
+      "label": "Distinct Nucleotide, Same Amino Acid Benign/Likely Benign — First B Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_blb.lb_first",
+      "label": "Distinct Nucleotide, Same Amino Acid Benign/Likely Benign — First LB Variant"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.same_aa_blb.blb_additional",
+      "label": "Distinct Nucleotide, Same Amino Acid Benign/Likely Benign — Additional B/LB variants"
+    },
+    {
+      "workflow": "mis_inf",
+      "code": "MIS_INF",
+      "cell": "MIS_INF.none_met",
+      "label": "Informative Variants for Which None of Above Four Criteria Met"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.p_first",
+      "label": "Pathogenic/Likely Pathogenic variants at position +1, +2, +3 — First P Variant"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.lp_first",
+      "label": "Pathogenic/Likely Pathogenic variants at position +1, +2, +3 — First LP Variant"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.plp_additional",
+      "label": "Pathogenic/Likely Pathogenic variants at position +1, +2, +3 — Additional P/LP variants"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.vus",
+      "label": "VUS informative variants in this exon"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.b_first",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — First B Variant"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.lb_first",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — First LB Variant"
+    },
+    {
+      "workflow": "start_lost_inf_default",
+      "code": "NUL_INF/CDS_INF",
+      "cell": "NUL_INF/CDS_INF.start_loss_default.blb_additional",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — Additional B/LB variants"
+    },
+    {
+      "workflow": "start_lost_inf_alt_start",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.start_loss_functional_alt_start.reconsider",
+      "label": "P/LP variants exist resulting in similarly altered/removed region — Reconsider the use of this path of the flow diagram"
+    },
+    {
+      "workflow": "start_lost_inf_alt_start",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.start_loss_functional_alt_start.none",
+      "label": "No informative variants in this exon"
+    },
+    {
+      "workflow": "start_lost_inf_alt_start",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.start_loss_functional_alt_start.b_first",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — First B Variant"
+    },
+    {
+      "workflow": "start_lost_inf_alt_start",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.start_loss_functional_alt_start.lb_first",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — First LB Variant"
+    },
+    {
+      "workflow": "start_lost_inf_alt_start",
+      "code": "CDS_INF",
+      "cell": "CDS_INF.start_loss_functional_alt_start.blb_additional",
+      "label": "B/LB variants at position +1, +2, +3 OR PTC introduced by B/LB variant occurs upstream of alternate start codon — Additional B/LB variants"
+    }
+  ]
+}

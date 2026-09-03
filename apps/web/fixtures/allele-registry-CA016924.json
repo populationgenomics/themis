@@ -1,0 +1,361 @@
+{
+  "@context": "http://reg.genome.network/schema/allele.jsonld",
+  "@id": "http://reg.genome.network/allele/CA016924",
+  "communityStandardTitle": [
+    "NM_000138.5(FBN1):c.7003C>T (p.Arg2335Trp)"
+  ],
+  "externalRecords": {
+    "ClinVarAlleles": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/clinvar/?term=197620[alleleid]",
+        "alleleId": 197620,
+        "preferredName": "NM_000138.5(FBN1):c.7003C>T (p.Arg2335Trp)"
+      }
+    ],
+    "ClinVarVariations": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/clinvar/variation/200100",
+        "RCV": [
+          "RCV000695545",
+          "RCV000663920",
+          "RCV003528148",
+          "RCV000781372"
+        ],
+        "variationId": 200100
+      }
+    ],
+    "MyVariantInfo_hg19": [
+      {
+        "@id": "http://myvariant.info/v1/variant/chr15:g.48719965G>A?assembly=hg19",
+        "id": "chr15:g.48719965G>A"
+      }
+    ],
+    "MyVariantInfo_hg38": [
+      {
+        "@id": "http://myvariant.info/v1/variant/chr15:g.48427768G>A?assembly=hg38",
+        "id": "chr15:g.48427768G>A"
+      }
+    ],
+    "dbSNP": [
+      {
+        "@id": "http://www.ncbi.nlm.nih.gov/snp/794728262",
+        "rs": 794728262
+      }
+    ],
+    "gnomAD_4": [
+      {
+        "@id": "http://gnomad.broadinstitute.org/variant/15-48427768-G-A?dataset=gnomad_r4",
+        "id": "15-48427768-G-A",
+        "variant": "15:48427768 G / A"
+      }
+    ]
+  },
+  "genomicAlleles": [
+    {
+      "chromosome": "15",
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 48427768,
+          "referenceAllele": "G",
+          "start": 48427767
+        }
+      ],
+      "hgvs": [
+        "NC_000015.10:g.48427768G>A",
+        "CM000677.2:g.48427768G>A"
+      ],
+      "referenceGenome": "GRCh38",
+      "referenceSequence": "http://reg.genome.network/refseq/RS000063"
+    },
+    {
+      "chromosome": "15",
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 48719965,
+          "referenceAllele": "G",
+          "start": 48719964
+        }
+      ],
+      "hgvs": [
+        "NC_000015.9:g.48719965G>A",
+        "CM000677.1:g.48719965G>A"
+      ],
+      "referenceGenome": "GRCh37",
+      "referenceSequence": "http://reg.genome.network/refseq/RS000039"
+    },
+    {
+      "chromosome": "15",
+      "coordinates": [
+        {
+          "allele": "A",
+          "end": 46507257,
+          "referenceAllele": "G",
+          "start": 46507256
+        }
+      ],
+      "hgvs": [
+        "NC_000015.8:g.46507257G>A"
+      ],
+      "referenceGenome": "NCBI36",
+      "referenceSequence": "http://reg.genome.network/refseq/RS000015"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 223021,
+          "referenceAllele": "C",
+          "start": 223020
+        }
+      ],
+      "hgvs": [
+        "NG_008805.2:g.223021C>T",
+        "LRG_778:g.223021C>T"
+      ],
+      "referenceSequence": "http://reg.genome.network/refseq/RS001224"
+    }
+  ],
+  "transcriptAlleles": [
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7381,
+          "referenceAllele": "C",
+          "start": 7380
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000559133.6:c.7065C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000453958.2:p.Ile2355="
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS914274"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7486,
+          "referenceAllele": "C",
+          "start": 7485
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000674301.2:c.*516C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000501333.2:n.*516C>T"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS914454"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 1184,
+          "referenceAllele": "C",
+          "start": 1183
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000682170.1:n.1184C>T"
+      ],
+      "referenceSequence": "http://reg.genome.network/refseq/RS827167"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 300,
+          "referenceAllele": "C",
+          "start": 299
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000682767.1:n.300C>T"
+      ],
+      "referenceSequence": "http://reg.genome.network/refseq/RS827756"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7319,
+          "referenceAllele": "C",
+          "start": 7318
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000316623.10:c.7003C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000325527.5:p.Arg2335Trp",
+        "hgvsWellDefined": "ENSP00000325527.5:p.Arg2335Trp"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS746076",
+      "MANE": {
+        "maneVersion": "1.3",
+        "maneStatus": "MANE Select",
+        "nucleotide": {
+          "Ensembl": {
+            "hgvs": "ENST00000316623.10:c.7003C>T"
+          },
+          "RefSeq": {
+            "hgvs": "NM_000138.5:c.7003C>T"
+          }
+        },
+        "protein": {
+          "Ensembl": {
+            "hgvs": "ENSP00000325527.5:p.Arg2335Trp"
+          },
+          "RefSeq": {
+            "hgvs": "NP_000129.3:p.Arg2335Trp"
+          }
+        }
+      }
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 2169,
+          "referenceAllele": "C",
+          "start": 2168
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000674301.1:c.2169C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000501333.1:n.2169C>T"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS774292"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7459,
+          "referenceAllele": "C",
+          "start": 7458
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000316623.9:c.7003C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "ENSP00000325527.5:p.Arg2335Trp",
+        "hgvsWellDefined": "ENSP00000325527.5:p.Arg2335Trp"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS247158"
+    },
+    {
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 2372,
+          "referenceAllele": "C",
+          "start": 2371
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "ENST00000559133.5:c.2372C>T"
+      ],
+      "referenceSequence": "http://reg.genome.network/refseq/RS374338"
+    },
+    {
+      "@id": "http://reg.genome.network/allele/PA304254",
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7398,
+          "referenceAllele": "C",
+          "start": 7397
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "NM_000138.4:c.7003C>T",
+        "LRG_778t1:c.7003C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "NP_000129.3:p.Arg2335Trp",
+        "hgvsWellDefined": "NP_000129.3:p.Arg2335Trp"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS006200"
+    },
+    {
+      "@id": "http://reg.genome.network/allele/PA304254",
+      "coordinates": [
+        {
+          "allele": "T",
+          "end": 7319,
+          "referenceAllele": "C",
+          "start": 7318
+        }
+      ],
+      "gene": "http://reg.genome.network/gene/GN003603",
+      "geneNCBI_id": 2200,
+      "geneSymbol": "FBN1",
+      "hgvs": [
+        "NM_000138.5:c.7003C>T"
+      ],
+      "proteinEffect": {
+        "hgvs": "NP_000129.3:p.Arg2335Trp",
+        "hgvsWellDefined": "NP_000129.3:p.Arg2335Trp"
+      },
+      "referenceSequence": "http://reg.genome.network/refseq/RS674722",
+      "MANE": {
+        "maneVersion": "1.3",
+        "maneStatus": "MANE Select",
+        "nucleotide": {
+          "Ensembl": {
+            "hgvs": "ENST00000316623.10:c.7003C>T"
+          },
+          "RefSeq": {
+            "hgvs": "NM_000138.5:c.7003C>T"
+          }
+        },
+        "protein": {
+          "Ensembl": {
+            "hgvs": "ENSP00000325527.5:p.Arg2335Trp"
+          },
+          "RefSeq": {
+            "hgvs": "NP_000129.3:p.Arg2335Trp"
+          }
+        }
+      }
+    }
+  ],
+  "type": "nucleotide"
+}

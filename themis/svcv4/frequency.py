@@ -1251,7 +1251,7 @@ def pop_hmz(
     if eligible < _HMZ_OBSERVATION_FLOOR:
         return PopHmz(points=None, support=HmzSupport.BELOW_FLOOR, observations=eligible, counts=counts)
     weights = ref.per_observation.homozygous
-    per_observation = (weights.dominant if inheritance is HmzInheritance.AD else weights.other).points
+    per_observation = (weights.dominant if inheritance is HmzInheritance.AD else weights.other).award()
     return PopHmz(
         points=per_observation * (eligible - 1),
         support=HmzSupport.SCORED,

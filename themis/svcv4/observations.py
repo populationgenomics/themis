@@ -63,7 +63,7 @@ _UNAFFECTED = _UnaffectedExpansion(
 )
 
 
-def _priced(grid: reference.ObservationGrid) -> Iterator[tuple[str, str | None, decimal.Decimal]]:
+def _priced(grid: reference.ObservationGrid) -> Iterator[tuple[str, str | None, decimal.Decimal | None]]:
     """Every cell a grid prices: the row's fragment, the column's where the cell has one, and the value.
 
     A row priced per column is addressed by both fragments; a collapsed row is addressed by its own
@@ -83,8 +83,11 @@ def _priced(grid: reference.ObservationGrid) -> Iterator[tuple[str, str | None, 
         yield row.cell, None, row.points
 
 
-def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal]]:
+def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal | None]]:
     """Every per-observation cell, as the id addressing it and what one observation in it scores.
+
+    `None` is a row the framework declines to value, which is addressed all the same: the determination is
+    recordable and there is no number to read for it.
 
     Raises:
         ReferenceDataError: If CLN_UAF states a column no zygosity reads.
@@ -132,6 +135,11 @@ def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal]
     for row, column, points in _priced(tables.de_novo):
         yield f'CLN_DNV.{row if column is None else f"{row}.{column}"}', points
 
+    # CLN_CCS is one determination about a cohort rather than a count of individuals, so its rows are
+    # addressed by their own fragment alone.
+    for row in tables.case_control:
+        yield f'CLN_CCS.{row.cell}', row.points
+
     for yield_bin in tables.diagnostic_yield:
         yield f'LOC_PHE.yield.{yield_bin.cell}', yield_bin.points
     # Step 1 gates the workflow rather than scoring it.
@@ -141,15 +149,18 @@ def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal]
     for row in tables.cosegregation:
         yield f'LOC_SEG.{row.cell}', row.points
 
+    for row in tables.non_segregation:
+        yield f'LOC_SEG.non_segregation.{row.cell}', row.points
 
-def cell_points(ref: reference.Reference) -> dict[str, decimal.Decimal]:
-    """Every per-observation cell the framework prices, by id.
+
+def _all_cells(ref: reference.Reference) -> dict[str, decimal.Decimal | None]:
+    """Every per-observation cell by id, an unvalued row carrying `None`.
 
     Raises:
         ReferenceDataError: If two rows are addressed by one id, which would price one of them at
             the other's value, or if CLN_UAF states a column no zygosity reads.
     """
-    cells: dict[str, decimal.Decimal] = {}
+    cells: dict[str, decimal.Decimal | None] = {}
     for cell_id, points in _addressed(ref):
         if cell_id in cells:
             raise reference.ReferenceDataError(
@@ -158,6 +169,42 @@ def cell_points(ref: reference.Reference) -> dict[str, decimal.Decimal]:
             )
         cells[cell_id] = points
     return cells
+
+
+def cell_points(ref: reference.Reference) -> dict[str, decimal.Decimal]:
+    """Every per-observation cell the framework prices, by id.
+
+    A row the framework declines to value is not priced and so not here; `unvalued_cells` reports it.
+
+    Raises:
+        ReferenceDataError: If two rows are addressed by one id, which would price one of them at
+            the other's value, or if CLN_UAF states a column no zygosity reads.
+    """
+    return {cell_id: points for cell_id, points in _all_cells(ref).items() if points is not None}
+
+
+def unvalued_cells(ref: reference.Reference) -> frozenset[str]:
+    """The cells the framework names and declines to value.
+
+    Not the same as a cell nobody mapped. SM4 routes a case-control odds ratio near or below 1.0 to a
+    statistician rather than to a number, so there is no value to read -- and a curator can still
+    record the determination. Reported here so a consumer can tell the two apart.
+
+    Raises:
+        ReferenceDataError: As `cell_points`.
+    """
+    return frozenset(cell_id for cell_id, points in _all_cells(ref).items() if points is None)
+
+
+def is_path_code(ref: reference.Reference, code: str) -> bool:
+    """Whether a code is priced by a decision-tree path rather than by a per-observation row.
+
+    The split is the reference's own: `independent_families` names the families no variant-type path
+    sums, so a code outside them is one `builders` prices from a tier and the matrix axes. Never a
+    hand-kept list -- a hand-kept exclusion is one anybody can grow to silence this module instead of
+    mapping a row.
+    """
+    return code.partition('_')[0] not in ref.independent_families
 
 
 def points_for(ref: reference.Reference, cell_id: str) -> decimal.Decimal:

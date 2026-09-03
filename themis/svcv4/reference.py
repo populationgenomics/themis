@@ -435,12 +435,25 @@ class ObservationRow:
     Attributes:
         cell: The row's cell-id fragment, which is how `observations` addresses it.
         description: What one observation in the row is, as the framework states it.
-        points: What one such observation scores.
+        points: What one such observation scores, or `None` where the framework declines to value the
+            row: it states the row, and gives no number to read for it. That is not a cell nobody
+            mapped — `observations.unvalued_cells` reports these, and an unmapped cell stays an error.
     """
 
     cell: str
     description: str
-    points: decimal.Decimal
+    points: decimal.Decimal | None
+
+    def award(self) -> decimal.Decimal:
+        """What one observation in the row scores, for a caller reading a fully priced table.
+
+        Raises:
+            ReferenceDataError: If the framework declines to value the row, which a caller reading a
+                table every row of which is priced has no branch for.
+        """
+        if self.points is None:
+            raise ReferenceDataError(f'the framework states no value for {self.cell!r}, so nothing can score it')
+        return self.points
 
 
 @dataclasses.dataclass(frozen=True)
@@ -526,9 +539,9 @@ class AlternateCauseRows:
 class PerObservationTables:
     """The framework's tables that price one observed individual rather than a variant.
 
-    SM3 Table 7, SM4 Tables 1-5, SM5's yield bins and segregation figure state a value per observed
-    individual, and a code's contribution is that value times how many individuals fall in the row.
-    `observations` gives each row a cell id and reads its value here.
+    SM3 Table 7, SM4 Tables 1-5 and Figure 1, SM5's yield bins and its segregation figures state a
+    value per observed individual, and a code's contribution is that value times how many individuals
+    fall in the row. `observations` gives each row a cell id and reads its value here.
 
     Attributes:
         homozygous: POP_HMZ's per-observation tariffs.
@@ -537,8 +550,10 @@ class PerObservationTables:
         affected_monoallelic: CLN_AFF Table 1, one monoallelic proband.
         affected_biallelic: CLN_AFF Table 2, one biallelic proband.
         de_novo: CLN_DNV Table 3, one de novo occurrence.
+        case_control: CLN_CCS's determinations, one of which the framework declines to value.
         diagnostic_yield: LOC_PHE's diagnostic-yield bins.
         cosegregation: LOC_SEG's per-cosegregation rows.
+        non_segregation: LOC_SEG's per-non-segregation rows.
     """
 
     homozygous: HomozygousWeights
@@ -547,8 +562,10 @@ class PerObservationTables:
     affected_monoallelic: ObservationGrid
     affected_biallelic: ObservationGrid
     de_novo: ObservationGrid
+    case_control: tuple[ObservationRow, ...]
     diagnostic_yield: tuple[ObservationRow, ...]
     cosegregation: tuple[ObservationRow, ...]
+    non_segregation: tuple[ObservationRow, ...]
 
 
 @dataclasses.dataclass(frozen=True)

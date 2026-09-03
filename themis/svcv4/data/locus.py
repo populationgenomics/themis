@@ -68,6 +68,29 @@ class Cosegregation:
     rows: tuple[reference.ObservationRow, ...]
 
 
+_NON_SEGREGATION_PROVENANCE = (
+    "SM5 §33's recommendation, which is the reading codes.py's LOC_SEG notes already state against the calculator's "
+    'floor — scoring the observations off the same reading opens no second departure. Its autosomal-recessive row is '
+    "SM5's closing note, which withholds benignity from autosomal recessive outright, against the co-segregation "
+    'section granting it with homozygosity: both readings are in the text, so both are carried and a caller records '
+    'which it took (docs/design/curation-surface.md).'
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class NonSegregations:
+    """SM5's non-segregation rows: what one non-segregating observation is worth.
+
+    Attributes:
+        provenance: The passages the rows were read from, and the two readings the recessive row
+            carries.
+        rows: One row per inheritance pattern the recommendation reaches.
+    """
+
+    provenance: str
+    rows: tuple[reference.ObservationRow, ...]
+
+
 @dataclasses.dataclass(frozen=True)
 class NonSegregation:
     """What an observation that does not segregate does to the locus codes.
@@ -76,11 +99,13 @@ class NonSegregation:
         effect: What non-segregation does to the two locus codes' awards.
         benign_points: The benign award it earns, and where the re-analysis goes next.
         ar_note: Why a recessive MDE earns none of it.
+        per_observation: What one non-segregating observation is worth, by inheritance pattern.
     """
 
     effect: str
     benign_points: str
     ar_note: str
+    per_observation: NonSegregations
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,5 +178,26 @@ LOC_SEG = SegregationEvidence(
             'locus'
         ),
         ar_note='AR non-segregation gives NO benignity evidence',
+        per_observation=NonSegregations(
+            provenance=_NON_SEGREGATION_PROVENANCE,
+            rows=(
+                reference.ObservationRow(
+                    cell='autosomal_dominant',
+                    description='autosomal_dominant',
+                    points=decimal.Decimal('-4.0'),
+                ),
+                reference.ObservationRow(
+                    cell='autosomal_recessive_homozygous',
+                    description='autosomal_recessive_with_homozygosity',
+                    points=decimal.Decimal('-4.0'),
+                ),
+                reference.ObservationRow(cell='x_linked', description='x_linked', points=decimal.Decimal('-4.0')),
+                reference.ObservationRow(
+                    cell='autosomal_recessive_no_benignity',
+                    description='autosomal_recessive_benignity_withheld',
+                    points=decimal.Decimal('0.0'),
+                ),
+            ),
+        ),
     ),
 )

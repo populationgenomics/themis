@@ -111,16 +111,18 @@ already cover is a question for the author before it is transcribed, not a judge
 
 ### The transcription is checked against texts the repository does not carry
 
-Provenance is checked, not asserted: a fidelity test holds every label, and every description a table spans over its
-rows, verbatim against the three source texts — the calculator's page and the two supplements — and reports which source
-each workflow's wording comes from. Those texts stay out of the repository: one is a capture of a logged-in calculator
-page and two are supplements' running text, and what this repository carries of the framework is its code names and its
-values, never a supplement's prose. So the check is a manual gate, run against a local copy a maintainer points it at,
-in the shape the calculator oracle already takes ([`evidence-interfaces.md`](evidence-interfaces.md)).
+Provenance is checked, not asserted: [a fidelity test](../../apps/web/src/curation/workflows/fidelity.test.ts) holds
+every label, and every description a table spans over its rows, verbatim against the three source texts — the
+calculator's page and the two supplements — and reports which source each workflow's wording comes from. Those texts
+stay out of the repository: one is a capture of a logged-in calculator page and two are supplements' running text, and
+what this repository carries of the framework is its code names and its values, never a supplement's prose. So the check
+is a manual gate, run against a local copy a maintainer points it at, in the shape the calculator oracle already takes
+([`evidence-interfaces.md`](evidence-interfaces.md)).
 
 What CI runs is everything needing no capture: the module's unit tests, and two exported readings held against the
-library in Python — the cell inventory, which says every cell a curator can answer is one the framework prices or
-declines to value, and the DAFT tables.
+library in Python — [the cell inventory](../../themis/curation/tests/test_cell_inventory.py), which says every cell a
+curator can answer is one the framework prices or declines to value, and
+[the DAFT tables](../../themis/curation/tests/test_daft_tables.py).
 
 ### `POP_FRQ`'s row is derived, from the library's own thresholds
 
