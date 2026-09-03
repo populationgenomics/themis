@@ -73,11 +73,16 @@ envelope — and a pre-envelope record may instead decode as an envelope carryin
 30-day noncurrent window, so the deletion is recoverable for that long.
 
 ```sh
-gcloud storage rm "gs://$FULLTEXT/papers/*/metadata.pb"
+gcloud storage rm "gs://$FULLTEXT/papers/**/metadata.pb"
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT" --dry-run
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT" --limit 500   # a canary
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT"
 ```
+
+The `**` is load-bearing. With a single `*`, `gcloud storage` expands the directory level first and then probes each
+paper's directory with a request of its own — one per paper, sequentially, so over the seed corpus the deletion runs for
+the better part of an hour and looks hung. `**` lists the prefix once and filters the result (under a minute for the
+same corpus).
 
 The dry run prints the listing's count — the manifests under `papers/` and how many are due — and the request each due
 paper makes; `--limit` refreshes the first N due in `doc_id` order, a canary before the whole corpus. The refresh never
