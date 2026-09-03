@@ -1,7 +1,7 @@
 """The store service: an internal Cloud Run service over two GCS buckets (docs/design/services.md).
 
 Provisions the store data-plane service for one environment — a runtime SA, the
-working-document and ephemeral-workspace buckets, the SA's object-admin on both, and
+working-document and workspace buckets, the SA's object-admin on both, and
 an internal-ingress Cloud Run service. The container runs the `gcs` storage backend and
 resolves each request's session through the auth service at `THEMIS_AUTH_URL`
 (sandbox-worker.md §"One trusted process, not two containers"). The sandbox worker
@@ -14,9 +14,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-# Scratch no live session touches ages out; a live session rewrites it each turn,
-# resetting the age (self-hosted-sandbox.md §9).
-_WORKSPACE_TTL_DAYS = 30
+from themis_infra import storage
 
 
 class StoreService(pulumi.ComponentResource):
@@ -28,7 +26,7 @@ class StoreService(pulumi.ComponentResource):
         service_name: The Cloud Run service name, for the load balancer's serverless NEG
             and the sandbox job's invoker binding.
         working_document_bucket: The versioned working-document bucket name.
-        workspace_bucket: The ephemeral-workspace bucket name.
+        workspace_bucket: The workspace bucket name.
         url: The service's `run.app` URL (reached only through the internal load balancer).
     """
 
@@ -69,6 +67,9 @@ class StoreService(pulumi.ComponentResource):
         )
         self.working_document_bucket = working_documents.name
 
+        # No age-based delete: a sheaf pack is written once and never rewritten, so an age rule
+        # would delete a live repository's base pack (sheaf.md). Otherwise the full-text bucket's
+        # policy (storage.py).
         workspace = gcp.storage.Bucket(
             'themis-store-workspace',
             project=project,
@@ -76,12 +77,17 @@ class StoreService(pulumi.ComponentResource):
             location=region,
             uniform_bucket_level_access=True,
             public_access_prevention='enforced',
+            versioning=gcp.storage.BucketVersioningArgs(enabled=True),
             lifecycle_rules=[
                 gcp.storage.BucketLifecycleRuleArgs(
                     action=gcp.storage.BucketLifecycleRuleActionArgs(type='Delete'),
-                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(age=_WORKSPACE_TTL_DAYS),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(
+                        days_since_noncurrent_time=storage.NONCURRENT_RETENTION_DAYS,
+                    ),
                 )
             ],
+            soft_delete_policy=gcp.storage.BucketSoftDeletePolicyArgs(retention_duration_seconds=0),
+            autoclass=gcp.storage.BucketAutoclassArgs(enabled=True, terminal_storage_class='ARCHIVE'),
             opts=child,
         )
         self.workspace_bucket = workspace.name

@@ -11,8 +11,8 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-# Days a noncurrent version is kept before a lifecycle rule GCs it.
-_NONCURRENT_RETENTION_DAYS = 30
+# Days a noncurrent version is kept before a lifecycle rule GCs it (every versioned bucket).
+NONCURRENT_RETENTION_DAYS = 30
 
 
 def fulltext_bucket(
@@ -63,7 +63,7 @@ def fulltext_bucket(
             gcp.storage.BucketLifecycleRuleArgs(
                 action=gcp.storage.BucketLifecycleRuleActionArgs(type='Delete'),
                 condition=gcp.storage.BucketLifecycleRuleConditionArgs(
-                    days_since_noncurrent_time=_NONCURRENT_RETENTION_DAYS,
+                    days_since_noncurrent_time=NONCURRENT_RETENTION_DAYS,
                 ),
             )
         ],

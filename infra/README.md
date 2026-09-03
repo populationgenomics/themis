@@ -51,6 +51,15 @@ Deletion is a safeguard, not a lock: `force_destroy` is False so `pulumi destroy
 intentional removal — a copyright takedown, a retraction — is always available manually (`gcloud storage rm`, or
 empty-then-destroy).
 
+The store's **workspace** bucket, `gs://cpg-themis-<env>-store-workspace`, carries the same policy — versioned with the
+same 30-day noncurrent window, soft delete off, Autoclass to Archive — and no age-based delete rule. The constraint is
+the sheaf repository it is shaped to hold ([`docs/design/sheaf.md`](../docs/design/sheaf.md)): packfiles are written
+once and never rewritten, so a rule that deletes by age would remove a long-lived repository's base pack while the ref
+document still names it, whereas a noncurrent-age rule cannot touch a pack, since a pack never has a noncurrent
+generation. Nothing in that design deletes, so what accumulates sinks to Archive rather than being reclaimed. For the
+single tar archive a live session rewrites each turn, each rewrite makes the previous generation noncurrent and those
+expire after 30 days; the current archive persists until something deletes it.
+
 The **PR review screenshot** bucket, `gs://cpg-themis-dev-pr-screenshots`, is the one exception to that private policy
 and the only bucket in the project that permits public access: GitHub renders a PR-body image through its Camo proxy,
 which fetches the origin anonymously, so the read is necessarily unauthenticated
