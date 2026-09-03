@@ -31,6 +31,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',
+    'roles/logging.configWriter',  # retention on the _Default log bucket (baseline.py) is a buckets.create/update
     'roles/run.admin',
     'roles/secretmanager.admin',
     'roles/serviceusage.serviceUsageAdmin',
