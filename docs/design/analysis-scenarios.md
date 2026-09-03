@@ -4,8 +4,8 @@
 [`workbench-navigation.md`](workbench-navigation.md) (the pages that render these); [`proto.md`](proto.md) (schema +
 serialization); [`frontend-framework.md`](frontend-framework.md) (the BFF that renders the kickoff and persists the
 inputs); [`migrations.md`](migrations.md) (the deploy ordering `0008` is destructive against, and the condition that
-allows it); [`agent-runtime.md`](agent-runtime.md) (the rest of what a scenario specialises — guiding prompt, outline,
-and what the run can reach); [`conversation-view.md`](conversation-view.md) (where the kickoff turn is read back).
+allows it); [`agent-runtime.md`](agent-runtime.md) (the rest of what a scenario specialises — guiding prompt and what
+the run can reach); [`conversation-view.md`](conversation-view.md) (where the kickoff turn is read back).
 
 ## Overview
 
@@ -42,8 +42,12 @@ is the web tier's backend-for-frontend, which serves that form and creates the a
 ### A scenario is a template; creating an Analysis fills it in
 
 A **scenario** is the platform's unit of specialization ([`PRODUCT.md`](../PRODUCT.md) §4): a named kind of analysis,
-supplying the guiding prompt, the working-document outline, and what the run can reach — its tool surface, and the
-roster of sub-agents the coordinator may delegate to ([`agent-runtime.md`](agent-runtime.md)).
+specialised on three axes — the guiding prompt, the working document's outline, and what the run can reach. The reach
+has two parts, the run's tool surface and the roster of sub-agents the coordinator may delegate to;
+[`agent-runtime.md`](agent-runtime.md) names the two separately, as the runtime configures them separately, which is why
+its count of what we supply comes to four. The axes have two carriers. The bundle the runtime is configured with carries
+the guiding prompt, the tool surface and the roster; the kickoff carries the outline (§"The kickoff text is rendered,
+not stored").
 
 What all of those leave open is what a curator supplies for one run, and that is what this doc owns: a scenario is also
 a **template**, a fixed set of fields it asks for. The template is not another specialization axis. The axes above say
@@ -54,9 +58,6 @@ Creating an Analysis instantiates that template. `AnalysisInputs` is the filled-
 template at once: the fields hold what the curator entered, and *which* member of the oneof is set is the scenario they
 entered it for. Scenario-iff-inputs is therefore structural. A required oneof over one message per scenario leaves no
 enum beside the payload to disagree with the fields, and no way to name a scenario without supplying what it asks for.
-
-(On the count: PRODUCT §4 makes it three axes because the roster is part of what the run can reach; `agent-runtime.md`
-lists the roster separately, the runtime configuring it separately.)
 
 ### The three scenarios
 
@@ -92,8 +93,8 @@ rule is a different matter, and there is none yet (§Open questions).
 ### Identity is derived, never authored or generated
 
 One module of the web app decides how a scenario presents itself, for every surface — the card, the app bar, the page.
-Three things per scenario, and a new scenario adds its case to each — the presentation half of adding one, the
-specialization above being the rest ([`agent-runtime.md`](agent-runtime.md)):
+Three things per scenario, and a new scenario adds its case to each — the presentation half of adding one; the rest is
+its bundle ([`agent-runtime.md`](agent-runtime.md)) and its kickoff case (§"The kickoff text is rendered, not stored"):
 
 - the **identifying line** — the transcript and coding change, the proband's sample id, or the opening of a free-form
   instruction;
@@ -125,10 +126,15 @@ not a degraded one.
 ### The kickoff text is rendered, not stored
 
 **The decision.** The BFF renders the scenario and its inputs into the instruction the agent's session opens with, and
-stores none of it. That instruction is the *case*, not the scenario's guiding prompt: the guiding prompt says how to
-approach this kind of analysis and is part of the specialization the session is configured with
-([`agent-runtime.md`](agent-runtime.md)), while the kickoff says which instance to work, and is the only text that
-varies per run. What each scenario's kickoff asks for is in the Appendix.
+stores none of it. That instruction is the *case* and the shape of its answer, not the scenario's guiding prompt: the
+guiding prompt says how to approach this kind of analysis and is part of the specialization the session is configured
+with ([`agent-runtime.md`](agent-runtime.md)), while the kickoff says which instance to work and, where the scenario
+writes a working document, closes with that document's outline — the sections to write, one line each on what a section
+holds. The inputs are the only text that varies per run; the outline is fixed per scenario and versioned with the BFF
+that renders it. The split with the guiding prompt is by kind: the kickoff owns the section list and what each section
+holds; the guiding prompt — the agent's skill document in the runtime-configured bundle — keeps each section's rules:
+the wording of the notice, the wording of the reflection questions, the format of a derivation. The curator reads the
+outline in the conversation as the run's first turn. What each scenario's kickoff asks for is in the Appendix.
 
 **Why the server renders it.** The scenario contract belongs to the server: a run labelled `variant_classification` was
 therefore asked the classification instruction, and that is what makes two runs of one scenario comparable — the point
@@ -140,9 +146,10 @@ session-mirroring work the workbench needs for the conversation as a whole.
 
 Three qualifications follow.
 
-- **Comparability holds within a template version.** An edit to a template changes what later runs are asked, nothing
-  records which version a run got, and nothing rewrites what earlier runs were asked. Closing that gap is the
-  session-mirroring work, not a version field beside the inputs.
+- **Comparability holds within a kickoff version.** The template and the outline are both fixed per scenario and
+  versioned with the BFF; an edit to either changes what later runs are asked, nothing records which version a run got,
+  and nothing rewrites what earlier runs were asked. Closing that gap is the session-mirroring work, not a version field
+  beside the inputs.
 - **This is not a security boundary.** A curator filling in a scenario is expressing intent, exactly as they do steering
   a running session, and `free_form` exists so they can ask for work no template covers. Prompt injection is *outside*
   content redirecting a run away from what its user asked for; a user's own inputs are not that.
@@ -218,7 +225,8 @@ read one way.
 **A classification asks for "the disease entity or entities", never "the entity".** A gene can map to several
 non-mutually-exclusive disease entities — the case SVCv4's SM21 rule exists for — so asking for one presupposes the
 count before the run has looked. The same text starts a round of the classifier-evaluation loop, which scores that step
-against a reference set.
+against a reference set, and the kickoff closes with the working document's outline
+([`kickoff.ts`](../../apps/web/src/server/kickoff.ts)).
 
 **A case analysis asks the agent to diagnose, not to classify one variant.** Establish the disease frame from the
 clinical context, analyze the family's genomic data, classify the variants it prioritizes, and synthesize a case-level

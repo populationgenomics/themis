@@ -37,10 +37,11 @@ services tier's (above).
 
 Use **Managed Agents** as the runtime, with its **`multiagent` coordinator** as the model-driven orchestrator. A
 coordinator agent, given the case, decides per case how to gather, aggregate, reason, and review, delegating to
-sub-agent threads. Scheduling is the model's; we supply only the scenario specialization — guiding prompt,
-working-document outline, tool surface, and the roster of sub-agents the coordinator may delegate to. This is PRODUCT §4
-("the orchestrator decides scheduling per case… the framework scaffolds evidence, not agent topology") and the
-Bitter-Lesson stance of §6 (dynamic, model-composed workflows; just enough fixed scaffold to guarantee evidence
+sub-agent threads. Scheduling is the model's; we supply only the scenario specialization: the guiding prompt, tool
+surface and roster of sub-agents the coordinator may delegate to, configured on the runtime, and the working document's
+outline, carried by the kickoff the session opens with ([`analysis-scenarios.md`](analysis-scenarios.md)). This is
+PRODUCT §4 ("the orchestrator decides scheduling per case… the framework scaffolds evidence, not agent topology") and
+the Bitter-Lesson stance of §6 (dynamic, model-composed workflows; just enough fixed scaffold to guarantee evidence
 coverage, traceability, and eval).
 
 ### Why Managed Agents

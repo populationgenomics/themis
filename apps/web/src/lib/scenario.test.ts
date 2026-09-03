@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
+import { AnalysisInputsSchema, AnalysisSchema } from "@/models/workbench";
 import {
-  type AnalysisInputs,
-  AnalysisInputsSchema,
-  AnalysisSchema,
-} from "@/models/workbench";
+  freeForm,
+  SAMPLES,
+  scenarioCases,
+  variant,
+} from "@/models/workbench.test-support";
 import {
   analysisTitle,
   cardContent,
@@ -12,32 +14,6 @@ import {
   scenarioLabel,
   splitVariant,
 } from "./scenario";
-
-function variant(
-  transcript: string,
-  hgvsC: string,
-  clinicalContext = "de novo, developmental delay",
-): AnalysisInputs {
-  return create(AnalysisInputsSchema, {
-    scenario: {
-      case: "variantClassification",
-      value: { transcript, hgvsC, clinicalContext },
-    },
-  });
-}
-
-function freeForm(prompt: string): AnalysisInputs {
-  return create(AnalysisInputsSchema, {
-    scenario: { case: "freeForm", value: { prompt } },
-  });
-}
-
-// One sample per scenario, keyed by its oneof case, so the exhaustiveness check below can demand one
-// for every case the proto declares.
-const SAMPLES: Record<string, AnalysisInputs | undefined> = {
-  variantClassification: variant("NM_001382309.1", "c.332del"),
-  freeForm: freeForm("Re-review the MYH7 VUS calls."),
-};
 
 describe("how a scenario names its Analysis", () => {
   test("a classification is named by the variant it is about", () => {
@@ -67,7 +43,7 @@ describe("how a scenario names its Analysis", () => {
   test("every scenario the proto declares is named, labelled, and rendered", () => {
     // Read off the oneof descriptor, so a scenario added to the proto fails here until it has a
     // rendering — a hand-written list would only fail when someone remembered to extend it.
-    const cases = AnalysisInputsSchema.oneofs[0].fields.map((f) => f.localName);
+    const cases = scenarioCases();
     expect(cases.length).toBeGreaterThan(1);
     // What an unset oneof renders — a scenario this build predates. Compared against rather than
     // checked for length: every fallback is a non-empty string, so a length assertion passes on a
