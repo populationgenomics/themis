@@ -1,4 +1,5 @@
-// The litcache at-rest manifest and its parts (structural model: docs/design/litcache-manifest.md).
+// The litcache at-rest records: the manifest and its parts, and the bibliographic record beside it
+// (structural model: docs/design/litcache-manifest.md).
 // A durable, authored contract: binary proto at rest, gated additively. This proto is the source of
 // truth; the committed themis/litcache/models/litcache_pb2 stubs are generated from it.
 
@@ -8,6 +9,9 @@ package themis.litcache.models.litcache;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "pubmed_proto/pubmed.proto";
+import "themis/litcache/models/crossref.proto";
+import "themis/litcache/models/openalex.proto";
 
 enum SourceKind {
   SOURCE_KIND_UNSPECIFIED = 0;
@@ -17,6 +21,7 @@ enum SourceKind {
   SOURCE_KIND_BIORXIV = 4;
   SOURCE_KIND_UPLOAD = 5;
   SOURCE_KIND_SEED = 6;
+  SOURCE_KIND_EUROPE_PMC_BOOKSHELF = 7;  // a Bookshelf chapter's BITS XML: Europe PMC's bookXML endpoint, by accession
 }
 
 // Scraped html is converted to xml upstream and enters as media_type xml under a distinct
@@ -110,6 +115,7 @@ message ExternalIds {
   optional string pmcid = 3;
   optional string arxiv = 4;
   optional string biorxiv = 5;
+  optional string bookid = 6;  // Bookshelf accession (NBK…), from a book record's BookDocument.article_id_list
 }
 
 message Equivalence {
@@ -145,4 +151,31 @@ message Manifest {
   repeated Source sources = 6;  // primary-artifact lineages (pdf, jats-xml, …)
   map<string, Rendering> renderings = 7;  // key = the markdown's content hash (sha256 hex)
   repeated AssociatedFile files = 8;  // every KNOWN supplementary file, even un-fetched (lazy fetch)
+}
+
+// PubMed's record for a PMID, in the one of its two kinds the index files it under: a journal
+// citation, or a book NCBI hosts on its Bookshelf or a chapter of one. protovalidate requires exactly
+// one kind set.
+message PubmedRecord {
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+
+    pubmed.PubmedArticle article = 1;
+    pubmed.PubmedBookArticle book_article = 2;
+  }
+}
+
+// The at-rest type of a paper's `metadata.pb`: one field per index, each holding that index's
+// record whole. protovalidate requires at least one set (docs/design/litcache-manifest.md, "The
+// bibliographic record").
+message PaperMetadata {
+  option (buf.validate.message).cel = {
+    id: "paper_metadata.some_record"
+    message: "at least one index's record must be set"
+    expression: "has(this.pubmed) || has(this.crossref) || has(this.openalex)"
+  };
+
+  PubmedRecord pubmed = 1;
+  themis.litcache.models.crossref.Work crossref = 2;
+  themis.litcache.models.openalex.Work openalex = 3;
 }

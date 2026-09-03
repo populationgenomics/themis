@@ -1,4 +1,5 @@
-// The litcache at-rest manifest and its parts (structural model: docs/design/litcache-manifest.md).
+// The litcache at-rest records: the manifest and its parts, and the bibliographic record beside it
+// (structural model: docs/design/litcache-manifest.md).
 // A durable, authored contract: binary proto at rest, gated additively. This proto is the source of
 // truth; the committed themis/litcache/models/litcache_pb2 stubs are generated from it.
 
@@ -11,13 +12,19 @@ import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../buf/validate/validate_pb";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { PubmedArticle, PubmedBookArticle } from "../../../pubmed_proto/pubmed_pb";
+import { file_pubmed_proto_pubmed } from "../../../pubmed_proto/pubmed_pb";
+import type { Work } from "./crossref_pb";
+import { file_themis_litcache_models_crossref } from "./crossref_pb";
+import type { Work as Work$1 } from "./openalex_pb";
+import { file_themis_litcache_models_openalex } from "./openalex_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/litcache/models/litcache.proto.
  */
 export const file_themis_litcache_models_litcache: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCKhAQoLRXh0ZXJuYWxJZHMSEAoDZG9pGAEgASgJSACIAQESEQoEcG1pZBgCIAEoCUgBiAEBEhIKBXBtY2lkGAMgASgJSAKIAQESEgoFYXJ4aXYYBCABKAlIA4gBARIUCgdiaW9yeGl2GAUgASgJSASIAQFCBgoEX2RvaUIHCgVfcG1pZEIICgZfcG1jaWRCCAoGX2FyeGl2QgoKCF9iaW9yeGl2IjYKC0VxdWl2YWxlbmNlEg0KBWVkZ2VzGAEgAygJEhgKEGNhbm9uaWNhbF9kb2NfaWQYAiABKAkibgoKUmV0cmFjdGlvbhIWCglyZXRyYWN0ZWQYASABKAhIAIgBARITCgZzb3VyY2UYAiABKAlIAYgBARIRCgRkYXRlGAMgASgJSAKIAQFCDAoKX3JldHJhY3RlZEIJCgdfc291cmNlQgcKBV9kYXRlIqUBCg5Bc3NvY2lhdGVkRmlsZRJBCgRyb2xlGAEgASgOMjMudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZVJvbGUSDAoEbmFtZRgCIAEoCRIXCgpzb3VyY2VfdXJsGAMgASgJSACIAQESEQoEcGF0aBgEIAEoCUgBiAEBQg0KC19zb3VyY2VfdXJsQgcKBV9wYXRoIp0ECghNYW5pZmVzdBIOCgZkb2NfaWQYASABKAkSQgoMZXh0ZXJuYWxfaWRzGAIgASgLMiwudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5FeHRlcm5hbElkcxIRCgljbGFpbV9rZXkYAyABKAkSQQoLZXF1aXZhbGVuY2UYBCABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkVxdWl2YWxlbmNlEj8KCnJldHJhY3Rpb24YBSABKAsyKy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldHJhY3Rpb24SOAoHc291cmNlcxgGIAMoCzInLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuU291cmNlEk0KCnJlbmRlcmluZ3MYByADKAsyOS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLk1hbmlmZXN0LlJlbmRlcmluZ3NFbnRyeRI+CgVmaWxlcxgIIAMoCzIvLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuQXNzb2NpYXRlZEZpbGUaXQoPUmVuZGVyaW5nc0VudHJ5EgsKA2tleRgBIAEoCRI5CgV2YWx1ZRgCIAEoCzIqLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuUmVuZGVyaW5nOgI4ASrEAQoKU291cmNlS2luZBIbChdTT1VSQ0VfS0lORF9VTlNQRUNJRklFRBAAEhkKFVNPVVJDRV9LSU5EX1BNQ19PQV9TMxABEhoKFlNPVVJDRV9LSU5EX0VVUk9QRV9QTUMQAhIbChdTT1VSQ0VfS0lORF9FTFNFVklFUl9PQRADEhcKE1NPVVJDRV9LSU5EX0JJT1JYSVYQBBIWChJTT1VSQ0VfS0lORF9VUExPQUQQBRIUChBTT1VSQ0VfS0lORF9TRUVEEAYqWwoMU291cmNlRm9ybWF0Eh0KGVNPVVJDRV9GT1JNQVRfVU5TUEVDSUZJRUQQABIVChFTT1VSQ0VfRk9STUFUX1hNTBABEhUKEVNPVVJDRV9GT1JNQVRfUERGEAIqZQoMTGljZW5jZUJhc2lzEh0KGUxJQ0VOQ0VfQkFTSVNfVU5TUEVDSUZJRUQQABIaChZMSUNFTkNFX0JBU0lTX0FSVElGQUNUEAESGgoWTElDRU5DRV9CQVNJU19BU1NFUlRFRBACKmsKCUNvbnZlcnRlchIZChVDT05WRVJURVJfVU5TUEVDSUZJRUQQABIVChFDT05WRVJURVJfTElURE9XThABEhUKEUNPTlZFUlRFUl9ET0NMSU5HEAISFQoRQ09OVkVSVEVSX0xMTV9PQ1IQAyqDAQoSQXNzb2NpYXRlZEZpbGVSb2xlEiQKIEFTU09DSUFURURfRklMRV9ST0xFX1VOU1BFQ0lGSUVEEAASHwobQVNTT0NJQVRFRF9GSUxFX1JPTEVfRklHVVJFEAESJgoiQVNTT0NJQVRFRF9GSUxFX1JPTEVfU1VQUExFTUVOVEFSWRACYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp]);
+  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCLBAQoLRXh0ZXJuYWxJZHMSEAoDZG9pGAEgASgJSACIAQESEQoEcG1pZBgCIAEoCUgBiAEBEhIKBXBtY2lkGAMgASgJSAKIAQESEgoFYXJ4aXYYBCABKAlIA4gBARIUCgdiaW9yeGl2GAUgASgJSASIAQESEwoGYm9va2lkGAYgASgJSAWIAQFCBgoEX2RvaUIHCgVfcG1pZEIICgZfcG1jaWRCCAoGX2FyeGl2QgoKCF9iaW9yeGl2QgkKB19ib29raWQiNgoLRXF1aXZhbGVuY2USDQoFZWRnZXMYASADKAkSGAoQY2Fub25pY2FsX2RvY19pZBgCIAEoCSJuCgpSZXRyYWN0aW9uEhYKCXJldHJhY3RlZBgBIAEoCEgAiAEBEhMKBnNvdXJjZRgCIAEoCUgBiAEBEhEKBGRhdGUYAyABKAlIAogBAUIMCgpfcmV0cmFjdGVkQgkKB19zb3VyY2VCBwoFX2RhdGUipQEKDkFzc29jaWF0ZWRGaWxlEkEKBHJvbGUYASABKA4yMy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkFzc29jaWF0ZWRGaWxlUm9sZRIMCgRuYW1lGAIgASgJEhcKCnNvdXJjZV91cmwYAyABKAlIAIgBARIRCgRwYXRoGAQgASgJSAGIAQFCDQoLX3NvdXJjZV91cmxCBwoFX3BhdGginQQKCE1hbmlmZXN0Eg4KBmRvY19pZBgBIAEoCRJCCgxleHRlcm5hbF9pZHMYAiABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkV4dGVybmFsSWRzEhEKCWNsYWltX2tleRgDIAEoCRJBCgtlcXVpdmFsZW5jZRgEIAEoCzIsLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRXF1aXZhbGVuY2USPwoKcmV0cmFjdGlvbhgFIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuUmV0cmFjdGlvbhI4Cgdzb3VyY2VzGAYgAygLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2USTQoKcmVuZGVyaW5ncxgHIAMoCzI5LnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWFuaWZlc3QuUmVuZGVyaW5nc0VudHJ5Ej4KBWZpbGVzGAggAygLMi8udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZRpdCg9SZW5kZXJpbmdzRW50cnkSCwoDa2V5GAEgASgJEjkKBXZhbHVlGAIgASgLMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5SZW5kZXJpbmc6AjgBInoKDFB1Ym1lZFJlY29yZBIoCgdhcnRpY2xlGAEgASgLMhUucHVibWVkLlB1Ym1lZEFydGljbGVIABIxCgxib29rX2FydGljbGUYAiABKAsyGS5wdWJtZWQuUHVibWVkQm9va0FydGljbGVIAEINCgRraW5kEgW6SAIIASLNAgoNUGFwZXJNZXRhZGF0YRI9CgZwdWJtZWQYASABKAsyLS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlB1Ym1lZFJlY29yZBI3Cghjcm9zc3JlZhgCIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMuY3Jvc3NyZWYuV29yaxI3CghvcGVuYWxleBgDIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMub3BlbmFsZXguV29yazqKAbpIhgEagwEKGnBhcGVyX21ldGFkYXRhLnNvbWVfcmVjb3JkEidhdCBsZWFzdCBvbmUgaW5kZXgncyByZWNvcmQgbXVzdCBiZSBzZXQaPGhhcyh0aGlzLnB1Ym1lZCkgfHwgaGFzKHRoaXMuY3Jvc3NyZWYpIHx8IGhhcyh0aGlzLm9wZW5hbGV4KSrqAQoKU291cmNlS2luZBIbChdTT1VSQ0VfS0lORF9VTlNQRUNJRklFRBAAEhkKFVNPVVJDRV9LSU5EX1BNQ19PQV9TMxABEhoKFlNPVVJDRV9LSU5EX0VVUk9QRV9QTUMQAhIbChdTT1VSQ0VfS0lORF9FTFNFVklFUl9PQRADEhcKE1NPVVJDRV9LSU5EX0JJT1JYSVYQBBIWChJTT1VSQ0VfS0lORF9VUExPQUQQBRIUChBTT1VSQ0VfS0lORF9TRUVEEAYSJAogU09VUkNFX0tJTkRfRVVST1BFX1BNQ19CT09LU0hFTEYQBypbCgxTb3VyY2VGb3JtYXQSHQoZU09VUkNFX0ZPUk1BVF9VTlNQRUNJRklFRBAAEhUKEVNPVVJDRV9GT1JNQVRfWE1MEAESFQoRU09VUkNFX0ZPUk1BVF9QREYQAiplCgxMaWNlbmNlQmFzaXMSHQoZTElDRU5DRV9CQVNJU19VTlNQRUNJRklFRBAAEhoKFkxJQ0VOQ0VfQkFTSVNfQVJUSUZBQ1QQARIaChZMSUNFTkNFX0JBU0lTX0FTU0VSVEVEEAIqawoJQ29udmVydGVyEhkKFUNPTlZFUlRFUl9VTlNQRUNJRklFRBAAEhUKEUNPTlZFUlRFUl9MSVRET1dOEAESFQoRQ09OVkVSVEVSX0RPQ0xJTkcQAhIVChFDT05WRVJURVJfTExNX09DUhADKoMBChJBc3NvY2lhdGVkRmlsZVJvbGUSJAogQVNTT0NJQVRFRF9GSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIfChtBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9GSUdVUkUQARImCiJBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9TVVBQTEVNRU5UQVJZEAJiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_pubmed_proto_pubmed, file_themis_litcache_models_crossref, file_themis_litcache_models_openalex]);
 
 /**
  * @generated from message themis.litcache.models.litcache.FreeToRead
@@ -298,6 +305,13 @@ export type ExternalIds = Message<"themis.litcache.models.litcache.ExternalIds">
    * @generated from field: optional string biorxiv = 5;
    */
   biorxiv?: string | undefined;
+
+  /**
+   * Bookshelf accession (NBK…), from a book record's BookDocument.article_id_list
+   *
+   * @generated from field: optional string bookid = 6;
+   */
+  bookid?: string | undefined;
 };
 
 /**
@@ -453,6 +467,70 @@ export const ManifestSchema: GenMessage<Manifest> = /*@__PURE__*/
   messageDesc(file_themis_litcache_models_litcache, 12);
 
 /**
+ * PubMed's record for a PMID, in the one of its two kinds the index files it under: a journal
+ * citation, or a book NCBI hosts on its Bookshelf or a chapter of one. protovalidate requires exactly
+ * one kind set.
+ *
+ * @generated from message themis.litcache.models.litcache.PubmedRecord
+ */
+export type PubmedRecord = Message<"themis.litcache.models.litcache.PubmedRecord"> & {
+  /**
+   * @generated from oneof themis.litcache.models.litcache.PubmedRecord.kind
+   */
+  kind: {
+    /**
+     * @generated from field: pubmed.PubmedArticle article = 1;
+     */
+    value: PubmedArticle;
+    case: "article";
+  } | {
+    /**
+     * @generated from field: pubmed.PubmedBookArticle book_article = 2;
+     */
+    value: PubmedBookArticle;
+    case: "bookArticle";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.PubmedRecord.
+ * Use `create(PubmedRecordSchema)` to create a new message.
+ */
+export const PubmedRecordSchema: GenMessage<PubmedRecord> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 13);
+
+/**
+ * The at-rest type of a paper's `metadata.pb`: one field per index, each holding that index's
+ * record whole. protovalidate requires at least one set (docs/design/litcache-manifest.md, "The
+ * bibliographic record").
+ *
+ * @generated from message themis.litcache.models.litcache.PaperMetadata
+ */
+export type PaperMetadata = Message<"themis.litcache.models.litcache.PaperMetadata"> & {
+  /**
+   * @generated from field: themis.litcache.models.litcache.PubmedRecord pubmed = 1;
+   */
+  pubmed?: PubmedRecord | undefined;
+
+  /**
+   * @generated from field: themis.litcache.models.crossref.Work crossref = 2;
+   */
+  crossref?: Work | undefined;
+
+  /**
+   * @generated from field: themis.litcache.models.openalex.Work openalex = 3;
+   */
+  openalex?: Work$1 | undefined;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.PaperMetadata.
+ * Use `create(PaperMetadataSchema)` to create a new message.
+ */
+export const PaperMetadataSchema: GenMessage<PaperMetadata> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 14);
+
+/**
  * @generated from enum themis.litcache.models.litcache.SourceKind
  */
 export enum SourceKind {
@@ -490,6 +568,13 @@ export enum SourceKind {
    * @generated from enum value: SOURCE_KIND_SEED = 6;
    */
   SEED = 6,
+
+  /**
+   * a Bookshelf chapter's BITS XML: Europe PMC's bookXML endpoint, by accession
+   *
+   * @generated from enum value: SOURCE_KIND_EUROPE_PMC_BOOKSHELF = 7;
+   */
+  EUROPE_PMC_BOOKSHELF = 7,
 }
 
 /**

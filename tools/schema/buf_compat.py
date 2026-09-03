@@ -65,6 +65,8 @@ _PRE_RELEASE = frozenset(
     {
         'clinvar_proto/clinvar.proto',
         'themis/litcache/models/litcache.proto',
+        'themis/litcache/models/crossref.proto',
+        'themis/litcache/models/openalex.proto',
         'themis/evidence/models/evidence.proto',
         'themis/rpc/clinvar.proto',
         'themis/rpc/cspec.proto',

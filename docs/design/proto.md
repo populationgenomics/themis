@@ -60,9 +60,9 @@ Serialized data falls into three buckets by *who owns the schema* and *who consu
   lookup. Those are public, semver-covered exports, and the fetch server path carries the project's own conformance
   coverage.
 
-- **Bucket 3 — external JSON, tolerant subset.** Raw upstream payloads we cache (Crossref, Unpaywall): stored as the
-  upstream's JSON, modelled only for the fields we read, tolerant of extras. Never round-tripped through a lossy typed
-  write. See External data.
+- **Bucket 3 — external JSON, tolerant subset.** Raw upstream payloads we cache (Unpaywall): stored as the upstream's
+  JSON, modelled only for the fields we read, tolerant of extras. Never round-tripped through a lossy typed write. See
+  External data.
 
 Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque bytes, outside all three.
 
@@ -104,7 +104,7 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/rpc/                     # internal gRPC service contracts (auth, store, hello)
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
-  themis/litcache/models/         # at-rest domain contracts (the manifest)
+  themis/litcache/models/         # at-rest domain contracts (the manifest, the bibliographic record + the mirrors it embeds)
   themis/sheaf/models/            # at-rest: the sheaf ref document
   clinvar_proto/                  # copy of an upstream's published schema (below)
   pubmed_proto/                   # copy of an upstream's published schema (below)
@@ -188,12 +188,11 @@ additive fields independent, and by (2).
 
 ## External data (bucket 3)
 
-For a cached upstream payload (a raw Crossref or Unpaywall response): store the upstream's JSON as-is; model only the
-fields we read, as a **subset view, not a closed contract**. Reads are tolerant (extra upstream fields ignored). We do
-not RMW external JSON; if we must annotate it, we write a *separate* authored artifact rather than mutating the upstream
-blob.
+For a cached upstream payload (a raw Unpaywall response): store the upstream's JSON as-is; model only the fields we
+read, as a **subset view, not a closed contract**. Reads are tolerant (extra upstream fields ignored). We do not RMW
+external JSON; if we must annotate it, we write a *separate* authored artifact rather than mutating the upstream blob.
 
-The bucket-1-vs-3 axis is **re-derivability**, not "did we author a schema over it": a write-once projection over a
+The bucket-1-vs-3 axis is **re-derivability**, not "did we author a schema over it": a write-once derivation over a
 retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, never RMW — e.g. `metadata.pb` from the
 re-fetchable PubMed XML); a cached per-request response we keep as received and cannot re-derive is bucket 3 (preserve
 the raw bytes, tolerant subset read).
@@ -223,7 +222,8 @@ generates from it like any other proto. The freshness gate catches both ways the
 pin bumped without a regeneration.
 
 Only a type our own protos embed needs a copy: `clinvar_proto/clinvar.proto` (the record `themis/rpc/clinvar.proto`
-embeds) and `pubmed_proto/pubmed.proto` (the records `themis/rpc/literature.proto` embeds).
+embeds) and `pubmed_proto/pubmed.proto` (the records `themis/rpc/literature.proto` and
+`themis/litcache/models/litcache.proto` embed).
 
 Two properties hold for every copy, because it does not behave like the hand-authored protos beside it:
 
@@ -239,17 +239,64 @@ What that instability costs depends on what depends on the copy, and the two dif
   rpc response, and both ends of that call ship together. Nothing reads a stored copy of it, so a renumbering breaks no
   reader — which is why its copy sits on the pre-release exclusion list (`tools/schema/buf_compat.py`) permanently,
   unbound by `buf breaking`.
-- **PubMed's message is at rest**: litcache's `metadata.pb` is a serialized `PubmedArticle`, so a renumbering would
-  already corrupt every stored record — the schema's stability was load-bearing before any rpc embedded it. Its copy is
-  therefore *inside* the compared module (it cannot be pre-release listed anyway: the released `literature.proto`
-  imports it, and listing unlinks a file from the build), and the compat gate refusing an incompatible pin bump is the
-  store's own constraint made visible. The wheel is first-party, so holding its releases additive is ours to do. The
-  copy enters the module at 0.3.0, whose `MedlineCitation` is renumbered relative to 0.1.0's. That one reshape is
-  accepted: the dev corpus's `metadata.pb` is re-serialised from source for it, and the gate binds from the copy's first
-  release onward.
+- **PubMed's messages are at rest**: litcache's `metadata.pb` is a `PaperMetadata` envelope whose `pubmed` field carries
+  PubMed's own record, `PubmedArticle` or `PubmedBookArticle`
+  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so a renumbering would already
+  corrupt every stored record: the schema's stability was load-bearing before any rpc embedded it. Its copy is therefore
+  *inside* the compared module (it cannot be pre-release listed anyway: the released `literature.proto` imports it, and
+  listing unlinks a file from the build), and the compat gate refusing an incompatible pin bump is the store's own
+  constraint made visible. The wheel is first-party, so holding its releases additive is ours to do. The copy enters the
+  module at 0.3.0, whose `MedlineCitation` is renumbered relative to 0.1.0's. That one reshape is accepted: the dev
+  corpus's `metadata.pb` is re-serialised from source for it, and the gate binds from the copy's first release onward.
 
 Whether the embedded message is persisted is the one thing to re-check before any new use of this bucket: it decides
 which of the two regimes the copy lands in.
+
+## Mirrored upstream schemas
+
+An upstream that publishes JSON, and no schema a generator consumes, gets a **mirror**: a hand-authored proto whose
+every field is one of the upstream's keys, `json_name` the key verbatim, loaded by the proto3-JSON parser with unknown
+fields refused. Two exist, Crossref's work record and OpenAlex's
+([`crossref.proto`](../../schema/proto/themis/litcache/models/crossref.proto),
+[`openalex.proto`](../../schema/proto/themis/litcache/models/openalex.proto)), each embedded whole in litcache's
+`PaperMetadata` beside PubMed's generated record
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). A mirror is bucket 1: a write-once
+derivation over a re-fetchable source, regenerated wholesale, never read-modify-written.
+
+A mirror is the answer to two rejected alternatives. The generated route above is a first draft at most: each index's
+OpenAPI description carries a schema a generator could read, but the description lags and mis-states the records the API
+serves — OpenAlex's by a dozen top-level keys, Crossref's by keys and shapes it never lists — so the strict parse fails
+on live records until the output is corrected by hand, and a record at rest then has to be maintained by hand additively
+regardless, since a regenerated file renumbers. Storing the JSON bytes was rejected for what a typed field buys — a
+record protovalidate can reach, pyright and the generated stubs cover, and every reader handles as it handles the rest
+of the store — at the price that a hand-authored schema can lag the upstream. The strict parse is what makes that price
+payable: a mirror that dropped the keys it lacked would lose data at write time for good, whereas one that refuses them
+turns lag into a loud, per-record failure repaired by adding the field.
+
+Three properties distinguish a mirror from a copy:
+
+- **Hand-authored, so field numbers are stable.** A mirror evolves additively like any authored proto: a key the
+  upstream adds is appended with the next number. The ordering convention, by upstream key, is a reading aid; numbers
+  never move. The hazard a copy's positional numbering poses at rest does not arise.
+- **Checked against live records, not the description alone.** Live records carry keys and shapes the descriptions lack
+  or mis-state — OpenAlex's top-level keys, Crossref's event and grant fields, an array where the description says
+  string — and keys spelled against them (Crossref's `special_numbering`, `Reference.ISSN`); the live record wins,
+  because the parse is strict on live data. The check is a round trip — parse a live record, serialise it back to JSON,
+  compare with the source after dropping what proto cannot distinguish from absence (nulls, empty arrays, an empty map)
+  and reading an int64 back from the string it serialises as, numbers comparing by value — over committed fixtures in
+  the unit tests and over a live sample on demand.
+- **Wrapped where JSON outruns proto.** A JSON array of arrays, and an object whose values are arrays, have no proto
+  equivalent; the loader wraps each inner array in a message before the parse, and the round trip unwraps. A null array
+  element, which proto3-JSON rejects, is dropped — except inside a positional array such as a date's parts, where a null
+  between stated parts fails the parse. The mirror's header names each wrapped shape.
+
+An upstream vocabulary (`type`, `id-type`, `oa_status`) stays a string. The strict parse guards against loss, and a
+string value cannot be lost; an enum would only move the failure. Proto3-JSON binds an enum value by member name alone,
+so a value the mirror has not met would fail the paper at ingest, to be repaired by a member, a loader-side value table,
+and a re-fetch. A string holds it, and the reader that branches on it fails, if it must, at read time over a stored
+record. A typed vocabulary is Themis's, derived on read as the summary is
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), folding each index's strings in
+one place.
 
 ## Schema evolution
 

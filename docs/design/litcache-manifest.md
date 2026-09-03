@@ -12,6 +12,12 @@ as a binary proto (`manifest.pb`); the JSON shown below is a *rendering*, not th
 `oneof` over the four access variants (access-iff-`publisher` structural), the residual constraints protovalidate
 options (see [`proto.md`](proto.md)).
 
+Beside the manifest, `metadata.pb` holds the paper's bibliographic record inside a typed envelope, `PaperMetadata`, with
+one field per index a paper can be resolved from — PubMed, Crossref, OpenAlex — each holding that index's record whole
+and in the index's own schema; PubMed's field says which of its two record kinds, a journal article or a Bookshelf book
+or chapter, the bytes are, and a summary in one shape is derived on read, never stored
+([The bibliographic record](#the-bibliographic-record-metadatapb)).
+
 ## Background
 
 The manifest must capture, as simply as the domain allows:
@@ -120,6 +126,7 @@ enum SourceKind {
   SOURCE_KIND_UNSPECIFIED = 0;
   SOURCE_KIND_PMC_OA_S3 = 1; SOURCE_KIND_EUROPE_PMC = 2; SOURCE_KIND_ELSEVIER_OA = 3;
   SOURCE_KIND_BIORXIV = 4; SOURCE_KIND_UPLOAD = 5; SOURCE_KIND_SEED = 6;
+  SOURCE_KIND_EUROPE_PMC_BOOKSHELF = 7;
 }
 // Scraped html is converted to xml upstream and enters as media_type xml under a distinct
 // handle (e.g. "scraped-html") — so html is not a media type here.
@@ -224,7 +231,8 @@ rendering (llm-ocr of the pdf, carrying `model`) is **fabricated** to show the s
     "pmid": "21070663",
     "pmcid": null,
     "arxiv": null,
-    "biorxiv": null
+    "biorxiv": null,
+    "bookid": null
   },
   "claim_key": "doi:10.1186/1471-2156-11-102",
   "equivalence": { "edges": [], "canonical_doc_id": "bed7486a-69e9-4a5a-b4f3-a4de08341ab0" },
@@ -295,9 +303,11 @@ rendering (llm-ocr of the pdf, carrying `model`) is **fabricated** to show the s
 
 ## Path layout
 
-Content-addressed throughout, flat per artifact:
+Two records at the paper's root; everything else content-addressed, flat per artifact:
 
 ```
+manifest.pb
+metadata.pb
 sources/pdf/<rev-hex>.pdf
 sources/jats-xml/<rev-hex>.xml
 renderings/<md-hex>.md
@@ -306,6 +316,98 @@ supplementary/<hex>.jpg
 
 A second revision appends `sources/jats-xml/<new-rev-hex>.xml`; a re-render appends `renderings/<new-md-hex>.md`. Old
 blobs persist, so old cites keep resolving.
+
+## The bibliographic record: `metadata.pb`
+
+Beside `manifest.pb`, at the paper's root rather than under a content hash, sits `metadata.pb`: the paper's bibliography
+— title, authors, journal, abstract, the identifiers its index lists. The manifest says what we hold of a paper and
+under what terms; `metadata.pb` says what the paper is. It is write-once and regenerated wholesale from its source,
+never edited in place ([`proto.md`](proto.md), bucket 1). This section decides what the record is, and how a reader
+tells.
+
+**The record is kept whole, in the schema its index publishes.** A paper's metadata is stored as the record its index
+published, in that index's own schema, rather than as a subset of its fields chosen at write time. A subset carries only
+what its author foresaw needing, and what it dropped is gone until someone re-fetches; the whole record costs kilobytes
+and answers questions nobody has asked yet. The same test rules out storing one index's record mapped into another's
+schema: a Crossref work squeezed into `PubmedArticle` keeps only the fields PubMed happens to have a slot for, and a
+reader can no longer tell which index answered ([`literature-evidence-layer.md`](literature-evidence-layer.md), a
+discovery rpc is a query against one named source). So each index has a schema of its own here. PubMed's is NLM's,
+generated from its DTD ([`proto.md`](proto.md), Generated upstream schemas); Crossref's and OpenAlex's are mirrors of
+the JSON each publishes, hand-authored and loaded strictly ([`proto.md`](proto.md), Mirrored upstream schemas). The same
+reasoning makes the literature interface answer a PMID with PubMed's record whole, so a run's triage read and the
+store's copy are the same record kind through the same converter — not the same bytes, since the store's copy is taken
+at ingest and the run's at query time, and indexes revise records.
+
+**One field per index.** `metadata.pb` is a typed envelope, `PaperMetadata`
+([`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto)): one field per index a paper can be
+resolved from, each holding that index's record whole, and a protovalidate constraint that at least one is set. The
+fields are independent because the indexes are: a paper PubMed indexes may also have an OpenAlex record, and a preprint
+PubMed does not index has a Crossref or OpenAlex record and no PubMed one. Which record a reader prefers when several
+are present — PubMed's title over Crossref's, say — is a policy of the one function that derives the summary, below, not
+a slot in the envelope. The envelope records what each index states and nothing about their precedence, so a new index
+is a new field and changes no reader of the others.
+
+**PubMed's record has two kinds, and its field says which.** Most PMIDs name a journal article, but a PMID can also name
+a book NCBI hosts on its Bookshelf, or a chapter of one — a GeneReviews chapter, the expert-written summary of a gene or
+condition that a variant analysis cites routinely. PubMed's schema gives the two kinds different records,
+`PubmedArticle` and `PubmedBookArticle`, that share no top-level shape: a journal record hangs off a citation with a
+journal, a book record off a document with a book. Protobuf's wire format carries field numbers, not a type, so bytes
+read as the wrong message may decode without error into a record that means nothing, and a store that can hold either
+has to write down which one it holds. The envelope's `pubmed` field is therefore a message of its own, `PubmedRecord`,
+whose `oneof` has an arm per kind and requires exactly one set — the structural move `Access` makes above. The
+exclusivity is PubMed's own rule, a PMID names one record, stated in the type; it is why the two kinds are arms of one
+field where other indexes are fields of their own.
+
+**A mirror is loaded strictly, so a lagging mirror fails the paper rather than thinning the record.** Crossref and
+OpenAlex publish JSON, and neither publishes a schema a generator consumes the way `pubmed-proto` consumes NLM's DTD:
+each publishes an OpenAPI description of its HTTP API, and each description lags and mis-states the records the API
+serves — OpenAlex's by a dozen top-level keys, Crossref's by keys and shapes it never lists. Each mirror is therefore
+hand-authored against the live records, and a hand-authored schema can lag the upstream. A lagging schema that dropped
+the keys it lacked would lose data at write time for good, so the loader refuses a record carrying a key the mirror
+lacks: the paper is dead-lettered as schema drift naming the field, and the fix is the field. Nothing lossy is ever
+written; the cost is that ingestion of papers resolved through that index pauses until the mirror catches up, which for
+OpenAlex is as often as it adds fields. Two upstream shapes have no proto equivalent — an array of arrays, an object
+whose values are arrays — and the loader wraps them into messages before the parse; it also drops the null array
+elements proto3-JSON cannot hold, except inside a positional array such as a date's parts, where a null between stated
+parts fails the parse rather than shifting them. A round trip over live records, parse then serialise then compare, is
+what checks that the wrapping and the mirror lose nothing.
+
+**The summary is derived, never stored.** Consumers want a bibliography in one shape — a title, a year, an author list —
+without switching on which index answered. That shape is computed from the envelope by one function beside the proto,
+and is not a field of it. A stored projection goes stale with every change to the rule that derives it: a chapter with
+no title of its own falls back to its book's, say, and the next such rule would leave every stored summary wrong until a
+corpus rewrite, at which point the store's rule for derived artifacts would want a summariser version on it, as a
+rendering carries its converter's. Derived on read, the same change is a deploy. Adjudicating between coexisting records
+lands in the same function.
+
+**An envelope with no record is corruption.** The at-least-one constraint is enforced where the record crosses a
+boundary: the writer validates the envelope before it writes, and a reader that parses one fails rather than reading it
+as a paper without metadata. A paper no index has a record for is not ingested at all — the resolve ladder dead-letters
+it — so an empty envelope never means "metadata not yet resolved"; it means the bytes are wrong.
+
+**A book record carries an identifier of its own.** Beside the PMID, Bookshelf names a chapter by an accession (`NBK…`),
+and the accession is how the chapter's text is addressed: Europe PMC serves a chapter's BITS XML under its accession at
+the `bookXML` endpoint — a different endpoint and corpus from the JATS article XML behind the plain Europe PMC source
+kind. The lineage it produces records a distinct source kind for two reasons: the producer maps the upstream that served
+a body onto a `SourceKind` and refuses a body from an upstream it has no kind for as a permanent anomaly, so a new
+upstream needs a member; and the member records which corpus the bytes came from. The accession joins the manifest's
+external ids (`ExternalIds.bookid`) on the footing every external id there has: an id in the manifest is one the
+crosswalk claimed — that is what keeps the crosswalk rebuildable from the manifests alone — so the accession is minted
+like the others rather than merely recorded.
+
+**What is deliberately not here: a migration, or a dual-read window.** Every `metadata.pb` in the store is re-derivable
+from its source — PubMed's XML, Crossref's or OpenAlex's JSON — so the corpus is rebuilt once — the bucket's `papers/`
+prefix and the crosswalk table cleared and the seed set re-ingested — and a reader parses envelopes only. The rebuild is
+also what un-maps the Crossref- and OpenAlex-resolved papers: their raw records were never kept, so no rewrite of the
+stored bytes could recover them, and a re-fetch is the only route; a rebuild that re-fetches every paper anyway makes it
+free, where a later one would pay it again. A rewrite in place is not available either way: a pre-envelope blob may
+decode as an envelope without error, so nothing can tell one from a valid envelope, and ingestion skips a paper whose
+manifest exists; until the rebuild completes, every pre-envelope `metadata.pb` reads as garbage or fails. That is a
+destructive change to a stored artifact, allowed on the condition [`migrations.md`](migrations.md#how-it-runs) puts on a
+destructive migration: the environment holds no data worth keeping and no users to fail, and the doc names what breaks
+and until when — the window opens when the envelope reader deploys, and the rebuild closes it. A read-side fallback is
+the cost of rewriting a corpus that has users; paying it here would leave a second decode path in every reader for a
+state that ceases to exist the moment the rebuild completes.
 
 ## Reference / anchor types
 
@@ -354,6 +456,9 @@ staged in the build plan ([`../plans/literature-cache.md`](../plans/literature-c
   `converter == llm-ocr`; the writer enforces it. Expressing the invariant structurally would mean splitting `Rendering`
   into a converter-discriminated union (cf. `Access`), which duplicates four common fields across variants for one
   conditional field -- not worth it. Revisit if more converter-specific fields appear.
+- **A Bookshelf accession at the door.** Whether `MaybeIngestPapers` accepts `bookid:` beside `doi:`, `pmid:` and
+  `pmcid:` is the door's question, held in
+  [`literature-evidence-layer.md`](literature-evidence-layer.md#open-questions).
 - **Cross-work quote fallback for entitlement.** A KU anchored to a work an unentitled reader can't see (a licensed
   paper) could be surfaced against an *equivalent ingested work* they can -- e.g. a preprint linked by an equivalence
   edge -- by realigning the same verbatim quote into that work's rendering. The machinery already exists (equivalence

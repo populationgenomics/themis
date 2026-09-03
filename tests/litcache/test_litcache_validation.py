@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import protovalidate
 import pytest
+from pubmed_proto import pubmed_pb2
 
-from themis.litcache.models import litcache_pb2
+from themis.litcache.models import crossref_pb2, litcache_pb2
 
 
 def _source(
@@ -89,3 +90,30 @@ def test_rendering_model_iff_llm_ocr() -> None:
         protovalidate.validate(_rendering(model='claude-opus-4-8'))  # model on non-llm_ocr
     with pytest.raises(protovalidate.ValidationError):
         protovalidate.validate(_rendering(converter=litcache_pb2.CONVERTER_LLM_OCR))  # llm_ocr without model
+
+
+def _journal_record() -> litcache_pb2.PubmedRecord:
+    return litcache_pb2.PubmedRecord(article=pubmed_pb2.PubmedArticle())
+
+
+@pytest.mark.parametrize(
+    'envelope',
+    [
+        litcache_pb2.PaperMetadata(pubmed=_journal_record()),
+        litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
+        litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
+        litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
+    ],
+)
+def test_an_envelope_holding_a_record_is_valid(envelope: litcache_pb2.PaperMetadata) -> None:
+    protovalidate.validate(envelope)  # does not raise
+
+
+def test_an_envelope_holding_no_record_is_invalid() -> None:
+    with pytest.raises(protovalidate.ValidationError):
+        protovalidate.validate(litcache_pb2.PaperMetadata())
+
+
+def test_a_pubmed_record_in_neither_kind_is_invalid() -> None:
+    with pytest.raises(protovalidate.ValidationError):
+        protovalidate.validate(litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()))

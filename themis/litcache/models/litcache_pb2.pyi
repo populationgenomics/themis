@@ -2,6 +2,9 @@ import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from pubmed_proto import pubmed_pb2 as _pubmed_pb2
+from themis.litcache.models import crossref_pb2 as _crossref_pb2
+from themis.litcache.models import openalex_pb2 as _openalex_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -20,6 +23,7 @@ class SourceKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SOURCE_KIND_BIORXIV: _ClassVar[SourceKind]
     SOURCE_KIND_UPLOAD: _ClassVar[SourceKind]
     SOURCE_KIND_SEED: _ClassVar[SourceKind]
+    SOURCE_KIND_EUROPE_PMC_BOOKSHELF: _ClassVar[SourceKind]
 
 class SourceFormat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -52,6 +56,7 @@ SOURCE_KIND_ELSEVIER_OA: SourceKind
 SOURCE_KIND_BIORXIV: SourceKind
 SOURCE_KIND_UPLOAD: SourceKind
 SOURCE_KIND_SEED: SourceKind
+SOURCE_KIND_EUROPE_PMC_BOOKSHELF: SourceKind
 SOURCE_FORMAT_UNSPECIFIED: SourceFormat
 SOURCE_FORMAT_XML: SourceFormat
 SOURCE_FORMAT_PDF: SourceFormat
@@ -143,18 +148,20 @@ class Rendering(_message.Message):
     def __init__(self, from_source: _Optional[str] = ..., from_revision: _Optional[str] = ..., converter: _Optional[_Union[Converter, str]] = ..., converter_version: _Optional[str] = ..., model: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ExternalIds(_message.Message):
-    __slots__ = ("doi", "pmid", "pmcid", "arxiv", "biorxiv")
+    __slots__ = ("doi", "pmid", "pmcid", "arxiv", "biorxiv", "bookid")
     DOI_FIELD_NUMBER: _ClassVar[int]
     PMID_FIELD_NUMBER: _ClassVar[int]
     PMCID_FIELD_NUMBER: _ClassVar[int]
     ARXIV_FIELD_NUMBER: _ClassVar[int]
     BIORXIV_FIELD_NUMBER: _ClassVar[int]
+    BOOKID_FIELD_NUMBER: _ClassVar[int]
     doi: str
     pmid: str
     pmcid: str
     arxiv: str
     biorxiv: str
-    def __init__(self, doi: _Optional[str] = ..., pmid: _Optional[str] = ..., pmcid: _Optional[str] = ..., arxiv: _Optional[str] = ..., biorxiv: _Optional[str] = ...) -> None: ...
+    bookid: str
+    def __init__(self, doi: _Optional[str] = ..., pmid: _Optional[str] = ..., pmcid: _Optional[str] = ..., arxiv: _Optional[str] = ..., biorxiv: _Optional[str] = ..., bookid: _Optional[str] = ...) -> None: ...
 
 class Equivalence(_message.Message):
     __slots__ = ("edges", "canonical_doc_id")
@@ -212,3 +219,21 @@ class Manifest(_message.Message):
     renderings: _containers.MessageMap[str, Rendering]
     files: _containers.RepeatedCompositeFieldContainer[AssociatedFile]
     def __init__(self, doc_id: _Optional[str] = ..., external_ids: _Optional[_Union[ExternalIds, _Mapping]] = ..., claim_key: _Optional[str] = ..., equivalence: _Optional[_Union[Equivalence, _Mapping]] = ..., retraction: _Optional[_Union[Retraction, _Mapping]] = ..., sources: _Optional[_Iterable[_Union[Source, _Mapping]]] = ..., renderings: _Optional[_Mapping[str, Rendering]] = ..., files: _Optional[_Iterable[_Union[AssociatedFile, _Mapping]]] = ...) -> None: ...
+
+class PubmedRecord(_message.Message):
+    __slots__ = ("article", "book_article")
+    ARTICLE_FIELD_NUMBER: _ClassVar[int]
+    BOOK_ARTICLE_FIELD_NUMBER: _ClassVar[int]
+    article: _pubmed_pb2.PubmedArticle
+    book_article: _pubmed_pb2.PubmedBookArticle
+    def __init__(self, article: _Optional[_Union[_pubmed_pb2.PubmedArticle, _Mapping]] = ..., book_article: _Optional[_Union[_pubmed_pb2.PubmedBookArticle, _Mapping]] = ...) -> None: ...
+
+class PaperMetadata(_message.Message):
+    __slots__ = ("pubmed", "crossref", "openalex")
+    PUBMED_FIELD_NUMBER: _ClassVar[int]
+    CROSSREF_FIELD_NUMBER: _ClassVar[int]
+    OPENALEX_FIELD_NUMBER: _ClassVar[int]
+    pubmed: PubmedRecord
+    crossref: _crossref_pb2.Work
+    openalex: _openalex_pb2.Work
+    def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref: _Optional[_Union[_crossref_pb2.Work, _Mapping]] = ..., openalex: _Optional[_Union[_openalex_pb2.Work, _Mapping]] = ...) -> None: ...

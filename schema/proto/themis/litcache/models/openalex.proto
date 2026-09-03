@@ -1,0 +1,250 @@
+// An OpenAlex work record, mirrored from the `works` endpoint's JSON: every field is an upstream key,
+// `json_name` is that key verbatim, and the record is loaded strictly, so a key this file lacks fails
+// the parse rather than being dropped (docs/design/proto.md, "Mirrored upstream schemas"). Drafted
+// from https://help.openalex.org/openapi.json, which lags live records by a dozen top-level keys; the
+// live record wins.
+//
+// One shape proto has no equivalent for is wrapped before the parse: `abstract_inverted_index` maps
+// each word to an array of positions, each becoming a `Positions`.
+//
+// Fields are ordered by upstream key; a key the upstream adds is appended with the next number.
+
+syntax = "proto3";
+
+package themis.litcache.models.openalex;
+
+message Work {
+  map<string, Positions> abstract_inverted_index = 1 [json_name = "abstract_inverted_index"];
+  Apc apc_list = 2 [json_name = "apc_list"];
+  Apc apc_paid = 3 [json_name = "apc_paid"];
+  repeated Authorship authorships = 4;
+  repeated Award awards = 5;
+  Location best_oa_location = 6 [json_name = "best_oa_location"];
+  Biblio biblio = 7;
+  CitationNormalizedPercentile citation_normalized_percentile = 8 [json_name = "citation_normalized_percentile"];
+  optional int32 cited_by_count = 9 [json_name = "cited_by_count"];
+  CitedByPercentileYear cited_by_percentile_year = 10 [json_name = "cited_by_percentile_year"];
+  repeated Concept concepts = 11;
+  optional string content_url = 12 [json_name = "content_url"];
+  ContentUrls content_urls = 13 [json_name = "content_urls"];
+  repeated string corresponding_author_ids = 14 [json_name = "corresponding_author_ids"];
+  repeated string corresponding_institution_ids = 15 [json_name = "corresponding_institution_ids"];
+  optional int32 countries_distinct_count = 16 [json_name = "countries_distinct_count"];
+  repeated CountsByYear counts_by_year = 17 [json_name = "counts_by_year"];
+  optional string created_date = 18 [json_name = "created_date"];
+  optional string display_name = 19 [json_name = "display_name"];
+  optional string doi = 20;
+  repeated DehydratedFunder funders = 21;
+  optional double fwci = 22;
+  HasContent has_content = 23 [json_name = "has_content"];
+  optional bool has_fulltext = 24 [json_name = "has_fulltext"];
+  optional string id = 25;
+  Ids ids = 26;
+  repeated string indexed_in = 27 [json_name = "indexed_in"];
+  repeated DehydratedInstitution institutions = 28;  // element type assumed: the upstream has published only empty arrays
+  optional int32 institutions_distinct_count = 29 [json_name = "institutions_distinct_count"];
+  optional bool is_paratext = 30 [json_name = "is_paratext"];
+  optional bool is_retracted = 31 [json_name = "is_retracted"];
+  optional bool is_xpac = 32 [json_name = "is_xpac"];
+  repeated Keyword keywords = 33;
+  optional string language = 34;
+  repeated Location locations = 35;
+  optional int32 locations_count = 36 [json_name = "locations_count"];
+  repeated Mesh mesh = 37;
+  OpenAccess open_access = 38 [json_name = "open_access"];
+  Location primary_location = 39 [json_name = "primary_location"];
+  Topic primary_topic = 40 [json_name = "primary_topic"];
+  optional string publication_date = 41 [json_name = "publication_date"];
+  optional int32 publication_year = 42 [json_name = "publication_year"];
+  repeated string referenced_works = 43 [json_name = "referenced_works"];
+  optional int32 referenced_works_count = 44 [json_name = "referenced_works_count"];
+  repeated string related_works = 45 [json_name = "related_works"];
+  optional double relevance_score = 46 [json_name = "relevance_score"];
+  repeated SustainableDevelopmentGoal sustainable_development_goals = 47 [json_name = "sustainable_development_goals"];
+  optional string title = 48;
+  repeated Topic topics = 49;
+  optional string type = 50;
+  optional string updated_date = 51 [json_name = "updated_date"];
+}
+
+// The positions array under one word of `abstract_inverted_index`.
+message Positions {
+  repeated int32 positions = 1;
+}
+
+// An `apc_list` / `apc_paid` entry.
+message Apc {
+  optional string currency = 1;
+  optional int32 value = 2;
+  optional int32 value_usd = 3 [json_name = "value_usd"];
+}
+
+message Authorship {
+  repeated Affiliation affiliations = 1;
+  DehydratedAuthor author = 2;
+  optional string author_position = 3 [json_name = "author_position"];
+  repeated string countries = 4;
+  repeated DehydratedInstitution institutions = 5;
+  optional bool is_corresponding = 6 [json_name = "is_corresponding"];
+  repeated string raw_affiliation_strings = 7 [json_name = "raw_affiliation_strings"];
+  optional string raw_author_name = 8 [json_name = "raw_author_name"];
+  optional string raw_orcid = 9 [json_name = "raw_orcid"];
+}
+
+message Affiliation {
+  repeated string institution_ids = 1 [json_name = "institution_ids"];
+  optional string raw_affiliation_string = 2 [json_name = "raw_affiliation_string"];
+}
+
+message DehydratedAuthor {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+  optional string orcid = 3;
+}
+
+message DehydratedInstitution {
+  optional string country_code = 1 [json_name = "country_code"];
+  optional string display_name = 2 [json_name = "display_name"];
+  optional string id = 3;
+  repeated string lineage = 4;
+  optional string ror = 5;
+  optional string type = 6;
+}
+
+message Award {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string doi = 2;
+  optional string funder_award_id = 3 [json_name = "funder_award_id"];
+  optional string funder_display_name = 4 [json_name = "funder_display_name"];
+  optional string funder_id = 5 [json_name = "funder_id"];
+  optional string id = 6;
+}
+
+message Biblio {
+  optional string first_page = 1 [json_name = "first_page"];
+  optional string issue = 2;
+  optional string last_page = 3 [json_name = "last_page"];
+  optional string volume = 4;
+}
+
+message CitationNormalizedPercentile {
+  optional bool is_in_top_10_percent = 1 [json_name = "is_in_top_10_percent"];
+  optional bool is_in_top_1_percent = 2 [json_name = "is_in_top_1_percent"];
+  optional double value = 3;
+}
+
+message CitedByPercentileYear {
+  optional int32 max = 1;
+  optional int32 min = 2;
+}
+
+message Concept {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+  optional int32 level = 3;
+  optional double score = 4;
+  optional string wikidata = 5;
+}
+
+message ContentUrls {
+  optional string grobid_xml = 1 [json_name = "grobid_xml"];
+  optional string pdf = 2;
+}
+
+message CountsByYear {
+  optional int32 cited_by_count = 1 [json_name = "cited_by_count"];
+  optional int32 year = 2;
+}
+
+message DehydratedFunder {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+  optional string ror = 3;
+}
+
+message HasContent {
+  optional bool grobid_xml = 1 [json_name = "grobid_xml"];
+  optional bool pdf = 2;
+}
+
+message Ids {
+  optional string doi = 1;
+  optional string mag = 2;
+  optional string openalex = 3;
+  optional string pmcid = 4;
+  optional string pmid = 5;
+}
+
+message Keyword {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+  optional double score = 3;
+}
+
+// A `primary_location` / `best_oa_location` / `locations` entry.
+message Location {
+  optional string id = 1;
+  optional bool is_accepted = 2 [json_name = "is_accepted"];
+  optional bool is_oa = 3 [json_name = "is_oa"];
+  optional bool is_published = 4 [json_name = "is_published"];
+  optional string landing_page_url = 5 [json_name = "landing_page_url"];
+  optional string license = 6;
+  optional string license_id = 7 [json_name = "license_id"];
+  optional string pdf_url = 8 [json_name = "pdf_url"];
+  optional string raw_source_name = 9 [json_name = "raw_source_name"];
+  optional string raw_type = 10 [json_name = "raw_type"];
+  DehydratedSource source = 11;
+  optional string version = 12;
+}
+
+message DehydratedSource {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string host_organization = 2 [json_name = "host_organization"];
+  repeated string host_organization_lineage = 3 [json_name = "host_organization_lineage"];
+  repeated string host_organization_lineage_names = 4 [json_name = "host_organization_lineage_names"];
+  optional string host_organization_name = 5 [json_name = "host_organization_name"];
+  optional string id = 6;
+  optional bool is_core = 7 [json_name = "is_core"];
+  optional bool is_in_doaj = 8 [json_name = "is_in_doaj"];
+  optional bool is_oa = 9 [json_name = "is_oa"];
+  repeated string issn = 10;
+  optional string issn_l = 11 [json_name = "issn_l"];
+  optional string type = 12;
+}
+
+message Mesh {
+  optional string descriptor_name = 1 [json_name = "descriptor_name"];
+  optional string descriptor_ui = 2 [json_name = "descriptor_ui"];
+  optional bool is_major_topic = 3 [json_name = "is_major_topic"];
+  optional string qualifier_name = 4 [json_name = "qualifier_name"];
+  optional string qualifier_ui = 5 [json_name = "qualifier_ui"];
+}
+
+message OpenAccess {
+  optional bool any_repository_has_fulltext = 1 [json_name = "any_repository_has_fulltext"];
+  optional bool is_oa = 2 [json_name = "is_oa"];
+  optional string oa_status = 3 [json_name = "oa_status"];
+  optional string oa_url = 4 [json_name = "oa_url"];
+}
+
+message SustainableDevelopmentGoal {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+  optional double score = 3;
+}
+
+// A `primary_topic` / `topics` entry.
+message Topic {
+  optional string display_name = 1 [json_name = "display_name"];
+  TopicLevel domain = 2;
+  TopicLevel field = 3;
+  optional string id = 4;
+  optional double score = 5;
+  TopicLevel subfield = 6;
+}
+
+// A topic's `domain` / `field` / `subfield`.
+message TopicLevel {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+}

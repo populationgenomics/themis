@@ -1,0 +1,395 @@
+// A Crossref work record, mirrored from the `works` endpoint's JSON: every field is an upstream key,
+// `json_name` is that key verbatim, and the record is loaded strictly, so a key this file lacks fails
+// the parse rather than being dropped (docs/design/proto.md, "Mirrored upstream schemas"). Drafted
+// from https://api.crossref.org/swagger-docs, which lags and mis-states live records; the live record
+// wins.
+//
+// Shapes proto has no equivalent for are wrapped before the parse: `date-parts` is an array of
+// arrays, each inner array becoming a `DateParts`, less the trailing null Crossref states an unknown
+// date with (a null between stated parts fails the parse); `relation` maps each relation type to an
+// array, each becoming a `RelationList`; a null element of any other array is dropped.
+//
+// Fields are ordered by upstream key; a key the upstream adds is appended with the next number.
+
+syntax = "proto3";
+
+package themis.litcache.models.crossref;
+
+message Work {
+  optional string abstract = 1;
+  Date accepted = 2;
+  repeated string aliases = 3;
+  repeated string alternative_id = 4 [json_name = "alternative-id"];
+  Date approved = 5;
+  repeated string archive = 6;
+  optional string article_number = 7 [json_name = "article-number"];
+  repeated Assertion assertion = 8;
+  repeated Author author = 9;
+  optional string award = 10;
+  Date award_start = 11 [json_name = "award-start"];
+  repeated Author chair = 12;
+  repeated ClinicalTrial clinical_trial_number = 13 [json_name = "clinical-trial-number"];
+  optional string component_number = 14 [json_name = "component-number"];
+  repeated string container_title = 15 [json_name = "container-title"];
+  Date content_created = 16 [json_name = "content-created"];
+  ContentDomain content_domain = 17 [json_name = "content-domain"];
+  Date content_updated = 18 [json_name = "content-updated"];
+  repeated Author contributor = 19;
+  Date created = 20;
+  repeated string degree = 21;
+  Date deposited = 22;
+  optional string description = 23;
+  optional string doi = 24 [json_name = "DOI"];
+  optional string edition_number = 25 [json_name = "edition-number"];
+  repeated Author editor = 26;
+  Event event = 27;
+  FreeToRead free_to_read = 28 [json_name = "free-to-read"];
+  repeated Funder funder = 29;
+  optional string group_title = 30 [json_name = "group-title"];
+  Date indexed = 31;
+  repeated Affiliation institution = 32;
+  optional int32 is_referenced_by_count = 33 [json_name = "is-referenced-by-count"];
+  repeated string isbn = 34 [json_name = "ISBN"];
+  repeated IdentifierType isbn_type = 35 [json_name = "isbn-type"];
+  repeated string issn = 36 [json_name = "ISSN"];
+  repeated IdentifierType issn_type = 37 [json_name = "issn-type"];
+  optional string issue = 38;
+  repeated string issue_title = 39 [json_name = "issue-title"];
+  Date issued = 40;
+  JournalIssue journal_issue = 41 [json_name = "journal-issue"];
+  optional string language = 42;
+  repeated License license = 43;
+  repeated Link link = 44;
+  optional string member = 45;
+  repeated string original_title = 46 [json_name = "original-title"];
+  optional string page = 47;
+  optional string part_number = 48 [json_name = "part-number"];
+  Date posted = 49;
+  optional string prefix = 50;
+  optional string proceedings_subject = 51 [json_name = "proceedings-subject"];
+  repeated Project project = 52;
+  Date published = 53;
+  Date published_online = 54 [json_name = "published-online"];
+  Date published_other = 55 [json_name = "published-other"];
+  Date published_print = 56 [json_name = "published-print"];
+  optional string publisher = 57;
+  optional string publisher_location = 58 [json_name = "publisher-location"];
+  repeated Reference reference = 59;
+  optional int32 reference_count = 60 [json_name = "reference-count"];
+  optional int32 references_count = 61 [json_name = "references-count"];
+  map<string, RelationList> relation = 62;
+  Resource resource = 63;
+  Review review = 64;
+  optional double score = 65;
+  repeated string short_container_title = 66 [json_name = "short-container-title"];
+  repeated string short_title = 67 [json_name = "short-title"];
+  optional string source = 68;
+  optional string special_numbering = 69 [json_name = "special_numbering"];
+  StandardsBody standards_body = 70 [json_name = "standards-body"];
+  PostedContentStatus status = 71;
+  repeated string subject = 72;
+  repeated string subtitle = 73;
+  optional string subtype = 74;
+  repeated string title = 75;
+  repeated Author translator = 76;
+  optional string type = 77;
+  optional string update_policy = 78 [json_name = "update-policy"];
+  repeated Update update_to = 79 [json_name = "update-to"];
+  repeated Update updated_by = 80 [json_name = "updated-by"];
+  optional string url = 81 [json_name = "URL"];
+  VersionInfo version = 82;
+  optional string volume = 83;
+}
+
+// A Crossref date. A partial date (`issued`, `posted`, …) carries `date-parts` alone; a full one
+// (`created`, `deposited`, `indexed`) adds `date-time` and `timestamp`; `indexed` adds `version`.
+message Date {
+  repeated DateParts date_parts = 1 [json_name = "date-parts"];
+  optional string date_time = 2 [json_name = "date-time"];
+  optional int64 timestamp = 3;
+  optional string version = 4;
+}
+
+// One inner array of `date-parts`: [year, month?, day?].
+message DateParts {
+  repeated int32 parts = 1;
+}
+
+message Affiliation {
+  repeated string acronym = 1;
+  repeated string department = 2;
+  repeated AffiliationIdentifier id = 3;
+  optional string name = 4;
+  repeated string place = 5;
+}
+
+message AffiliationIdentifier {
+  optional string asserted_by = 1 [json_name = "asserted-by"];
+  optional string id = 2;
+  optional string id_type = 3 [json_name = "id-type"];
+}
+
+message Assertion {
+  AssertionExplanation explanation = 1;
+  AssertionGroup group = 2;
+  optional string label = 3;
+  optional string name = 4;
+  optional int32 order = 5;
+  optional string url = 6 [json_name = "URL"];
+  optional string value = 7;
+}
+
+message AssertionExplanation {
+  optional string url = 1 [json_name = "URL"];
+}
+
+message AssertionGroup {
+  optional string label = 1;
+  optional string name = 2;
+}
+
+// A contributor: `author`, `editor`, `chair`, `translator`, `contributor`.
+message Author {
+  repeated Affiliation affiliation = 1;
+  optional bool authenticated_orcid = 2 [json_name = "authenticated-orcid"];
+  optional string family = 3;
+  optional string given = 4;
+  optional string name = 5;
+  optional string orcid = 6 [json_name = "ORCID"];
+  optional string prefix = 7;
+  repeated ContributorRole role = 8;
+  optional string sequence = 9;
+  optional string suffix = 10;
+}
+
+message ContributorRole {
+  optional string role = 1;
+  optional string vocabulary = 2;
+}
+
+message ClinicalTrial {
+  optional string clinical_trial_number = 1 [json_name = "clinical-trial-number"];
+  optional string registry = 2;
+  optional string type = 3;
+}
+
+message ContentDomain {
+  optional bool crossmark_restriction = 1 [json_name = "crossmark-restriction"];
+  repeated string domain = 2;
+}
+
+message Event {
+  optional string acronym = 1;
+  Date end = 2;
+  optional string location = 3;
+  optional string name = 4;
+  optional string number = 5;
+  repeated string sponsor = 6;
+  Date start = 7;
+  optional string theme = 8;
+}
+
+message FreeToRead {
+  Date end_date = 1 [json_name = "end-date"];
+  Date start_date = 2 [json_name = "start-date"];
+}
+
+message Funder {
+  repeated string award = 1;
+  repeated AwardInfo award_info = 2 [json_name = "award-info"];
+  optional string doi = 3 [json_name = "DOI"];
+  optional string doi_asserted_by = 4 [json_name = "doi-asserted-by"];
+  repeated FunderIdentifier id = 5;
+  optional string name = 6;
+}
+
+message AwardInfo {
+  repeated string award_number = 1 [json_name = "award-number"];
+}
+
+message FunderIdentifier {
+  optional string asserted_by = 1 [json_name = "asserted-by"];
+  optional string id = 2;
+  optional string id_type = 3 [json_name = "id-type"];
+}
+
+// An `issn-type` / `isbn-type` entry.
+message IdentifierType {
+  optional string type = 1;
+  optional string value = 2;
+}
+
+message JournalIssue {
+  optional string issue = 1;
+  Date published_online = 2 [json_name = "published-online"];
+  Date published_print = 3 [json_name = "published-print"];
+}
+
+message License {
+  optional string content_version = 1 [json_name = "content-version"];
+  optional int32 delay_in_days = 2 [json_name = "delay-in-days"];
+  Date start = 3;
+  optional string url = 4 [json_name = "URL"];
+}
+
+message Link {
+  optional string content_type = 1 [json_name = "content-type"];
+  optional string content_version = 2 [json_name = "content-version"];
+  optional string intended_application = 3 [json_name = "intended-application"];
+  optional string url = 4 [json_name = "URL"];
+}
+
+message Project {
+  AwardAmount award_amount = 1 [json_name = "award-amount"];
+  Date award_end = 2 [json_name = "award-end"];
+  Date award_planned_end = 3 [json_name = "award-planned-end"];
+  Date award_planned_start = 4 [json_name = "award-planned-start"];
+  Date award_start = 5 [json_name = "award-start"];
+  repeated Investigator co_lead_investigator = 6 [json_name = "co-lead-investigator"];
+  repeated Funding funding = 7;
+  repeated Investigator investigator = 8;
+  repeated Investigator lead_investigator = 9 [json_name = "lead-investigator"];
+  repeated ProjectDescription project_description = 10 [json_name = "project-description"];
+  repeated ProjectTitle project_title = 11 [json_name = "project-title"];
+}
+
+message AwardAmount {
+  optional double amount = 1;
+  optional string currency = 2;
+  optional int32 percentage = 3;
+}
+
+message Funding {
+  AwardAmount award_amount = 1 [json_name = "award-amount"];
+  Funder funder = 2;
+  optional string scheme = 3;
+  optional string type = 4;
+}
+
+message Investigator {
+  repeated InvestigatorAffiliation affiliation = 1;
+  repeated string alternate_name = 2 [json_name = "alternate-name"];
+  optional bool authenticated_orcid = 3 [json_name = "authenticated-orcid"];
+  optional string family = 4;
+  optional string given = 5;
+  optional string name = 6;
+  optional string orcid = 7 [json_name = "ORCID"];
+  optional string prefix = 8;
+  Date role_end = 9 [json_name = "role-end"];
+  Date role_start = 10 [json_name = "role-start"];
+  optional string sequence = 11;
+  optional string suffix = 12;
+}
+
+message InvestigatorAffiliation {
+  optional string country = 1;
+  repeated AffiliationIdentifier id = 2;
+  optional string name = 3;
+}
+
+message ProjectDescription {
+  optional string description = 1;
+  optional string language = 2;
+}
+
+message ProjectTitle {
+  optional string language = 1;
+  optional string title = 2;
+}
+
+message Reference {
+  optional string article_title = 1 [json_name = "article-title"];
+  optional string author = 2;
+  optional string component = 3;
+  optional string doi = 4 [json_name = "DOI"];
+  optional string doi_asserted_by = 5 [json_name = "doi-asserted-by"];
+  optional string edition = 6;
+  optional string first_page = 7 [json_name = "first-page"];
+  optional string isbn = 8 [json_name = "ISBN"];
+  optional string isbn_type = 9 [json_name = "isbn-type"];
+  optional string issn = 10 [json_name = "ISSN"];
+  optional string issn_type = 11 [json_name = "issn-type"];
+  optional string issue = 12;
+  optional string journal_title = 13 [json_name = "journal-title"];
+  optional string key = 14;
+  optional string series_title = 15 [json_name = "series-title"];
+  optional string standard_designator = 16 [json_name = "standard-designator"];
+  optional string standards_body = 17 [json_name = "standards-body"];
+  optional string type = 18;
+  optional string unstructured = 19;
+  optional string volume = 20;
+  optional string volume_title = 21 [json_name = "volume-title"];
+  optional string year = 22;
+}
+
+// The array under one `relation` key (`is-preprint-of`, `has-review`, …).
+message RelationList {
+  repeated RelationObject items = 1;
+}
+
+message RelationObject {
+  optional string asserted_by = 1 [json_name = "asserted-by"];
+  optional string id = 2;
+  optional string id_type = 3 [json_name = "id-type"];
+}
+
+message Resource {
+  PrimaryResource primary = 1;
+  repeated SecondaryResource secondary = 2;
+}
+
+message PrimaryResource {
+  optional string url = 1 [json_name = "URL"];
+}
+
+message SecondaryResource {
+  optional string label = 1;
+  optional string url = 2 [json_name = "URL"];
+}
+
+message Review {
+  optional string competing_interest_statement = 1 [json_name = "competing-interest-statement"];
+  optional string language = 2;
+  optional string recommendation = 3;
+  optional string revision_round = 4 [json_name = "revision-round"];
+  optional string running_number = 5 [json_name = "running-number"];
+  optional string stage = 6;
+  optional string type = 7;
+}
+
+message StandardsBody {
+  optional string acronym = 1;
+  optional string name = 2;
+}
+
+message PostedContentStatus {
+  repeated StatusDescription status_description = 1 [json_name = "status-description"];
+  optional string type = 2;
+  Date update = 3;
+}
+
+message StatusDescription {
+  optional string description = 1;
+  optional string language = 2;
+}
+
+// An `update-to` / `updated-by` entry.
+message Update {
+  optional string doi = 1 [json_name = "DOI"];
+  optional string label = 2;
+  optional string record_id = 3 [json_name = "record-id"];
+  optional string source = 4;
+  optional string type = 5;
+  Date updated = 6;
+}
+
+message VersionInfo {
+  optional string language = 1;
+  optional string version = 2;
+  repeated VersionInfoDescription version_description = 3 [json_name = "version-description"];
+}
+
+message VersionInfoDescription {
+  optional string description = 1;
+  optional string language = 2;
+}
