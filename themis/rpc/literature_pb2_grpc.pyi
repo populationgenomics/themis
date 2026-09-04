@@ -11,13 +11,11 @@ every outbound call is the service's own, since the agent holds no credential an
 proto is the source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the
 server subclasses the servicer base, a caller uses the stub.
 
-Two consumers: the BFF (service-to-service) calls DescribePaper/ResolveContent/Locate and serves
-the named object itself; the sandbox agent searches the indexes, resolves the identifiers it holds
-to doc_ids, reads the markdown behind one, and validates a quote at authoring time. The full-text
-store is shared (litcache is not session-scoped — entitlement is a deferred non-goal,
-literature-evidence-layer.md), so the read rpcs carry no session binding. MaybeIngestPapers is the
-exception, stated where it is declared rather than here: auth is per-rpc on this service, not
-uniform across it.
+Two callers reach this service: the web tier's backend, for the browser's paper display, and the
+sandbox agent, which searches the indexes, resolves the identifiers it holds to doc_ids, reads the
+markdown behind one, and validates a quote at authoring time. The corpus is shared across analyses
+(entitlement is a deferred non-goal, literature-evidence-layer.md); which rpcs resolve a session,
+and for what, each rpc states (docs/design/sandbox-rpc-exposure.md).
 """
 
 from collections import abc as _abc
@@ -49,7 +47,8 @@ class LiteratureStub:
     @_typing.overload
     def __new__(cls, channel: _aio.Channel) -> LiteratureAsyncStub: ...
     DescribePaper: _grpc.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]
-    """What representations and files a paper offers; the pane's default-representation choice.
+    """What representations and files a paper offers; the pane's default-representation choice. The
+    web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
     An unknown doc_id is a NOT_FOUND the server adds.
     """
     ResolveContent: _grpc.UnaryUnaryMultiCallable[_literature_pb2.ResolveContentRequest, _literature_pb2.ContentLocation]
@@ -139,7 +138,8 @@ class LiteratureStub:
 class LiteratureAsyncStub(LiteratureStub):
     def __init__(self, channel: _aio.Channel) -> None: ...
     DescribePaper: _aio.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]  # type: ignore[assignment]
-    """What representations and files a paper offers; the pane's default-representation choice.
+    """What representations and files a paper offers; the pane's default-representation choice. The
+    web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
     An unknown doc_id is a NOT_FOUND the server adds.
     """
     ResolveContent: _aio.UnaryUnaryMultiCallable[_literature_pb2.ResolveContentRequest, _literature_pb2.ContentLocation]  # type: ignore[assignment]
@@ -232,7 +232,8 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         request: _literature_pb2.DescribePaperRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_literature_pb2.PaperInfo, _abc.Awaitable[_literature_pb2.PaperInfo]]:
-        """What representations and files a paper offers; the pane's default-representation choice.
+        """What representations and files a paper offers; the pane's default-representation choice. The
+        web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
         An unknown doc_id is a NOT_FOUND the server adds.
         """
 

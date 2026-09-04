@@ -26,6 +26,8 @@ from themis.rpc import (
     gnomad_pb2_grpc,
     hello_pb2,
     hello_pb2_grpc,
+    literature_pb2,
+    literature_pb2_grpc,
     mavedb_pb2,
     mavedb_pb2_grpc,
     splice_pb2,
@@ -253,6 +255,79 @@ class CspecForwarder(_Forwarder[cspec_pb2_grpc.CspecStub], cspec_pb2_grpc.CspecS
         return _forward(self._stub.ListSpecifications, request, self._metadata, context)
 
 
+class LiteratureForwarder(_Forwarder[literature_pb2_grpc.LiteratureStub], literature_pb2_grpc.LiteratureServicer):
+    """Forward the guest's allowlisted literature calls to the evidence service, session-token-injected (sync)."""
+
+    def __init__(self, channel: grpc.Channel, *, session_token: str) -> None:
+        super().__init__(literature_pb2_grpc.LiteratureStub, channel, session_token=session_token)
+
+    @override
+    def DescribePaper(
+        self, request: literature_pb2.DescribePaperRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.PaperInfo:
+        return _forward(self._stub.DescribePaper, request, self._metadata, context)
+
+    @override
+    def ResolveContent(
+        self, request: literature_pb2.ResolveContentRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.ContentLocation:
+        return _forward(self._stub.ResolveContent, request, self._metadata, context)
+
+    @override
+    def Locate(
+        self, request: literature_pb2.LocateRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.LocateResponse:
+        return _forward(self._stub.Locate, request, self._metadata, context)
+
+    @override
+    def Validate(
+        self, request: literature_pb2.ValidateRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.ValidateResponse:
+        return _forward(self._stub.Validate, request, self._metadata, context)
+
+    @override
+    def PollFullTexts(
+        self, request: literature_pb2.PollFullTextsRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.PollFullTextsResponse:
+        return _forward(self._stub.PollFullTexts, request, self._metadata, context)
+
+    @override
+    def MaybeIngestPapers(
+        self, request: literature_pb2.MaybeIngestPapersRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.MaybeIngestPapersResponse:
+        return _forward(self._stub.MaybeIngestPapers, request, self._metadata, context)
+
+    @override
+    def GetMarkdown(
+        self, request: literature_pb2.GetMarkdownRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.GetMarkdownResponse:
+        return _forward(self._stub.GetMarkdown, request, self._metadata, context)
+
+    @override
+    def SearchEuropePmc(
+        self, request: literature_pb2.SearchEuropePmcRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.SearchEuropePmcResponse:
+        return _forward(self._stub.SearchEuropePmc, request, self._metadata, context)
+
+    @override
+    def FetchPubmedArticles(
+        self, request: literature_pb2.FetchPubmedArticlesRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.FetchPubmedArticlesResponse:
+        return _forward(self._stub.FetchPubmedArticles, request, self._metadata, context)
+
+    @override
+    def SearchLitVar(
+        self, request: literature_pb2.SearchLitVarRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.SearchLitVarResponse:
+        return _forward(self._stub.SearchLitVar, request, self._metadata, context)
+
+    @override
+    def ListLitVarEntities(
+        self, request: literature_pb2.ListLitVarEntitiesRequest, context: grpc.ServicerContext
+    ) -> literature_pb2.ListLitVarEntitiesResponse:
+        return _forward(self._stub.ListLitVarEntities, request, self._metadata, context)
+
+
 def build_hatch(
     *,
     hello_channel: grpc.Channel,
@@ -261,7 +336,7 @@ def build_hatch(
 ) -> postern_grpc.GrpcHatch:
     """A hatch exposing the allowlisted hello and evidence methods, forwarded with the session token injected.
 
-    Every per-source evidence forwarder dials ``evidence_channel``: the sources are one deployment serving
+    Every evidence forwarder dials ``evidence_channel``: the evidence interfaces are one deployment serving
     one gRPC service each. Both channels are keyword-only — they are the same type, and transposing them
     leaves every rpc dialling the wrong deployment.
     """
@@ -305,5 +380,9 @@ def build_hatch(
     hatch.add_servicer(
         cspec_pb2_grpc.add_CspecServicer_to_server,
         CspecForwarder(evidence_channel, session_token=session_token),
+    )
+    hatch.add_servicer(
+        literature_pb2_grpc.add_LiteratureServicer_to_server,
+        LiteratureForwarder(evidence_channel, session_token=session_token),
     )
     return hatch

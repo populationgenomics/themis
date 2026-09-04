@@ -21,6 +21,7 @@ from themis.rpc import (
     gnomad_pb2,
     gnomad_pb2_grpc,
     hello_pb2,
+    literature_pb2,
     mavedb_pb2,
     splice_pb2,
     transcript_pb2,
@@ -66,6 +67,7 @@ _REACHABLE_SERVICES: list[tuple[protobuf_descriptor.FileDescriptor, str, _Forwar
     (splice_pb2.DESCRIPTOR, 'themis.rpc.splice.Splice', hatch.SpliceForwarder),
     (mavedb_pb2.DESCRIPTOR, 'themis.rpc.mavedb.MaveDb', hatch.MaveDbForwarder),
     (cspec_pb2.DESCRIPTOR, 'themis.rpc.cspec.Cspec', hatch.CspecForwarder),
+    (literature_pb2.DESCRIPTOR, 'themis.rpc.literature.Literature', hatch.LiteratureForwarder),
 ]
 
 # One injection case per rpc each reachable service declares, derived from the descriptors so a newly-declared
@@ -284,7 +286,7 @@ def _service_of(method: str) -> str:
 def test_build_hatch_hands_each_forwarder_the_channel_for_its_deployment() -> None:
     """Both channels are `grpc.Channel`, so swapping them is not a type error — and the stubs bind at construction.
 
-    hello is its own deployment; the nine evidence sources share one, so the split is the whole of the routing.
+    hello is its own deployment; the ten evidence interfaces share one, so the split is the whole of the routing.
     """
     hello_channel, evidence_channel = _RecordingChannel(), _RecordingChannel()
     hatch.build_hatch(
@@ -326,6 +328,31 @@ def test_build_hatch_serves_every_allowlisted_method() -> None:
                 assert code is not grpc.StatusCode.PERMISSION_DENIED, f'{method} is served but refused at the hatch'
                 # The refusal is the real thing grpc synthesises a diagnostic for, address and all.
                 assert call_error.details() == code.name, f'{method} leaked an upstream diagnostic to the guest'
+    finally:
+        hatch_server.close()
+        unreachable.close()
+
+
+def test_the_hatch_refuses_every_declared_method_the_allowlist_omits() -> None:
+    """A forwarder is a whole-service pass-through, so the hatch serves rpcs the allowlist omits; each is refused.
+
+    The first partially exposed service is where this stops being vacuous: the literature forwarder registers
+    eleven rpcs and the allowlist admits eight. The refusal has to come from the hatch, before any forwarding,
+    so the code is PERMISSION_DENIED and never the forward leg's UNAVAILABLE — a hatch that stopped consulting
+    its allowlist would hand the guest a storage location here with every other test still green.
+    """
+    declared = frozenset().union(*(_declared_methods(fd, name) for fd, name, _ in _REACHABLE_SERVICES))
+    omitted = sorted(declared - hatch.GUEST_METHODS)
+    assert omitted, 'every declared rpc is allowlisted — the check would be vacuous'
+    unreachable = grpc.insecure_channel('127.0.0.1:1')
+    hatch_server = hatch.build_hatch(hello_channel=unreachable, evidence_channel=unreachable, session_token=_TOKEN)
+    hatch_server.start()
+    try:
+        with grpc.insecure_channel(f'unix:{hatch_server.socket_path}') as guest:
+            for method in omitted:
+                with pytest.raises(grpc.RpcError) as raised:
+                    guest.unary_unary(method)(b'', timeout=10)
+                assert cast('grpc.Call', raised.value).code() is grpc.StatusCode.PERMISSION_DENIED, method
     finally:
         hatch_server.close()
         unreachable.close()

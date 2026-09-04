@@ -3571,6 +3571,7 @@ guest = [
     { name = "clinvar-proto" },
     { name = "grpcio" },
     { name = "protobuf" },
+    { name = "pubmed-proto" },
 ]
 hello = [
     { name = "google-auth" },
@@ -3814,6 +3815,7 @@ guest = [
     { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "grpcio" },
     { name = "protobuf" },
+    { name = "pubmed-proto", specifier = "==0.3.0" },
 ]
 hello = [
     { name = "google-auth" },

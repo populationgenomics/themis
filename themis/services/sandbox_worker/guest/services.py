@@ -17,6 +17,7 @@ from themis.rpc import (
     gene_disease_pb2_grpc,
     gnomad_pb2_grpc,
     hello_pb2_grpc,
+    literature_pb2_grpc,
     mavedb_pb2_grpc,
     splice_pb2_grpc,
     transcript_pb2_grpc,
@@ -45,6 +46,10 @@ def gnomad() -> gnomad_pb2_grpc.GnomadStub:
 
 def hello() -> hello_pb2_grpc.HelloStub:
     return hello_pb2_grpc.HelloStub(channel.to_hatch())
+
+
+def literature() -> literature_pb2_grpc.LiteratureStub:
+    return literature_pb2_grpc.LiteratureStub(channel.to_hatch())
 
 
 def mavedb() -> mavedb_pb2_grpc.MaveDbStub:

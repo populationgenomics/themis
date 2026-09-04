@@ -151,11 +151,11 @@ sheaf = ["google-cloud-storage", "protobuf"]
 sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", { include-group = "session" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
-# protobuf backs the shipped stubs, and clinvar_proto the upstream record schema the clinvar stub imports —
-# its package `__init__` is eager, so pydantic comes into the rootfs behind it. Locked rather than a floating
-# pip install so the guest inherits the age gate and stays version-aligned with the worker's own
-# grpcio/protobuf.
-guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0"]
+# protobuf backs the shipped stubs, and clinvar_proto and pubmed_proto the upstream record schemas the clinvar
+# and literature stubs import — each package `__init__` is eager, so pydantic comes into the rootfs behind
+# them. Locked rather than a floating pip install so the guest inherits the age gate and stays
+# version-aligned with the worker's own grpcio/protobuf.
+guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0"]
 # classifier evaluation CLI (themis/classifier_eval): anthropic reads the session event logs and the
 # resolved agent each case ran; google-cloud-storage reads the store's working-document and workspace
 # buckets; google-auth is the ADC preflight resolves; pyyaml reads the checked-out agent config

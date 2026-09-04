@@ -41,8 +41,8 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
 # generated from `proto/`, the exposed contracts cut to the rpcs the hatch admits and the types they reach, which
 # lands beside them for the model to read. Nothing in either half names a capability the guest lacks.
 # `test_guest_rootfs.py` holds the stage to these two directories and to the import closure of everything it
-# lands. The clinvar stub reaches the upstream record schema (`clinvar_proto`), a wheel the `guest` group installs
-# above; `themis/rpc` and `themis/evidence/models` take no `__init__.py` and resolve as namespace packages under
+# lands. The clinvar and literature stubs reach the upstream record schemas (`clinvar_proto`, `pubmed_proto`),
+# wheels the `guest` group installs above; `themis/rpc` and `themis/evidence/models` take no `__init__.py` and resolve as namespace packages under
 # the `themis` package this stage touches into place. Then the code-mode `services`, `retry` and `display` helpers
 # (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the accessors
 # ride, and the stdlib-only working-document linter.

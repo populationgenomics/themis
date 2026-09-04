@@ -107,6 +107,31 @@ def test_the_entity_id_is_escaped_into_the_path() -> None:
     assert asked[0].endswith('litvar%40%2377%23p.A355T')
 
 
+@pytest.mark.parametrize('value', ['', '.', '..'])
+@pytest.mark.parametrize(
+    'call',
+    [
+        pytest.param(lambda c, v: litvar.entity_labels(v, http_client=c), id='entity_labels'),
+        pytest.param(lambda c, v: litvar.gene_entities(v, http_client=c), id='gene_entities'),
+    ],
+)
+def test_a_value_that_would_leave_its_path_segment_is_refused_before_any_request(
+    call: Callable[[httpx2.AsyncClient, str], Awaitable[object]], value: str
+) -> None:
+    # Percent-encoding leaves `.` unencoded, and the client resolves dot segments, so `..` as an entity id or
+    # a gene would ask a route one level up rather than a record on the fixed one; an empty value asks the
+    # route with its last segment missing. Each is refused as the caller's error, and nothing is dialled.
+    asked: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        asked.append(str(request.url))
+        return httpx2.Response(200, json={})
+
+    with pytest.raises(errors.InvalidRequestError):
+        _run(handler, lambda c: call(c, value))
+    assert not asked
+
+
 def test_entity_labels_reports_an_unknown_entity_rather_than_failing() -> None:
     # LitVar2 answers an unknown id with 400, not 404; taking that for a refusal would turn "the
     # index holds no such entity" into an INVALID_ARGUMENT the caller cannot act on.

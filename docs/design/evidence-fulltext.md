@@ -178,7 +178,13 @@ Resolution is also the only step in this lane that resolves a session. Every rea
 and so needs none; a conversion spends model budget, and that is not a cost a caller who cannot name a session may
 incur. The gate therefore sits on the enqueue rather than on the call around it: a batch that resolves its ids and finds
 nothing to produce is answered without a session, and one with something to produce is refused whole — answering
-readiness while quietly skipping the enqueue would strand the paper exactly as a lost task does.
+readiness while quietly skipping the enqueue would strand the paper exactly as a lost task does. What a caller may spend
+is bounded rather than attributed: a paper converts once however often it is asked for within the task-name reuse
+window, so what a hostile agent can commit in that window is the corpus's unconverted papers, not a function of how
+often it calls; the servicer caps a batch, and the conversion queue paces dispatch fleet-wide. The bound does not hold
+across windows for a paper whose attempts exhaust: it is deleted without a marker, reads PENDING again, and a later
+re-ask re-enqueues it, so for the papers that time out — the expensive ones — spend is bounded by the pace alone. The
+residual is that spend, by nothing per session, and availability, since other sessions' conversions wait behind them.
 
 ### Write-back is a generation-matched compare-and-swap
 
@@ -292,8 +298,8 @@ killed.
   on every call it forwards, so exposing resolution to the agent would cost the agent nothing. A user-initiated ingest
   arrives through the BFF holding a logged-in user's identity and no agent session — two callers, two principals — so
   admitting it means adding an arm to the gate, not swapping out the one that is there. Reads stay ungated under either.
-  What neither arm settles is how much a caller may spend: the resolved binding is discarded, so any caller the gate
-  admits can convert any paper, without a ceiling.
+  What neither arm settles is attribution: the resolved binding is discarded, so nothing records which Analysis asked
+  for a conversion, the use [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) names for the session here.
 - **A conversion that cannot fit a pushed request.** A pathological PDF exceeds the dispatch ceiling and would need a
   job rather than a request. Whether to build for that now or wait until one appears is undecided.
 - **The submit-side upload door** — the user-facing path for handing the system a document it could not otherwise reach,

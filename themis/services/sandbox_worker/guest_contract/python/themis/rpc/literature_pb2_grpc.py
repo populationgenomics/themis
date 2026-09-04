@@ -34,21 +34,6 @@ class LiteratureStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.DescribePaper = channel.unary_unary(
-                '/themis.rpc.literature.Literature/DescribePaper',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.PaperInfo.FromString,
-                _registered_method=True)
-        self.ResolveContent = channel.unary_unary(
-                '/themis.rpc.literature.Literature/ResolveContent',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.ResolveContentRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.ContentLocation.FromString,
-                _registered_method=True)
-        self.Locate = channel.unary_unary(
-                '/themis.rpc.literature.Literature/Locate',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.LocateRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.LocateResponse.FromString,
-                _registered_method=True)
         self.Validate = channel.unary_unary(
                 '/themis.rpc.literature.Literature/Validate',
                 request_serializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.SerializeToString,
@@ -93,36 +78,6 @@ class LiteratureStub:
 
 class LiteratureServicer:
     """Missing associated documentation comment in .proto file."""
-
-    def DescribePaper(self, request, context):
-        """What representations and files a paper offers; the pane's default-representation choice. The
-        web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
-        An unknown doc_id is a NOT_FOUND the server adds.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ResolveContent(self, request, context):
-        """Name the GCS object for a rendering, the PDF, or an associated file. NOT_FOUND for an unknown
-        doc_id or a selected object the paper lacks.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def Locate(self, request, context):
-        """Locate a quote within a representation. NOT_FOUND for an unknown doc_id; FAILED_PRECONDITION
-        when the paper lacks the requested representation; INTERNAL when the rendering it must read is
-        listed but unreadable; a `not_located` result when the quote is absent (not an error). No
-        producer resolves a quote against a PDF yet, so the live store answers a `REPRESENTATION_PDF`
-        request UNIMPLEMENTED rather than the `not_located` that would read as the quote being absent
-        from the paper. The fixture resolves its seeded PDF quotes, in the provisional coordinate
-        space `Rect` states, so the pane's highlight path can be built offline.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def Validate(self, request, context):
         """Whether a quote locates in any representation — the agent's authoring-time check. An unknown
@@ -228,21 +183,6 @@ class LiteratureServicer:
 
 def add_LiteratureServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'DescribePaper': grpc.unary_unary_rpc_method_handler(
-                    servicer.DescribePaper,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.PaperInfo.SerializeToString,
-            ),
-            'ResolveContent': grpc.unary_unary_rpc_method_handler(
-                    servicer.ResolveContent,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.ResolveContentRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.ContentLocation.SerializeToString,
-            ),
-            'Locate': grpc.unary_unary_rpc_method_handler(
-                    servicer.Locate,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.LocateRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.LocateResponse.SerializeToString,
-            ),
             'Validate': grpc.unary_unary_rpc_method_handler(
                     servicer.Validate,
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.ValidateRequest.FromString,
@@ -293,87 +233,6 @@ def add_LiteratureServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class Literature:
     """Missing associated documentation comment in .proto file."""
-
-    @staticmethod
-    def DescribePaper(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/themis.rpc.literature.Literature/DescribePaper',
-            themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.PaperInfo.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ResolveContent(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/themis.rpc.literature.Literature/ResolveContent',
-            themis_dot_rpc_dot_literature__pb2.ResolveContentRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.ContentLocation.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def Locate(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/themis.rpc.literature.Literature/Locate',
-            themis_dot_rpc_dot_literature__pb2.LocateRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.LocateResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def Validate(request,

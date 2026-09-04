@@ -32,6 +32,21 @@ _GENE_URL_TEMPLATE = 'https://www.ncbi.nlm.nih.gov/research/litvar2-api/variant/
 _SOURCE = 'NCBI LitVar2'
 
 
+def _path_segment(value: str, *, subject: str) -> str:
+    """``value`` percent-encoded as one path segment of a fixed route, or refused where it would not stay one.
+
+    ``quote(safe='')`` leaves only ``A-Za-z0-9_.-~`` unencoded, so of every value a caller can supply, the
+    empty string and the dot segments ``.`` and ``..`` are the ones the URL's path normalisation would
+    resolve onto a different route rather than a different record.
+
+    Raises:
+        errors.InvalidRequestError: ``value`` is empty, ``.`` or ``..``.
+    """
+    if value in ('', '.', '..'):
+        raise errors.InvalidRequestError(f'{subject} {value!r} is not an identifier {_SOURCE} can be asked about')
+    return urllib.parse.quote(value, safe='')
+
+
 class EntityLabels(NamedTuple):
     """What LitVar2 states about one entity, verbatim and independent of any request.
 
@@ -111,11 +126,12 @@ async def entity_labels(entity_id: str, *, http_client: httpx2.AsyncClient) -> E
         The entity's labels, or ``None`` when the index holds no entity under that id.
 
     Raises:
-        errors.InvalidRequestError: If LitVar2 refuses the call (a non-400, non-429 4xx).
+        errors.InvalidRequestError: If ``entity_id`` cannot be a path segment (empty, ``.`` or ``..``), or
+            LitVar2 refuses the call (a non-400, non-429 4xx).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: If the entity record is not a mapping, or states no id of its own.
     """
-    url = _ENTITY_URL_TEMPLATE.format(entity_id=urllib.parse.quote(entity_id, safe=''))
+    url = _ENTITY_URL_TEMPLATE.format(entity_id=_path_segment(entity_id, subject='entity id'))
     response = await http_client.get(url)
     if response.status_code == httpx2.codes.BAD_REQUEST:
         return None
@@ -201,11 +217,12 @@ async def gene_entities(gene: str, *, http_client: httpx2.AsyncClient) -> list[L
         The gene's rows in the index's own order; empty where it lists none.
 
     Raises:
-        errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If ``gene`` cannot be a path segment (empty, ``.`` or ``..``), or LitVar2
+            refuses the call (a non-429 4xx).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: A line does not parse, or does not carry the two fields a row is.
     """
-    response = await http_client.get(_GENE_URL_TEMPLATE.format(gene=urllib.parse.quote(gene, safe='')))
+    response = await http_client.get(_GENE_URL_TEMPLATE.format(gene=_path_segment(gene, subject='gene')))
     errors.raise_for_status(response, upstream=_SOURCE, subject=f'gene listing for {gene!r}')
     return _listed_entities(response.text)
 

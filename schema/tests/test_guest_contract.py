@@ -423,3 +423,29 @@ def test_generation_is_deterministic(tree: SimpleNamespace, tmp_path: pathlib.Pa
 
 def test_the_mark_is_cut_by_the_option_file_the_stub_registers() -> None:
     assert guest_contract.agent_exposed_file() == sandbox_options_pb2.DESCRIPTOR.name
+
+
+_GUEST_PROTO = (
+    pathlib.Path(__file__).resolve().parents[2] / 'themis' / 'services' / 'sandbox_worker' / 'guest_contract' / 'proto'
+)
+_SOURCE_PROTO = pathlib.Path(__file__).resolve().parents[2] / 'schema' / 'proto'
+
+
+def test_the_guest_contract_names_no_rpc_it_cut() -> None:
+    """A cut rpc's name appears nowhere in the guest's copy — not in a field comment, not in the file header.
+
+    The contract the model reads is the contract it can call; prose that sends it to a method the cut removed
+    costs it a turn on an attribute that does not exist. The declarations go by span; this holds the authored
+    comments to the same line, so the fix for a hit is in the source proto's comments.
+    """
+    checked = 0
+    for guest in sorted(_GUEST_PROTO.rglob('*.proto')):
+        rel = guest.relative_to(_GUEST_PROTO)
+        source = (_SOURCE_PROTO / rel).read_text(encoding='utf-8')
+        text = guest.read_text(encoding='utf-8')
+        declared = set(re.findall(r'^\s*rpc\s+(\w+)\s*\(', source, flags=re.M))
+        kept = set(re.findall(r'^\s*rpc\s+(\w+)\s*\(', text, flags=re.M))
+        for name in sorted(declared - kept):
+            assert not re.search(rf'\b{name}\b', text), f'{rel}: names {name}, an rpc the guest cannot call'
+            checked += 1
+    assert checked, 'no rpc was cut anywhere — the check would be vacuous'
