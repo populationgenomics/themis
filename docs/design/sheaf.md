@@ -2,10 +2,11 @@
 
 **Status:** draft
 
-**Related:** [`workspace-model.md`](workspace-model.md) (the collaboration model whose workspace this would carry, and
-the branch-and-append semantics an Analysis has); [`services.md`](services.md) (the store service, which holds the
-workspace archive today, and how the sandbox reaches a service at all); [`agent-runtime.md`](agent-runtime.md) (the
-session the sandbox runs inside).
+**Related:** [`sheaf-service.md`](sheaf-service.md) (the rpc surface this protocol is served through, who calls it, and
+where the credential lives); [`workspace-model.md`](workspace-model.md) (the collaboration model whose workspace this
+would carry, and the branch-and-append semantics an Analysis has); [`services.md`](services.md) (the store service,
+which holds the workspace archive today, and how the sandbox reaches a service at all);
+[`agent-runtime.md`](agent-runtime.md) (the session the sandbox runs inside).
 
 ## Overview
 
@@ -33,9 +34,9 @@ compare-and-swap on a single object via `ifGenerationMatch`. The design follows 
   reflog ref, written by the same compare-and-swap as each push, records which commit was each ref's tip and when. The
   price is storage that grows with publishes; the payoff is that the one operation able to destroy data does not exist.
 - **Stock git owns the wire protocol.** The agent clones and pushes with a real `git` binary against a real
-  `git http-backend`. Sheaf's code in that path is a CGI bridge, a sync of the bare mirror before each request, and a
-  pre-receive hook that refuses anything rewriting history or touching a protected path, writes the reflog entry, and
-  turns the push into one compare-and-swap.
+  `git upload-pack` and `git receive-pack`, reached from the sandbox over postern's stream hatch. Sheaf's code in that
+  path is a sync of the bare mirror before each connection and a pre-receive hook that refuses anything rewriting
+  history or touching a protected path, writes the reflog entry, and turns the push into one compare-and-swap.
 - **The resident set needs a ceiling checked before hydration** — decided, not yet built. Serving a request means
   building a local object database, and on Cloud Run that is memory. Running out of it is the one failure this layer
   cannot replay away, so a repository too large to serve has to be refused by the request that asked for it, before it
@@ -72,7 +73,7 @@ store has neither. Two writers advancing the same ref through separate GCS write
 
 ## Non-goals
 
-- **Not a general-purpose git host.** One repository per workspace, served on loopback to a known client, with no
+- **Not a general-purpose git host.** One repository per workspace, served over a socket to a known client, with no
   authentication of its own. Anything reaching it goes through something in front that authenticates. The set of
   repositories a server will serve is an explicit input, never inferred from the request path: with no authentication,
   that set is the only boundary between a client that can reach the server and every workspace in the store.
@@ -225,8 +226,8 @@ inherits.
 ### The wire: stock git, sheaf's precondition
 
 Getting `git-upload-pack` and `git-receive-pack` subtly wrong is the kind of mistake that surfaces as an obscure failure
-in somebody's git version months later. So the agent's side is a real `git` binary talking to `git http-backend` over
-loopback, and sheaf's code in that path does two things:
+in somebody's git version months later. So the agent's side is a real `git` binary talking to the real `git upload-pack`
+and `git receive-pack`, and sheaf's code in that path does two things:
 
 1. **Sync a bare mirror from the store before handing the request to git.** Once local refs match the store, a client
    pushing from an out-of-date clone fails git's own fast-forward check and gets git's own message, which is what a
@@ -241,6 +242,13 @@ loopback, and sheaf's code in that path does two things:
    non-zero makes git discard the quarantine and leave every ref untouched, so a refusal cannot leave the mirror
    disagreeing with the store. It is `pre-receive` and not `update` because `pre-receive` sees the whole push at once,
    so a multi-ref push maps onto a single compare-and-swap and is atomic in the same way the store is.
+
+The transport is postern's stream hatch: one Unix socket per service bound into the guest, each spliced host-side to
+`git upload-pack` or `git receive-pack` against the mirror — git's native protocol over an `ext::` remote, no HTTP in
+the path. The socket is the capability. The guest's connector sends no repository and no service name, so nothing
+host-side parses one; a socket bound to `upload-pack` cannot be talked into `receive-pack`; and read-only access is a
+socket pair with the receive half unbound. `git http-backend` over loopback remains for a writer that is not sandboxed,
+and the hook runs the same under either, since `receive-pack` runs it whatever the transport.
 
 The client's fast-forward check does the rejecting in the common case, and `--force` is the instruction to skip it. The
 hook's own check is what holds then, and it has to be the hook's: receive-pack's `denyNonFastForwards` and `denyDeletes`
@@ -470,13 +478,6 @@ the mirror already had, is independent of that.
   running with idle CPU rules out a background thread.
 - **Whether storage growth ever warrants a sweep of archived analyses.** The bill is small and visible; if it stops
   being small, the safe sweep is over repositories with no writer, under a lock, and is a separate design.
-- **How the agent's `git` reaches the store.** It runs inside a sandbox with no network, so the route is postern's
-  stream hatch: a socket bound into the guest, spliced host-side to `git upload-pack` or `git receive-pack` against the
-  mirror after a sync — git's native protocol over an `ext::` remote, no HTTP in the path. The socket is the capability:
-  the guest's connector sends no repository and no service name, so nothing host-side parses one, and read-only access
-  is a socket pair with the receive half unbound. The hook and the compare-and-swap are unchanged, since receive-pack
-  runs the hook whatever the transport; `git http-backend` stays for a writer that is not sandboxed. postern 0.4.0
-  supplies the hatch; the wiring is the deferred sandbox work.
 - **Whether an Analysis's branch tree maps onto git refs.** [`workspace-model.md`](workspace-model.md) gives an Analysis
   a tree of immutable turns with branching. Git refs could carry that, but nothing here has been designed against those
   semantics, and the working document's linear versioning deliberately stays where it is.

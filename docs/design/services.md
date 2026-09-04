@@ -225,10 +225,11 @@ Two consumers, different shapes — know which a service is for:
   **fail-loud** (a `grpc.RpcError` surfaces, never a silent empty result). Which rpcs it reaches at all is decided by
   the `agent_exposed` option on the `.proto`, from which `regen` emits the hatch's allowlist
   ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)); absent the option, nothing.
-- **The platform, service-to-service** — `auth` (called by every service to authorize a request) and `store` (the
-  sandbox worker checkpoints `/workspace` to it) are consumed this way, never by the agent. The caller holds its own SA
-  identity and presents its ID token: the generated stub over a channel built with `themis.clients.id_token`, wrapped
-  for auth by `themis.clients.auth`.
+- **The platform, service-to-service** — `auth` (called by every service to authorize a request), `store` (the sandbox
+  worker checkpoints `/workspace` to it) and the `Sheaf` interface (the workspace repository's storage protocol, served
+  by a data-plane deployment that [`sheaf-service.md`](sheaf-service.md) leaves to the deploy to name) are consumed this
+  way, never by the agent. The caller holds its own SA identity and presents its ID token: the generated stub over a
+  channel built with `themis.clients.id_token`, wrapped for auth by `themis.clients.auth`.
 
 **Sandbox-reachability is an explicit wiring step, not a default.** An agent-facing service is reached *through the
 hatch*, so making it callable from the sandbox takes four things: the `agent_exposed` option on its `.proto`, a

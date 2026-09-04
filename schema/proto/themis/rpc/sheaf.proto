@@ -1,0 +1,167 @@
+// The `sheaf` service: a repository's mutable state and packs, behind the one credential on the
+// workspace bucket (docs/design/sheaf.md). This proto is the source of truth; `regen` (buf generate) emits the
+// themis/rpc/sheaf stubs each consumer imports.
+//
+// Sheaf is git over object storage: content-addressed packfiles plus one ref document replaced by
+// compare-and-swap. The service holds the bucket and runs sheaf's storage protocol; a caller holds
+// the objects. That caller is the sandbox worker: its bare mirror hydrates through ReadRefDoc and
+// FetchPack, and its pre-receive hook publishes through Publish. The guest's git sees none of this —
+// it speaks git's own protocol to the worker's mirror over the stream hatch, and the mirror is where
+// git's world ends and sheaf's begins. The BFF is the deployment's second consumer through a
+// workspace-level interface of its own; it holds no objects and no session token, so it does not
+// call these rpcs. Every call here is scoped to one repository by the session it carries
+// (x-themis-session-token metadata resolves to an Analysis; the repository is that Analysis's), so
+// no request names a repository and a caller can reach only its own.
+//
+// The split of checks follows what each side holds. The service refuses what it can decide from
+// the document alone: a name or id git cannot hold, a ref set git cannot store, a deletion, a
+// publish that moves a ref without advancing the reflog ref, and a base the document has moved
+// past. What needs the objects — that a move is a fast-forward, that the reflog entry's parents are
+// the tips it records — is the caller's contract, as it is for every sheaf writer.
+//
+// Publish only extends the pack manifest. Compaction's write — a pack set that replaces the manifest
+// — has no rpc here because nothing runs compaction yet (docs/design/sheaf.md, Open questions); when
+// something does, it gains a ReplacePacks rpc beside these, an additive change.
+syntax = "proto3";
+
+package themis.rpc.sheaf;
+
+import "google/protobuf/empty.proto";
+import "themis/sheaf/models/refdoc.proto";
+
+// The repository's whole mutable state, and the version token a publish against it is conditional on.
+message RefDocSnapshot {
+  // Unset when the repository does not exist yet. A publish against that state asserts creation.
+  themis.sheaf.models.refdoc.RefDoc document = 1;
+  // The backend's version token for `document`: opaque, compared only for equality, never ordered
+  // or counted. Zero exactly when `document` is unset.
+  int64 generation = 2;
+}
+
+// Names one packfile by its content hash, as the document's `packs` lists it.
+message FetchPackRequest {
+  // Lowercase hex SHA-256 of the pack's bytes — sixty-four hex digits, so a caller can verify what
+  // it receives. Anything else is INVALID_ARGUMENT before the store is consulted: the id becomes
+  // part of an object key, and its form is the contract's to fix, not a backend's.
+  string pack_id = 1;
+}
+
+// One chunk of a packfile's bytes, the streaming unit in both directions.
+message PackChunk {
+  bytes content = 1;
+}
+
+// A compare-and-swap on one ref.
+message RefUpdate {
+  // The object id the ref must hold now. Absent to require that the ref does not exist yet.
+  optional string old = 1;
+  // The object id the ref moves to. Absent is a deletion — representable so the service can refuse
+  // it by name with INVALID_ARGUMENT, since history here is append-only. Git's zero object id, which
+  // a relayed push carries for a deletion, is refused the same way: it is not an id git can hold.
+  optional string new = 2;
+}
+
+// What one publish wants: the state it was built against, the refs it moves, and where a clone
+// should start. Sent first on the Publish stream, before any pack bytes.
+message PublishIntent {
+  // The generation of the RefDocSnapshot the caller built against; zero asserts the repository does
+  // not exist yet. A document at any other generation is never merged; the service reads the
+  // current document and classifies over the refs the intent moves outside `refs/sheaf/` — the
+  // reflog ref advances on every publish, so it is bookkeeping the service checks for presence, not
+  // an input to the split. In this order: if every such ref already holds its `new`, this publish
+  // landed and only its response was lost — the call succeeds with the current generation, so a
+  // retry completes. Else if every such ref still holds its `old`, the caller lost a race with an
+  // unrelated publish (ABORTED — rebuild against the new document and publish again). Else one has
+  // moved under the caller (FAILED_PRECONDITION — a non-fast-forward, for the caller to merge).
+  int64 base_generation = 1;
+  // Ref name to update. Names are fully qualified under `refs/`. A publish that moves any ref
+  // outside `refs/sheaf/` must also update `refs/sheaf/reflog`, or it is refused; an intent moving
+  // no ref outside `refs/sheaf/` is refused too — nothing legitimate publishes only sheaf's own
+  // bookkeeping, and the classification above is over exactly those refs.
+  map<string, RefUpdate> ref_updates = 2;
+  // Where a clone should start. Unset carries the document's HEAD over, with one exception: a
+  // symbolic HEAD naming a branch that does not exist — the unborn `refs/heads/main` a repository
+  // with no branch is given — is re-derived once the publish leaves a branch, so a clone lands on a
+  // branch rather than on nothing. Re-derivation, on a first publish and in that case, is one rule:
+  // `refs/heads/main` if it exists after the publish, else the first branch in name order, else an
+  // unborn `refs/heads/main`. One rule, so two builds cannot record different HEADs for one
+  // repository.
+  themis.sheaf.models.refdoc.RefTarget head = 3;
+  // The packs this publish carries, in the order their chunks follow; `PublishChunk.pack` indexes
+  // into this list. Declared up front so a stream that delivers the wrong number of bytes for a pack
+  // — a client that half-closed after a short read — is refused rather than stored: a truncated pack
+  // the manifest names is the one damage this store cannot undo. Empty when every object the new
+  // tips need is already stored.
+  repeated PackDescriptor packs = 4;
+}
+
+// What a pack is before its bytes arrive: how many, and their hash.
+message PackDescriptor {
+  // Byte length of the pack. The stream must deliver exactly this many bytes for it.
+  uint64 size = 1;
+  // Lowercase hex SHA-256 of those bytes — sixty-four hex digits, refused with INVALID_ARGUMENT
+  // before any byte is read if it is anything else, since it becomes part of an object key — and the
+  // id the document will name the pack by. The service hashes what arrives and refuses a mismatch.
+  string pack_id = 2;
+}
+
+// One message of the Publish stream: the intent once, first, then the packs' bytes in the order the
+// intent declared them. A stream of the intent alone is a complete publish when it declares no packs.
+message PublishRequest {
+  oneof message {
+    PublishIntent intent = 1;
+    // Bytes of one pack. `pack` indexes the intent's declared packs, chunks of one pack arrive in
+    // order, and packs are contiguous: every chunk of pack n arrives before any chunk of pack n+1,
+    // so the service can hash, check and store one pack before the next begins rather than hold the
+    // whole publish. Every pack is self-contained (no `--thin`), so the service never has to relate
+    // two.
+    PublishChunk chunk = 2;
+  }
+}
+
+// A chunk of one of the publish's packs.
+message PublishChunk {
+  // Which pack these bytes belong to, counting from zero in the order the caller sends them.
+  uint32 pack = 1;
+  bytes content = 2;
+}
+
+// The generation at which the document holds this publish's outcome: the one the publish wrote, or,
+// when the call succeeded because the publish had already landed, the current one. Either way the
+// caller's next read sees it. Nothing else: the packs stored are exactly the intent's declared
+// descriptors, so the caller already knows them.
+message PublishResponse {
+  int64 generation = 1;
+}
+
+// A sheaf repository's storage protocol, served for the repository the session names.
+service Sheaf {
+  // The current ref document and its generation; an unset document is a repository that does not
+  // exist yet, not an error. DATA_LOSS if the stored document does not parse as one this code
+  // wrote: that is damage, and a caller must not retry it as a fault.
+  rpc ReadRefDoc(google.protobuf.Empty) returns (RefDocSnapshot);
+  // One packfile the document names, streamed. INVALID_ARGUMENT if `pack_id` is not sixty-four hex
+  // digits; NOT_FOUND if no such pack: nothing in a sheaf store is ever deleted, so that is a fact
+  // about the caller's request, never about timing.
+  rpc FetchPack(FetchPackRequest) returns (stream PackChunk);
+  // Upload packs and replace the ref document in one operation, conditional on the base
+  // generation. Packs land before the document names them, so a refusal leaves at most inert
+  // litter and never a ref nothing can fetch. A moved document is classified as `base_generation`
+  // describes: a publish that already landed succeeds again, so a lost response is recovered by
+  // retrying. Refusals: ABORTED when the document moved and every ref the intent moves outside
+  // `refs/sheaf/` is as the caller read it (rebuild, publish again). FAILED_PRECONDITION when the
+  // document moved and one of those refs moved with it (a non-fast-forward, for the caller to
+  // merge). INVALID_ARGUMENT for a
+  // name or id git cannot hold (the zero id included), a ref set it cannot store, a deletion, an
+  // intent moving no ref outside `refs/sheaf/`, a HEAD naming neither an object nor a ref, a
+  // publish that forgets the reflog ref, a declared pack id that is not sixty-four hex digits, a
+  // pack whose bytes do not match its declared size or hash, or a malformed stream — no intent, an intent after a chunk, a pack index out of order or beyond
+  // the declared list.
+  // RESOURCE_EXHAUSTED when the declared packs exceed the deployment's per-publish byte ceiling, or
+  // the ref set the publish would leave exceeds its ref-count or document-size ceiling — both
+  // decided from the intent and the current document before any pack is stored. The ref set only
+  // grows, since nothing is deleted, so it is bounded for the same reason the bytes are. Faults, not
+  // refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage fault a caller
+  // retries.
+  rpc Publish(stream PublishRequest) returns (PublishResponse);
+}

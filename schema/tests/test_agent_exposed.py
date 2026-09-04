@@ -81,15 +81,18 @@ def test_exposed_file_without_a_package_fails_loud() -> None:
 
 @_needs_buf
 def test_the_worker_only_services_are_never_exposed() -> None:
-    """No store or auth method reaches the allowlist, however many agent-facing services carry the option.
+    """No store, auth or sheaf method reaches the allowlist, however many agent-facing services carry the option.
 
     The set itself is not pinned: every agent-facing service legitimately adds to it. What cannot change is
     that the worker-only surface stays off the hatch — the working document and scratch are checkpointed by
-    the worker, and a session token is resolved by it, so neither belongs to the guest.
+    the worker, a session token is resolved by it, and the repository is published by its pre-receive hook
+    after the hook's own checks — so none of it belongs to the guest, which speaks git to the mirror instead.
     """
     exposed = agent_exposed._exposed_methods(agent_exposed.build_image())
     assert exposed, 'nothing is exposed, so this would pass whatever the option did'
-    worker_only = [m for m in exposed if m.startswith(('/themis.rpc.store.', '/themis.rpc.auth.'))]
+    worker_only = [
+        m for m in exposed if m.startswith(('/themis.rpc.store.', '/themis.rpc.auth.', '/themis.rpc.sheaf.'))
+    ]
     assert not worker_only
 
 
