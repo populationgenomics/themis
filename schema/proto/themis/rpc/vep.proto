@@ -27,9 +27,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // One VEP call carries several SVCv4 lines at once. Doc maps each to its code so the agent knows
 // what it is holding:
 //   consequence          -> the routing key (and the NUL_ vs CDS_ LoF path)
@@ -96,5 +93,7 @@ message AnnotateResponse {
 service Vep {
   // Ensembl VEP: routing consequence + the policy's predictor score (MIS_PRD) + SpliceAI (SPL_PRD)
   // deltas + a ClinVar/gnomAD snapshot (context only). See AnnotateResponse.
-  rpc Annotate(AnnotateRequest) returns (AnnotateResponse);
+  rpc Annotate(AnnotateRequest) returns (AnnotateResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

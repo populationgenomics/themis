@@ -1,19 +1,19 @@
-// The `agent_exposed` file option: the single authoring point that marks a proto file's services
-// callable from the sandbox agent through the hatch. `regen` reads it from the descriptor set to
-// generate the hatch allowlist (and, in later slices, the forwarders, guest stubs, image manifest,
-// and prompt fragment), so those artifacts cannot drift from the contract. See
-// docs/design/sandbox-rpc-exposure.md.
+// The `agent_exposed` method option: the single authoring point that marks an rpc callable from the
+// sandbox agent through the hatch. `regen` reads it from the descriptor set to generate the hatch
+// allowlist, the guest's accessors, and the guest's contract tree — each exposed proto cut to the
+// marked rpcs and the types they reach, with the stubs the guest imports generated from those cut
+// sources — so none of them can drift from the contract. See docs/design/sandbox-rpc-exposure.md.
 syntax = "proto3";
 
 package themis.rpc;
 
 import "google/protobuf/descriptor.proto";
 
-extend google.protobuf.FileOptions {
-  // When true, every service defined in this file is agent-callable through the hatch; absent means
-  // false, so the default is fail-closed. Marking a file asserts that every rpc it defines is
-  // written to survive a hostile caller: untrusted model code invokes them as the session, so a
-  // service that is not hardened for that stays unmarked. 50002 is in descriptor.proto's
-  // 50000–99999 range reserved for organization-internal extensions.
+extend google.protobuf.MethodOptions {
+  // When true, this rpc is agent-callable through the hatch; absent means false, so the default is
+  // fail-closed. Marking an rpc asserts it is written to survive a hostile caller — nothing it does
+  // on the caller's behalf is unbounded in cost, and every outbound request carrying the caller's
+  // text is destination-fixed and query-only — since untrusted model code invokes it. 50002 is in
+  // descriptor.proto's 50000–99999 range reserved for organization-internal extensions.
   bool agent_exposed = 50002;
 }

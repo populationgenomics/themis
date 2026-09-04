@@ -6,9 +6,6 @@ package themis.rpc.hello;
 
 import "themis/rpc/sandbox_options.proto";
 
-// Hello is reachable from the sandbox agent through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // The caller's note, echoed back in the greeting.
 message SayHelloRequest {
   string note = 1;
@@ -25,5 +22,7 @@ message SayHelloResponse {
 // The hello service: echo the caller's note against its resolved session binding.
 service Hello {
   // Resolve the request's session token and echo the note against the bound Analysis.
-  rpc SayHello(SayHelloRequest) returns (SayHelloResponse);
+  rpc SayHello(SayHelloRequest) returns (SayHelloResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

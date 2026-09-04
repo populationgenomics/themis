@@ -35,9 +35,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // ---- DescribeVariant: the queried allele's record + the gene's classified P/LP variants ---------
 // Resolves ClinVar's aggregate classification and review status so the model judges
 // informative-variant eligibility over records it can weigh, not raw submissions. Two independent
@@ -463,10 +460,14 @@ service ClinVar {
   // half of the *_INF candidate set (eligibility is the model's, SM19). The gene pool is P/LP by
   // construction, so the benign and VUS arms of the *_INF rules are SearchCodingSpan's, not this
   // rpc's. See DescribeVariantResponse.
-  rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse);
+  rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
   // VariantValidator (the exon table) -> NCBI ClinVar. Every germline record ClinVar holds at
   // one c. span of one transcript, of every classification, with its review stars and c. coordinates
   // -> the *_INF candidate set at a codon or an exon, benign and VUS arms included. See
   // SearchCodingSpanResponse.
-  rpc SearchCodingSpan(SearchCodingSpanRequest) returns (SearchCodingSpanResponse);
+  rpc SearchCodingSpan(SearchCodingSpanRequest) returns (SearchCodingSpanResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

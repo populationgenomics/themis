@@ -6,3 +6,4 @@ apps/web/src/gen/** linguist-generated=true
 **/*_pb2.pyi linguist-generated=true
 **/*_pb2_grpc.py linguist-generated=true
 **/*_pb2_grpc.pyi linguist-generated=true
+themis/services/sandbox_worker/guest_contract/** linguist-generated=true

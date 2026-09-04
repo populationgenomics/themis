@@ -14,9 +14,9 @@ repos:
       # under schema/proto/ byte for byte from the wheels that publish them; a hygiene rewrite
       # would drift them from the generator and break the freshness gate.
       - id: end-of-file-fixer
-        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/|schema/proto/pubmed_proto/)'
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/|schema/proto/pubmed_proto/|themis/services/sandbox_worker/guest_contract/)'
       - id: trailing-whitespace
-        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/|schema/proto/pubmed_proto/)'
+        exclude: '^(themis/rpc/|themis/litcache/models/|buf/|apps/web/src/gen/|schema/proto/clinvar_proto/|schema/proto/pubmed_proto/|themis/services/sandbox_worker/guest_contract/)'
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: detect-private-key

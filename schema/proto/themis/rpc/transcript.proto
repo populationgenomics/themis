@@ -32,9 +32,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // ---- AssessExonRelevance: the exon axis of the mechanism x exon-relevance matrix ----------------
 // Surfaces the signals for the All / Most / Few exon-relevance call (the matrix multiplier's exon
 // axis, x1.0 / 0.5 / 0); the call itself is judgement-heavy and is the model's, not a lookup. Doc
@@ -426,9 +423,13 @@ service Transcript {
   // VariantValidator transcript alignment: the exon table in genomic / n. / c. coordinates, plus
   // where a supplied position sits in it (exon or intron, and its distance to each boundary).
   // See GetStructureResponse.
-  rpc GetStructure(GetStructureRequest) returns (GetStructureResponse);
+  rpc GetStructure(GetStructureRequest) returns (GetStructureResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
   // GTEx + gnomAD pext/constraint + ClinVar density + VariantValidator (the exon table, and the
   // gene's transcript inventory against the assessed exon) -> the exon axis of the mechanism x
   // exon-relevance matrix; the All/Most/Few call is the model's. See AssessExonRelevanceResponse.
-  rpc AssessExonRelevance(AssessExonRelevanceRequest) returns (AssessExonRelevanceResponse);
+  rpc AssessExonRelevance(AssessExonRelevanceRequest) returns (AssessExonRelevanceResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

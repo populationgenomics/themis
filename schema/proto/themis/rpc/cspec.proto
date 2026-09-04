@@ -31,9 +31,6 @@ import "google/protobuf/timestamp.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // The ClinGen Criteria Specification Registry (CSpec) specification(s) covering a gene: the VCEP's
 // criterion-by-criterion wording, its per-strength gene-specific thresholds, and the attribution a
 // working document quotes it under. SM3 ranks "a curated VCEP or community threshold" FIRST among
@@ -395,5 +392,7 @@ service Cspec {
   // reached. It is NOT an SVCv4 profile: the codes, strengths and points here are ACMG/AMP-2015 and
   // the panel's own, and a threshold enters SM3's ordering at the rung ITS derivation earns rather
   // than at method 1 because a VCEP published it. See ListSpecificationsResponse.
-  rpc ListSpecifications(ListSpecificationsRequest) returns (ListSpecificationsResponse);
+  rpc ListSpecifications(ListSpecificationsRequest) returns (ListSpecificationsResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

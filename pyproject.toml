@@ -167,7 +167,9 @@ classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }]
+# The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
+# the test group carries the protoc group.
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -202,7 +204,7 @@ target-version = "py313"
 # `themis/curation/models`, `themis/sheaf/models`, `themis/svcv4/models`, `themis/workbench/models` and `themis/workbench/rpc` are the generated
 # proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The pre-commit
 # ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["themis/curation/models", "themis/evidence/models", "themis/litcache/models", "themis/sheaf/models", "themis/svcv4/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "buf"]
+extend-exclude = ["themis/curation/models", "themis/evidence/models", "themis/litcache/models", "themis/sheaf/models", "themis/svcv4/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "themis/services/sandbox_worker/guest_contract", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -311,7 +313,10 @@ include = ["tools", "tests", "schema/tests", "infra", "themis"]
 # Re-list pyright's auto-excludes, which specifying `exclude` would otherwise drop. The committed
 # buf output stays *in*: `exclude` drops a file from analysis entirely, so a servicer's generated
 # base becomes invisible and `reportImplicitOverride` silently passes on the case it exists for.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
+# The guest contract tree is the one generated tree that is excluded: nothing in the repo imports
+# it, and it is a second registration of the same descriptor names as `themis/rpc`, meant to be the
+# only one inside the guest rootfs.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "themis/services/sandbox_worker/guest_contract"]
 extraPaths = ["infra"]
 typeCheckingMode = "standard"
 # An override that does not say so is one a base-method rename or removal leaves behind silently,

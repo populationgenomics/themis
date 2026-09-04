@@ -34,9 +34,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // The unit SVCv4 classifies is the MDE — gene x phenotype x inheritance x mechanism — and SM18
 // states the gate and the mechanism precondition per MDE, never per gene. So the message keeps the
 // two scopes apart rather than answering for the gene and letting that read as the entity's:
@@ -197,5 +194,7 @@ service GeneDisease {
   // Classification, gate level, inheritance and mechanism narratives are per entity; the
   // haploinsufficiency score, the gain-of-function veto and PanelApp's mode of inheritance are per
   // gene. See DescribeGeneResponse.
-  rpc DescribeGene(DescribeGeneRequest) returns (DescribeGeneResponse);
+  rpc DescribeGene(DescribeGeneRequest) returns (DescribeGeneResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

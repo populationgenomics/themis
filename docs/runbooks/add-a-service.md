@@ -102,11 +102,14 @@ not this outbound leg.
 
 ## 6. Expose to the sandbox agent (agent-facing services only)
 
-Skip for platform (worker-only) services. Exposure is the `agent_exposed` option on the service's `.proto`, and it is
-fail-closed: `regen` derives both the hatch's method allowlist and the guest's stub accessors from the files carrying it
-([`tools/schema/agent_exposed.py`](../../tools/schema/agent_exposed.py)), and a proto without the option reaches the
-guest with nothing. The steps, the rest of the surface the option drives, and the threat model — an exposed RPC must
-assume a hostile caller — are in [`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md) ("In practice").
+Skip for platform (worker-only) services. Exposure is the `agent_exposed` option on each rpc the agent may call, and it
+is fail-closed: `regen` derives the hatch's method allowlist and the guest's accessors from the rpcs carrying it
+([`tools/schema/agent_exposed.py`](../../tools/schema/agent_exposed.py)), and the guest's contract tree
+([`tools/schema/guest_contract.py`](../../tools/schema/guest_contract.py)) — each exposed proto cut to the marked rpcs
+and the types they reach, the marks themselves removed, and the stubs the guest imports generated from those cut
+sources. An rpc without the option reaches the guest with nothing, and the guest's copy of its contract never names it.
+The steps, the rest of the surface the option drives, and the threat model — an exposed RPC must assume a hostile caller
+— are in [`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md) § The rpc is the unit of exposure.
 
 ## 7. Validate
 

@@ -20,7 +20,11 @@ Fully local — no BSR remote plugins:
    dynamic ``channel.unary_unary(...)`` assignments in the ``.py``, which a type-checker cannot see,
    so a call to an rpc the proto no longer declares goes unnoticed (``docs/design/proto.md``,
    "Schema evolution").
-4. ``apps/web/buf.gen.yaml`` — protobuf-es (TypeScript) via the app's local
+4. The sandbox agent-exposure surface, from the ``agent_exposed`` option in the same descriptor set:
+   the hatch allowlist and the guest's accessors (``tools.schema.agent_exposed``), and the guest's
+   contract tree — the exposed protos cut to the marked rpcs and the types they reach, with stubs
+   protoc generates from those cut sources (``tools.schema.guest_contract``).
+5. ``apps/web/buf.gen.yaml`` — protobuf-es (TypeScript) via the app's local
    ``@bufbuild/protoc-gen-es`` plugin, written to ``apps/web/src/gen/``. The web tier has no wheel to
    read the copied schema's types from, so this pass covers it like any other proto.
 
@@ -45,7 +49,7 @@ from clinvar_proto import clinvar_pb2
 from grpc_tools import protoc
 from pubmed_proto import pubmed_pb2
 
-from tools.schema import agent_exposed
+from tools.schema import agent_exposed, guest_contract
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # grpcio-tools' bundled well-known-type protos (descriptor.proto, timestamp.proto, …). The
@@ -148,8 +152,10 @@ def main() -> int:
         print('schema/regen: grpc stubs (service protos)')
         _protoc(export, services, grpc=True)
 
-    print('schema/regen: sandbox agent-exposure surface (hatch allowlist)')
-    agent_exposed.generate(image)
+        print('schema/regen: sandbox agent-exposure surface (hatch allowlist, guest accessors)')
+        services = agent_exposed.generate(image)
+        print('schema/regen: guest contract tree (the marked rpcs, cut from the exported sources, and their stubs)')
+        guest_contract.generate(image, export, services=services)
 
     print('schema/regen: protobuf-es stubs (apps/web)')
     es = ['buf', 'generate', '--template', 'apps/web/buf.gen.yaml', '--include-imports']

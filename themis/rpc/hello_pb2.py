@@ -25,18 +25,19 @@ _sym_db = _symbol_database.Default()
 from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/hello.proto\x12\x10themis.rpc.hello\x1a themis/rpc/sandbox_options.proto\"\x1f\n\x0fSayHelloRequest\x12\x0c\n\x04note\x18\x01 \x01(\t\"M\n\x10SayHelloResponse\x12\x10\n\x08greeting\x18\x01 \x01(\t\x12\x12\n\nproject_id\x18\x02 \x01(\t\x12\x13\n\x0b\x61nalysis_id\x18\x03 \x01(\t2Z\n\x05Hello\x12Q\n\x08SayHello\x12!.themis.rpc.hello.SayHelloRequest\x1a\".themis.rpc.hello.SayHelloResponseB\x04\x90\xb5\x18\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/hello.proto\x12\x10themis.rpc.hello\x1a themis/rpc/sandbox_options.proto\"\x1f\n\x0fSayHelloRequest\x12\x0c\n\x04note\x18\x01 \x01(\t\"M\n\x10SayHelloResponse\x12\x10\n\x08greeting\x18\x01 \x01(\t\x12\x12\n\nproject_id\x18\x02 \x01(\t\x12\x13\n\x0b\x61nalysis_id\x18\x03 \x01(\t2`\n\x05Hello\x12W\n\x08SayHello\x12!.themis.rpc.hello.SayHelloRequest\x1a\".themis.rpc.hello.SayHelloResponse\"\x04\x90\xb5\x18\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.hello_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'\220\265\030\001'
+  DESCRIPTOR._loaded_options = None
+  _globals['_HELLO'].methods_by_name['SayHello']._loaded_options = None
+  _globals['_HELLO'].methods_by_name['SayHello']._serialized_options = b'\220\265\030\001'
   _globals['_SAYHELLOREQUEST']._serialized_start=78
   _globals['_SAYHELLOREQUEST']._serialized_end=109
   _globals['_SAYHELLORESPONSE']._serialized_start=111
   _globals['_SAYHELLORESPONSE']._serialized_end=188
   _globals['_HELLO']._serialized_start=190
-  _globals['_HELLO']._serialized_end=280
+  _globals['_HELLO']._serialized_end=286
 # @@protoc_insertion_point(module_scope)

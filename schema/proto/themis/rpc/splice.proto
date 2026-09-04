@@ -30,9 +30,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // ---- PredictDeltas: SpliceAI + Pangolin deltas for SPL_PRD -------------------------------------
 // Every variant type checks a splice effect. Each predictor reports gain apart from loss, because
 // the two do NOT share a sign convention in `raw`: SpliceAI's four deltas are magnitudes (all >= 0),
@@ -153,9 +150,13 @@ service Splice {
   // Broad SpliceAI + Pangolin: each predictor's per-transcript deltas reduced to one gain and
   // one loss on a shared orientation -> SPL_PRD input; the product-consequence call is the model's
   // (SM11/SM18). See PredictDeltasResponse.
-  rpc PredictDeltas(PredictDeltasRequest) returns (PredictDeltasResponse);
+  rpc PredictDeltas(PredictDeltasRequest) returns (PredictDeltasResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
   // The exon table (VariantValidator) + the RefSeq transcript sequence (NCBI Nucleotide): given a
   // lost splice site, the skipped transcript's frame, PTC and NMD prediction — NOT whether the site
   // is lost (that is PredictDeltas). See PredictSkipOutcomeResponse.
-  rpc PredictSkipOutcome(PredictSkipOutcomeRequest) returns (PredictSkipOutcomeResponse);
+  rpc PredictSkipOutcome(PredictSkipOutcomeRequest) returns (PredictSkipOutcomeResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

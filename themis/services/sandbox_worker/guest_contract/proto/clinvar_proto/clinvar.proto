@@ -1,0 +1,1636 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+package clinvar;
+// Aggregate germline review status across every submission on the record. The gold-star count is derived from this value; it is NOT this enum's ordinal. 0 stars: 'no classification provided', 'no assertion criteria provided', 'no classifications from unflagged records', 'no classification for the single variant'; 1 star: 'criteria provided, single submitter' or 'criteria provided, conflicting classifications'; 2 stars: 'criteria provided, multiple submitters, no conflicts'; 3 stars: 'reviewed by expert panel'; 4 stars: 'practice guideline'.
+enum AggregateGermlineReviewStatusValue {
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_UNSPECIFIED = 0;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_PROVIDED = 1;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_NO_ASSERTION_CRITERIA_PROVIDED = 2;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_SINGLE_SUBMITTER = 3;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_MULTIPLE_SUBMITTERS_NO_CONFLICTS = 4;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_CONFLICTING_CLASSIFICATIONS = 5;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_REVIEWED_BY_EXPERT_PANEL = 6;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_PRACTICE_GUIDELINE = 7;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_NO_CLASSIFICATIONS_FROM_UNFLAGGED_RECORDS = 8;
+  AGGREGATE_GERMLINE_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_FOR_THE_SINGLE_VARIANT = 9;
+}
+enum AggregateNoClassificationReviewStatusValue {
+  AGGREGATE_NO_CLASSIFICATION_REVIEW_STATUS_VALUE_UNSPECIFIED = 0;
+  AGGREGATE_NO_CLASSIFICATION_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_PROVIDED = 1;
+}
+// Aggregate review status (star rating) across all oncogenicity submissions. Uses the same 0-4 star scale as AggregateGermlineReviewStatusValue.
+enum AggregateOncogenicityReviewStatusValue {
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_UNSPECIFIED = 0;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_PROVIDED = 1;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_NO_ASSERTION_CRITERIA_PROVIDED = 2;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_SINGLE_SUBMITTER = 3;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_MULTIPLE_SUBMITTERS_NO_CONFLICTS = 4;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_CONFLICTING_CLASSIFICATIONS = 5;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_REVIEWED_BY_EXPERT_PANEL = 6;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_PRACTICE_GUIDELINE = 7;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_NO_CLASSIFICATIONS_FROM_UNFLAGGED_RECORDS = 8;
+  AGGREGATE_ONCOGENICITY_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_FOR_THE_SINGLE_VARIANT = 9;
+}
+// Aggregate review status across every somatic clinical impact submission. ClinVar does not assess somatic submissions for conflicts, so this enumeration has no 'conflicting classifications' member and its 2-star value is 'criteria provided, multiple submitters', without the germline scale's 'no conflicts' suffix.
+enum AggregateSomaticClinicalImpactReviewStatusValue {
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_UNSPECIFIED = 0;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_PROVIDED = 1;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_NO_ASSERTION_CRITERIA_PROVIDED = 2;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_SINGLE_SUBMITTER = 3;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_MULTIPLE_SUBMITTERS = 4;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_REVIEWED_BY_EXPERT_PANEL = 5;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_PRACTICE_GUIDELINE = 6;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_NO_CLASSIFICATIONS_FROM_UNFLAGGED_RECORDS = 7;
+  AGGREGATE_SOMATIC_CLINICAL_IMPACT_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_FOR_THE_SINGLE_VARIANT = 8;
+}
+enum AssertionTypeAttr {
+  ASSERTION_TYPE_ATTR_UNSPECIFIED = 0;
+  ASSERTION_TYPE_ATTR_VARIATION_TO_DISEASE = 1;
+  ASSERTION_TYPE_ATTR_VARIATION_TO_INCLUDED_DISEASE = 2;
+  ASSERTION_TYPE_ATTR_VARIATION_IN_MODIFIER_GENE_TO_DISEASE = 3;
+  ASSERTION_TYPE_ATTR_CONFERS_SENSITIVITY = 4;
+  ASSERTION_TYPE_ATTR_CONFERS_RESISTANCE = 5;
+  ASSERTION_TYPE_ATTR_VARIANT_TO_NAMED_PROTEIN = 6;
+  ASSERTION_TYPE_ATTR_NO_CLASSIFICATION = 7;
+}
+// The attribute is a general element to represent a defined set of data qualified by an enumerated set of types. For each attribute element, the value will be a character string and is optional. Source shall be used to store identifiers for supplied data from source other than the submitter (e.g. SequenceOntology). The data submitted where Type="variation" shall be validated against sequence_alternation in Sequence Ontology http://www.sequenceontology.org/. This is to be a generic version of AttributeType and should be used with extension when it is used to specify Type and its enumerations.
+message Attribute {
+  optional int32 integer_value = 1;
+  google.protobuf.Timestamp date_value = 2;
+  // The attribute is a general element to represent a defined set of data qualified by an enumerated set of types. For each attribute element, the value will be a character string and is optional. Source shall be used to store identifiers for supplied data from source other than the submitter (e.g. SequenceOntology). The data submitted where Type="variation" shall be validated against sequence_alternation in Sequence Ontology http://www.sequenceontology.org/. This is to be a generic version of AttributeType and should be used with extension when it is used to specify Type and its enumerations.
+  optional string value = 3;
+}
+// Non-numeric chromosome names: X, Y, MT, PAR, Un. Numeric chromosomes 1-22 come from ChromosomeNr; the Chr attribute is the union of both.
+enum ChromosomeStr {
+  CHROMOSOME_STR_UNSPECIFIED = 0;
+  CHROMOSOME_STR_X = 1;
+  CHROMOSOME_STR_Y = 2;
+  CHROMOSOME_STR_MT = 3;
+  CHROMOSOME_STR_PAR = 4;
+  CHROMOSOME_STR_UN = 5;
+}
+// Allowed values are 'present', 'absent', and 'not tested'.
+enum ClinicalFeaturesAffectedStatusType {
+  CLINICAL_FEATURES_AFFECTED_STATUS_TYPE_UNSPECIFIED = 0;
+  CLINICAL_FEATURES_AFFECTED_STATUS_TYPE_PRESENT = 1;
+  CLINICAL_FEATURES_AFFECTED_STATUS_TYPE_ABSENT = 2;
+  CLINICAL_FEATURES_AFFECTED_STATUS_TYPE_NOT_TESTED = 3;
+}
+enum CommentType {
+  COMMENT_TYPE_UNSPECIFIED = 0;
+  COMMENT_TYPE_PUBLIC = 1;
+  COMMENT_TYPE_CONVERTED_BY_NCBI = 2;
+  COMMENT_TYPE_MISSING_FROM_ASSEMBLY = 3;
+  COMMENT_TYPE_GENOMIC_LOCATION_NOT_ESTABLISHED = 4;
+  COMMENT_TYPE_LOCATION_ON_GENOME_AND_PRODUCT_NOT_ALIGNED = 5;
+  COMMENT_TYPE_DELETION_COMMENT = 6;
+  COMMENT_TYPE_MERGE_COMMENT = 7;
+  COMMENT_TYPE_ASSEMBLY_SPECIFIC_ALLELE_DEFINITION = 8;
+  COMMENT_TYPE_ALIGNMENT_GAP_MAKES_APPEAR_INCONSISTENT = 9;
+  COMMENT_TYPE_EXPLANATION_OF_CLASSIFICATION = 10;
+  COMMENT_TYPE_FLAGGED_COMMENT = 11;
+}
+message DescriptionHistory {
+  google.protobuf.Timestamp dated = 1;
+  string description = 2;
+}
+enum Evidencetype {
+  EVIDENCETYPE_UNSPECIFIED = 0;
+  EVIDENCETYPE_GENETIC = 1;
+  EVIDENCETYPE_EXPERIMENTAL = 2;
+  EVIDENCETYPE_POPULATION = 3;
+  EVIDENCETYPE_COMPUTATIONAL = 4;
+}
+// Structure to describe attributes of any family data in an observation. If the details of the number of families and the de-identified pedigree id are not available, use FamilyHistory to describe what type of family data is available. Can also be used to report 'Yes' or 'No' if there are no more details.
+message FamilyInfo {
+  // Total families tested; denominator for 'Number of families with variant'.
+  optional int32 num_families = 1;
+  // Families in which the variant was observed.
+  optional int32 num_families_with_variant = 2;
+  // Families where the variant co-segregates with the condition in two or more family members.
+  optional int32 num_families_with_segregation_observed = 3;
+  // Anonymous identifier linking individual observations from the same family across multiple records.
+  optional string pedigree_id = 4;
+  optional string segregation_observed = 5;
+  // Free text describing what kind of family data is available; the submitter may give only 'Yes' or 'No' when there are no further details.
+  optional string family_history = 6;
+}
+enum GeneVariant {
+  GENE_VARIANT_UNSPECIFIED = 0;
+  GENE_VARIANT_VARIANT_WITHIN_GENE = 1;
+  GENE_VARIANT_GENE_OVERLAPPED_BY_VARIANT = 2;
+  GENE_VARIANT_VARIANT_NEAR_GENE_UPSTREAM = 3;
+  GENE_VARIANT_VARIANT_NEAR_GENE_DOWNSTREAM = 4;
+  GENE_VARIANT_ASSERTED_BUT_NOT_COMPUTED = 5;
+  GENE_VARIANT_WITHIN_MULTIPLE_GENES_BY_OVERLAP = 6;
+  GENE_VARIANT_WITHIN_SINGLE_GENE = 7;
+  GENE_VARIANT_GENES_OVERLAPPED_BY_VARIANT = 8;
+  GENE_VARIANT_NEAR_GENE_DOWNSTREAM = 9;
+  GENE_VARIANT_NEAR_GENE_UPSTREAM = 10;
+}
+enum HaplotypeVariationType {
+  HAPLOTYPE_VARIATION_TYPE_UNSPECIFIED = 0;
+  HAPLOTYPE_VARIATION_TYPE_HAPLOTYPE = 1;
+  HAPLOTYPE_VARIATION_TYPE_HAPLOTYPE_SINGLE_VARIANT = 2;
+  HAPLOTYPE_VARIATION_TYPE_VARIATION = 3;
+  HAPLOTYPE_VARIATION_TYPE_PHASE_UNKNOWN = 4;
+  HAPLOTYPE_VARIATION_TYPE_HAPLOTYPE_DEFINED_BY_A_SINGLE_VARIANT = 5;
+}
+enum Hgvs {
+  HGVS_UNSPECIFIED = 0;
+  HGVS_CODING = 1;
+  HGVS_GENOMIC = 2;
+  HGVS_GENOMIC_TOP_LEVEL = 3;
+  HGVS_NON_CODING = 4;
+  HGVS_PROTEIN = 5;
+}
+// The method used to collect data for a submission.
+enum Methodlist {
+  METHODLIST_UNSPECIFIED = 0;
+  METHODLIST_LITERATURE_ONLY = 1;
+  METHODLIST_REFERENCE_POPULATION = 2;
+  METHODLIST_CASE_CONTROL = 3;
+  METHODLIST_CLINICAL_TESTING = 4;
+  METHODLIST_IN_VITRO = 5;
+  METHODLIST_IN_VIVO = 6;
+  METHODLIST_RESEARCH = 7;
+  METHODLIST_CURATION = 8;
+  METHODLIST_NOT_PROVIDED = 9;
+  METHODLIST_PROVIDER_INTERPRETATION = 10;
+  METHODLIST_PHENOTYPING_ONLY = 11;
+}
+enum NucleotideSequence {
+  NUCLEOTIDE_SEQUENCE_UNSPECIFIED = 0;
+  NUCLEOTIDE_SEQUENCE_GENOMIC_TOP_LEVEL = 1;
+  NUCLEOTIDE_SEQUENCE_GENOMIC_REF_SEQ_GENE = 2;
+  NUCLEOTIDE_SEQUENCE_GENOMIC = 3;
+  NUCLEOTIDE_SEQUENCE_CODING = 4;
+  NUCLEOTIDE_SEQUENCE_NON_CODING = 5;
+  NUCLEOTIDE_SEQUENCE_PROTEIN = 6;
+}
+enum Origin {
+  ORIGIN_UNSPECIFIED = 0;
+  ORIGIN_GERMLINE = 1;
+  ORIGIN_SOMATIC = 2;
+  ORIGIN_DE_NOVO = 3;
+  ORIGIN_NOT_PROVIDED = 4;
+  ORIGIN_INHERITED = 5;
+  ORIGIN_MATERNAL = 6;
+  ORIGIN_PATERNAL = 7;
+  ORIGIN_UNIPARENTAL = 8;
+  ORIGIN_BIPARENTAL = 9;
+  ORIGIN_NOT_REPORTED = 10;
+  ORIGIN_TESTED_INCONCLUSIVE = 11;
+  ORIGIN_UNKNOWN = 12;
+  ORIGIN_NOT_APPLICABLE = 13;
+  ORIGIN_EXPERIMENTALLY_GENERATED = 14;
+}
+// Category of the condition grouping: Disease, DrugResponse, Finding, PhenotypeInstruction, TraitChoice.
+enum PhenotypeSet {
+  PHENOTYPE_SET_UNSPECIFIED = 0;
+  PHENOTYPE_SET_DISEASE = 1;
+  PHENOTYPE_SET_DRUG_RESPONSE = 2;
+  PHENOTYPE_SET_FINDING = 3;
+  PHENOTYPE_SET_PHENOTYPE_INSTRUCTION = 4;
+  PHENOTYPE_SET_TRAIT_CHOICE = 5;
+}
+enum ProteinSequence {
+  PROTEIN_SEQUENCE_UNSPECIFIED = 0;
+  PROTEIN_SEQUENCE_PROTEIN = 1;
+}
+message ProteinSequenceExpression {
+  optional string sequence_accession_version = 1;
+  optional string sequence_accession = 2;
+  optional string sequence_version = 3;
+  optional string change = 4;
+  // Protein change in single-letter amino acid code, e.g. p.Arg123His → p.R123H.
+  optional string single_letter_protein_change = 5;
+  string expression = 6;
+}
+// The classified condition (disease or phenotype) associated with this RCV. The value 'not provided' is used for submissions where no condition was named.
+message RcvinterpretedCondition {
+  // Database for the condition identifier; NOT enumerated in the XSD. In the VCV release this is the MedGen concept for the condition (ClinVar maps every submitted trait to MedGen, including 'not provided'); other vocabularies (OMIM, Orphanet, MeSH, MONDO, Human Phenotype Ontology) appear on the trait's xref, not here.
+  optional string db = 1;
+  optional string id = 2;
+  optional string value = 3;
+}
+message Scv {
+  optional string title = 1;
+  string accession = 2;
+  int64 version = 3;
+}
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_MILD = 1;
+  SEVERITY_MODERATE = 2;
+  SEVERITY_SEVERE = 3;
+}
+// Description of software used in variant analysis, including version and purpose.
+message SoftwareSet {
+  string name = 1;
+  optional string version = 2;
+  // Purpose of the software, e.g. 'alignment', 'variant calling', 'annotation'.
+  optional string purpose = 3;
+}
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_CURRENT = 1;
+  STATUS_COMPLETED_AND_RETIRED = 2;
+  STATUS_DELETE = 3;
+  STATUS_IN_DEVELOPMENT = 4;
+  STATUS_RECLASSIFIED = 5;
+  STATUS_REJECT = 6;
+  STATUS_SECONDARY = 7;
+  STATUS_SUPPRESSED = 8;
+  STATUS_UNDER_REVIEW = 9;
+}
+// Review status of ONE submitted record (SCV). Stars per SCV: 4 'practice guideline'; 3 'reviewed by expert panel'; 1 'criteria provided, single submitter'; 0 'no assertion criteria provided' and 'no classification provided'. There is no 2-star SCV value — 'criteria provided, multiple submitters, no conflicts' is computed only across SCVs (see AggregateGermlineReviewStatusValue). 'flagged submission' marks a record ClinVar has flagged; it does not contribute to the aggregate, which then reports 'no classifications from unflagged records'. The remaining values are retained for backward compatibility with clinvar_public.xsd.
+enum SubmitterReviewStatusValue {
+  SUBMITTER_REVIEW_STATUS_VALUE_UNSPECIFIED = 0;
+  SUBMITTER_REVIEW_STATUS_VALUE_NO_CLASSIFICATION_PROVIDED = 1;
+  SUBMITTER_REVIEW_STATUS_VALUE_NO_ASSERTION_CRITERIA_PROVIDED = 2;
+  SUBMITTER_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_SINGLE_SUBMITTER = 3;
+  SUBMITTER_REVIEW_STATUS_VALUE_REVIEWED_BY_EXPERT_PANEL = 4;
+  SUBMITTER_REVIEW_STATUS_VALUE_PRACTICE_GUIDELINE = 5;
+  SUBMITTER_REVIEW_STATUS_VALUE_FLAGGED_SUBMISSION = 6;
+  SUBMITTER_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_MULTIPLE_SUBMITTERS_NO_CONFLICTS = 7;
+  SUBMITTER_REVIEW_STATUS_VALUE_CRITERIA_PROVIDED_CONFLICTING_CLASSIFICATIONS = 8;
+  SUBMITTER_REVIEW_STATUS_VALUE_CLASSIFIED_BY_SINGLE_SUBMITTER = 9;
+  SUBMITTER_REVIEW_STATUS_VALUE_REVIEWED_BY_PROFESSIONAL_SOCIETY = 10;
+  SUBMITTER_REVIEW_STATUS_VALUE_NOT_CLASSIFIED_BY_SUBMITTER = 11;
+  SUBMITTER_REVIEW_STATUS_VALUE_CLASSIFIED_BY_MULTIPLE_SUBMITTERS = 12;
+}
+enum VariationType {
+  VARIATION_TYPE_UNSPECIFIED = 0;
+  VARIATION_TYPE_DIPLOTYPE = 1;
+  VARIATION_TYPE_COMPOUND_HETEROZYGOTE = 2;
+  VARIATION_TYPE_DISTINCT_CHROMOSOMES = 3;
+}
+// Zygosity: Homozygote, SingleHeterozygote, CompoundHeterozygote, Hemizygote, not provided. Used both for the asserted variant (CoOccurrenceType) and for a co-occurring allele (AlleleDescr).
+enum Zygosity {
+  ZYGOSITY_UNSPECIFIED = 0;
+  ZYGOSITY_HOMOZYGOTE = 1;
+  ZYGOSITY_SINGLE_HETEROZYGOTE = 2;
+  ZYGOSITY_COMPOUND_HETEROZYGOTE = 3;
+  ZYGOSITY_HEMIZYGOTE = 4;
+  ZYGOSITY_NOT_PROVIDED = 5;
+}
+message Citation {
+  message Id {
+    // Database providing the citation identifier. E.g. PubMed, PubMedCentral, DOI, NCBI bookshelf.
+    string source = 1;
+    // Identifier from the source database for this citation.
+    optional string value = 2;
+  }
+  // NCBI-assigned citation type, not expected from submitters. Values include: general, review, practice guideline, Position Statement, Translational/Evidence-based, Suggested Reading, Recommendation.
+  optional string type = 1;
+  // Corresponds to the abbreviation reported by GTR.
+  optional string abbrev = 2;
+  repeated Id id = 3;
+  // Complete URL of the citation.
+  optional string url = 4;
+  // Use only when there is no database ID for the publication and no URL.
+  optional string citation_text = 5;
+}
+// A structure to support reporting unformatted content, with type and source specified.
+message Comment {
+  optional string data_source = 1;
+  // Comment category. 'public' is a plain public comment; the remaining values are specific NCBI-applied kinds — ConvertedByNCBI, MissingFromAssembly, GenomicLocationNotEstablished, LocationOnGenomeAndProductNotAligned, DeletionComment, MergeComment, AssemblySpecificAlleleDefinition, AlignmentGapMakesAppearInconsistent, ExplanationOfClassification, FlaggedComment.
+  optional CommentType type = 2;
+  // Free text comment. Line breaks are retained, but no other formatting.
+  optional string value = 3;
+}
+// A structure to support reporting of an accession, its version, the date it was deleted and a free-text summary of why it was deleted.
+message DeletedScv {
+  message Accession {
+    // The version of the deleted SCV.
+    uint64 version = 1;
+    // The date the SCV was deleted.
+    google.protobuf.Timestamp date_deleted = 2;
+    // The accession of the deleted SCV.
+    optional string value = 3;
+  }
+  Accession accession = 1;
+  optional string description = 2;
+}
+message FunctionalDataType {
+  message FunctionalEffect {
+    optional string source = 1;
+    optional string id = 2;
+    optional string value = 3;
+  }
+  message FunctionalConsequence {
+    optional string source = 1;
+    optional string id = 2;
+    // Functional consequence reported by the submitter; may be an ontology term (with source and id giving the ontology) or free text.
+    optional string value = 3;
+  }
+  message LinkToExternalDatabase {
+    string link_name = 1;
+    optional string value = 2;
+  }
+  FunctionalEffect functional_effect = 1;
+  repeated FunctionalConsequence functional_consequence = 2;
+  optional string functional_consequence_comment = 3;
+  string result = 4;
+  LinkToExternalDatabase link_to_external_database = 5;
+}
+message Names {
+  message Name {
+    // Classification of the name, e.g. 'Preferred' or 'Alternate'.
+    optional string type = 1;
+    optional string value = 2;
+  }
+  repeated Name name = 1;
+}
+message NucleotideSequenceExpression {
+  optional NucleotideSequence sequence_type = 1;
+  optional string sequence_accession_version = 2;
+  optional string sequence_accession = 3;
+  optional string sequence_version = 4;
+  optional string change = 5;
+  optional string assembly = 6;
+  optional string submitted = 7;
+  optional bool maneselect = 8;
+  optional bool maneplus_clinical = 9;
+  string expression = 10;
+}
+// A structure to support reporting the name of a submitter, its organization id, and its abbreviation and type
+message SubmitterType {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_PRIMARY = 1;
+    TYPE_SECONDARY = 2;
+    TYPE_BEHALF = 3;
+  }
+  // Name of the person or organization submitting this batch of records.
+  string submitter_name = 1;
+  uint64 org_id = 2;
+  string organization_category = 3;
+  optional string org_abbreviation = 4;
+  Type type = 5;
+}
+// Database cross-reference (XRef) linking a concept to an identifier in an external database. Used throughout to point to MedGen, OMIM, Orphanet, dbSNP, dbVar, and others.
+message Xref {
+  // Name of the external database. E.g. MedGen, OMIM, Orphanet, Gene, Ensembl, HGNC, dbSNP.
+  string db = 1;
+  // The identifier used by the database. Being exported as a string even though internally the database has rules for defining which datases use integer identifers.
+  string id = 2;
+  // Used to differentiate between different types of identifiers that a database may provide.
+  optional string type = 3;
+  optional string url = 4;
+  optional Status status = 5;
+}
+message AttributeSet {
+  message Attribute {
+    optional int32 integer_value = 1;
+    google.protobuf.Timestamp date_value = 2;
+    // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+    string type = 3;
+    optional string value = 4;
+  }
+  Attribute attribute = 1;
+  repeated Citation citation = 2;
+  repeated Xref xref = 3;
+  repeated Comment comment = 4;
+}
+// The classification from a single submitted clinical variant record (SCV). This is one submitter's verdict, before aggregation across all SCVs into the VCV.
+message ClassificationTypeScv {
+  message SomaticClinicalImpact {
+    optional string clinical_impact_assertion_type = 1;
+    optional string clinical_impact_clinical_significance = 2;
+    optional string drug_for_therapeutic_assertion = 3;
+    optional string value = 4;
+  }
+  message ClassificationScore {
+    optional string type = 1;
+    optional double value = 2;
+  }
+  // Date the classification was last evaluated by the submitter.
+  google.protobuf.Timestamp date_last_evaluated = 1;
+  // Single-submitter review status; see SubmitterReviewStatusValue for allowed values.
+  SubmitterReviewStatusValue review_status = 2;
+  oneof oneof_name {
+    // This submitter's own germline classification, as submitted — the per-submission counterpart to AggregatedGermlineClassification.description. The submission value space additionally admits the VUS sub-tiers 'VUS-high', 'VUS-mid' and 'VUS-low'; whether a sub-tier survives into the aggregate description is not documented upstream. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+    string germline_classification = 3;
+    SomaticClinicalImpact somatic_clinical_impact = 4;
+    string oncogenicity_classification = 5;
+    string no_classification = 6;
+  }
+  optional string explanation_of_classification = 7;
+  repeated ClassificationScore classification_score = 8;
+  repeated Xref xref = 9;
+  repeated Citation citation = 10;
+  // Explanation of the classification, providing the submitter's rationale.
+  repeated Comment comment = 11;
+}
+// Record of changes to a submitted clinical variant record (SCV).
+message ClinicalAssertionRecordHistory {
+  string accession = 1;
+  optional uint64 version = 2;
+  google.protobuf.Timestamp date_changed = 3;
+  Comment comment = 4;
+}
+message ClinicalSignificanceType {
+  google.protobuf.Timestamp date_last_evaluated = 1;
+  // Review status of the submission.
+  optional SubmitterReviewStatusValue review_status = 2;
+  // Carries old-style (pre-2023) clinical significance data from AlleleDescriptionSet within Co-occurrenceSet, before the current three-category classification model was adopted.
+  optional string description = 3;
+  // Legacy Co-occurrenceSet structure: populated when the old-style description was 'conflicting data from submitters', a value ClinVar has retired.
+  Comment explanation = 4;
+  repeated Xref xref = 5;
+  repeated Citation citation = 6;
+  repeated Comment comment = 7;
+}
+// A structure to represent an HGVS expression for a nucleotide sequence variant, along with the predicted protein change and the predicted molecular consequence. Also used to represent only the protein change if that is all that has been reported.
+message Hgvsexpression {
+  Hgvs type = 1;
+  optional string assembly = 2;
+  NucleotideSequenceExpression nucleotide_expression = 3;
+  ProteinSequenceExpression protein_expression = 4;
+  repeated Xref molecular_consequence = 5;
+}
+// There can be multiple types of location, and the locations may have identifiers in other databases
+message Location {
+  message SequenceLocation {
+    enum AssemblyStatus {
+      ASSEMBLY_STATUS_UNSPECIFIED = 0;
+      ASSEMBLY_STATUS_CURRENT = 1;
+      ASSEMBLY_STATUS_PREVIOUS = 2;
+    }
+    optional bool for_display = 1;
+    string assembly = 2;
+    string chr = 3;
+    optional string accession = 4;
+    optional uint64 outer_start = 5;
+    optional uint64 inner_start = 6;
+    optional uint64 start = 7;
+    optional uint64 stop = 8;
+    optional uint64 inner_stop = 9;
+    optional uint64 outer_stop = 10;
+    optional uint64 display_start = 11;
+    optional uint64 display_stop = 12;
+    optional string strand = 13;
+    optional uint64 variant_length = 14;
+    optional string reference_allele = 15;
+    optional string alternate_allele = 16;
+    optional string assembly_accession_version = 17;
+    optional AssemblyStatus assembly_status = 18;
+    optional uint64 position_vcf = 19;
+    optional string reference_allele_vcf = 20;
+    optional string alternate_allele_vcf = 21;
+    optional bool for_display_length = 22;
+  }
+  // Cytogenetic band location (e.g. 17q21.31), maintained independently of sequence coordinates and can be computed from them.
+  repeated string cytogenetic_location = 1;
+  // Sequence-based location using 1-based offset coordinates, right-justified to be consistent with HGVS. Includes reference and alternate allele, and start/stop values.
+  repeated SequenceLocation sequence_location = 2;
+  // The location of the variant relative to features within the gene
+  repeated string gene_location = 3;
+  repeated Xref xref = 4;
+}
+message MethodRefs {
+  string method_name = 1;
+  repeated Xref xref = 2;
+}
+// This is an AttributeSet, there will be 1 attribute supported by optional citations, xrefs and comment. There must be at least one ObservedData Set, but can be any number. For each ObservedData set the Attribute will be either decimal or string depending on type. The value will be stored here, but decimals will be entered to the database as a string.
+message ObservedDataType {
+  message Attribute {
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      TYPE_DESCRIPTION = 1;
+      TYPE_VARIANT_ALLELES = 2;
+      TYPE_SUBJECTS_WITH_VARIANT = 3;
+      TYPE_SUBJECTS_WITH_DIFFERENT_CAUSATIVE_VARIANT = 4;
+      TYPE_VARIANT_CHROMOSOMES = 5;
+      TYPE_INDEPENDENT_OBSERVATIONS = 6;
+      TYPE_SINGLE_HETEROZYGOTE = 7;
+      TYPE_COMPOUND_HETEROZYGOTE = 8;
+      TYPE_HOMOZYGOTE = 9;
+      TYPE_HEMIZYGOTE = 10;
+      TYPE_NUMBER_MOSAIC = 11;
+      TYPE_OBSERVED_UNSPECIFIED = 12;
+      TYPE_ALLELE_FREQUENCY = 13;
+      TYPE_SECONDARY_FINDING = 14;
+      TYPE_GENOTYPE_AND_MOICONSISTENT = 15;
+      TYPE_UNAFFECTED_FAMILY_MEMBER_WITH_CAUSATIVE_VARIANT = 16;
+      TYPE_HET_PARENT_TRANSMIT_NORMAL_ALLELE = 17;
+      TYPE_COSEGREGATING_FAMILIES = 18;
+      TYPE_INFORMATIVE_MEIOSES = 19;
+      TYPE_SAMPLE_LOCAL_ID = 20;
+      TYPE_SAMPLE_VARIANT_ID = 21;
+      TYPE_FAMILY_HISTORY = 22;
+      TYPE_NUM_FAMILIES_WITH_VARIANT = 23;
+      TYPE_NUM_FAMILIES_WITH_SEGREGATION_OBSERVED = 24;
+      TYPE_SEGREGATION_OBSERVED = 25;
+    }
+    optional int32 integer_value = 1;
+    google.protobuf.Timestamp date_value = 2;
+    // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+    Type type = 3;
+    optional string value = 4;
+  }
+  Attribute attribute = 1;
+  optional Severity severity = 2;
+  repeated Citation citation = 3;
+  repeated Xref xref = 4;
+  repeated Comment comment = 5;
+}
+// A structure to support reporting of an accession, its version, the date its status changed, and text describing that change.
+message RecordHistory {
+  string accession = 1;
+  uint64 version = 2;
+  google.protobuf.Timestamp date_changed = 3;
+  // Populated only for VCV records, where the accession is of the form VCV000000009.
+  optional uint64 variation_id = 4;
+  Comment comment = 5;
+}
+message ScoringRangesType {
+  message Range {
+    message UpperLimit {
+      optional bool inclusive = 1;
+      optional double value = 2;
+    }
+    message LowerLimit {
+      optional bool inclusive = 1;
+      optional double value = 2;
+    }
+    string label = 1;
+    repeated UpperLimit upper_limit = 2;
+    repeated LowerLimit lower_limit = 3;
+  }
+  repeated Range range = 1;
+}
+message SetElementSetType {
+  enum DerivedBy {
+    DERIVED_BY_UNSPECIFIED = 0;
+    DERIVED_BY_NCBI = 1;
+  }
+  message ElementValue {
+    string type = 1;
+    optional string value = 2;
+  }
+  optional DerivedBy derived_by = 1;
+  ElementValue element_value = 2;
+  repeated Citation citation = 3;
+  repeated Xref xref = 4;
+  repeated Comment comment = 5;
+}
+message SingleGermlineClassification {
+  // Aggregate review status (star rating) across all germline submissions for this record — NOT a per-submitter status; for that see ClassificationTypeScv.review_status.
+  AggregateGermlineReviewStatusValue review_status = 1;
+  // Record-level germline classification aggregated over all germline SCVs; same value space as AggregatedGermlineClassification.description, which adds description history, the condition list and submitter/submission counts. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 2;
+  // Populated when the description is 'Conflicting classifications of pathogenicity'; the value enumerates the conflicting classifications with submission counts. The XSD's own annotation instead names 'conflicting data from submitters' — a germline classification term retained from early submissions by a single consortium, not the aggregate conflict description.
+  Comment explanation = 3;
+  repeated Xref xref = 4;
+  repeated Citation citation = 5;
+  repeated Comment comment = 6;
+}
+message SingleNoClassification {
+  // The aggregate review status based on all no-classification submissions for this record.
+  AggregateNoClassificationReviewStatusValue review_status = 1;
+  // Why the record carries no classification. The value space is not enumerated in the XSD; see https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 2;
+  repeated Xref xref = 3;
+  repeated Citation citation = 4;
+  repeated Comment comment = 5;
+}
+message SingleOncogenicityClassification {
+  // Aggregate review status (star rating) across all oncogenicity submissions for this record — NOT a per-submitter status; for that see ClassificationTypeScv.review_status.
+  AggregateOncogenicityReviewStatusValue review_status = 1;
+  // Record-level oncogenicity classification aggregated over all oncogenicity SCVs; same value space as AggregatedOncogenicityClassification.description. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 2;
+  // Populated when the description is 'Conflicting classifications of oncogenicity'; the value enumerates the conflicting classifications with submission counts. The XSD's own annotation instead names 'conflicting data from submitters' — a germline classification term retained from early submissions by a single consortium, not the aggregate conflict description.
+  Comment explanation = 3;
+  repeated Xref xref = 4;
+  repeated Citation citation = 5;
+  repeated Comment comment = 6;
+}
+message SingleSomaticClinicalImpact {
+  // Aggregate review status (star rating) across all somatic clinical impact submissions for this record — NOT a per-submitter status; for that see ClassificationTypeScv.review_status.
+  AggregateSomaticClinicalImpactReviewStatusValue review_status = 1;
+  // Record-level somatic clinical impact aggregated over all somatic SCVs; same value space as AggregatedSomaticClinicalImpact.description. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 2;
+  repeated Xref xref = 3;
+  repeated Citation citation = 4;
+  repeated Comment comment = 5;
+}
+// Description of an allele in a co-occurrence set, used in trans/cis analysis.
+message AlleleDescr {
+  enum RelativeOrientation {
+    RELATIVE_ORIENTATION_UNSPECIFIED = 0;
+    RELATIVE_ORIENTATION_CIS = 1;
+    RELATIVE_ORIENTATION_TRANS = 2;
+    RELATIVE_ORIENTATION_UNKNOWN = 3;
+  }
+  string name = 1;
+  optional RelativeOrientation relative_orientation = 2;
+  optional Zygosity zygosity = 3;
+  ClinicalSignificanceType clinical_significance = 4;
+}
+// Details of a method used to generate variant calls or predict/report functional consequence. The name of the platform should represent a sequencer or an array, e.g. sequencing or array , e.g. capillary, 454, Helicos, Solexa, SOLiD. This structure should also be used if the method is 'Curation'.
+message MethodType {
+  enum ResultType {
+    RESULT_TYPE_UNSPECIFIED = 0;
+    RESULT_TYPE_NUMBER_OF_OCCURRENCES = 1;
+    RESULT_TYPE_P_VALUE = 2;
+    RESULT_TYPE_ODDS_RATIO = 3;
+    RESULT_TYPE_VARIANT_CALL = 4;
+  }
+  enum SourceType {
+    SOURCE_TYPE_UNSPECIFIED = 0;
+    SOURCE_TYPE_SUBMITTER_GENERATED = 1;
+    SOURCE_TYPE_DATA_MINING = 2;
+    SOURCE_TYPE_DATA_REVIEW = 3;
+  }
+  message MethodAttribute {
+    message Attribute {
+      enum Type {
+        TYPE_UNSPECIFIED = 0;
+        TYPE_LOCATION = 1;
+        TYPE_CONTROLS_APPROPRIATE = 2;
+        TYPE_METHOD_APPROPRIATE = 3;
+        TYPE_TEST_NAME = 4;
+        TYPE_STRUCT_VAR_METHOD_TYPE = 5;
+        TYPE_PROBE_ACCESSION = 6;
+      }
+      optional int32 integer_value = 1;
+      google.protobuf.Timestamp date_value = 2;
+      // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+      Type type = 3;
+      optional string value = 4;
+    }
+    Attribute attribute = 1;
+  }
+  message ObsMethodAttribute {
+    message Attribute {
+      enum Type {
+        TYPE_UNSPECIFIED = 0;
+        TYPE_METHOD_RESULT = 1;
+        TYPE_TESTING_LABORATORY = 2;
+      }
+      optional int32 integer_value = 1;
+      google.protobuf.Timestamp date_value = 2;
+      // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+      Type type = 3;
+      optional string value = 4;
+    }
+    Attribute attribute = 1;
+    repeated Comment comment = 2;
+  }
+  message AssayType {
+    optional string source = 1;
+    optional string id = 2;
+    optional string value = 3;
+  }
+  optional string name_platform = 1;
+  optional string type_platform = 2;
+  optional string purpose = 3;
+  optional ResultType result_type = 4;
+  optional string min_reported = 5;
+  optional string max_reported = 6;
+  optional string reference_standard = 7;
+  repeated Citation citation = 8;
+  repeated Xref xref = 9;
+  // Free text supplementing the structured method fields with details not captured elsewhere.
+  optional string description = 10;
+  repeated SoftwareSet software = 11;
+  optional SourceType source_type = 12;
+  Methodlist method_type = 13;
+  repeated MethodAttribute method_attribute = 14;
+  // Attribute specific to a particular method in conjunction with a particular observation.
+  repeated ObsMethodAttribute obs_method_attribute = 15;
+  AssayType assay_type = 16;
+  optional string molecular_phenotype_measured = 17;
+  optional uint64 number_of_replicates = 18;
+  optional uint64 number_of_controls = 19;
+  ScoringRangesType scoring_ranges = 20;
+}
+// An allele from a single submitted clinical variant record (SCV).
+message AlleleScv {
+  message GeneList {
+    message Gene {
+      optional string symbol = 1;
+      optional GeneVariant relationship_type = 2;
+      optional string name = 3;
+      // Keywords for retrieval or display (e.g. genes listed by the ACMG guidelines for secondary findings).
+      repeated string property = 4;
+      // Gene-specific external identifiers, such as MIM number, Gene ID, HGNC ID.
+      repeated Xref xref = 5;
+    }
+    repeated Gene gene = 1;
+  }
+  // Name provided by the submitter.
+  message Name {
+    // Classification of the name, e.g. 'Preferred' or 'Alternate'.
+    optional string type = 1;
+    // Name provided by the submitter.
+    optional string value = 2;
+  }
+  message MolecularConsequenceList {
+    message MolecularConsequence {
+      // dbSNP rs number for this variant.
+      optional uint64 rs = 1;
+      optional string hgvs = 2;
+      optional string soid = 3;
+      optional string function = 4;
+      repeated Xref xref = 5;
+      repeated Citation citation = 6;
+      repeated Comment comment = 7;
+    }
+    repeated MolecularConsequence molecular_consequence = 1;
+  }
+  optional int32 allele_id = 1;
+  // 0 to many genes (and related data) related to the allele being reported.
+  GeneList gene_list = 2;
+  repeated Name name = 3;
+  optional string variant_type = 4;
+  Location location = 5;
+  Names other_name_list = 6;
+  // Single-letter representation of the amino acid change and its location.
+  repeated string protein_change = 7;
+  repeated Xref xref_list = 8;
+  repeated Citation citation_list = 9;
+  repeated Comment comment = 10;
+  // Currently redundant with the MolecularConsequence element of the HGVS element.
+  MolecularConsequenceList molecular_consequence_list = 11;
+  repeated AttributeSet attribute_set = 12;
+}
+message ClinAsserTraitType {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_DISEASE = 1;
+    TYPE_DRUG_RESPONSE = 2;
+    TYPE_BLOOD_GROUP = 3;
+    TYPE_FINDING = 4;
+    TYPE_NAMED_PROTEIN_VARIANT = 5;
+    TYPE_PHENOTYPE_INSTRUCTION = 6;
+  }
+  message AttributeSet {
+    message Attribute {
+      optional int32 integer_value = 1;
+      google.protobuf.Timestamp date_value = 2;
+      // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+      string type = 3;
+      optional string value = 4;
+    }
+    Attribute attribute = 1;
+    repeated Citation citation = 2;
+    repeated Xref xref = 3;
+    repeated Comment comment = 4;
+  }
+  message TraitRelationship {
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      TYPE_PHENOCOPY = 1;
+      TYPE_SUBPHENOTYPE = 2;
+      TYPE_DRUG_RESPONSE_AND_DISEASE = 3;
+      TYPE_CO_OCCURRING_CONDITION = 4;
+      TYPE_FINDING_MEMBER = 5;
+    }
+    message AttributeSet {
+      message Attribute {
+        optional int32 integer_value = 1;
+        google.protobuf.Timestamp date_value = 2;
+        // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+        string type = 3;
+        optional string value = 4;
+      }
+      Attribute attribute = 1;
+      repeated Citation citation = 2;
+      repeated Xref xref = 3;
+      repeated Comment comment = 4;
+    }
+    Type type = 1;
+    repeated SetElementSetType name = 2;
+    repeated SetElementSetType symbol = 3;
+    repeated AttributeSet attribute_set = 4;
+    repeated Citation citation = 5;
+    repeated Xref xref = 6;
+    repeated string source = 7;
+  }
+  Type type = 1;
+  // Whether each clinical feature was present, absent, or not tested in the observed individuals.
+  optional ClinicalFeaturesAffectedStatusType clinical_features_affected_status = 2;
+  optional uint64 id = 3;
+  repeated SetElementSetType name = 4;
+  repeated SetElementSetType symbol = 5;
+  repeated AttributeSet attribute_set = 6;
+  // Relationships to other traits (e.g. Subphenotype, DrugResponseAndDisease).
+  repeated TraitRelationship trait_relationship = 7;
+  repeated Citation citation = 8;
+  repeated Xref xref = 9;
+  repeated Comment comment = 10;
+  repeated string source = 11;
+}
+message CoOccurrenceType {
+  // Zygosity of the variant BEING ASSERTED in this observation (e.g. CompoundHeterozygote). The co-occurring variants are in allele_desc_set, each with its own zygosity and cis/trans orientation.
+  optional Zygosity zygosity = 1;
+  repeated AlleleDescr allele_desc_set = 2;
+  optional int32 count = 3;
+}
+message IndicationListType {
+  message Indication {
+    string name = 1;
+    int32 target_id = 2;
+    repeated Xref xref_list = 3;
+  }
+  // The type of phenotype grouping (e.g. Disease, DrugResponse, Finding).
+  optional PhenotypeSet phenotype_set_type = 1;
+  // The indication may be a set of phenotypic descriptions.
+  repeated Indication indication = 2;
+}
+message PhenotypeListDetailsType {
+  message Phenotype {
+    string name = 1;
+    int32 target_id = 2;
+    optional string affected_status = 3;
+    repeated Xref xref_list = 4;
+  }
+  message PhenotypeDetails {
+    string submitter_name = 1;
+    uint64 org_id = 2;
+    string organization_category = 3;
+    optional string org_abbreviation = 4;
+    // Separates biochemical test results from clinical feature descriptions.
+    string type = 5;
+    string person_id = 6;
+    // Date the phenotype features were evaluated.
+    google.protobuf.Timestamp date_evaluated = 7;
+    optional string phenotype_name = 8;
+    optional string affected_status = 9;
+    optional string loinc = 10;
+    optional string observed_value = 11;
+    optional string interpretation = 12;
+    optional string source_laboratory = 13;
+    repeated Xref xref_list = 14;
+  }
+  // The type of phenotype grouping (e.g. Disease, DrugResponse, Finding).
+  optional PhenotypeSet phenotype_set_type = 1;
+  repeated Phenotype phenotype = 2;
+  // Set of descriptors and values for person-specific phenotype information.
+  repeated PhenotypeDetails phenotype_details = 3;
+}
+// An RCV (Reference ClinVar) record. Each RCV links a single variant (VCV) to a single condition or condition set. RCV accessions have the format RCV + 9 digits + version suffix.
+message Rcv {
+  message ClassifiedConditionList {
+    uint64 trait_set_id = 1;
+    repeated RcvinterpretedCondition classified_condition = 2;
+  }
+  message Rcvclassifications {
+    message GermlineClassification {
+      message Description {
+        google.protobuf.Timestamp date_last_evaluated = 1;
+        optional uint64 submission_count = 2;
+        optional string value = 3;
+      }
+      // Aggregate review status (star rating) from all germline submissions for this variant.
+      AggregateGermlineReviewStatusValue review_status = 1;
+      Description description = 2;
+    }
+    message SomaticClinicalImpact {
+      message Description {
+        optional string clinical_impact_assertion_type = 1;
+        optional string clinical_impact_clinical_significance = 2;
+        google.protobuf.Timestamp date_last_evaluated = 3;
+        optional uint64 submission_count = 4;
+        optional string value = 5;
+      }
+      // Aggregate review status (star rating) from all somatic clinical impact submissions for this variant.
+      AggregateSomaticClinicalImpactReviewStatusValue review_status = 1;
+      repeated Description description = 2;
+    }
+    message OncogenicityClassification {
+      message Description {
+        google.protobuf.Timestamp date_last_evaluated = 1;
+        optional uint64 submission_count = 2;
+        optional string value = 3;
+      }
+      // Aggregate review status (star rating) from all oncogenicity submissions for this variant.
+      AggregateOncogenicityReviewStatusValue review_status = 1;
+      Description description = 2;
+    }
+    message NoClassification {
+      message Description {
+        optional uint64 submission_count = 1;
+        optional string value = 2;
+      }
+      // The aggregate review status based on all no-classification submissions for this record.
+      AggregateNoClassificationReviewStatusValue review_status = 1;
+      Description description = 2;
+    }
+    GermlineClassification germline_classification = 1;
+    SomaticClinicalImpact somatic_clinical_impact = 2;
+    OncogenicityClassification oncogenicity_classification = 3;
+    NoClassification no_classification = 4;
+  }
+  optional string title = 1;
+  string accession = 2;
+  int64 version = 3;
+  ClassifiedConditionList classified_condition_list = 4;
+  Rcvclassifications rcvclassifications = 5;
+  // RCV accessions that were merged into this RCV.
+  repeated RecordHistory replaced_list = 6;
+}
+// A set of traits. Used for an SCV's own TraitSet, for the aggregate Classifications/*/ConditionList/TraitSet, and for functional-evidence annotations.
+message ClinAsserTraitSetType {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_DISEASE = 1;
+    TYPE_DRUG_RESPONSE = 2;
+    TYPE_FINDING = 3;
+    TYPE_PHENOTYPE_INSTRUCTION = 4;
+    TYPE_TRAIT_CHOICE = 5;
+  }
+  message AttributeSet {
+    message Attribute {
+      optional int32 integer_value = 1;
+      google.protobuf.Timestamp date_value = 2;
+      // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+      string type = 3;
+      optional string value = 4;
+    }
+    Attribute attribute = 1;
+    repeated Citation citation = 2;
+    repeated Xref xref = 3;
+    repeated Comment comment = 4;
+  }
+  Type type = 1;
+  google.protobuf.Timestamp date_last_evaluated = 2;
+  optional uint64 id = 3;
+  // On a TraitSet in an aggregate ConditionList, whether this condition was reported by submissions that contribute to the aggregate classification (same precedence rule as MeasureTraitType.contributes_to_aggregate_classification).
+  optional bool contributes_to_aggregate_classification = 4;
+  // On a TraitSet in a somatic ConditionList, marks a condition for which a LOWER tier than the aggregate's highest was reported — not a judgement on the submission's evidence quality.
+  optional bool lower_level_of_evidence = 5;
+  // An explanation provided when the submission covers multiple conditions simultaneously.
+  optional string multiple_condition_explanation = 6;
+  repeated ClinAsserTraitType trait = 7;
+  repeated SetElementSetType name = 8;
+  repeated SetElementSetType symbol = 9;
+  repeated AttributeSet attribute_set = 10;
+  repeated Citation citation = 11;
+  repeated Xref xref = 12;
+  repeated Comment comment = 13;
+}
+message EvidenceObservation {
+  string submitter_name = 1;
+  uint64 org_id = 2;
+  string organization_category = 3;
+  optional string org_abbreviation = 4;
+  optional string families = 5;
+  optional string individuals = 6;
+  optional string segregation = 7;
+  optional string other_gene = 8;
+  optional string same_gene = 9;
+  Evidencetype type = 10;
+  optional string allele_frequency = 11;
+  optional Origin allele_origin = 12;
+  optional int32 allele_origin_times_observed = 13;
+  optional string ethnicity = 14;
+  optional string geographic_origin = 15;
+  // Method of data capture, not method of evaluation.
+  repeated MethodRefs method = 16;
+  repeated string mode_of_inheritance = 17;
+  repeated Citation citation_list = 18;
+  repeated Comment description = 19;
+  PhenotypeListDetailsType observed_phenotypes = 20;
+  IndicationListType indications = 21;
+}
+message IndicationType {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_INDICATION = 1;
+  }
+  Type type = 1;
+  optional uint64 id = 2;
+  // Represents the value for the test indication as a name of a trait.
+  repeated ClinAsserTraitType trait = 3;
+  repeated SetElementSetType name = 4;
+  repeated SetElementSetType symbol = 5;
+  repeated AttributeSet attribute_set = 6;
+  repeated Citation citation = 7;
+  repeated Xref xref = 8;
+  Comment comment = 9;
+}
+message PharmaType {
+  message DrugResponse {
+    string name = 1;
+    optional int32 target_id = 2;
+    PhenotypeListDetailsType phenotype_list = 3;
+    repeated Xref xref_list = 4;
+  }
+  repeated DrugResponse drug_response = 1;
+}
+message Sample {
+  message SampleDescription {
+    Comment description = 1;
+    Citation citation = 2;
+  }
+  enum Origin {
+    ORIGIN_UNSPECIFIED = 0;
+    ORIGIN_GERMLINE = 1;
+    ORIGIN_SOMATIC = 2;
+    ORIGIN_DE_NOVO = 3;
+    ORIGIN_UNKNOWN = 4;
+    ORIGIN_NOT_PROVIDED = 5;
+    ORIGIN_INHERITED = 6;
+    ORIGIN_MATERNAL = 7;
+    ORIGIN_PATERNAL = 8;
+    ORIGIN_UNIPARENTAL = 9;
+    ORIGIN_BIPARENTAL = 10;
+    ORIGIN_NOT_REPORTED = 11;
+    ORIGIN_TESTED_INCONCLUSIVE = 12;
+    ORIGIN_NOT_APPLICABLE = 13;
+    ORIGIN_EXPERIMENTALLY_GENERATED = 14;
+  }
+  enum SomaticVariantInNormalTissue {
+    SOMATIC_VARIANT_IN_NORMAL_TISSUE_UNSPECIFIED = 0;
+    SOMATIC_VARIANT_IN_NORMAL_TISSUE_PRESENT = 1;
+    SOMATIC_VARIANT_IN_NORMAL_TISSUE_ABSENT = 2;
+    SOMATIC_VARIANT_IN_NORMAL_TISSUE_NOT_TESTED = 3;
+  }
+  message Species {
+    optional int32 taxonomy_id = 1;
+    optional string value = 2;
+  }
+  message Age {
+    enum AgeUnit {
+      AGE_UNIT_UNSPECIFIED = 0;
+      AGE_UNIT_DAYS = 1;
+      AGE_UNIT_WEEKS = 2;
+      AGE_UNIT_MONTHS = 3;
+      AGE_UNIT_YEARS = 4;
+      AGE_UNIT_WEEKS_GESTATION = 5;
+      AGE_UNIT_MONTHS_GESTATION = 6;
+    }
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      TYPE_MINIMUM = 1;
+      TYPE_MAXIMUM = 2;
+      TYPE_SINGLE = 3;
+    }
+    AgeUnit age_unit = 1;
+    Type type = 2;
+    optional int32 value = 3;
+  }
+  enum AffectedStatus {
+    AFFECTED_STATUS_UNSPECIFIED = 0;
+    AFFECTED_STATUS_YES = 1;
+    AFFECTED_STATUS_NO = 2;
+    AFFECTED_STATUS_NOT_PROVIDED = 3;
+    AFFECTED_STATUS_UNKNOWN = 4;
+    AFFECTED_STATUS_NOT_APPLICABLE = 5;
+  }
+  enum Sex {
+    SEX_UNSPECIFIED = 0;
+    SEX_MALE = 1;
+    SEX_FEMALE = 2;
+    SEX_MIXED = 3;
+  }
+  enum SourceType {
+    SOURCE_TYPE_UNSPECIFIED = 0;
+    SOURCE_TYPE_SUBMITTER_GENERATED = 1;
+    SOURCE_TYPE_DATA_MINING = 2;
+  }
+  SampleDescription sample_description = 1;
+  Origin origin = 2;
+  optional string ethnicity = 3;
+  optional string geographic_origin = 4;
+  optional string tissue = 5;
+  optional SomaticVariantInNormalTissue somatic_variant_in_normal_tissue = 6;
+  // Variant allele fraction (VAF) of the somatic variant in the sample.
+  optional string somatic_variant_allele_fraction = 7;
+  optional string cell_line = 8;
+  Species species = 9;
+  repeated Age age = 10;
+  optional string strain = 11;
+  AffectedStatus affected_status = 12;
+  // Total individuals in this observation set.
+  optional int32 number_tested = 13;
+  // Total male individuals in this observation set.
+  optional int32 number_males = 14;
+  // Total female individuals in this observation set.
+  optional int32 number_females = 15;
+  // Total chromosomes tested; denominator when 'Number of chromosomes with variant' is reported.
+  optional int32 number_chr_tested = 16;
+  // Use only when explicit male/female counts are unavailable but sex composition is known. Prefer number_males and number_females when possible.
+  optional Sex sex = 17;
+  FamilyInfo family_data = 18;
+  optional string proband = 19;
+  IndicationType indication = 20;
+  repeated Citation citation = 21;
+  repeated Xref xref = 22;
+  repeated Comment comment = 23;
+  optional SourceType source_type = 24;
+}
+message AggregatedGermlineClassification {
+  google.protobuf.Timestamp date_last_evaluated = 1;
+  google.protobuf.Timestamp date_created = 2;
+  google.protobuf.Timestamp most_recent_submission = 3;
+  uint64 number_of_submitters = 4;
+  uint64 number_of_submissions = 5;
+  // Aggregate review status (star rating) from all germline submissions for this variant.
+  AggregateGermlineReviewStatusValue review_status = 6;
+  // Germline classification. Usually an ACMG/AMP term (Pathogenic, Likely pathogenic, Uncertain significance, Likely benign, Benign), or a composite formed by joining terms with '/' — 'Pathogenic/Likely pathogenic', 'Benign/Likely benign', and across categories 'Pathogenic/Established risk allele'; also 'Conflicting classifications of pathogenicity', the ClinGen low-penetrance and risk-allele terms (Pathogenic/Likely pathogenic, low penetrance; Established risk allele; Likely risk allele; Uncertain risk allele), and non-standard terms (drug response, risk factor, association, protective, Affects, other, not provided). The value space is open — do not treat it as an enumeration. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 7;
+  // Populated when the description is 'Conflicting classifications of pathogenicity'; the value enumerates the conflicting classifications with submission counts, e.g. 'Uncertain significance (1); Benign (1)'. The XSD's own annotation instead names 'conflicting data from submitters' — a germline classification term retained from early submissions by a single consortium, not the aggregate conflict description.
+  Comment explanation = 8;
+  repeated Xref xref = 9;
+  repeated Citation citation = 10;
+  repeated Comment comment = 11;
+  repeated DescriptionHistory description_history = 12;
+  repeated ClinAsserTraitSetType condition_list = 13;
+}
+message AggregatedNoClassification {
+  google.protobuf.Timestamp date_created = 1;
+  google.protobuf.Timestamp most_recent_submission = 2;
+  uint64 number_of_submitters = 3;
+  uint64 number_of_submissions = 4;
+  optional string type = 5;
+  // The aggregate review status based on all no-classification submissions for this record.
+  AggregateNoClassificationReviewStatusValue review_status = 6;
+  // Why the record carries no classification, aggregated over its submissions. The value space is not enumerated in the XSD; see https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 7;
+  repeated Xref xref = 8;
+  repeated Citation citation = 9;
+  repeated Comment comment = 10;
+  repeated DescriptionHistory description_history = 11;
+  repeated ClinAsserTraitSetType condition_list = 12;
+}
+message AggregatedOncogenicityClassification {
+  google.protobuf.Timestamp date_last_evaluated = 1;
+  google.protobuf.Timestamp date_created = 2;
+  google.protobuf.Timestamp most_recent_submission = 3;
+  uint64 number_of_submitters = 4;
+  uint64 number_of_submissions = 5;
+  // Aggregate review status (star rating) from all oncogenicity submissions for this variant.
+  AggregateOncogenicityReviewStatusValue review_status = 6;
+  // Oncogenicity classification on the ClinGen/CGC/VICC terms (PMID 36063163): Oncogenic, Likely oncogenic, Uncertain significance, Likely benign, Benign; also the composites 'Oncogenic/Likely oncogenic' and 'Benign/Likely benign', and 'Conflicting classifications of oncogenicity'. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 7;
+  // Populated when the description is 'Conflicting classifications of oncogenicity'; the value enumerates the conflicting classifications with submission counts. The XSD's own annotation instead names 'conflicting data from submitters' — a germline classification term retained from early submissions by a single consortium, not the aggregate conflict description.
+  Comment explanation = 8;
+  repeated Xref xref = 9;
+  repeated Citation citation = 10;
+  repeated Comment comment = 11;
+  repeated DescriptionHistory description_history = 12;
+  repeated ClinAsserTraitSetType condition_list = 13;
+}
+message AggregatedSomaticClinicalImpact {
+  google.protobuf.Timestamp date_last_evaluated = 1;
+  google.protobuf.Timestamp date_created = 2;
+  google.protobuf.Timestamp most_recent_submission = 3;
+  uint64 number_of_submitters = 4;
+  uint64 number_of_submissions = 5;
+  // Aggregate review status (star rating) from all somatic clinical impact submissions for this variant.
+  AggregateSomaticClinicalImpactReviewStatusValue review_status = 6;
+  // Somatic clinical impact on the AMP/ASCO/CAP tiers (PMID 27993330), reported verbatim as 'Tier I - Strong', 'Tier II - Potential', 'Tier III - Unknown', 'Tier IV - Benign/Likely benign'. The aggregate is the HIGHEST tier reported by the submissions at the record's review-status tier — not a consensus; conflicts are not calculated, and different tiers for different tumour types are expected. Conditions reported at a lower tier are marked in condition_list. See https://github.com/ncbi/clinvar/blob/master/somatic_classifications/ClassificationOnClinVar.md.
+  optional string description = 7;
+  repeated Xref xref = 8;
+  repeated Citation citation = 9;
+  repeated Comment comment = 10;
+  repeated DescriptionHistory description_history = 11;
+  repeated ClinAsserTraitSetType condition_list = 12;
+}
+// Documents in what populations or samples an allele or genotype has been observed relative to the described trait. Summary observations can be registered per submitted assertion, grouped by common citation, study type, origin, ethnicity, tissue, cell line, and species data. Not all options are valid per study type, but these will not be validated in the xsd.
+message ObservationSet {
+  message Method {
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      TYPE_LITERATURE_ONLY = 1;
+      TYPE_REFERENCE_POPULATION = 2;
+      TYPE_CASE_CONTROL = 3;
+      TYPE_CLINICAL_TESTING = 4;
+      TYPE_IN_VITRO = 5;
+      TYPE_IN_VIVO = 6;
+      TYPE_INFERRED_FROM_SOURCE = 7;
+      TYPE_RESEARCH = 8;
+    }
+    optional string name_platform = 1;
+    optional string type_platform = 2;
+    optional string purpose = 3;
+    optional MethodType.ResultType result_type = 4;
+    optional string min_reported = 5;
+    optional string max_reported = 6;
+    optional string reference_standard = 7;
+    repeated Citation citation = 8;
+    repeated Xref xref = 9;
+    // Free text supplementing the structured method fields with details not captured elsewhere.
+    optional string description = 10;
+    repeated SoftwareSet software = 11;
+    // The source type of the method.
+    optional MethodType.SourceType source_type = 12;
+    Methodlist method_type = 13;
+    repeated MethodType.MethodAttribute method_attribute = 14;
+    // Attribute specific to a particular method in conjunction with a particular observation.
+    repeated MethodType.ObsMethodAttribute obs_method_attribute = 15;
+    MethodType.AssayType assay_type = 16;
+    optional string molecular_phenotype_measured = 17;
+    optional uint64 number_of_replicates = 18;
+    optional uint64 number_of_controls = 19;
+    ScoringRangesType scoring_ranges = 20;
+    optional Type type = 21;
+  }
+  optional string type = 1;
+  Sample sample = 2;
+  repeated Method method = 3;
+  // AttributeSet with exactly one attribute, optionally supported by citations, xrefs, and comments. At least one ObservedData is required; decimal values are stored as strings.
+  repeated ObservedDataType observed_data = 4;
+  FunctionalDataType functional_data = 5;
+  // Co-occurring variants observed in the same individuals, used for cis/trans analysis.
+  repeated CoOccurrenceType co_occurrence_set = 6;
+  ClinAsserTraitSetType trait_set = 7;
+  repeated Citation citation = 8;
+  repeated Xref xref = 9;
+  repeated Comment comment = 10;
+}
+// Used to bundle different types of Classifications (germline, oncogenic, somatic clinical impact, no-classification) ; Supports summary as well as submission details
+message AggregateClassificationSet {
+  AggregatedGermlineClassification germline_classification = 1;
+  AggregatedSomaticClinicalImpact somatic_clinical_impact = 2;
+  AggregatedOncogenicityClassification oncogenicity_classification = 3;
+  AggregatedNoClassification no_classification = 4;
+}
+// A single sequence change (simple allele) relative to a reference. Contrast with Haplotype (multiple changes on one chromosome) and Genotype (changes on both chromosomes of a homologous pair).
+message Allele {
+  message GeneList {
+    message Gene {
+      // ClinGen haploinsufficiency score for this gene — evidence that losing one copy causes disease.
+      message Haploinsufficiency {
+        google.protobuf.Timestamp last_evaluated = 1;
+        // URL to the ClinGen dosage sensitivity page for this gene's haploinsufficiency score.
+        optional string clin_gen = 2;
+        // Haploinsufficiency score description. E.g. 'Little evidence for dosage pathogenicity', 'Sufficient evidence for dosage pathogenicity'.
+        optional string value = 3;
+      }
+      // ClinGen triplosensitivity score for this gene — evidence that gaining an extra copy causes disease.
+      message Triplosensitivity {
+        google.protobuf.Timestamp last_evaluated = 1;
+        // URL to the ClinGen dosage sensitivity page for this gene's triplosensitivity score.
+        optional string clin_gen = 2;
+        // Triplosensitivity score description. E.g. 'No evidence available', 'Sufficient evidence for dosage pathogenicity'.
+        optional string value = 3;
+      }
+      optional string symbol = 1;
+      string full_name = 2;
+      uint64 gene_id = 3;
+      optional string hgnc_id = 4;
+      // Whether the gene association was 'calculated' by NCBI or 'submitted' by the submitter.
+      string source = 5;
+      optional GeneVariant relationship_type = 6;
+      Location location = 7;
+      repeated uint64 omim = 8;
+      // ClinGen haploinsufficiency score and supporting evidence for this gene.
+      Haploinsufficiency haploinsufficiency = 9;
+      Triplosensitivity triplosensitivity = 10;
+      // Keywords for retrieval or display (e.g. genes listed by the ACMG guidelines for secondary findings).
+      repeated string property = 11;
+    }
+    optional int32 gene_count = 1;
+    repeated Gene gene = 2;
+  }
+  message AlleleFrequencyList {
+    message AlleleFrequency {
+      optional double value = 1;
+      optional string source = 2;
+      optional string url = 3;
+    }
+    repeated AlleleFrequency allele_frequency = 1;
+  }
+  message GlobalMinorAlleleFrequency {
+    optional double value = 1;
+    optional string source = 2;
+    optional string minor_allele = 3;
+    optional string url = 4;
+  }
+  // ClinVar's identifier for this individual variant. The AlleleID and VariationID numbering spaces OVERLAP, so a bare integer is ambiguous without its context; one AlleleID can belong to several VariationIDs (haplotypes, genotypes).
+  int32 allele_id = 1;
+  uint64 variation_id = 2;
+  // 0 to many genes (and related data) related to the allele being reported.
+  GeneList gene_list = 3;
+  string name = 4;
+  optional string common_name = 5;
+  // Canonical SPDI (Sequence:Position:Deleted:Inserted) — a fully justified, transcript-independent representation anchored to a genomic RefSeq accession, so it is specific to THAT assembly, not build-independent.
+  optional string canonical_spdi = 6;
+  optional string variant_type = 7;
+  Location location = 8;
+  Names other_name_list = 9;
+  // Single-letter representations of the protein change (e.g. R123H).
+  repeated string protein_change = 10;
+  repeated Hgvsexpression hgvslist = 11;
+  AggregateClassificationSet classifications = 12;
+  repeated Xref xref_list = 13;
+  repeated Comment comment = 14;
+  AlleleFrequencyList allele_frequency_list = 15;
+  GlobalMinorAlleleFrequency global_minor_allele_frequency = 16;
+}
+message HaplotypeScv {
+  optional int32 variation_id = 1;
+  // Number of copies of this haplotype.
+  optional int32 number_of_copies = 2;
+  // Number of chromosomes carrying this haplotype.
+  optional uint64 number_of_chromosomes = 3;
+  repeated AlleleScv simple_allele = 4;
+  optional string name = 5;
+  // Other names used for the haplotype
+  Names other_name_list = 6;
+  AggregateClassificationSet classifications = 7;
+  repeated AttributeSet attribute_set = 8;
+  repeated Citation citation_list = 9;
+  repeated Xref xref_list = 10;
+  repeated Comment comment = 11;
+}
+// Used to report genotypes, be they simple or complex diplotypes.
+message GenotypeScv {
+  optional int32 variation_id = 1;
+  repeated AlleleScv simple_allele = 2;
+  // Allows more than 2 haplotypes per genotype to support representation of ploidy.
+  repeated HaplotypeScv haplotype = 3;
+  optional string name = 4;
+  // Other names used for the Genotype
+  Names other_name_list = 5;
+  VariationType variation_type = 6;
+  repeated AttributeSet attribute_set = 7;
+  repeated Citation citation_list = 8;
+  repeated Xref xref_list = 9;
+  repeated Comment comment = 10;
+}
+// Multiple sequence changes on one chromosome of a homologous pair (or the mitochondrion). Contrast with SimpleAllele (a single change) and Genotype (changes on both chromosomes).
+message Haplotype {
+  int32 variation_id = 1;
+  // Number of copies of this haplotype.
+  optional int32 number_of_copies = 2;
+  // Number of chromosomes carrying this haplotype.
+  optional uint64 number_of_chromosomes = 3;
+  repeated Allele simple_allele = 4;
+  // The preferred representation of the haplotype.
+  string name = 5;
+  optional string common_name = 6;
+  HaplotypeVariationType variation_type = 7;
+  // Names other than 'preferred' used for the haplotype.
+  Names other_name_list = 8;
+  // All HGVS expressions valid for, or used to submit, this haplotype.
+  repeated Hgvsexpression hgvslist = 9;
+  AggregateClassificationSet classifications = 10;
+  repeated Xref xref_list = 11;
+  repeated Comment comment = 12;
+}
+// Sequence changes on both chromosomes of a homologous pair. Contrast with Haplotype (changes on one chromosome) and SimpleAllele (a single change).
+message Genotype {
+  int32 variation_id = 1;
+  // A single sequence change contributing to this genotype.
+  repeated Allele simple_allele = 2;
+  // Allows more than 2 haplotypes per genotype to support representation of ploidy.
+  repeated Haplotype haplotype = 3;
+  string name = 4;
+  optional string common_name = 5;
+  VariationType variation_type = 6;
+  // Names other than 'preferred' used for the Genotype.
+  Names other_name_list = 7;
+  repeated Hgvsexpression hgvslist = 8;
+  repeated AggregateClassificationSet classifications = 9;
+  repeated Xref xref_list = 10;
+  repeated Citation citation_list = 11;
+  repeated Comment comment = 12;
+  repeated AttributeSet attribute_set = 13;
+}
+// A simple allele or haplotype referenced by ClassifiedRecords but submitted without an independent classification. Its Classifications block is PRESENT but reports, for each classification type, a review status and the description 'no classification for the single variant' (zero stars).
+message IncludedRecord {
+  message ClassifiedVariationList {
+    message ClassifiedVariation {
+      uint64 variation_id = 1;
+      optional string accession = 2;
+      int64 version = 3;
+    }
+    repeated ClassifiedVariation classified_variation = 1;
+  }
+  message GeneralCitations {
+    repeated Citation citation = 1;
+    repeated Xref xref = 2;
+  }
+  oneof oneof_name {
+    Allele simple_allele = 1;
+    // A haplotype (multiple sequence changes on one chromosome) included in this record but submitted without an independent classification.
+    Haplotype haplotype = 2;
+  }
+  AggregateClassificationSet classifications = 3;
+  repeated Scv submitted_classification_list = 4;
+  // Classified variants (with their own VCV) that incorporate this included variant, maintaining referential integrity for indexing and retrieval.
+  ClassifiedVariationList classified_variation_list = 5;
+  repeated GeneralCitations general_citations = 6;
+}
+// A single submitted clinical variant record (SCV): one submitter's classification of a variant against a condition SET (see multiple_condition_explanation), identified by a unique SCV accession. The variant-condition PAIR is the RCV.
+message MeasureTraitType {
+  message ClinVarSubmissionId {
+    // Identifier provided by the submitter to match their internal records. If not provided by the submitter, NCBI generates one. Whether submitter-provided is indicated by local_key_is_submitted.
+    string local_key = 1;
+    optional string title = 2;
+    // True if the local_key was provided by the submitter (vs NCBI-generated).
+    optional string local_key_is_submitted = 3;
+    optional string submitted_assembly = 4;
+  }
+  // The SCV (submitted record in ClinVar) accession for one submitter's record. SCV accessions have the format SCV + 9 digits + version suffix (e.g. SCV000000001.1).
+  message ClinVarAccession {
+    string accession = 1;
+    int64 version = 2;
+    // Always 'SCV'. Maintained for consistency with ClinVarFullRelease.
+    optional string type = 3;
+    string submitter_name = 4;
+    uint64 org_id = 5;
+    string organization_category = 6;
+    optional string org_abbreviation = 7;
+    // Date when the latest update to this SCV became public in ClinVar.
+    google.protobuf.Timestamp date_updated = 8;
+    // Date when this SCV first became public in ClinVar.
+    google.protobuf.Timestamp date_created = 9;
+  }
+  enum RecordStatus {
+    RECORD_STATUS_UNSPECIFIED = 0;
+    RECORD_STATUS_CURRENT = 1;
+    RECORD_STATUS_REPLACED = 2;
+    RECORD_STATUS_REMOVED = 3;
+  }
+  message AttributeSet {
+    message Attribute {
+      enum Type {
+        TYPE_UNSPECIFIED = 0;
+        TYPE_MODE_OF_INHERITANCE = 1;
+        TYPE_PENETRANCE = 2;
+        TYPE_AGE_OF_ONSET = 3;
+        TYPE_SEVERITY = 4;
+        TYPE_CLASSIFICATION_HISTORY = 5;
+        TYPE_SEVERITY_DESCRIPTION = 6;
+        TYPE_ASSERTION_METHOD = 7;
+      }
+      optional int32 integer_value = 1;
+      google.protobuf.Timestamp date_value = 2;
+      // Type key for the attribute value. Examples include 'GARD id', 'keyword'.
+      Type type = 3;
+      optional string value = 4;
+    }
+    Attribute attribute = 1;
+    repeated Citation citation = 2;
+    repeated Xref xref = 3;
+    repeated Comment comment = 4;
+  }
+  // Date when this SCV first became public in ClinVar.
+  google.protobuf.Timestamp date_created = 1;
+  // Date when the latest update to this SCV became public in ClinVar.
+  google.protobuf.Timestamp date_last_updated = 2;
+  // Date ClinVar received this submission (distinct from the public release date in date_created).
+  google.protobuf.Timestamp submission_date = 3;
+  optional uint64 id = 4;
+  // Whether this submission comes from an FDA-recognized public human genetic variant database (e.g. a ClinGen expert panel). Germline submissions carry it too.
+  optional bool fdarecognized_database = 5;
+  // False when this SCV is outranked — ClinVar aggregates only the highest review-status tier present (practice guideline > reviewed by expert panel > criteria provided, single submitter > no assertion criteria provided). Also false for flagged records and for SCVs submitted without a classification. A 0-star SCV DOES contribute when no higher tier exists.
+  bool contributes_to_aggregate_classification = 6;
+  ClinVarSubmissionId clin_var_submission_id = 7;
+  // The SCV accession for this record; only SCV (not VCV or RCV) accessions are stored here.
+  ClinVarAccession clin_var_accession = 8;
+  // Additional submitters beyond the primary, used only when a batch has multiple submitters.
+  repeated SubmitterType additional_submitters = 9;
+  RecordStatus record_status = 10;
+  // SCV accessions that this record supersedes.
+  repeated string replaces = 11;
+  // SCV accessions that were replaced by (merged into) this SCV.
+  repeated ClinicalAssertionRecordHistory replaced_list = 12;
+  ClassificationTypeScv classification = 13;
+  AssertionTypeAttr assertion = 14;
+  // Package representing a unit of information with its source(s), identifiers, and comments.
+  repeated AttributeSet attribute_set = 15;
+  repeated ObservationSet observed_in_list = 16;
+  oneof oneof_name {
+    AlleleScv simple_allele = 17;
+    HaplotypeScv haplotype = 18;
+    GenotypeScv genotype = 19;
+  }
+  ClinAsserTraitSetType trait_set = 20;
+  repeated Citation citation = 21;
+  optional string study_name = 22;
+  optional string study_description = 23;
+  repeated Comment comment = 24;
+  repeated string submission_name_list = 25;
+}
+message ClassifiedRecord {
+  message Rcvlist {
+    // The number of submissions (SCV accessions) referencing the VariationID
+    optional uint64 submission_count = 1;
+    // Total independent observations supporting the RCV classification.
+    optional uint64 independent_observations = 2;
+    // RCV accessions referencing this VariationID, supporting indexing and retrieval. Does not describe RCV-to-SCV relationships; see clinical_assertion_list for those.
+    repeated Rcv rcvaccession = 3;
+  }
+  message TraitMappingList {
+    message TraitMapping {
+      enum MappingType {
+        MAPPING_TYPE_UNSPECIFIED = 0;
+        MAPPING_TYPE_NAME = 1;
+        MAPPING_TYPE_XREF = 2;
+      }
+      message MedGen {
+        string name = 1;
+        string cui = 2;
+      }
+      // References clinical_assertion_list[i].id, linking this trait mapping to a specific SCV.
+      optional uint64 clinical_assertion_id = 1;
+      optional string trait_type = 2;
+      // How the submitted trait was matched to a MedGen concept. MAPPING_TYPE_NAME: matched by name (mapping_ref is 'Alternate' or 'Preferred', mapping_value is the submitted trait name). MAPPING_TYPE_XREF: matched by database ID (mapping_ref is the database name, mapping_value is the identifier).
+      optional MappingType mapping_type = 3;
+      optional string mapping_value = 4;
+      optional string mapping_ref = 5;
+      MedGen med_gen = 6;
+    }
+    repeated TraitMapping trait_mapping = 1;
+  }
+  message FunctionalEvidenceStrengthAnnotationList {
+    message FunctionalEvidenceStrengthAnnotation {
+      message Source {
+        optional string name = 1;
+        optional uint64 org_id = 2;
+      }
+      Source source = 1;
+      repeated string accession_list = 2;
+      string functional_evidence_strength = 3;
+      optional string comment_on_functional_evidence_strength = 4;
+      ClinAsserTraitSetType trait_set = 5;
+      Citation citation = 6;
+    }
+    repeated FunctionalEvidenceStrengthAnnotation functional_evidence_strength_annotation = 1;
+  }
+  message GeneralCitations {
+    repeated Citation citation = 1;
+    repeated Xref xref = 2;
+  }
+  oneof oneof_name {
+    // Describes a single sequence change relative to a contiguous region of a chromosome or the mitochondrion.
+    Allele simple_allele = 1;
+    // Describes multiple sequence changes on one of the chromosomes of a homologous pair or on the mitochondrion.
+    Haplotype haplotype = 2;
+    // Describes the combination of sequence changes on each chromosome of a homologous pair
+    Genotype genotype = 3;
+  }
+  Rcvlist rcvlist = 4;
+  AggregateClassificationSet classifications = 5;
+  repeated MeasureTraitType clinical_assertion_list = 6;
+  // This element is used to report how each user-submitted trait name was mapped to a MedGen CUI identifier and a preferred name. The structure may be used in the future to report, when a trait is identified by a source's identifier (e.g. MIM number), the preferred name used by that source at the time of submission. For MappingType XRef, MappingRef is the database name and MappingValue is the database's identifier. For MappingType Name, MappingRef is Alternate or Preferred, and MappingValue is the submitted name of the trait. ClinicalAssertionID is an integer identifier that corresponds 1:1 to the SCV assigned to the submission.
+  TraitMappingList trait_mapping_list = 7;
+  FunctionalEvidenceStrengthAnnotationList functional_evidence_strength_annotation_list = 8;
+  repeated DeletedScv deleted_scvlist = 9;
+  repeated GeneralCitations general_citations = 10;
+}
+// Top-level record for a classified variant in ClinVar. Each VCV (Variation Archive) aggregates all submissions for a single variation (SimpleAllele, Haplotype, or Genotype). VCV accessions have the format VCV + 9 digits + version suffix (e.g. VCV000000351.1).
+message VariationArchiveType {
+  enum RecordType {
+    RECORD_TYPE_UNSPECIFIED = 0;
+    RECORD_TYPE_INCLUDED = 1;
+    RECORD_TYPE_CLASSIFIED = 2;
+  }
+  enum RecordStatus {
+    RECORD_STATUS_UNSPECIFIED = 0;
+    RECORD_STATUS_CURRENT = 1;
+    RECORD_STATUS_PREVIOUS = 2;
+    RECORD_STATUS_REPLACED = 3;
+    RECORD_STATUS_DELETED = 4;
+  }
+  message Species {
+    optional int32 taxonomy_id = 1;
+    optional string value = 2;
+  }
+  uint64 variation_id = 1;
+  // ClinVar's preferred display name for this variant, as shown on the website.
+  string variation_name = 2;
+  string variation_type = 3;
+  // Date when this VCV first became public in ClinVar.
+  google.protobuf.Timestamp date_created = 4;
+  // Date of the most recent change to this VCV, including SCV updates and NCBI-added annotations. May change without incrementing the version number.
+  google.protobuf.Timestamp date_last_updated = 5;
+  // Date of the most recently updated or newly added SCV for this VCV.
+  google.protobuf.Timestamp most_recent_submission = 6;
+  // VCV accession assigned to this variant record (e.g. VCV000000351). Paired with version for the full versioned accession. Distinct from AlleleID (on the Allele element), which identifies the underlying sequence change.
+  string accession = 7;
+  int32 version = 8;
+  uint64 number_of_submitters = 9;
+  uint64 number_of_submissions = 10;
+  // Whether this VCV was submitted with its own classification ('classified') or only as part of a larger submitted set ('included'). The variation type is variation_type.
+  RecordType record_type = 11;
+  // Status of this VCV record: current, previous, replaced, deleted.
+  RecordStatus record_status = 12;
+  // The VCV accession that superseded this record (populated when record_status is 'replaced').
+  RecordHistory replaced_by = 13;
+  // VCV accessions that have been merged into this record.
+  repeated RecordHistory replaced_list = 14;
+  Comment comment = 15;
+  Species species = 16;
+  oneof oneof_name {
+    // Classification data for a variant that was independently submitted with its own classification. Contrast with included_record, which tracks variants referenced in submissions but without their own independent classification.
+    ClassifiedRecord classified_record = 17;
+    // A simple allele or haplotype incorporated into submissions for this VCV, but submitted without an independent classification of its own. See IncludedRecord.
+    IncludedRecord included_record = 18;
+  }
+}
+// A full release of the ClinVar database, containing one VariationArchive per variation — classified records and included records alike.
+message ReleaseType {
+  google.protobuf.Timestamp release_date = 1;
+  repeated VariationArchiveType variation_archive = 2;
+}

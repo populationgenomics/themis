@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import descriptor_pb2 as google_dot_protobuf_dot_descriptor__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n themis/rpc/sandbox_options.proto\x12\nthemis.rpc\x1a google/protobuf/descriptor.proto:5\n\ragent_exposed\x12\x1c.google.protobuf.FileOptions\x18\xd2\x86\x03 \x01(\x08\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n themis/rpc/sandbox_options.proto\x12\nthemis.rpc\x1a google/protobuf/descriptor.proto:7\n\ragent_exposed\x12\x1e.google.protobuf.MethodOptions\x18\xd2\x86\x03 \x01(\x08\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)

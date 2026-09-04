@@ -51,9 +51,10 @@ def _declared_methods(file_descriptor: protobuf_descriptor.FileDescriptor, servi
     return frozenset(f'/{service.full_name}/{method.name}' for method in service.methods)
 
 
-# The services whose full rpc surface the hatch forwards to the guest, each paired with the forwarder that fronts
-# it. Every one is an agent-facing tool called in code mode; the store is deliberately absent — it is the trusted
-# worker's, reached over no hatch method.
+# The services the hatch forwards to the guest, each paired with the forwarder that fronts it. A forwarder is a
+# whole-service pass-through; which of its rpcs the guest reaches is the allowlist's decision, per rpc. Every one
+# is an agent-facing tool called in code mode; the store is deliberately absent — it is the trusted worker's,
+# reached over no hatch method.
 _REACHABLE_SERVICES: list[tuple[protobuf_descriptor.FileDescriptor, str, _ForwarderClass]] = [
     (hello_pb2.DESCRIPTOR, 'themis.rpc.hello.Hello', hatch.HelloForwarder),
     (variant_pb2.DESCRIPTOR, 'themis.rpc.variant.Variant', hatch.VariantForwarder),
@@ -77,20 +78,21 @@ _FORWARDER_RPC_CASES = [
 
 
 @pytest.mark.parametrize(('file_descriptor', 'service_full_name'), [(fd, name) for fd, name, _ in _REACHABLE_SERVICES])
-def test_every_declared_rpc_of_a_reachable_service_is_allowlisted(
+def test_every_reachable_service_has_an_allowlisted_rpc(
     file_descriptor: protobuf_descriptor.FileDescriptor, service_full_name: str
 ) -> None:
-    # every rpc the service's proto declares must be reachable; a new rpc the allowlist misses fails here.
+    # a forwarder fronting a service none of whose rpcs is marked is a forwarder nothing can reach.
     declared = _declared_methods(file_descriptor, service_full_name)
     assert declared, f'{service_full_name} declares no rpc — the check would be vacuous'
-    assert declared <= hatch.GUEST_METHODS
+    assert declared & hatch.GUEST_METHODS, f'{service_full_name} has a forwarder but no allowlisted rpc'
 
 
 def test_allowlist_reaches_nothing_beyond_the_reachable_services() -> None:
-    # closed world: the allowlist is exactly the reachable services' rpcs — no store method, no stray entry.
-    # The store (working document + ephemeral-workspace scratch) is the trusted worker's, never over the hatch.
+    # closed world: every allowlisted method is an rpc a forwarded service declares — no store method, no stray
+    # entry. The store (working document + ephemeral-workspace scratch) is the trusted worker's, never over the hatch.
     reachable = frozenset().union(*(_declared_methods(fd, name) for fd, name, _ in _REACHABLE_SERVICES))
-    assert reachable == hatch.GUEST_METHODS
+    assert hatch.GUEST_METHODS, 'the allowlist is empty — the check would be vacuous'
+    assert reachable >= hatch.GUEST_METHODS
     assert not any('Store' in method for method in hatch.GUEST_METHODS)
 
 
@@ -290,9 +292,14 @@ def test_build_hatch_hands_each_forwarder_the_channel_for_its_deployment() -> No
         evidence_channel=cast('grpc.Channel', evidence_channel),
         session_token=_TOKEN,
     ).close()
-    assert hello_channel.methods == _declared_methods(hello_pb2.DESCRIPTOR, 'themis.rpc.hello.Hello')
-    assert evidence_channel.methods == hatch.GUEST_METHODS - hello_channel.methods
-    assert evidence_channel.methods, 'no evidence forwarder was built — the split would pass vacuously'
+    hello_methods = {method for method in hatch.GUEST_METHODS if _service_of(method) == 'themis.rpc.hello.Hello'}
+    evidence_methods = hatch.GUEST_METHODS - hello_methods
+    assert hello_methods, 'no hello method is allowlisted — the split would pass vacuously'
+    assert evidence_methods, 'no evidence method is allowlisted — the split would pass vacuously'
+    assert hello_channel.methods >= hello_methods
+    assert not hello_methods & evidence_channel.methods
+    assert evidence_channel.methods >= evidence_methods
+    assert not evidence_methods & hello_channel.methods
 
 
 def test_build_hatch_serves_every_allowlisted_method() -> None:
@@ -332,7 +339,7 @@ def test_the_guest_has_an_accessor_for_every_exposed_service() -> None:
     exposed = {_service_of(method).rsplit('.', 1)[0].rsplit('.', 1)[1] for method in hatch.GUEST_METHODS}
     assert exposed, 'no services parsed out of the allowlist'
     missing = sorted(name for name in exposed if not callable(getattr(services, name, None)))
-    assert not missing, f'{missing} are agent-exposed but have no guest stub accessor'
+    assert not missing, f'{missing} are agent-exposed but have no guest accessor'
 
 
 class _RecordingUpstream(gnomad_pb2_grpc.GnomadServicer):

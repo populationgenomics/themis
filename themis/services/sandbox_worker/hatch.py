@@ -62,7 +62,7 @@ _SERVICER_AUTHORED_CODES = frozenset(
 )
 
 # The methods the guest may reach, generated from the `agent_exposed` proto option (sandbox-rpc-exposure.md):
-# whichever files carry it. store and auth carry no option, so the worker-only surface stays off the hatch.
+# whichever rpcs carry it. store and auth carry no option, so the worker-only surface stays off the hatch.
 GUEST_METHODS = _generated.GUEST_METHODS
 
 

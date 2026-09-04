@@ -1,10 +1,12 @@
 """Resolve a request's session token to its Project + Analysis binding via the auth service.
 
-Every data-plane servicer authorizes a request by resolving the ``x-themis-session-token``
-metadata to a ``SessionContext`` through auth. ``session_resolver`` builds the resolver over the
-generated auth stub (presenting the SA ID token via ``themis.clients.id_token``); ``require_session``
-is the servicer guard that reads the metadata, resolves it, and aborts the RPC on a missing or
-unresolvable token — it never returns ``None``, so a servicer cannot proceed without a binding.
+An rpc whose answer depends on the caller's session — the Project's scope, a data cutoff, the
+Analysis that spend is attributed to — resolves the ``x-themis-session-token`` metadata to a
+``SessionContext`` through auth before it does the caller's work (sandbox-rpc-exposure.md).
+``session_resolver`` builds the resolver over the generated auth stub (presenting the SA ID token
+via ``themis.clients.id_token``); ``require_session`` is the servicer guard that reads the metadata,
+resolves it, and aborts the RPC on a missing or unresolvable token — it never returns ``None``, so
+such an rpc cannot proceed without a binding.
 """
 
 from __future__ import annotations

@@ -1,9 +1,13 @@
-"""The guest rootfs is closed under the first-party imports of everything it ships.
+"""The guest rootfs is closed under the first-party imports of everything it ships, and its contract is the guest tree.
 
 The Dockerfile's guest stage copies named paths into the guest's site-packages, and that copy is the guest's only
 source of first-party code, so a shipped module importing any `themis` module outside the copied set raises at
 import time and leaves the hatch unreachable. Nothing about the failure is particular to `themis.rpc`: the guest
 also ships hand-authored code and whole directories, and either can grow an import the copy does not satisfy.
+
+The stubs and the contract sources the guest ships are the generated guest contract tree — the exposed protos cut
+to the marked rpcs, and the stubs generated from those cut sources — and nothing else: a stub copied from the full
+tree would offer rpcs the hatch refuses, and a source copied from it would describe them.
 """
 
 from __future__ import annotations
@@ -23,6 +27,9 @@ _DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / 'Dockerfile'
 _GUEST_STAGE = 'guest'
 _PROJECT = 'themis'
 _SITE_PACKAGES = '/site-packages/'
+_GUEST_CONTRACT = 'themis/services/sandbox_worker/guest_contract/'
+# Where the guest stage lands the contract sources for the model to read.
+_PROTO_ROOT = '/usr/local/share/themis/proto/'
 _COPY = re.compile(r'^[ \t]*(?i:COPY|ADD)[ \t]+(?P<argv>.+)$', re.MULTILINE)
 _FROM = re.compile(r'^[ \t]*(?i:FROM)[ \t]+\S+(?:[ \t]+(?i:AS)[ \t]+(?P<stage>\S+))?[ \t]*$', re.MULTILINE)
 
@@ -64,7 +71,12 @@ def _landing(source: str, target: str) -> dict[str, pathlib.Path]:
     """
     path = _REPO_ROOT / source
     if path.is_dir():  # a directory source lands as its contents, under the destination
-        return {f'{target.rstrip("/")}/{found.relative_to(path).as_posix()}': found for found in path.rglob('*.py')}
+        prefix = target.rstrip('/')
+        return {
+            f'{prefix}/{rel}' if prefix else rel: found
+            for found in path.rglob('*.py')
+            if (rel := found.relative_to(path).as_posix())
+        }
     assert path.is_file(), f'the Dockerfile copies {source}, which is not a literal file path in the repo'
     return {target + path.name if target.endswith('/') else target: path}
 
@@ -171,7 +183,7 @@ def test_the_guest_ships_a_stub_for_every_agent_exposed_service() -> None:
 
     The rootfs is the guest's whole first-party world, so the failure is an `ImportError` a session away from any
     test that runs here. Import-closedness is the other property and does not imply this one: a rootfs that ships
-    no stub at all is closed. The exposed set is read from the generated allowlist, so marking a proto and
+    no stub at all is closed. The exposed set is read from the generated allowlist, so marking an rpc and
     forgetting the COPY fails here rather than in a session.
     """
     landings = frozenset(_guest_modules())
@@ -179,6 +191,43 @@ def test_the_guest_ships_a_stub_for_every_agent_exposed_service() -> None:
     assert packages, 'no services parsed out of the generated allowlist'
     required = {f'{package.replace(".", "/")}_pb2{suffix}.py' for package in packages for suffix in ('', '_grpc')}
     assert not sorted(required - landings), f'agent-exposed stubs the guest rootfs does not ship: {required - landings}'
+
+
+def _copies(destination_marker: str) -> dict[str, str]:
+    """Every guest-stage COPY landing under `destination_marker`: source → destination."""
+    copies = {}
+    for copy in _COPY.finditer(_guest_stage()):
+        tokens = [token for token in copy['argv'].split() if not token.startswith('--')]
+        *sources, destination = tokens
+        if destination_marker in destination:
+            copies.update(dict.fromkeys(sources, destination))
+    return copies
+
+
+def test_the_guest_ships_the_contract_tree_and_no_other_stub() -> None:
+    """Both halves of the generated guest contract tree land, and every stub the guest holds comes from it.
+
+    A stub copied from the full tree instead would offer the rpcs the hatch refuses; a contract source copied from
+    `schema/proto` would describe them. So every service stub, and every module under a package the tree provides,
+    resolves to a file under the tree's `python/`, landing on the site-packages root; the sources' one source is
+    `guest_contract/proto/`, landing where the model reads them. A library's own message module elsewhere
+    (`themis/svcv4/models`, say) is that library's to ship.
+    """
+    python = _REPO_ROOT / _GUEST_CONTRACT / 'python'
+    packages = {found.relative_to(python).parent.as_posix() for found in python.rglob('*.py')}
+    assert packages, 'the guest contract tree holds no stubs — regen has not written it'
+    astray = {
+        landing: str(source)
+        for landing, source in _guest_modules().items()
+        if (landing.endswith('_pb2_grpc.py') or pathlib.PurePosixPath(landing).parent.as_posix() in packages)
+        and not source.is_relative_to(python)
+    }
+    assert not astray, f'stubs shipped from outside the guest contract tree: {astray}'
+    landings = _copies(_SITE_PACKAGES)
+    assert landings.get(f'{_GUEST_CONTRACT}python/', '').endswith(_SITE_PACKAGES), 'python/ lands off the root'
+    sources = _copies(_PROTO_ROOT)
+    assert sources == {f'{_GUEST_CONTRACT}proto/': _PROTO_ROOT}, f'contract sources land from {sorted(sources)}'
+    assert (_REPO_ROOT / _GUEST_CONTRACT / 'proto').is_dir()
 
 
 def _locked_guest_distributions() -> set[str]:

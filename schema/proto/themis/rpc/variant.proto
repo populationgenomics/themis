@@ -28,9 +28,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // Canonicalise a transcript HGVS onto the MANE Select transcript and project it, so every
 // downstream fact joins on a shared key and the right decision tree is selected. Wraps ClinGen
 // Allele Registry (canonical CAID + GRCh37/38 + dbSNP/ClinVar/gnomAD crosswalk), VariantValidator
@@ -127,5 +124,7 @@ message ClinVarAllele {
 service Variant {
   // Canonicalise the variant, project transcripts, set the routing consequence — the join
   // key every other interface's facts hang on. ClinGen Allele Registry + VariantValidator + VEP.
-  rpc Normalize(NormalizeRequest) returns (NormalizeResponse);
+  rpc Normalize(NormalizeRequest) returns (NormalizeResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }

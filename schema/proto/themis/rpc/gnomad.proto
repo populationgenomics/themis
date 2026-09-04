@@ -28,9 +28,6 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// Every service in this file is agent-callable through the hatch (sandbox-rpc-exposure.md).
-option (themis.rpc.agent_exposed) = true;
-
 // Doc maps fields to codes:
 //   joint.faf95.popmax -> the POP_FRQ input: the JOINT (exome + genome) Grpmax FAF, which ClinGen's
 //                         VCEP Review Committee gnomAD guidance (v3.0, 23 June 2025) names as the
@@ -82,5 +79,7 @@ service Gnomad {
   // hemizygote_count -> POP_HMZ, co-occurrence, pext/LOEUF/constraint ->
   // Transcript.AssessExonRelevance, STR.
   // See DescribeVariantResponse.
-  rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse);
+  rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse) {
+    option (themis.rpc.agent_exposed) = true;
+  }
 }
