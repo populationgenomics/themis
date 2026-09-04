@@ -63,9 +63,9 @@ without an egress firewall or a load balancer.
 
 ## Non-goals
 
-- **No general-purpose method on the hatch.** Nothing shaped like `fetch(url)` or `query(sql)`. Every exposed rpc
-  derives its scope server-side from the verified session token, never from an argument the guest chose; a general
-  method would move that decision inside the sandbox.
+- **No general-purpose method on the hatch.** Nothing shaped like `fetch(url)` or `query(sql)`. An exposed rpc whose
+  answer depends on the session — a Project's scope, a data cutoff — derives that server-side from the token the worker
+  injected, never from an argument the guest chose; a general method would move that decision inside the sandbox.
 - **The store is not agent-reachable.** The service holding the session's documents is worker-only, so no hatch method
   reaches it. A guest-facing store API, were one ever wanted, would have to be scoped and size-capped by design rather
   than being the raw document rpcs put on the allowlist.
@@ -162,8 +162,8 @@ The working-document linter ships beside it, so the agent can check its own outp
 ### The hatch is the capability boundary
 
 The guest's one exit is a gRPC server on a Unix socket inside the sandbox. It admits exactly the methods on a generated
-allowlist and answers everything else `PERMISSION_DENIED`; which methods those are is decided by a file option on the
-`.proto` and generated from it, so the allowlist is never authored
+allowlist and answers everything else `PERMISSION_DENIED`; which methods those are is decided by an option on each rpc's
+declaration in the `.proto` and generated from it, so the allowlist is never authored
 ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 
 The worker registers one forwarding servicer per exposed service. Each injects the per-session token as request metadata

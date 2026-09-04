@@ -193,8 +193,8 @@ this surface.
 
 - **The sandbox agent reaches these rpcs through a different gate than every other caller.** IAM is granted per
   deployment, so any invoker — the web application's backend included — can call all twelve rpcs. The agent instead
-  reaches whatever the hatch's method allowlist covers, and that is decided per proto *file* by the `agent_exposed`
-  option ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): a marked file's whole service surface, or nothing.
+  reaches whatever the hatch's method allowlist covers, and that is decided per *rpc* by the `agent_exposed` option on
+  its declaration ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): a marked rpc, or nothing.
 - **`gene_disease` is a startup dependency of every other interface.** Failure isolates per rpc, but startup is shared:
   an interface that cannot build its backend takes the process down. `GeneDisease.DescribeGene` loads four reference
   tables before it serves, so a bucket it cannot read keeps the whole image down — which is the intended behaviour, not
@@ -975,9 +975,9 @@ material, three cases are distinguished by what a caller does with it.
   [`proto.md`](proto.md#generated-upstream-schemas). A `Struct` there would make every consumer re-derive a schema the
   source already publishes.
 
-An rpc becomes agent-callable by a file option on its proto, from which the hatch allowlist and forwarders are generated
-([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). That is why adding an rpc is not free: it costs a forwarder, an
-allowlist regeneration, a fixture table and a servicer method.
+An rpc becomes agent-callable by an option on its declaration, from which the hatch allowlist and forwarders are
+generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). That is why adding an rpc is not free: it costs a
+forwarder, an allowlist regeneration, a fixture table and a servicer method.
 
 ## Alternatives considered
 

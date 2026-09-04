@@ -89,9 +89,10 @@ The resolver is the exception to the per-interface env rule: the vars selecting 
 image-wide. A per-interface copy would be the same value written once per interface, with as many ways to set it
 inconsistently. Its fixture seed is one var per *image* for the same reason, each image seeding the bindings its own
 callers present; the shared factory is told which var the JSON came from, so it names that var when it rejects it.
-(`literature` is the one interface whose *reads* resolve no session: the corpus it serves is shared across analyses, not
-scoped to one. It resolves one where it enqueues a conversion, which costs money — see
-[`evidence-fulltext.md`](evidence-fulltext.md).)
+(`literature`'s rpcs split by caller: the eight the agent calls resolve a session for the data cutoff, and the one that
+enqueues a conversion also for attributing its cost — see [`evidence-fulltext.md`](evidence-fulltext.md) — while the
+three the browser calls, a paper's description, its content location and a quote's position, resolve none: the corpus is
+shared across analyses and nothing is gated per reader.)
 
 Nothing in the data plane handles SIGTERM, so the exit stack unwinds on a startup failure, not on a Cloud Run stop — do
 not register work there that has to run before the process dies until graceful drain exists.
@@ -223,20 +224,21 @@ Two consumers, different shapes — know which a service is for:
   channel carrying the worker SA's ID token; the token lives only in the worker, so the agent can never present a valid
   one. The agent-facing client is therefore the **generated gRPC stub** pointed at the hatch — typed, one call per rpc,
   **fail-loud** (a `grpc.RpcError` surfaces, never a silent empty result). Which rpcs it reaches at all is decided by
-  the `agent_exposed` option on the `.proto`, from which `regen` emits the hatch's allowlist
+  the `agent_exposed` option on each rpc in the `.proto`, from which `regen` emits the hatch's allowlist
   ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)); absent the option, nothing.
-- **The platform, service-to-service** — `auth` (called by every service to authorize a request), `store` (the sandbox
-  worker checkpoints `/workspace` to it) and the `Sheaf` interface (the workspace repository's storage protocol, served
-  by a data-plane deployment that [`sheaf-service.md`](sheaf-service.md) leaves to the deploy to name) are consumed this
-  way, never by the agent. The caller holds its own SA identity and presents its ID token: the generated stub over a
-  channel built with `themis.clients.id_token`, wrapped for auth by `themis.clients.auth`.
+- **The platform, service-to-service** — `auth` (called by a service to resolve a session where an rpc's answer depends
+  on it), `store` (the sandbox worker checkpoints `/workspace` to it) and the `Sheaf` interface (the workspace
+  repository's storage protocol, served by a data-plane deployment that [`sheaf-service.md`](sheaf-service.md) leaves to
+  the deploy to name) are consumed this way, never by the agent. The caller holds its own SA identity and presents its
+  ID token: the generated stub over a channel built with `themis.clients.id_token`, wrapped for auth by
+  `themis.clients.auth`.
 
 **Sandbox-reachability is an explicit wiring step, not a default.** An agent-facing service is reached *through the
-hatch*, so making it callable from the sandbox takes four things: the `agent_exposed` option on its `.proto`, a
-forwarder on the hatch, its generated stub shipped into the guest's rootfs, and, at deploy time, the worker job's SA
-holding `run.invoker` on it — internal services are IAM-gated rather than open. Platform services carry no option:
-`auth` sits behind the store, reached only service-to-service, never by the sandbox. Decide which kind a service is
-before the deploy PR.
+hatch*, so making it callable from the sandbox takes four things: the `agent_exposed` option on each rpc the agent may
+call, a forwarder on the hatch, its generated stub shipped into the guest's rootfs, and, at deploy time, the worker
+job's SA holding `run.invoker` on it — internal services are IAM-gated rather than open. Platform services carry no
+option: `auth` sits behind the store, reached only service-to-service, never by the sandbox. Decide which kind a service
+is before the deploy PR.
 
 Most analysis services are agent-facing; design their surface for the agent first.
 
@@ -258,10 +260,14 @@ For the near-universal case — resolving a request's session through auth — t
 
 ## Authorizing a request via `themis.clients.auth`
 
-Every data-plane service authorizes a request by resolving its session token to a Project + Analysis through the auth
-service. Don't rebuild it — `themis.clients.auth` layers this on the generated auth stub:
+An rpc resolves the caller's session token to its Project + Analysis through the auth service where its answer depends
+on the session — the Project's scope for project-bound data, a data cutoff for masking, the Analysis for attributing
+spend — and fails loud without one. An rpc whose answer depends on none of those does not ask for a session
+([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Don't rebuild the resolving —
+`themis.clients.auth` layers it on the generated auth stub:
 
-- **In the servicer** — resolve the session once, at the top of each method:
+- **In the servicer** — resolve the session once, at the top of each method that takes one. The store's document
+  operations are scoped by the Analysis, so every one of them does:
   ```python
   self._session_resolver = session_resolver(auth_url)   # or a fixture SessionResolver in tests
 

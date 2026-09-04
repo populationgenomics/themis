@@ -14,11 +14,13 @@ offending content briefly, and suggest a concrete remediation.
   data.
 - **Broken authentication / authorisation.** New endpoints, RPCs, or cloud functions that don't authenticate their
   caller, or authenticate but don't authorise (anyone-authenticated reading a resource that should be project-scoped).
-  Session/token handling mistakes. In the data plane specifically, every `themis/services/*` gRPC servicer method must
-  authorise its request by resolving the session (`require_session`) before touching scoped state — flag a method that
-  reads or writes per-session/per-analysis data without it. A method that genuinely needs no session or project is
-  usually not accessing scoped information (the check is self-reinforcing), so call out any exception explicitly rather
-  than assuming it.
+  Session/token handling mistakes. In the data plane specifically, a `themis/services/*` gRPC servicer method whose
+  answer depends on the session — project scope, a data cutoff, spend attribution — must resolve it (`require_session`)
+  before doing any of the caller's work and abort without one: flag such a method that does not, and flag a *new* method
+  that resolves a session and then discards the binding, a check that guards nothing. A gate already standing on an
+  evidence rpc that awaits its data cutoff is kept by design (`docs/design/sandbox-rpc-exposure.md`) and is not a
+  finding. A method whose answer depends on none of the three takes no session; for a new method, call out which kind it
+  is rather than assuming.
 - **Tenant / user / group isolation.** This is a multi-tenant system; per-user (and per-group) data isolation is
   load-bearing. Flag: endpoints that scope to "authenticated user" but don't further scope to "*this user's* resources"
   (e.g. a report-fetch endpoint that returns any report given a known ID); SQL/queries that cross tenant boundaries

@@ -37,9 +37,11 @@ or TypeScript — fails CI.
 `themis/services/<name>/`:
 
 - **`servicer.py`** — the `<Service>Servicer` subclass, one method per rpc over the generated messages; takes its
-  backend (the abstract port) and a `themis.clients.auth.session.SessionResolver` as constructor arguments. Authorize
-  inbound at the top of each method — `session = await session.require_session(context, self._session_resolver)` before
-  touching scoped state; it aborts `UNAUTHENTICATED`/`PERMISSION_DENIED` and never returns `None`.
+  backend (the abstract port) and a `themis.clients.auth.session.SessionResolver` as constructor arguments. Where an
+  rpc's answer depends on the session — the Project's scope, a data cutoff, spend attribution — resolve it at the top of
+  the method, `session = await session.require_session(context, self._session_resolver)`, before doing any of the
+  caller's work; it aborts `UNAUTHENTICATED`/`PERMISSION_DENIED` and never returns `None`. An rpc whose answer depends
+  on none of those takes no session ([`sandbox-rpc-exposure.md`](../design/sandbox-rpc-exposure.md)).
 - **`<port>.py`** — the backend port as an `abc.ABC`, and nothing else in the module: one port for the interface, its
   methods the rpcs ([`services.md`](../design/services.md) §"One port per interface").
 - **`fixture.py`** — the in-memory **fixture** backend for offline runs, with its seed vocabulary and parser

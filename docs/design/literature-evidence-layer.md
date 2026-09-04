@@ -81,12 +81,12 @@ a rendering resolves to the exact bytes it was made against for as long as the p
 - **No production on the serving path.** Nothing that serves a paper fetches or converts its text. The reason is
   [`evidence-fulltext.md`](evidence-fulltext.md)'s: the cheap production route takes seconds and the expensive one takes
   minutes, so a request that waited for either would be a timeout dressed as an answer.
-- **No entitlement, for now.** The store is shared and its reads are session-free: they carry no session binding and
-  nothing is gated per reader — only the enqueue behind `MaybeIngestPapers` resolves a session, because a conversion
-  spends model budget ([`evidence-fulltext.md`](evidence-fulltext.md)). Gating a read by the reader's institutional
-  access is a requirement this interface will have to grow, and it will need both a session binding on these requests
-  and a decision about what a reader who may not open a paper sees instead. Deferring it is what lets the Spike run
-  against public sources with no session plumbing at all.
+- **No entitlement, for now.** The store is shared and nothing is gated per reader. The agent's reads carry the session
+  for the data cutoff, and `MaybeIngestPapers` for attributing the conversion it enqueues, which spends model budget
+  ([`evidence-fulltext.md`](evidence-fulltext.md)); the browser's paper reads carry none
+  ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Gating a read by the reader's
+  institutional access is a requirement this interface will have to grow, and it will need a decision about what a
+  reader who may not open a paper sees instead.
 - **No external identifiers on the rpcs that serve a paper.** Resolution is its own step, so a request either names a
   paper we hold or does not.
 - **No search over the papers the store holds.** The discovery group reaches live indexes only. A search scoped to the
@@ -351,14 +351,15 @@ helper owns backoff.
 
 ### The agent's reach: typed calls through the hatch
 
-Exposure to the sandboxed agent is decided per proto file, and this file is not marked: its rpcs do not yet meet the
-condition [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) sets for one — most of them resolve no session at all,
-and `MaybeIngestPapers`, which resolves one, does so at its enqueue rather than at the door.
+Exposure to the sandboxed agent is decided per rpc ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): the agent's
+reach is the discovery searches, resolving identifiers to papers, starting and polling full-text production, reading a
+paper's markdown and validating a quote, and marking each asserts the condition that doc sets — bounded cost, and
+outbound requests that are destination-fixed and query-only — for that rpc. `DescribePaper`, `ResolveContent` and
+`Locate` serve the BFF alone and are not marked.
 
-The read surface is shaped for that agent regardless: the guest (the sandboxed process these calls would serve) has no
-network and no storage credentials, so once the file meets the condition, typed calls are its entire reach into the
-literature. That is also why the agent's read path is `GetMarkdown` rather than the store directly, even though
-`ResolveContent` already names the object:
+The read surface is shaped for that agent: the guest (the sandboxed process these calls serve) has no network and no
+storage credentials, so typed calls are its entire reach into the literature. That is also why the agent's read path is
+`GetMarkdown` rather than the store directly, even though `ResolveContent` already names the object:
 
 - the service owns canonical-rendering selection, the read budget, and readiness and provenance derivation; a raw object
   read would re-derive all three inside the guest, where they could drift;
@@ -367,8 +368,9 @@ literature. That is also why the agent's read path is `GetMarkdown` rather than 
 - the location `ResolveContent` returns is useless in the guest by construction — nothing in the sandbox can follow it.
 
 The BFF path is the complement: it takes a location and serves the bytes to the browser itself. `ResolveContent` and
-`Locate` are useful only there, and file-level exposure would carry both into the guest's catalog anyway — catalogued
-noise, and the Open question at the end.
+`Locate` are useful only there, and neither reaches the guest's catalog. Those reads take no session: the corpus is
+shared, nothing paid starts, and a curator opening a paper is not an evaluation subject
+([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Callers).
 
 Several channels in that reach do carry free text the agent composes: the keyword query, and the variant identifiers a
 search carries — a gene symbol, a coding or protein change, an entity id passed back from a listing. They are an
@@ -487,9 +489,6 @@ nothing.
 
 ## Open questions
 
-- **Exposure granularity to the guest.** Exposure is decided per proto file, so the guest's catalog would carry
-  `ResolveContent` and `Locate` — a storage location it cannot follow, and a UI reveal seam. Harmless noise; per-rpc
-  granularity would remove it, at the cost of a second place where exposure is decided.
 - **Surfacing retraction.** The manifest records a paper's retraction — flagged, never purged
   ([`litcache-manifest.md`](litcache-manifest.md)) — but nothing on this read surface reports it, so a retracted paper
   reads like any other and a run can cite it as live evidence. How the read surface and the citation directives carry
