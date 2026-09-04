@@ -1,12 +1,15 @@
 # Runbook: Claude API auth via Workload Identity Federation
 
-Four workloads call the Claude API and authenticate by **WIF** — no stored `ANTHROPIC_API_KEY` (see
+Five workloads call the Claude API and authenticate by **WIF** — no stored `ANTHROPIC_API_KEY` (see
 [`spike-infrastructure.md`](../design/spike-infrastructure.md) §4/§8):
 
 1. **GitHub Actions** — the `claude-code-action` PR review (`internal-review.yml`).
 1. **GCP Cloud Run** — the web app (`themis-web`), the Managed-Agents client.
 1. **GCP Cloud Run** — the convert worker (`themis-convert-worker`), the full-text PDF-OCR client; its own svac and
    rule, sharing the org and workspace.
+1. **GCP Cloud Run** — the cost exporter (`themis-cost-exporter`), the workspace-spend monitor
+   ([`../design/cost-monitoring.md`](../design/cost-monitoring.md)); the same exchange as workload 2 (Path B) under its
+   own service account and rule.
 1. **GitHub Actions, scheduled** — the doc-gardening agent (`internal-doc-garden.yml`); reuses workload 1's service
    account via a second federation rule (Path C), since a scheduled run's OIDC subject differs from a PR's.
 
@@ -25,8 +28,8 @@ not namespace its name. The Anthropic org spans the whole hosting institute (wid
 full **`cpg-themis-`** product prefix to be unambiguous org-wide (unlike GCP SA emails, where the `cpg-themis-dev`
 project already scopes the name):
 
-- Env-scoped workloads (the web app and the convert worker — dev and prod attribute usage and rate limits separately)
-  **encode the env**: `cpg-themis-dev-web`.
+- Env-scoped workloads (the web app, the convert worker, the cost exporter — dev and prod attribute usage and rate
+  limits separately) **encode the env**: `cpg-themis-dev-web`, `cpg-themis-dev-cost-exporter`.
 - Repo-scoped workloads (the PR review — one process regardless of deploy target) stay env-neutral:
   `cpg-themis-ci-review`.
 
@@ -59,9 +62,13 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | svac `cpg-themis-convert-worker` (Path B)                 | `svac_013a2rMRQihX3fzRKDnk7o2v`        |
 | rule `cpg-themis-convert-worker-rule` (Path B)            | `fdrl_01GQqwA9kP4Fve93ycq2q6kE`        |
 
+The cost exporter has no rows yet: its rule pins a GCP service account that the environment's first `up` mints, so
+registration follows the first deploy (Path B) and the issued `svac_…` / `fdrl_…` are recorded here then.
+
 These rows are the **dev** set. CI (the review and doc-garden) is repo-scoped and only ever runs against dev, so prod
-adds no ci-review counterpart — just its own `cpg-themis-prod` workspace, a `cpg-themis-prod-web` svac + rule, and a
-convert-worker svac + rule pinned to the prod worker's own service account.
+adds no ci-review counterpart — just its own `cpg-themis-prod` workspace, `cpg-themis-prod-web` and
+`cpg-themis-prod-cost-exporter` svacs + rules, and a convert-worker svac + rule pinned to the prod worker's own service
+account.
 
 ## Path A — GitHub Actions → Claude API
 
@@ -105,9 +112,20 @@ For the `claude-code-action` review in `internal-review.yml`.
            anthropic_workspace_id:       wrkspc_014YcYcGz7XBbARzLRHwvhZt
    ```
 
-## Path B — the web app → Claude API
+## Path B — GCP Cloud Run → Claude API
 
-For the web app (`themis-web`), the Managed-Agents control-plane client. Its identity is the web service's runtime SA,
+Three workloads travel this path, each running as its own Cloud Run runtime SA under its own Anthropic service account
+and federation rule: the web app, the convert worker and the cost exporter. Separate identities on both sides so
+disabling one GCP identity revokes only that workload, and Anthropic-side usage stays attributable per workload.
+
+Each rule pins the numeric unique ID of a GCP service account, so **a rule can only be registered against an account
+that already exists**. The web app's and the cost exporter's accounts are minted by the environment's first `up`, so
+their rules follow the first deploy; the convert worker's was hand-created and adopted, so its rule could be registered
+before the program declared the account (below).
+
+### The web app
+
+For `themis-web`, the Managed-Agents control-plane client. Its identity is the web service's runtime SA,
 `themis-web@cpg-themis-dev.iam.gserviceaccount.com` (provisioned by the `web` module); the Anthropic client lands when
 the BFF does.
 
@@ -119,8 +137,8 @@ the BFF does.
    pulumi stack output web_sa_unique_id   # or: gcloud iam service-accounts describe <email> --format='value(uniqueId)'
    ```
    For `cpg-themis-dev` this is currently `111207962341197569515` — a snapshot; the `pulumi stack output` above is the
-   source of truth (the literal can drift if the SA is recreated). On a fresh environment the SA does not exist until
-   the first `up`, so `themis:anthropicFederationRuleId` holds a placeholder until the rule below is registered —
+   source of truth (the literal can drift if the SA is recreated). On a fresh environment
+   `themis:anthropicFederationRuleId` holds a placeholder until the rule below is registered —
    [`fresh-environment.md`](fresh-environment.md) §3.
 1. **Federation rule** `cpg-themis-dev-web-rule` (`fdrl_01JXLFyrG8PnJ62qPFzTmp4P`) — match `sub` + `email` (Google's
    `sub` has no stable prefix; never use `subject_prefix`):
@@ -139,8 +157,8 @@ the BFF does.
      "token_lifetime_seconds": 600
    }
    ```
-   `sub` (the never-reused unique ID) survives a delete/recreate-with-same-email; `email` is the readable pin. The SA
-   must be user-managed (not the GCE default).
+   `sub` (the never-reissued unique ID) fails closed on a delete/recreate-with-same-email — the new account gets a new
+   ID and stops matching; `email` is the readable pin. The SA must be user-managed (not the GCE default).
 1. **Runtime** — the web app builds the Anthropic client with `WorkloadIdentityCredentials`, whose token provider
    fetches the Google ID token from the metadata server with `audience=https://api.anthropic.com&format=full`
    (`format=full` is required so the token carries the `email` claim). When the Anthropic client lands, the `web` Pulumi
@@ -149,7 +167,7 @@ the BFF does.
    `themis:anthropicWorkspaceId`) and sets them as Cloud Run env vars (`ANTHROPIC_FEDERATION_RULE_ID` etc.) — read
    identically by local and CI `pulumi up`. Ensure `ANTHROPIC_API_KEY` is unset (it outranks federation).
 
-## Path B — the convert worker → Claude API
+### The convert worker
 
 For the full-text convert worker (`themis-convert-worker`,
 [`../../infra/themis_infra/convert.py`](../../infra/themis_infra/convert.py)), which transcribes a paper's PDF when the
@@ -158,10 +176,10 @@ the org and workspace are shared. Its identity is the worker's runtime service a
 `themis-convert-worker@<project>.iam.gserviceaccount.com`.
 
 Both halves are registered (the two rows above), so for dev this describes what exists rather than steps to repeat; a
-new environment repeats Path B above against its own worker service account. The rule is the web app's shape: `sub` +
-`email` matched against that service account, targeting svac `cpg-themis-convert-worker`. The account is hand-created
-and adopted for exactly that reason — [`fresh-environment.md`](fresh-environment.md) § Adopting a service account
-created ahead of the program — since the rule needs its `email` and `unique_id` before the program declares it.
+new environment repeats the web app's steps above against its own worker service account. The rule is the web app's
+shape: `sub` + `email` matched against that service account, targeting svac `cpg-themis-convert-worker`. The account is
+hand-created and adopted for exactly that reason — [`fresh-environment.md`](fresh-environment.md) § Adopting a service
+account created ahead of the program — since the rule needs its `email` and `unique_id` before the program declares it.
 
 The stack carries the two ids as `themis:anthropicWorkerServiceAccountId` and `themis:anthropicWorkerFederationRuleId`,
 `Worker`-qualified siblings of the web app's unqualified pair; `convert.py` sets them, with the shared org and
@@ -170,7 +188,7 @@ workspace, as the container's four `ANTHROPIC_*` env vars.
 **Runtime.** The worker reads the four ids at startup, so a revision missing one fails its startup probe rather than a
 conversion, and builds an `anthropic.WorkloadIdentityCredentials` for each transcription — the Google identity token
 minted per exchange by `google.oauth2.id_token.fetch_id_token`, which reads the metadata identity endpoint with
-`format=full` as Path B above. Nothing is written to disk and nothing is refreshed on a timer.
+`format=full` as the web app above. Nothing is written to disk and nothing is refreshed on a timer.
 
 The worker needs no `ANTHROPIC_API_KEY` guard of its own: the Python SDK consults no credential environment variable
 when the client is constructed with one, so a stray key cannot reach it. The web app's TypeScript client gets the same
@@ -188,6 +206,41 @@ gcloud iam service-accounts describe themis-convert-worker@<project>.iam.gservic
 
 against the `sub` claim on the rule. They differ only if the account was replaced, which `protect` and
 `retain_on_delete` on the declaration exist to prevent.
+
+### The cost exporter
+
+For `themis-cost-exporter`, the workspace-spend monitor ([`../design/cost-monitoring.md`](../design/cost-monitoring.md)
+§Identity). Its identity is the exporter's runtime SA, `themis-cost-exporter@cpg-themis-dev.iam.gserviceaccount.com`
+(provisioned by the `cost` module). Everything below is an Anthropic-org-admin action, so it goes to that admin as one
+request.
+
+1. **Issuer**: already registered — the `gcp` issuer above covers every GCP surface.
+1. **Service account**: `cpg-themis-dev-cost-exporter`; add to the `cpg-themis-dev` workspace.
+1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`cost` module), so read it from the stack output
+   (or `gcloud`):
+   ```sh
+   pulumi stack output cost_exporter_sa_unique_id   # email: pulumi stack output cost_exporter_sa_email
+   ```
+1. **Federation rule** `cpg-themis-dev-cost-exporter-rule` — match `sub` + `email`, as the web rule does:
+   ```json
+   {
+     "match": {
+       "audience": "https://api.anthropic.com",
+       "claims": {
+         "sub": "<cost_exporter_sa_unique_id>",
+         "email": "themis-cost-exporter@cpg-themis-dev.iam.gserviceaccount.com"
+       }
+     },
+     "target": { "type": "service_account", "service_account_id": "<the svac from step 2>" },
+     "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
+     "oauth_scope": "workspace:developer",
+     "token_lifetime_seconds": 600
+   }
+   ```
+   `workspace:developer` because nothing narrower reaches Managed-Agents sessions — `workspace:inference` excludes them,
+   and there is no read-only workspace scope. Record the issued `svac_…` and `fdrl_…` in the ID table above.
+1. **Runtime** — the exporter fetches its Google ID token from the metadata server with
+   `audience=https://api.anthropic.com&format=full` (`format=full` carries the `email` claim), same as the web app.
 
 ## Path C — GitHub Actions (scheduled, `main` ref) → Claude API
 

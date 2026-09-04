@@ -18,6 +18,7 @@ from themis_infra import (
     baseline,
     clu,
     convert,
+    cost,
     deploy_iam,
     evidence,
     hello,
@@ -537,6 +538,12 @@ gcp.cloudrunv2.JobIamMember(
     member=pulumi.Output.concat('serviceAccount:', dispatcher_service.service_account_email),
 )
 
+# The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it.
+cost_exporter = cost.CostExporter(
+    project=project,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+
 # Developer-workflow storage, unattached to the data plane: the review screenshots a
 # rendered-surface PR ships with (docs/design/pr-screenshots.md).
 if enable_pr_screenshot_bucket:
@@ -607,3 +614,7 @@ pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
 pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)
 # The identity a conversion task's OIDC token names — the subject of the producer's actAs grant.
 pulumi.export('convert_invoker_sa_email', convert_invoker.service_account_email)
+# The exporter SA's email and never-reissued unique id — the two claims its Anthropic federation rule
+# matches (docs/runbooks/claude-api-wif.md, Path B).
+pulumi.export('cost_exporter_sa_email', cost_exporter.service_account_email)
+pulumi.export('cost_exporter_sa_unique_id', cost_exporter.service_account_unique_id)

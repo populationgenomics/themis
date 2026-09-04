@@ -49,8 +49,8 @@ class WebService(pulumi.ComponentResource):
             Anthropic WIF federation pins (the web app is the Managed-Agents
             client; see ../../docs/runbooks/claude-api-wif.md).
         service_account_unique_id: The runtime SA's numeric unique ID — the
-            stable `sub` claim the federation pins (never reused, so it survives
-            a delete/recreate of the same email).
+            stable `sub` claim the federation pins; never reissued, so a
+            recreated account with the same email does not match the rule.
         db_user: The web SA's Cloud SQL IAM DB-user login — `THEMIS_DB_USER`
             for the container, and the `${WEB_DB_USER}` the `analyses` and
             `session_context` write grants substitute.
