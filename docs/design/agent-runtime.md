@@ -3,15 +3,15 @@
 **Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
 [`spike-infrastructure.md`](spike-infrastructure.md) §8 owns the *infra* consequences (project, secrets, CI images,
 sandbox build, egress); this doc owns the *runtime* semantics. [`deployment.md`](deployment.md) governs confidential
-model config.
+model config. [`conversation-view.md`](conversation-view.md) reads a session's threads back for the curator.
 
 ## Why this exploration
 
 The Spike runs several agent concerns over one `(variant, condition)` case — evidence gather (deterministic and
 agentic), aggregation to ACMG-V4 cells, holistic reasoning, adversarial review — sharing tool calls against a curated
-registry, structured output (claims, gaps, verdicts), trace emission, and per-agent model selection. The runtime choice
-fixes where the agent loop runs, how multi-agent work is scheduled, how the seams between roles are typed, and what
-crosses the data boundary.
+registry, structured output (claims, gaps, verdicts), trace emission, and model selection. The runtime choice fixes
+where the agent loop runs, how multi-agent work is scheduled, how the seams between roles are typed, and what crosses
+the data boundary.
 
 ## What Anthropic runs vs. what we host
 
@@ -37,11 +37,11 @@ services tier's (above).
 
 Use **Managed Agents** as the runtime, with its **`multiagent` coordinator** as the model-driven orchestrator. A
 coordinator agent, given the case, decides per case how to gather, aggregate, reason, and review, delegating to
-sub-agent threads. Scheduling is the model's; we supply only the scenario specialization: the guiding prompt, tool
-surface and roster of sub-agents the coordinator may delegate to, configured on the runtime, and the working document's
-outline, carried by the kickoff the session opens with ([`analysis-scenarios.md`](analysis-scenarios.md)). This is
-PRODUCT §4 ("the orchestrator decides scheduling per case… the framework scaffolds evidence, not agent topology") and
-the Bitter-Lesson stance of §6 (dynamic, model-composed workflows; just enough fixed scaffold to guarantee evidence
+sub-agent threads that are copies of itself (§Topology). Scheduling is the model's; we supply only the scenario
+specialization: the guiding prompt and tool surface, configured on the runtime, and the working document's outline,
+carried by the kickoff the session opens with ([`analysis-scenarios.md`](analysis-scenarios.md)). This is PRODUCT §4
+("the orchestrator decides scheduling per case… the framework scaffolds evidence, not agent topology") and the
+Bitter-Lesson stance of §6 (dynamic, model-composed workflows; just enough fixed scaffold to guarantee evidence
 coverage, traceability, and eval).
 
 ### Why Managed Agents
@@ -70,34 +70,70 @@ dependency it adds is Anthropic's (beta) agent API.
   premature; eval-shaped rather than a production runtime (Inspect-AI is the likely tool for the eval exploration, not
   this).
 
-## Topology: a coordinator over specialized sub-agents
+## Topology: a coordinator delegating to copies of itself
 
-A coordinator agent holds the long-running session context and delegates work to sub-agents — each running in its own
-context-isolated thread with its own history, model, system prompt, and tools (they share the sandbox, filesystem, and
-vault credentials, but not context). It fans sub-agents out in parallel, incorporates each result as it returns, and
-steers the next round from what came back, so it keeps an overview of a long case without its own context window filling
-with every gatherer's raw output. Threads persist: the coordinator can follow up with a sub-agent it called earlier,
-which retains its prior turns. Limits: one level of delegation (a sub-agent's own roster is ignored), up to 20 roster
-agents, and up to 25 concurrent threads (it may spawn multiple copies of a roster agent). See Anthropic's
-[Multiagent sessions](https://platform.claude.com/docs/en/managed-agents/multi-agent) docs.
+A coordinator agent holds the long-running session context and delegates work to sub-agent threads — each a
+context-isolated thread with its own history, sharing the sandbox and filesystem but not context. It fans threads out in
+parallel, incorporates each result as it returns, and steers the next round from what came back, so it keeps an overview
+of a long case without its own context window filling with every gatherer's raw output. Threads persist: the coordinator
+can follow up with a thread it opened earlier, which retains its prior turns. The platform's limits: one level of
+delegation — a thread cannot delegate in turn — and at most 25 concurrent threads. See Anthropic's
+[Multiagent orchestration](https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration) docs.
 
-The roles map onto that coordinator and a thin roster of sub-agents it may delegate to — kept as light as eval allows,
-not a fixed pipeline and not one-agent-per-cell:
+### Every delegate is a copy of the coordinator
+
+The platform configures a coordinator with a **roster**: the list of agent definitions it may delegate to, each an Agent
+object in the platform's vocabulary — a model, a system prompt, tools and skills. A roster entry may name another
+definition, or it may name the coordinator itself, in which case a delegation opens a thread running the coordinator's
+own definition. A Themis scenario's roster names only the coordinator itself. A delegate therefore runs the scenario's
+whole definition — the same guiding prompt, carried as the skill attached to the agent, the same tool surface and the
+same model — from a fresh context, and the coordinator's brief is all that makes one thread a literature sweep and
+another a review: prose saying what to do, what the coordinator already holds, and what to report back. The brief's
+shape is part of the guiding prompt and versions with it; its content is the run's.
+
+The reason is what a delegate needs. Every role here reads evidence — a sweep fetches and quotes papers, a reviewer
+re-reads what the draft cites — and reading evidence takes the scenario's tool surface (the sandbox and the services
+reached from it) and the guiding prompt that says how to use it. A roster entry naming another definition carries none
+of the coordinator's: its tools, skill and model would be declared a second time on that definition and kept in step
+with the coordinator's, and what that buys is a narrower tool surface or a cheaper model for one role. The decision
+flips on either of two conditions: a platform on which a named entry inherits the coordinator's definition, or a role
+that eval shows wanting a narrower surface or a cheaper model. Either way the change is one of configuration; the
+threads and their briefs stay as they are.
+
+What follows:
+
+- **No per-role scoping.** Every thread runs the coordinator's model with the whole tool surface; what a thread may do
+  is bounded by its brief, which is prose, not by configuration.
+- **A delegate does one whole job.** The platform allows one level of delegation, so a copy cannot fan out in turn: a
+  job handed to a copy runs whole in its thread — a case analysis's candidate variant, classified in a copy, gets its
+  literature sweep there rather than from a further copy.
+- **Threads are told apart by their briefs.** Every thread reports the coordinator's own agent name in the session's
+  event stream, so the name distinguishes nothing; the workbench shows a thread by its brief
+  ([`conversation-view.md`](conversation-view.md)).
+
+### The roles
+
+The roles map onto the coordinator and the copies it briefs — kept as light as eval allows, not a fixed pipeline and not
+one-agent-per-cell:
 
 - **Deterministic gather** (gnomAD AF, ClinVar structured fields, predictor scores) is **not** an agent — it is baseline
   annotations precomputed upstream and/or tool calls the coordinator makes; it surfaces through the tool/context
   surface.
-- **Agentic gatherers** (ClinVar free text, literature, gene–disease validity) are sub-agents with focused tool subsets,
-  delegated to as the coordinator sees fit.
+- **Agentic gather** (ClinVar free text, literature, gene–disease validity) is the coordinator's own work or a copy's,
+  as it sees fit. The literature sweep is the standing delegation: its raw material is what would fill the coordinator's
+  context.
 - **Aggregation** to ACMG-V4 cells is deterministic or agentic per [`aggregator.md`](aggregator.md); either way the
-  reasoner operates on claims and cell tags, not on the rolled-up score (PRODUCT §6).
-- **Reasoner** and **reviewer** are sub-agents. The reviewer evaluates the produced artifact from a **fresh context** —
-  adversarial review needs a separate context to beat self-review (PRODUCT §6, §11), which the sub-agent-thread model
-  gives directly.
+  reasoning operates on claims and cell tags, not on the rolled-up score (PRODUCT §6).
+- **Reasoning and the working document** are the coordinator's. It holds the whole case, and judgement does not
+  transfer: a copy's report is a claim the coordinator checks against what it gathered, never a conclusion it adopts.
+- **Review** is a copy with a **fresh context**, briefed once the draft exists to read it against the evidence and
+  report where they diverge — not to redo the work. Adversarial review needs a separate context to beat self-review
+  (PRODUCT §6, §11), which a copy gives directly; the coordinator folds the findings into the draft. The platform's
+  advisor — a model the primary thread consults mid-turn, handed a prompt the platform composes and holding no tools —
+  is not a fit: a reviewer that cannot re-read the evidence re-reads only the prose.
 
-Each roster sub-agent is its own versioned Agent, so per-role tool-scoping and per-role model selection fall out for
-free. How much the coordinator decomposes versus working in fewer, broader agents is the scaffold-vs-autonomy dial
-(PRODUCT §11) — set by eval, widened as the model proves it can own more.
+How much the coordinator decomposes versus working in fewer, broader threads is the scaffold-vs-autonomy dial (PRODUCT
+§11) — set by eval, widened as the model proves it can own more.
 
 ## Structured output: typed calls into our services
 
@@ -115,10 +151,10 @@ custom-tool round-trip. The **working document** (PRODUCT §7) is the durable ar
 
 ## Untrusted gathered content
 
-Gathered ClinVar free text and literature are **untrusted content** (PRODUCT §9): the coordinator and its gatherers read
-third-party text that can carry instructions injected to steer the model's tool use or its `record_*` output. The
-runtime treats that text as data, not instructions; it adds no separate instruction/data filter and relies on two
-properties the rest of the design already buys:
+Gathered ClinVar free text and literature are **untrusted content** (PRODUCT §9): the coordinator, and any copy it
+briefs to gather, read third-party text that can carry instructions injected to steer the model's tool use or its
+`record_*` output. The runtime treats that text as data, not instructions; it adds no separate instruction/data filter
+and relies on two properties the rest of the design already buys:
 
 - **Typed tool surface** — tools take constrained arguments (enums where the domain is finite, per PRODUCT §9,
   [`tool-surface.md`](tool-surface.md)), so an injected instruction cannot widen what a tool reads or what
@@ -145,13 +181,13 @@ They cover different halves of what a run did, and neither can supply the other'
   which snapshot of the data.
 - **The session client** reads Anthropic's event stream, which is the only place that knows what the *agent* did — its
   thinking, the calls it chose to make, and the tokens each turn cost — and projects that stream into the trace
-  vocabulary. It reads the per-thread streams as well as the primary one: the coordinator fans out across threads, so a
-  client consuming only the primary stream would record none of a sub-agent's activity.
+  vocabulary. It reads the per-thread streams as well as the primary one: the coordinator fans out across threads, and a
+  sub-agent's narration and thinking never reach the primary stream.
 
-One limit of the second feeder is worth naming, because it bounds what per-agent cost reporting can ever show. Token and
-cache usage arrives on a span that carries no thread id — neither when the stream is read at session scope nor at thread
-scope — so per-thread cost cannot be summed from spans; it comes from the thread listing's own aggregated usage instead,
-at whatever granularity that listing offers.
+One limit of the second feeder bounds what per-thread cost reporting can ever show. Token and cache usage arrives on a
+span that carries no thread id — neither when the stream is read at session scope nor at thread scope — so per-thread
+cost cannot be summed from spans; it comes from the thread listing's own aggregated usage instead, at whatever
+granularity that listing offers.
 
 The mapping into the trace schema:
 
@@ -163,11 +199,10 @@ The mapping into the trace schema:
 
 ## Model selection
 
-The per-agent model id lives on the Agent object and is pushed at deploy time via `ant` from gcpkms-encrypted stack
-config — it is secret-class confidential config (*Confidential config*, [`deployment.md`](deployment.md)): generic
-statements are public, the concrete id and per-agent assignment are not. Because each roster sub-agent is its own Agent,
-per-role selection (a frontier model for the reasoner; a faster model where tool-use quality allows for cheap lookups)
-is a deploy-time choice, not a runtime branch.
+The model id lives on the Agent object and is pushed at deploy time via `ant` from gcpkms-encrypted stack config — it is
+secret-class confidential config (*Confidential config*, [`deployment.md`](deployment.md)): generic statements are
+public, the concrete id is not. Every thread of a session runs it, the coordinator's and its copies' alike (§Topology),
+so the choice is per scenario, not per role.
 
 ## Configuration and lifecycle
 
@@ -182,9 +217,10 @@ cleanup, `user.interrupt` for cancellation, and handling for a stuck sub-agent t
 
 ## Open questions
 
-- **Per-role model defaults** — a small benchmark settles which roles need a frontier model versus a faster one.
+- **A role of its own** — whether any delegated job meets §Topology's condition for a named roster entry; per-thread
+  usage (§Trace integration) is the evidence and eval the arbiter.
 - **Aggregator shape** — deterministic vs. agentic vs. hybrid is owned by [`aggregator.md`](aggregator.md).
-- **Coordinator decomposition** — how far the coordinator should fan out versus work in fewer agents (the §11
+- **Coordinator decomposition** — how far the coordinator should fan out versus work in fewer threads (the §11
   scaffold-vs-autonomy dial); resolve via eval.
 - **Caching cadence** — what a session's automatic caching covers across a run (tool registry, ACMG-V4 framework text,
   resolved-condition context) and whether explicit cache hints are warranted.

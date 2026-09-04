@@ -4,8 +4,8 @@
 [`workbench-navigation.md`](workbench-navigation.md) (the pages that render these); [`proto.md`](proto.md) (schema +
 serialization); [`frontend-framework.md`](frontend-framework.md) (the BFF that renders the kickoff and persists the
 inputs); [`migrations.md`](migrations.md) (the deploy ordering `0008` is destructive against, and the condition that
-allows it); [`agent-runtime.md`](agent-runtime.md) (the rest of what a scenario specialises — guiding prompt and what
-the run can reach); [`conversation-view.md`](conversation-view.md) (where the kickoff turn is read back).
+allows it); [`agent-runtime.md`](agent-runtime.md) (the rest of what a scenario specialises — the guiding prompt and the
+tool surface); [`conversation-view.md`](conversation-view.md) (where the kickoff turn is read back).
 
 ## Overview
 
@@ -42,12 +42,9 @@ is the web tier's backend-for-frontend, which serves that form and creates the a
 ### A scenario is a template; creating an Analysis fills it in
 
 A **scenario** is the platform's unit of specialization ([`PRODUCT.md`](../PRODUCT.md) §4): a named kind of analysis,
-specialised on three axes — the guiding prompt, the working document's outline, and what the run can reach. The reach
-has two parts, the run's tool surface and the roster of sub-agents the coordinator may delegate to;
-[`agent-runtime.md`](agent-runtime.md) names the two separately, as the runtime configures them separately, which is why
-its count of what we supply comes to four. The axes have two carriers. The bundle the runtime is configured with carries
-the guiding prompt, the tool surface and the roster; the kickoff carries the outline (§"The kickoff text is rendered,
-not stored").
+specialised on three axes — the guiding prompt, the working document's outline, and the tool surface the run can reach.
+The axes have two carriers. The bundle the runtime is configured with carries the guiding prompt and the tool surface
+([`agent-runtime.md`](agent-runtime.md)); the kickoff carries the outline (§"The kickoff text is rendered, not stored").
 
 What all of those leave open is what a curator supplies for one run, and that is what this doc owns: a scenario is also
 a **template**, a fixed set of fields it asks for. The template is not another specialization axis. The axes above say
