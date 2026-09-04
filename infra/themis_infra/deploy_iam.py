@@ -32,6 +32,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',
     'roles/logging.configWriter',  # retention on the _Default log bucket (baseline.py) is a buckets.create/update
+    'roles/monitoring.editor',  # the workspace-spend monitor's Monitoring resources (cost.py)
     'roles/run.admin',
     'roles/secretmanager.admin',
     'roles/serviceusage.serviceUsageAdmin',
