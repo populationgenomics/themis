@@ -11,6 +11,7 @@ from themis import sheaf
 from themis.rpc import auth_pb2
 from themis.services.sheaf import __main__ as main_mod
 from themis.services.sheaf import servicer as servicer_mod
+from themis.sheaf.backends import gcs
 
 _LIMIT_ENV = {
     'THEMIS_SHEAF_MAX_PUBLISH_BYTES': '1048576',
@@ -109,3 +110,12 @@ def test_a_limit_that_is_not_a_positive_integer_is_refused(monkeypatch: pytest.M
     monkeypatch.setenv('THEMIS_SHEAF_MAX_REFS', bad)
     with pytest.raises(SystemExit, match='THEMIS_SHEAF_MAX_REFS'):
         main_mod.build_limits()
+
+
+def test_gcs_backend_keys_repositories_under_the_workspaces_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'gcs')
+    monkeypatch.setenv('THEMIS_WORKSPACE_BUCKET', 'a-bucket')
+    monkeypatch.setenv('STORAGE_EMULATOR_HOST', 'http://127.0.0.1:1')  # a client that never authenticates
+    backend = main_mod.build_backend()
+    assert isinstance(backend, gcs.GcsBackend)
+    assert backend.prefix == main_mod.WORKSPACES_PREFIX == 'workspaces'

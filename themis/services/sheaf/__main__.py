@@ -4,7 +4,8 @@ Every selector is required, with no silent default. ``THEMIS_AUTHORIZER_BACKEND`
 authorizer: ``http`` resolves each request's session through the auth service at
 ``THEMIS_AUTH_URL``; ``fixture`` resolves against a map seeded from ``THEMIS_SHEAF_FIXTURE_CONTEXTS``
 (JSON bearer -> binding). ``THEMIS_SHEAF_BACKEND`` picks the store: ``gcs`` over the bucket
-``THEMIS_WORKSPACE_BUCKET`` names, or ``local`` over the directory ``THEMIS_SHEAF_LOCAL_ROOT`` names.
+``THEMIS_WORKSPACE_BUCKET`` names, every repository under its ``workspaces/`` prefix, or ``local`` over the
+directory ``THEMIS_SHEAF_LOCAL_ROOT`` names.
 The three ceilings — ``THEMIS_SHEAF_MAX_PUBLISH_BYTES``, ``THEMIS_SHEAF_MAX_REFS``,
 ``THEMIS_SHEAF_MAX_DOCUMENT_BYTES`` — are positive integers. ``PORT`` is the Cloud Run convention;
 a ``grpc.health.v1`` health service reports SERVING alongside.
@@ -25,6 +26,9 @@ from themis.services.sheaf import servicer as servicer_mod
 
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_SHEAF_FIXTURE_CONTEXTS'
 _BACKEND_VAR = 'THEMIS_SHEAF_BACKEND'
+# The bucket's key layout: repositories live apart from anything else the bucket holds, so a prefix
+# condition can scope an identity to them.
+WORKSPACES_PREFIX = 'workspaces'
 _LIMIT_VARS = {
     'max_publish_bytes': 'THEMIS_SHEAF_MAX_PUBLISH_BYTES',
     'max_refs': 'THEMIS_SHEAF_MAX_REFS',
@@ -70,7 +74,7 @@ def _gcs_backend_from_env() -> sheaf.Backend:
     from themis.sheaf.backends import gcs  # noqa: PLC0415
 
     bucket = _require('THEMIS_WORKSPACE_BUCKET')
-    return gcs.GcsBackend(storage.Client().bucket(bucket))
+    return gcs.GcsBackend(storage.Client().bucket(bucket), prefix=WORKSPACES_PREFIX)
 
 
 def build_limits() -> servicer_mod.Limits:
