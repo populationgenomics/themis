@@ -68,7 +68,7 @@ gcloud iam service-accounts create themis-deploy --project="${PROJECT}" \
 gcloud iam service-accounts create themis-preview --project="${PROJECT}" \
   --display-name='Themis Pulumi preview (read-only; pull requests)' 2>/dev/null || true
 
-# The deploy SA's other build-time roles are program-managed (deploy_iam.py);
+# The deploy SA's other build-time roles are program-managed (themis_infra/grants.py, DeployAccountBuilder);
 # these two can't be: storage.admin reads its own state, projectIamAdmin grants the rest.
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${DEPLOY_SA}" --role=roles/resourcemanager.projectIamAdmin --condition=None >/dev/null

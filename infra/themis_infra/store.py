@@ -14,7 +14,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import storage
+from themis_infra import grants, storage
 
 
 class StoreService(pulumi.ComponentResource):
@@ -92,14 +92,16 @@ class StoreService(pulumi.ComponentResource):
         )
         self.workspace_bucket = workspace.name
 
-        # Read/write on both buckets; the store derives every key server-side, so
-        # object-admin scoped to these buckets is the whole credential (§7).
+        # The store derives every key server-side, so read/write scoped to these buckets is the whole
+        # credential (§7).
         for label, bucket in (('working-documents', working_documents), ('workspace', workspace)):
-            gcp.storage.BucketIAMMember(
-                f'themis-store-{label}-object-admin',
+            grants.BucketObjectReadWriter(
+                'themis-store',
+                member=member,
                 bucket=bucket.name,
                 role='roles/storage.objectAdmin',
-                member=member,
+                target=label,
+                prior=grants.Prior(f'themis-store-{label}-object-admin', parent=self),
                 opts=child,
             )
 

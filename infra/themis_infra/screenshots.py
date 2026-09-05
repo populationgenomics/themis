@@ -12,9 +12,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-# Exactly `storage.objects.get`. `roles/storage.objectViewer` would also carry
-# `storage.objects.list`, which makes a bucket publicly enumerable.
-_PUBLIC_READ_ROLE = 'roles/storage.legacyObjectReader'
+from themis_infra import grants
 
 
 def pr_screenshot_bucket(
@@ -52,20 +50,21 @@ def pr_screenshot_bucket(
         autoclass=gcp.storage.BucketAutoclassArgs(enabled=True, terminal_storage_class='ARCHIVE'),
         opts=opts,
     )
-    gcp.storage.BucketIAMMember(
-        'themis-pr-screenshots-public-read',
+    grants.PublicObjectReader(
         bucket=bucket.name,
-        role=_PUBLIC_READ_ROLE,
-        member='allUsers',
+        target='pr-screenshots',
+        prior=grants.Prior('themis-pr-screenshots-public-read'),
         opts=opts,
     )
-    # objectAdmin, not objectCreator: whoever can publish to the project's one public
-    # bucket must be able to retract from it without escalating to a project owner.
-    gcp.storage.BucketIAMMember(
-        'themis-pr-screenshots-team-admin',
+    # Read-write, not create-only: whoever can publish to the project's one public bucket must be able
+    # to retract from it without escalating to a project owner.
+    grants.BucketObjectReadWriter(
+        'themis-access-group',
+        member=f'group:{team_group}',
         bucket=bucket.name,
         role='roles/storage.objectAdmin',
-        member=f'group:{team_group}',
+        target='pr-screenshots',
+        prior=grants.Prior('themis-pr-screenshots-team-admin'),
         opts=opts,
     )
     return bucket

@@ -2,9 +2,8 @@
 
 Provisions the public web surface for one environment — a Cloud Run service, the
 external Application Load Balancer that fronts it (serverless NEG, Google-managed
-TLS certificate, HTTP→HTTPS redirect), and IAP enforcing the access group on the
-backend. Identical across environments; all per-environment values arrive as
-constructor arguments.
+TLS certificate, HTTP→HTTPS redirect), and IAP on the backend. Identical across
+environments; all per-environment values arrive as constructor arguments.
 
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
@@ -14,17 +13,12 @@ resolves, the managed certificate stays PROVISIONING.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import NamedTuple
 
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import sql
-
-# Coarse "may reach the app" gate granted to the access group on the IAP
-# resource — not an application role (those live in the app).
-_IAP_ACCESSOR_ROLE = 'roles/iap.httpsResourceAccessor'
+from themis_infra import grants, sql
 
 
 class _LoadBalancer(NamedTuple):
@@ -32,6 +26,7 @@ class _LoadBalancer(NamedTuple):
 
     ip_address: pulumi.Output[str]
     backend_service_id: pulumi.Output[int]
+    backend_service_name: pulumi.Output[str]
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -60,6 +55,9 @@ class WebService(pulumi.ComponentResource):
             backend fronts this service, so it cannot be a live input here; it is
             exported and fed back as config
             (`docs/runbooks/fresh-environment.md` §3).
+        backend_service_name: The IAP backend service's name — the resource an
+            `IapAccessor` grant is over. Who may reach the app is decided in the
+            program, not here.
     """
 
     def __init__(
@@ -69,8 +67,6 @@ class WebService(pulumi.ComponentResource):
         region: str,
         domain: str,
         image: pulumi.Input[str],
-        iap_members: Mapping[str, pulumi.Input[str]],
-        iap_member_keeping_the_unsuffixed_name: str,
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
@@ -107,16 +103,12 @@ class WebService(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         self.service_account_unique_id = service_account.unique_id
 
-        # Sign V4 read URLs for corpus content with no stored key: the SA signs blobs as itself
-        # through the IAM Credentials API (getSignedUrl's keyless path), which needs
-        # serviceAccountTokenCreator on its own identity. The BFF 302s the paper-content routes to
-        # these URLs (document-pane.md §Backend seam); the object-viewer grant (in __main__) is what
-        # the signed URL then reads as.
-        gcp.serviceaccount.IAMMember(
-            'themis-web-sign-blob',
-            service_account_id=service_account.name,
-            role='roles/iam.serviceAccountTokenCreator',
-            member=pulumi.Output.concat('serviceAccount:', service_account.email),
+        # The BFF 302s the paper-content routes to V4 read URLs (document-pane.md §Backend seam); the signed
+        # URL reads as the SA's bucket grants.
+        grants.SelfSigner(
+            'themis-web',
+            account=service_account,
+            prior=grants.Prior('themis-web-sign-blob', parent=self),
             opts=child,
         )
 
@@ -129,10 +121,11 @@ class WebService(pulumi.ComponentResource):
             service_account_email=service_account.email,
             opts=child,
         )
-        sql.grant_cloudsql_connect(
+        grants.DatabaseConnector(
             'themis-web',
+            member=grants.service_account(service_account.email),
             project=project,
-            service_account_email=service_account.email,
+            prior=grants.Prior('themis-web', parent=self),
             opts=child,
         )
         self.db_user = db_user.name
@@ -208,13 +201,14 @@ class WebService(pulumi.ComponentResource):
         # With ingress locked to the LB (above), a request that reaches the
         # service must still authenticate as this agent, closing the
         # unauthenticated internal-VPC path that ingress alone leaves open.
-        gcp.cloudrunv2.ServiceIamMember(
-            'themis-invoker',
+        grants.ServiceInvoker(
+            'iap-service-agent',
+            member=iap_agent.member,
+            service=self._service.name,
             project=project,
             location=region,
-            name=self._service.name,
-            role='roles/run.invoker',
-            member=iap_agent.member,
+            target='web',
+            prior=grants.Prior('themis-invoker', parent=self),
             opts=child,
         )
 
@@ -223,12 +217,11 @@ class WebService(pulumi.ComponentResource):
             project=project,
             region=region,
             domain=domain,
-            iap_members=iap_members,
-            iap_member_keeping_the_unsuffixed_name=iap_member_keeping_the_unsuffixed_name,
             child=child,
         )
         self.ip_address = load_balancer.ip_address
         self.backend_service_id = load_balancer.backend_service_id
+        self.backend_service_name = load_balancer.backend_service_name
         self.url = pulumi.Output.format('https://{0}', domain)
         self.register_outputs(
             {
@@ -238,6 +231,7 @@ class WebService(pulumi.ComponentResource):
                 'service_account_unique_id': self.service_account_unique_id,
                 'db_user': self.db_user,
                 'backend_service_id': self.backend_service_id,
+                'backend_service_name': self.backend_service_name,
             }
         )
 
@@ -248,14 +242,12 @@ class WebService(pulumi.ComponentResource):
         project: str,
         region: str,
         domain: str,
-        iap_members: Mapping[str, pulumi.Input[str]],
-        iap_member_keeping_the_unsuffixed_name: str,
         child: pulumi.ResourceOptions,
     ) -> _LoadBalancer:
         """Build the external HTTPS load balancer chain.
 
         Returns:
-            The reserved global IP and the IAP backend service's generated id.
+            The reserved global IP and the IAP backend service's generated id and name.
         """
         # The environment's DNS A record (added out of band) points at this IP,
         # so it must stay constant across deploys. `protect` makes Pulumi refuse
@@ -291,30 +283,6 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
 
-        # Who may reach the app: the access group in a browser, and the automation account anything
-        # programmatic impersonates. One binding each — the resource is per-member, so a shared one
-        # would fight over the same policy.
-        # One binding per member: the resource is per-(role, member), so a shared one would fight over
-        # the same policy. The named member's binding predates the others and keeps its unsuffixed
-        # resource name — suffixing it would read as a rename but destroy and recreate, and an
-        # IamMember destroy strips its (role, member) pair outright, dropping that member's access
-        # mid-update.
-        if iap_member_keeping_the_unsuffixed_name not in iap_members:
-            raise ValueError(
-                f'{iap_member_keeping_the_unsuffixed_name!r} names no IAP member; '
-                f'renaming one silently replaces its binding. Members: {sorted(iap_members)}'
-            )
-        for label, member in iap_members.items():
-            suffix = '' if label == iap_member_keeping_the_unsuffixed_name else f'-{label}'
-            gcp.iap.WebBackendServiceIamMember(
-                f'{name}-iap-access{suffix}',
-                project=project,
-                web_backend_service=backend.name,
-                role=_IAP_ACCESSOR_ROLE,
-                member=member,
-                opts=child,
-            )
-
         certificate = gcp.compute.ManagedSslCertificate(
             f'{name}-cert',
             project=project,
@@ -340,7 +308,11 @@ class WebService(pulumi.ComponentResource):
         )
 
         _build_http_redirect(name, project, address, child)
-        return _LoadBalancer(ip_address=address.address, backend_service_id=backend.generated_id)
+        return _LoadBalancer(
+            ip_address=address.address,
+            backend_service_id=backend.generated_id,
+            backend_service_name=backend.name,
+        )
 
 
 def _build_http_redirect(

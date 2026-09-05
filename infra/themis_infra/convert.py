@@ -23,6 +23,8 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+from themis_infra import grants
+
 # The maximum concurrent conversions the queue dispatches. The knob that matters: each dispatch runs a
 # conversion that may call a model API, so this caps in-flight model cost, not just load. Tune
 # against observed conversion volume and spend.
@@ -110,14 +112,16 @@ class ConvertWorker(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         self.service_account_unique_id = service_account.unique_id
 
-        # Read the manifest and seed PDF, write back the rendering and `.fetch_outcome` marker.
-        # objectUser, not objectViewer+objectCreator: the manifest commit replaces `manifest.pb`,
-        # and a GCS replace needs `objects.delete`, which objectCreator withholds.
-        gcp.storage.BucketIAMMember(
-            'themis-convert-worker-fulltext',
+        # Read the manifest and seed PDF, write back the rendering and `.fetch_outcome` marker. Read-write
+        # rather than read + create: the manifest commit replaces `manifest.pb`, and a GCS replace needs
+        # `objects.delete`, which objectCreator withholds.
+        grants.BucketObjectReadWriter(
+            'themis-convert-worker',
+            member=service_account.member,
             bucket=fulltext_bucket,
             role='roles/storage.objectUser',
-            member=service_account.member,
+            target='fulltext',
+            prior=grants.Prior('themis-convert-worker-fulltext', parent=self),
             opts=child,
         )
 
@@ -212,13 +216,14 @@ class ConversionInvoker(pulumi.ComponentResource):
         self.service_account_id = service_account.name
 
         # The task's OIDC identity must be authorized to invoke the require-auth worker.
-        gcp.cloudrunv2.ServiceIamMember(
-            'themis-convert-invoker-runs-worker',
+        grants.ServiceInvoker(
+            'themis-convert-invoker',
+            member=service_account.member,
+            service=worker_service_name,
             project=project,
             location=region,
-            name=worker_service_name,
-            role='roles/run.invoker',
-            member=service_account.member,
+            target='convert-worker',
+            prior=grants.Prior('themis-convert-invoker-runs-worker', parent=self),
             opts=child,
         )
 
@@ -235,17 +240,22 @@ class ConversionInvoker(pulumi.ComponentResource):
             service='cloudtasks.googleapis.com',
             opts=child,
         )
-        for slug, role in (
-            ('acts-as', 'roles/iam.serviceAccountUser'),
-            ('mints-token', 'roles/iam.serviceAccountTokenCreator'),
-        ):
-            gcp.serviceaccount.IAMMember(
-                f'themis-cloudtasks-{slug}-invoker',
-                service_account_id=self.service_account_id,
-                role=role,
-                member=tasks_agent.member,
-                opts=child,
-            )
+        grants.AccountUser(
+            'cloudtasks-service-agent',
+            member=tasks_agent.member,
+            account=self.service_account_id,
+            target='convert-invoker',
+            prior=grants.Prior('themis-cloudtasks-acts-as-invoker', parent=self),
+            opts=child,
+        )
+        grants.AccountImpersonator(
+            'cloudtasks-service-agent',
+            member=tasks_agent.member,
+            account=self.service_account_id,
+            target='convert-invoker',
+            prior=grants.Prior('themis-cloudtasks-mints-token-invoker', parent=self),
+            opts=child,
+        )
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,

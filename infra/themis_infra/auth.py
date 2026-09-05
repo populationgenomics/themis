@@ -13,7 +13,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import sql
+from themis_infra import grants, sql
 
 
 class AuthService(pulumi.ComponentResource):
@@ -60,10 +60,11 @@ class AuthService(pulumi.ComponentResource):
             service_account_email=service_account.email,
             opts=child,
         )
-        sql.grant_cloudsql_connect(
+        grants.DatabaseConnector(
             'themis-auth',
+            member=grants.service_account(service_account.email),
             project=project,
-            service_account_email=service_account.email,
+            prior=grants.Prior('themis-auth', parent=self),
             opts=child,
         )
         self.db_user = db_user.name

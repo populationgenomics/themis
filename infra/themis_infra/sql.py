@@ -2,7 +2,7 @@
 
 IAM database authentication only. The runtime SAs' read/write split is enforced
 by table GRANTs in the migrations, not here. `iam_db_user` (the login) and
-`grant_cloudsql_connect` (the project roles to reach the instance) are called from
+`grants.DatabaseConnector` (the project roles to reach the instance) are called from
 each service module, not this constructor — the instance can't depend on the
 services' SAs (they need its connection name), so attaching from here would cycle.
 See `docs/design/spike-infrastructure.md` §8.
@@ -26,12 +26,6 @@ _DATABASE_NAME = 'themis'
 # Cloud SQL IAM SA login names are the SA email without this domain suffix
 # (Postgres truncates the `.gserviceaccount.com` tail).
 _IAM_SA_EMAIL_SUFFIX = '.gserviceaccount.com'
-
-# Project-level roles each service SA needs over the connector: `client` opens the
-# connection (Admin-API ephemeral cert), `instanceUser` authenticates as its IAM DB
-# user. Neither has an instance-scoped IAM form — both granted at the project.
-_CLOUD_SQL_CLIENT_ROLE = 'roles/cloudsql.client'
-_CLOUD_SQL_INSTANCE_USER_ROLE = 'roles/cloudsql.instanceUser'
 
 
 class CloudSqlDatabase(pulumi.ComponentResource):
@@ -155,7 +149,7 @@ def iam_db_user(
     authenticates as (without it the SA has no DB principal). Its login name is the
     SA email with the `.gserviceaccount.com` suffix removed (the Postgres IAM SA
     convention). This does **not** grant the project roles a connection needs —
-    call `grant_cloudsql_connect` for that; a login and the roles to reach it are
+    that is `grants.DatabaseConnector`; a login and the roles to reach it are
     separate concerns (a user can exist before, or be reused across, grants).
     Table privileges come from the migrations, not here.
 
@@ -189,39 +183,3 @@ def iam_db_user(
         database_roles=database_roles,
         opts=opts,
     )
-
-
-def grant_cloudsql_connect(
-    name: str,
-    *,
-    project: str,
-    service_account_email: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> None:
-    """Grant a service account the project roles to reach the instance.
-
-    `cloudsql.client` opens the connection (Admin-API ephemeral cert),
-    `cloudsql.instanceUser` authenticates as the IAM DB user. Neither has an
-    instance-scoped IAM form, so both bind at the project. Independent of the DB
-    user itself (`iam_db_user`): the same SA needs both, but the login and these
-    connect roles are granted separately so either can vary — e.g. two SAs can
-    reach the instance without both owning a DB user.
-
-    Args:
-        name: Resource-name prefix (the consuming service's stack name + role).
-        project: The GCP project holding the IAM policy.
-        service_account_email: The SA to grant; the member is `serviceAccount:<email>`.
-        opts: Resource options (parent/dependency wiring from the caller).
-    """
-    member = pulumi.Output.concat('serviceAccount:', service_account_email)
-    for role_slug, role in (
-        ('cloudsql-client', _CLOUD_SQL_CLIENT_ROLE),
-        ('cloudsql-instance-user', _CLOUD_SQL_INSTANCE_USER_ROLE),
-    ):
-        gcp.projects.IAMMember(
-            f'{name}-{role_slug}',
-            project=project,
-            role=role,
-            member=member,
-            opts=opts,
-        )

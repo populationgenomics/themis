@@ -1,0 +1,11 @@
+%%{init: {"layout": "elk", "elk": {"mergeEdges": true, "nodePlacementStrategy": "NETWORK_SIMPLEX"}, "htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 320}}}%%
+flowchart LR
+    n0["Dataflow service agent"]
+    n1["themis-deploy"]
+    n2["themis-ingest"]
+    n3[("project")]
+    n4[("subnet themis-ingest")]
+    n0 -->|SubnetUser| n4
+    n1 -->|DeployAccountBuilder| n3
+    n2 -->|DataflowWorker| n3
+    n2 -->|SubnetUser| n4

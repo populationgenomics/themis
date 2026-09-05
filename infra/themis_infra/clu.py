@@ -19,7 +19,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import sql
+from themis_infra import grants, sql
 
 
 class AutomationUser(pulumi.ComponentResource):
@@ -56,14 +56,15 @@ class AutomationUser(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         self.member = service_account.member
 
-        # Token creator, not user: minting an ID token for a service audience is `generateIdToken`,
-        # and the impersonation is logged with its delegation chain, so a call is attributable to the
-        # person behind it rather than to the account.
-        gcp.serviceaccount.IAMMember(
-            'themis-clu-impersonation',
-            service_account_id=service_account.name,
-            role='roles/iam.serviceAccountTokenCreator',
+        # Impersonator, not user: minting an ID token for a service audience is `generateIdToken`, and
+        # the impersonation is logged with its delegation chain, so a call is attributable to the person
+        # behind it rather than to the account.
+        grants.AccountImpersonator(
+            'themis-clu-group',
             member=group_member,
+            account=service_account.name,
+            target='themis-clu',
+            prior=grants.Prior('themis-clu-impersonation', parent=self),
             opts=child,
         )
 
@@ -80,10 +81,11 @@ class AutomationUser(pulumi.ComponentResource):
             database_roles=[migrator_db_role],
             opts=child,
         )
-        sql.grant_cloudsql_connect(
+        grants.DatabaseConnector(
             'themis-clu',
+            member=self.member,
             project=project,
-            service_account_email=service_account.email,
+            prior=grants.Prior('themis-clu', parent=self),
             opts=child,
         )
         self.db_user = db_user.name

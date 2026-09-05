@@ -25,7 +25,8 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md). |
 | `themis_infra/sandbox.py`     | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret.                      |
 | `themis_infra/clu.py`         | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                                                 |
-| `themis_infra/deploy_iam.py`  | The CI deploy SA's build-time project roles (bootstrap keeps only the IAM/state root).                                                                                                    |
+| `themis_infra/grants.py`      | Every IAM grant, as a named capability: one component per ability, its docstring saying what the holder can do (`docs/design/deployment.md` § Grants are capabilities).                   |
+| `themis_infra/deploy_iam.py`  | The CI deploy SA's identity; its project roles are `grants.DeployAccountBuilder`.                                                                                                         |
 | `bootstrap/bootstrap.sh`      | One-time substrate setup (below). Run locally, never CI.                                                                                                                                  |
 
 Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
@@ -159,9 +160,11 @@ each secret against the new stack (`pulumi config set --secret themis:<key>`). `
 `themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
 copied one breaks loudly. Two are quiet instead, deploying clean onto a wrong outcome:
 `themis:enablePrScreenshotBucket`, because a copied `true` creates a world-readable bucket in an environment that has no
-review workflow to justify one; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another
-environment's service account, so the convert worker deploys healthy and fails only when it first tries to transcribe.
-No program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+review workflow to justify one; `themis:cluDerivesSessionTokens`, because a copied `true` lets whoever can impersonate
+`themis-clu` act as any live session in an environment whose sessions may be real; and
+`themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's service account, so the convert
+worker deploys healthy and fails only when it first tries to transcribe. No program change; the full sequence is
+[`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

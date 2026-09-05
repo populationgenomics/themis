@@ -3583,6 +3583,7 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pyyaml" },
 ]
 lint = [
     { name = "aiohttp" },
@@ -3720,6 +3721,8 @@ test = [
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto" },
+    { name = "pulumi" },
+    { name = "pulumi-gcp" },
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "pyyaml" },
@@ -3835,6 +3838,7 @@ hello = [
 infra = [
     { name = "pulumi" },
     { name = "pulumi-gcp" },
+    { name = "pyyaml" },
 ]
 lint = [
     { name = "aiohttp" },
@@ -3966,6 +3970,8 @@ test = [
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
+    { name = "pulumi" },
+    { name = "pulumi-gcp" },
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "pyyaml" },

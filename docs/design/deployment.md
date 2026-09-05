@@ -17,6 +17,7 @@ with this doc.
 | Deploy trigger     | Push `deployed/<env>`, or dispatch on `main`; merging deploys nothing (temporary — see below)                                      |
 | Deploy auth, CI    | GitHub Actions OIDC → Workload Identity Federation; no service-account keys                                                        |
 | Deploy auth, local | Personal `gcloud` ADC, IAM-gated                                                                                                   |
+| IAM grants         | Every binding is a child of a named capability component (`grants.py`); a test fails the suite on a loose one                      |
 | State backend      | Versioned, private GCS bucket (Pulumi DIY backend)                                                                                 |
 | Secrets encryption | `gcpkms` secrets provider (Cloud KMS key, IAM-gated)                                                                               |
 | Secret values      | OIDC/IAM-first: Anthropic API via WIF, Cloud SQL via IAM auth; only no-WIF-path credentials in Secret Manager                      |
@@ -116,6 +117,48 @@ no secrets.
   or gate preview behind manual approval).
 
 Local: `gcloud auth application-default login`; IAM grants to named individuals.
+
+## Grants are capabilities
+
+An IAM binding says which role a member holds on a resource; it does not say what that lets the member do. The program's
+readers need the second thing — `roles/cloudkms.signerVerifier` on the session-token key is "can act as any live session
+against every session-scoped service", and that is what a reviewer has to weigh. So the program never creates a binding
+directly. Each ability is a component in [`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py) whose
+docstring states what the holder can do as a result and how far that reaches, and whose children are exactly the
+bindings that constitute it. A call site names the holder and the resource; the meaning is stated once, on the class,
+and the program reads as a list of who holds which capability.
+
+The rule is enforced, not conventional: a test under [`infra/tests`](../../infra/tests) runs the program under Pulumi's
+mocks against the dev stack's config and fails on any IAM binding whose parent is not one of those components. A new
+grant therefore either fits an existing capability or adds one, and the review reads a new docstring, never an
+unexplained role. Where a capability widens a human's reach it is stack-gated: `themis-clu`, the account a person
+impersonates to drive a backend service by hand ([`hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)),
+derives session bearers only where `themis:cluDerivesSessionTokens` says so.
+
+The graphs below are generated from the program by the same capture the test uses (`themis_infra.grants_diagram` writes
+the sources and SVGs under `grants/`); a test fails when a source lags the program or a picture lags its source, naming
+the command that regenerates them. They are drawn from the dev stack's config with every opt-in switched on, so a
+stack-gated grant appears as if held. One graph of everything is a hairball, so there are three, each answering one
+question. A rectangle is a principal — an account, a group, or anyone; a double-edged box is a Cloud Run service or job;
+a cylinder is a resource. A solid edge is a capability, labelled with its class. A dotted edge is what makes reach
+followable across hops: which account a workload runs as, and which service an IAP backend fronts — anyone may call the
+dispatcher, the dispatcher may spawn the sandbox job, the job's account may call the store. One compression to keep in
+mind: the deploy account's single Platform edge stands for fourteen project roles — `run.admin` and
+`iam.serviceAccountUser` rewrite every service and run as every account, `secretmanager.admin` reads every secret,
+`cloudkms.admin` can grant it the session key, and bootstrap's `storage.admin` reaches every bucket — so every edge in
+all three graphs is within its reach, though none is drawn for it.
+
+**Calls** — who may call what.
+
+![Calls: who may call what](grants/calls.svg)
+
+**Data** — who may read or write which store, secret or key.
+
+![Data: who may read or write which store, secret or key](grants/data.svg)
+
+**Platform** — who may build or run on the project itself.
+
+![Platform: who may build or run on the project itself](grants/platform.svg)
 
 ## State
 

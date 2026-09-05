@@ -19,6 +19,9 @@ config:
   # Deliberately not iapAccessGroup: that gate admits clinical users of the web app, who have no
   # reason to reach the services underneath it.
   themis:cluGroup: themis-clu@populationgenomics.org.au
+  # Whether themis-clu may derive the bearer of any live session (docs/runbooks/hand-driving-a-service.md).
+  # Opt-in per stack; dev's sessions are synthetic.
+  themis:cluDerivesSessionTokens: true
   # The project's only public-read bucket, for PR review images. Opt-in per stack:
   # an environment that doesn't review code has no reason to expose one.
   themis:enablePrScreenshotBucket: true

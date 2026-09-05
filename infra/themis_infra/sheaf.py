@@ -15,6 +15,8 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+from themis_infra import grants
+
 # What a caller may publish in one call, and what a publish may leave behind. The document ceiling sits
 # under gRPC's default 4 MiB message limit, since `ReadRefDoc` returns the document in one message.
 _MAX_PUBLISH_BYTES = 256 * 1024 * 1024
@@ -64,11 +66,13 @@ class SheafService(pulumi.ComponentResource):
         )
         self.service_account_email = service_account.email
 
-        gcp.storage.BucketIAMMember(
-            'themis-sheaf-workspace-object-user',
+        grants.BucketObjectReadWriter(
+            'themis-sheaf',
+            member=grants.service_account(service_account.email),
             bucket=workspace_bucket,
             role='roles/storage.objectUser',
-            member=pulumi.Output.concat('serviceAccount:', service_account.email),
+            target='workspace',
+            prior=grants.Prior('themis-sheaf-workspace-object-user', parent=self),
             opts=child,
         )
 

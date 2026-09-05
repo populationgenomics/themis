@@ -252,11 +252,15 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
   - *Blast radius.* The proxy only ever receives its own session's derived bearer, never the signing key, so a
     compromised proxy is confined to its own Analysis. The concentrated trust is the signing key: a compromised
     dispatcher or BFF can forge a bearer for any live session, so those two are the credential's blast radius — guarded
-    like the env key, never reachable from the sandbox. Deterministic derivation (`HMAC(session_id)` under one org-wide
-    key) makes a signing-key compromise retroactive and total — every session's bearer, past and present, is forgeable —
-    where the wiring plan's random-per-session bearers survive a DB leak (only hashes are stored). The trade buys
-    statelessness (no per-session secret at rest, no runtime secret creation) against a single higher-value key; it is
-    defensible because KMS MAC material never leaves KMS, but it is a real shift, not pure upside.
+    like the env key, never reachable from the sandbox. A stack may add a third holder, the `themis-clu` automation
+    account, so a person can drive a session-scoped service by hand
+    ([`hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)); the grant is opt-in per stack
+    (`themis:cluDerivesSessionTokens`, on in dev), and every holder is a `grants.SessionBearerDeriver` in the Pulumi
+    program, so the blast radius is the list of its call sites. Deterministic derivation (`HMAC(session_id)` under one
+    org-wide key) makes a signing-key compromise retroactive and total — every session's bearer, past and present, is
+    forgeable — where the wiring plan's random-per-session bearers survive a DB leak (only hashes are stored). The trade
+    buys statelessness (no per-session secret at rest, no runtime secret creation) against a single higher-value key; it
+    is defensible because KMS MAC material never leaves KMS, but it is a real shift, not pure upside.
 - **Auth service — the sole session-token-table reader.** A tiny Cloud Run service: bearer in → `SessionContext` out,
   backed by a session-token-hash read on Cloud SQL (resolve-only). It is a **credential chokepoint**, not a reuse
   convenience — the wiring §5 auth *library* already gives reuse and a lockstep contract. Its value is that with the

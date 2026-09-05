@@ -19,6 +19,8 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+from themis_infra import grants
+
 
 def session_token_signing_key(
     *,
@@ -31,8 +33,8 @@ def session_token_signing_key(
     An HMAC-SHA256 MAC key in the environment's existing `themis` key ring. The key
     material never leaves KMS — the BFF and dispatcher derive `HMAC(session_id)` via the
     MAC-sign API — so no service can exfiltrate the signing key, and there is no
-    per-session secret at rest. The `signerVerifier` grants to the BFF and dispatcher SAs
-    land with those services.
+    per-session secret at rest. Who may sign with it is a `grants.SessionBearerDeriver`
+    per holder.
 
     Args:
         project: The GCP project the key ring lives in.
@@ -63,9 +65,8 @@ def environment_key_secret(
 
     The worker credential (`sk-ant-oat01-…`) that authorises claiming work and posting
     results for the whole environment. Sourced from encrypted Pulumi config so the
-    plaintext never enters the repo; replication is pinned in-region. No accessor grant
-    is attached here — the runtime reader (the dispatcher) is not deployed yet; its
-    `secretAccessor` grant lands with that service.
+    plaintext never enters the repo; replication is pinned in-region. The reader's grant
+    is the dispatcher's (`grants.SecretReader`).
 
     Args:
         project: The GCP project to create the secret in.
@@ -183,20 +184,20 @@ class DispatcherService(pulumi.ComponentResource):
             ('environment-key', environment_key_secret_id),
             ('webhook-signing-key', webhook_signing_key_secret_id),
         ):
-            gcp.secretmanager.SecretIamMember(
-                f'themis-dispatcher-{label}-access',
-                project=project,
-                secret_id=secret_id,
-                role='roles/secretmanager.secretAccessor',
+            grants.SecretReader(
+                'themis-dispatcher',
                 member=member,
+                secret=secret_id,
+                project=project,
+                target=label,
+                prior=grants.Prior(f'themis-dispatcher-{label}-access', parent=self),
                 opts=child,
             )
-        # Use-only MAC signing (KMS material never leaves KMS); the dispatcher derives HMAC(session_id).
-        gcp.kms.CryptoKeyIAMMember(
-            'themis-dispatcher-mac-signer',
-            crypto_key_id=session_token_key_id,
-            role='roles/cloudkms.signerVerifier',
+        grants.SessionBearerDeriver(
+            'themis-dispatcher',
             member=member,
+            key=session_token_key_id,
+            prior=grants.Prior('themis-dispatcher-mac-signer', parent=self),
             opts=child,
         )
         # Version 1 is pinned: a different version derives different bearers and strands live sessions (§7).
@@ -235,15 +236,14 @@ class DispatcherService(pulumi.ComponentResource):
             opts=child,
         )
         self.url = service.uri
-        # Anthropic posts the webhook without a GCP token, so the endpoint is public-invoke; the HMAC
-        # signature is the authentication and the proxy allowlist keeps the sandbox off /work/stats (§11).
-        gcp.cloudrunv2.ServiceIamMember(
-            'themis-dispatcher-public',
+        # Anthropic posts the webhook without a GCP token; the HMAC signature is the authentication and
+        # the proxy allowlist keeps the sandbox off /work/stats (§11).
+        grants.PublicService(
+            service=service.name,
             project=project,
             location=region,
-            name=service.name,
-            role='roles/run.invoker',
-            member='allUsers',
+            target='dispatcher',
+            prior=grants.Prior('themis-dispatcher-public', parent=self),
             opts=child,
         )
         self.register_outputs({'service_account_email': self.service_account_email, 'url': self.url})

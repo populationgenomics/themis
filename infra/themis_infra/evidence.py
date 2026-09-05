@@ -34,7 +34,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import sql
+from themis_infra import grants, sql
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -88,17 +88,17 @@ class EvidenceService(pulumi.ComponentResource):
         # Read-only wherever the image only reads: literature resolves objects and locates quotes in
         # the litcache fulltext bucket (the cache warms via ingestion); gene_disease loads the four
         # reference dumps from the resources bucket at startup (the weekly refresh job holds the write
-        # credential). Object-viewer is bucket-wide, so the second grant reaches every dataset in the
-        # resources bucket, not the `gene-disease/` prefix alone.
+        # credential).
         for label, bucket in (
             ('fulltext', fulltext_bucket),
             ('resources', resources_bucket),
         ):
-            gcp.storage.BucketIAMMember(
-                f'themis-evidence-{label}-object-viewer',
-                bucket=bucket,
-                role='roles/storage.objectViewer',
+            grants.BucketObjectReader(
+                'themis-evidence',
                 member=member,
+                bucket=bucket,
+                target=label,
+                prior=grants.Prior(f'themis-evidence-{label}-object-viewer', parent=self),
                 opts=child,
             )
 
@@ -111,10 +111,11 @@ class EvidenceService(pulumi.ComponentResource):
             service_account_email=service_account.email,
             opts=child,
         )
-        sql.grant_cloudsql_connect(
+        grants.DatabaseConnector(
             'themis-evidence',
+            member=member,
             project=project,
-            service_account_email=service_account.email,
+            prior=grants.Prior('themis-evidence', parent=self),
             opts=child,
         )
         self.db_user = db_user.name

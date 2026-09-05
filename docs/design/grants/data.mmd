@@ -1,0 +1,49 @@
+%%{init: {"layout": "elk", "elk": {"mergeEdges": true, "nodePlacementStrategy": "NETWORK_SIMPLEX"}, "htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 320}}}%%
+flowchart LR
+    n0["allUsers"]
+    n1["group themis-dev-access"]
+    n2["themis-auth"]
+    n3["themis-clu"]
+    n4["themis-convert-worker"]
+    n5["themis-deploy"]
+    n6["themis-dispatcher"]
+    n7["themis-evidence"]
+    n8["themis-gene-disease-refresh"]
+    n9["themis-ingest"]
+    n10["themis-sheaf"]
+    n11["themis-store"]
+    n12["themis-web"]
+    n13[("Cloud SQL, project-wide")]
+    n14[("KMS session-token key")]
+    n15[("bucket fulltext")]
+    n16[("bucket pr-screenshots")]
+    n17[("bucket resources")]
+    n18[("bucket store-working-documents")]
+    n19[("bucket store-workspace")]
+    n20[("secret anthropic-environment-key")]
+    n21[("secret anthropic-webhook-signing-key")]
+    n22[("secret semantic-scholar-api-key")]
+    n0 -->|PublicObjectReader| n16
+    n1 -->|BucketObjectReadWriter| n16
+    n2 -->|DatabaseConnector| n13
+    n3 -->|DatabaseConnector| n13
+    n3 -->|SessionBearerDeriver| n14
+    n4 -->|BucketObjectReadWriter| n15
+    n5 -->|DatabaseConnector| n13
+    n6 -->|SecretReader| n20
+    n6 -->|SecretReader| n21
+    n6 -->|SessionBearerDeriver| n14
+    n7 -->|BucketObjectReader| n15
+    n7 -->|BucketObjectReader| n17
+    n7 -->|DatabaseConnector| n13
+    n8 -->|BucketObjectReadWriter| n17
+    n9 -->|BucketObjectReadWriter| n15
+    n9 -->|DatabaseConnector| n13
+    n9 -->|SecretReader| n22
+    n10 -->|BucketObjectReadWriter| n19
+    n11 -->|BucketObjectReadWriter| n18
+    n11 -->|BucketObjectReadWriter| n19
+    n12 -->|BucketObjectReader| n15
+    n12 -->|BucketObjectReader| n18
+    n12 -->|DatabaseConnector| n13
+    n12 -->|SessionBearerDeriver| n14

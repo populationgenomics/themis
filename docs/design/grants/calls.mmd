@@ -1,0 +1,66 @@
+%%{init: {"layout": "elk", "elk": {"mergeEdges": true, "nodePlacementStrategy": "NETWORK_SIMPLEX"}, "htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 320}}}%%
+flowchart TB
+    n0["Cloud Tasks service agent"]
+    n1["IAP service agent"]
+    n2["allUsers"]
+    n3["group themis-clu"]
+    n4["group themis-dev-access"]
+    n5["themis-auth"]
+    n6["themis-clu"]
+    n7["themis-convert-invoker"]
+    n8["themis-convert-worker"]
+    n9["themis-dispatcher"]
+    n10["themis-evidence"]
+    n11["themis-gene-disease-refresh"]
+    n12["themis-gene-disease-scheduler"]
+    n13["themis-hello"]
+    n14["themis-sandbox-job"]
+    n15["themis-sheaf"]
+    n16["themis-store"]
+    n17["themis-web"]
+    n18[("IAP themis-backend")]
+    n19[("queue themis-convert")]
+    n20[["themis-auth"]]
+    n21[["themis-convert-worker"]]
+    n22[["themis-dispatcher"]]
+    n23[["themis-evidence"]]
+    n24[["themis-gene-disease-refresh"]]
+    n25[["themis-hello"]]
+    n26[["themis-sandbox"]]
+    n27[["themis-sheaf"]]
+    n28[["themis-store"]]
+    n29[["themis-web"]]
+    n0 -->|AccountImpersonator| n7
+    n0 -->|AccountUser| n7
+    n1 -->|ServiceInvoker| n29
+    n2 -->|PublicService| n22
+    n3 -->|AccountImpersonator| n6
+    n4 -->|IapAccessor| n18
+    n6 -->|IapAccessor| n18
+    n6 -->|ServiceInvoker| n23
+    n6 -->|ServiceInvoker| n27
+    n7 -->|ServiceInvoker| n21
+    n9 -->|SandboxSpawner| n26
+    n10 -->|AccountUser| n7
+    n10 -->|ServiceInvoker| n20
+    n10 -->|TaskEnqueuer| n19
+    n12 -->|JobRunner| n24
+    n13 -->|ServiceInvoker| n20
+    n14 -->|ServiceInvoker| n23
+    n14 -->|ServiceInvoker| n25
+    n14 -->|ServiceInvoker| n28
+    n15 -->|ServiceInvoker| n20
+    n16 -->|ServiceInvoker| n20
+    n17 -->|SelfSigner| n17
+    n17 -->|ServiceInvoker| n23
+    n18 -. fronts .-> n29
+    n20 -. runs as .-> n5
+    n21 -. runs as .-> n8
+    n22 -. runs as .-> n9
+    n23 -. runs as .-> n10
+    n24 -. runs as .-> n11
+    n25 -. runs as .-> n13
+    n26 -. runs as .-> n14
+    n27 -. runs as .-> n15
+    n28 -. runs as .-> n16
+    n29 -. runs as .-> n17

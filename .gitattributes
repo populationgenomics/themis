@@ -7,3 +7,5 @@ apps/web/src/gen/** linguist-generated=true
 **/*_pb2_grpc.py linguist-generated=true
 **/*_pb2_grpc.pyi linguist-generated=true
 themis/services/sandbox_worker/guest_contract/** linguist-generated=true
+# Generated grants diagrams (infra/themis_infra/grants_diagram.py): the SVGs are single-line files.
+docs/design/grants/* linguist-generated=true

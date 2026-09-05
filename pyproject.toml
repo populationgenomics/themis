@@ -174,10 +174,10 @@ classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
-infra = ["pulumi", "pulumi-gcp"]
+infra = ["pulumi", "pulumi-gcp", "pyyaml"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
@@ -186,7 +186,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
+testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
 # otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —
@@ -195,8 +195,8 @@ strict_markers = true
 # An unrecognised key in this table is an error, not a warning: a misspelled option would
 # otherwise leave the guard it was meant to set switched off, silently.
 strict_config = true
-# "." for repo-root packages (themis, tools).
-pythonpath = ["."]
+# "." for repo-root packages (themis, tools); "infra" for the Pulumi program's package (themis_infra).
+pythonpath = [".", "infra"]
 consider_namespace_packages = true
 
 [tool.ruff]
@@ -281,6 +281,9 @@ ignore = [
 "schema/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # tests legitimately reach into module privates
+]
+"infra/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
 ]
 "tools/svcv4-oracle/test_*.py" = [
     "S101",   # asserts are the standard pytest idiom

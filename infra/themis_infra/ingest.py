@@ -19,7 +19,7 @@ from collections.abc import Mapping
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import sql
+from themis_infra import grants, sql
 
 
 class IngestionRuntime(pulumi.ComponentResource):
@@ -74,48 +74,51 @@ class IngestionRuntime(pulumi.ComponentResource):
         )
         member = service_account.member
 
-        # Run as a Dataflow worker. Project-scoped: the role has no resource form.
-        gcp.projects.IAMMember(
-            f'{ingest_name}-dataflow-worker',
-            project=project,
-            role='roles/dataflow.worker',
+        grants.DataflowWorker(
+            ingest_name,
             member=member,
+            project=project,
+            prior=grants.Prior(f'{ingest_name}-dataflow-worker', parent=self),
             opts=child,
         )
 
-        # networkUser on the subnet for both principals that place workers on it: the worker SA and
-        # the Dataflow service agent (which creates the worker VMs on the job's behalf).
+        # Both principals that place workers on the subnet: the worker SA and the Dataflow service
+        # agent (which creates the worker VMs on the job's behalf).
         dataflow_agent = (
             f'serviceAccount:service-{project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com'
         )
-        for label, principal in (('worker', member), ('agent', dataflow_agent)):
-            gcp.compute.SubnetworkIAMMember(
-                f'{ingest_name}-subnet-{label}',
-                project=project,
-                region=subnetwork.region,
-                subnetwork=subnetwork.name,
-                role='roles/compute.networkUser',
+        for holder, label, principal in (
+            (ingest_name, 'worker', member),
+            ('dataflow-service-agent', 'agent', dataflow_agent),
+        ):
+            grants.SubnetUser(
+                holder,
                 member=principal,
+                subnetwork=subnetwork.name,
+                region=subnetwork.region,
+                project=project,
+                target='ingest-subnet',
+                prior=grants.Prior(f'{ingest_name}-subnet-{label}', parent=self),
                 opts=child,
             )
-        # Read seed sources and write the content-addressed cache — both live in
-        # the full-text bucket. objectUser, not objectAdmin: the bucket enforces
-        # uniform access (no object ACLs to manage), and the writer is write-once.
-        gcp.storage.BucketIAMMember(
-            f'{ingest_name}-fulltext',
+        # Seed sources in, the content-addressed cache out — both in the full-text bucket.
+        grants.BucketObjectReadWriter(
+            ingest_name,
+            member=member,
             bucket=fulltext_bucket,
             role='roles/storage.objectUser',
-            member=member,
+            target='fulltext',
+            prior=grants.Prior(f'{ingest_name}-fulltext', parent=self),
             opts=child,
         )
-        # Read each ingestion API key at runtime, scoped to that one secret.
         for label, secret_id in secret_accessors.items():
-            gcp.secretmanager.SecretIamMember(
-                f'{ingest_name}-secret-{label}',
-                project=project,
-                secret_id=secret_id,
-                role='roles/secretmanager.secretAccessor',
+            grants.SecretReader(
+                ingest_name,
                 member=member,
+                secret=secret_id,
+                project=project,
+                target=label,
+                prior=grants.Prior(f'{ingest_name}-secret-{label}', parent=self),
                 opts=child,
             )
 
@@ -129,10 +132,11 @@ class IngestionRuntime(pulumi.ComponentResource):
             service_account_email=service_account.email,
             opts=child,
         )
-        sql.grant_cloudsql_connect(
+        grants.DatabaseConnector(
             ingest_name,
+            member=member,
             project=project,
-            service_account_email=service_account.email,
+            prior=grants.Prior(ingest_name, parent=self),
             opts=child,
         )
 

@@ -21,6 +21,7 @@ from themis_infra import (
     cost,
     deploy_iam,
     evidence,
+    grants,
     hello,
     ingest,
     ingest_network,
@@ -91,6 +92,9 @@ iap_backend_service_id = config.require('iapBackendServiceId')
 # May impersonate the themis-clu account to call a backend service by hand. The group + roster live
 # in cpg-infrastructure-private; this is the principal only (no PII).
 clu_group = config.require('cluGroup')
+# Whether themis-clu may derive the bearer of any live session (grants.SessionBearerDeriver). Required,
+# not defaulted: a stack must decide, so no environment hands a human that reach by omission.
+clu_derives_session_tokens = config.require_bool('cluDerivesSessionTokens')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -116,8 +120,7 @@ def _live_job_image(job_name: str, container_name: str) -> str:
     return by_name[container_name]
 
 
-# The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
-deploy_roles = deploy_iam.grant_deploy_roles(project=project)
+deploy = grants.DeployAccountBuilder(project=project, prior=grants.Prior('themis-deploy'))
 
 base = baseline.Baseline(project=project, region=region)
 database = sql.CloudSqlDatabase(
@@ -140,10 +143,11 @@ migrator_db_user = sql.iam_db_user(
     database_roles=['cloudsqlsuperuser'],
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
-sql.grant_cloudsql_connect(
+grants.DatabaseConnector(
     'themis-migrator',
+    member=grants.service_account(migrator_email),
     project=project,
-    service_account_email=migrator_email,
+    prior=grants.Prior('themis-migrator'),
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 automation_user = clu.AutomationUser(
@@ -259,37 +263,40 @@ evidence_service = evidence.EvidenceService(
         depends_on=[base, database, services_net, fulltext, resources, convert_queue, convert_worker, convert_invoker]
     ),
 )
-# What the evidence service needs to put a task on the lane: enqueue on the queue, and actAs on the
-# identity whose OIDC token the task carries into the worker.
-gcp.cloudtasks.QueueIamMember(
-    'themis-evidence-enqueues-conversions',
+# What the evidence service needs to put a task on the lane: the queue, and the identity whose OIDC
+# token the task carries into the worker.
+evidence_member = grants.service_account(evidence_service.service_account_email)
+grants.TaskEnqueuer(
+    'themis-evidence',
+    member=evidence_member,
+    queue=convert_queue.name,
     project=project,
     location=region,
-    name=convert_queue.name,
-    role='roles/cloudtasks.enqueuer',
-    member=pulumi.Output.concat('serviceAccount:', evidence_service.service_account_email),
+    target='conversions',
+    prior=grants.Prior('themis-evidence-enqueues-conversions'),
 )
-gcp.serviceaccount.IAMMember(
-    'themis-evidence-acts-as-convert-invoker',
-    service_account_id=convert_invoker.service_account_id,
-    role='roles/iam.serviceAccountUser',
-    member=pulumi.Output.concat('serviceAccount:', evidence_service.service_account_email),
+grants.AccountUser(
+    'themis-evidence',
+    member=evidence_member,
+    account=convert_invoker.service_account_id,
+    target='convert-invoker',
+    prior=grants.Prior('themis-evidence-acts-as-convert-invoker'),
 )
-# The data-plane services resolve session tokens through auth (§7); grant each SA invoke on the internal
-# auth service — the binding auth left for when they landed.
+# The data-plane services resolve session tokens through auth (§7).
 for label, invoker_sa_email in (
     ('store', store_service.service_account_email),
     ('hello', hello_service.service_account_email),
     ('evidence', evidence_service.service_account_email),
     ('sheaf', sheaf_service.service_account_email),
 ):
-    gcp.cloudrunv2.ServiceIamMember(
-        f'themis-{label}-invokes-auth',
+    grants.ServiceInvoker(
+        f'themis-{label}',
+        member=grants.service_account(invoker_sa_email),
+        service=auth_service.service_name,
         project=project,
         location=region,
-        name=auth_service.service_name,
-        role='roles/run.invoker',
-        member=pulumi.Output.concat('serviceAccount:', invoker_sa_email),
+        target='auth',
+        prior=grants.Prior(f'themis-{label}-invokes-auth'),
     )
 # The weekly reference-refresh job fetches the GenCC / ClinGen / PanelApp upstreams (public) and writes the
 # reference dumps the gene_disease live backend reads. No VPC access — only public upstreams and GCS — and
@@ -335,12 +342,13 @@ gene_disease_refresh_job = gcp.cloudrunv2.Job(
     ),
     opts=pulumi.ResourceOptions(depends_on=[base, resources]),
 )
-# Write credential on the resources bucket, scoped to the refresh SA (the evidence service only reads).
-gcp.storage.BucketIAMMember(
-    'themis-gene-disease-refresh-object-admin',
+grants.BucketObjectReadWriter(
+    'themis-gene-disease-refresh',
+    member=grants.service_account(gene_disease_refresh_sa.email),
     bucket=resources.name,
     role='roles/storage.objectAdmin',
-    member=pulumi.Output.concat('serviceAccount:', gene_disease_refresh_sa.email),
+    target='resources',
+    prior=grants.Prior('themis-gene-disease-refresh-object-admin'),
 )
 # Cloud Scheduler runs the refresh weekly against the Cloud Run Admin API. Its own SA, invoker-only on the
 # Job.
@@ -351,14 +359,14 @@ gene_disease_refresh_scheduler_sa = gcp.serviceaccount.Account(
     display_name='Themis gene-disease reference-refresh scheduler',
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-# roles/run.invoker on a Job carries run.jobs.run (run/docs/execute/jobs-on-schedule "Required roles").
-gcp.cloudrunv2.JobIamMember(
-    'themis-gene-disease-refresh-scheduler-runs-job',
+grants.JobRunner(
+    'themis-gene-disease-refresh-scheduler',
+    member=grants.service_account(gene_disease_refresh_scheduler_sa.email),
+    job=gene_disease_refresh_job.name,
     project=project,
     location=region,
-    name=gene_disease_refresh_job.name,
-    role='roles/run.invoker',
-    member=pulumi.Output.concat('serviceAccount:', gene_disease_refresh_scheduler_sa.email),
+    target='gene-disease-refresh',
+    prior=grants.Prior('themis-gene-disease-refresh-scheduler-runs-job'),
 )
 gcp.cloudscheduler.Job(
     'themis-gene-disease-refresh-weekly',
@@ -399,9 +407,6 @@ site = web.WebService(
     region=region,
     domain=domain,
     image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
-    iap_members={'group': f'group:{iap_access_group}', 'clu': automation_user.member},
-    # The group's binding is the one the deployed stack already has; see WebService.
-    iap_member_keeping_the_unsuffixed_name='group',
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
@@ -419,63 +424,86 @@ site = web.WebService(
     iap_backend_service_id=iap_backend_service_id,
     opts=pulumi.ResourceOptions(depends_on=[base, database, store_service]),
 )
-# The web BFF signs session tokens with the MAC key and reads the working document from GCS.
-gcp.kms.CryptoKeyIAMMember(
-    'themis-web-mac-signer',
-    crypto_key_id=session_token_key.id,
-    role='roles/cloudkms.signerVerifier',
-    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+# Who may pass IAP to reach the web app: the access group in a browser, and the automation account
+# anything programmatic impersonates.
+grants.IapAccessor(
+    'themis-access-group',
+    member=f'group:{iap_access_group}',
+    backend_service=site.backend_service_name,
+    project=project,
+    prior=grants.Prior('themis-iap-access', parent=site),
+    opts=pulumi.ResourceOptions(depends_on=[site]),
 )
-# Lets clu derive the bearer of any live session by hand, to drive a session-scoped service as it.
-gcp.kms.CryptoKeyIAMMember(
-    'themis-clu-mac-signer',
-    crypto_key_id=session_token_key.id,
-    role='roles/cloudkms.signerVerifier',
+grants.IapAccessor(
+    'themis-clu',
     member=automation_user.member,
-    opts=pulumi.ResourceOptions(depends_on=[deploy_roles['roles/cloudkms.admin']]),
+    backend_service=site.backend_service_name,
+    project=project,
+    prior=grants.Prior('themis-iap-access-clu', parent=site),
+    opts=pulumi.ResourceOptions(depends_on=[site]),
 )
-gcp.storage.BucketIAMMember(
-    'themis-web-working-document-viewer',
+# The web BFF: derives each session's bearer at session create, reads the working document the version
+# selector shows, resolves papers through the evidence service and serves the resolved object from the
+# fulltext bucket itself.
+web_member = grants.service_account(site.service_account_email)
+grants.SessionBearerDeriver(
+    'themis-web',
+    member=web_member,
+    key=session_token_key.id,
+    prior=grants.Prior('themis-web-mac-signer'),
+)
+grants.BucketObjectReader(
+    'themis-web',
+    member=web_member,
     bucket=store_service.working_document_bucket,
-    role='roles/storage.objectViewer',
-    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+    target='working-documents',
+    prior=grants.Prior('themis-web-working-document-viewer'),
 )
-# The BFF resolves papers through the evidence service (its ID token, audience = the service URL)
-# and serves the resolved object from the fulltext bucket itself — so grant the web SA invoke on
-# evidence and read on the bucket.
-# Reading the corpus by hand. The convert worker has no binding because nothing has needed to drive a
-# conversion by hand, not because it is withheld.
-gcp.cloudrunv2.ServiceIamMember(
-    'themis-clu-invokes-evidence',
+grants.ServiceInvoker(
+    'themis-web',
+    member=web_member,
+    service=evidence_service.service_name,
     project=project,
     location=region,
-    name=evidence_service.service_name,
-    role='roles/run.invoker',
-    member=automation_user.member,
+    target='evidence',
+    prior=grants.Prior('themis-web-invokes-evidence'),
 )
-# Driving the sheaf protocol by hand; no other caller is bound.
-gcp.cloudrunv2.ServiceIamMember(
-    'themis-clu-invokes-sheaf',
-    project=project,
-    location=region,
-    name=sheaf_service.service_name,
-    role='roles/run.invoker',
-    member=automation_user.member,
-)
-gcp.cloudrunv2.ServiceIamMember(
-    'themis-web-invokes-evidence',
-    project=project,
-    location=region,
-    name=evidence_service.service_name,
-    role='roles/run.invoker',
-    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
-)
-gcp.storage.BucketIAMMember(
-    'themis-web-fulltext-object-viewer',
+grants.BucketObjectReader(
+    'themis-web',
+    member=web_member,
     bucket=fulltext.name,
-    role='roles/storage.objectViewer',
-    member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
+    target='fulltext',
+    prior=grants.Prior('themis-web-fulltext-object-viewer'),
 )
+# themis-clu, by hand: the corpus, the sheaf protocol, and — where the stack allows it — any live
+# session. The convert worker has no binding because nothing has needed to drive a conversion by hand,
+# not because it is withheld.
+grants.ServiceInvoker(
+    'themis-clu',
+    member=automation_user.member,
+    service=evidence_service.service_name,
+    project=project,
+    location=region,
+    target='evidence',
+    prior=grants.Prior('themis-clu-invokes-evidence'),
+)
+grants.ServiceInvoker(
+    'themis-clu',
+    member=automation_user.member,
+    service=sheaf_service.service_name,
+    project=project,
+    location=region,
+    target='sheaf',
+    prior=grants.Prior('themis-clu-invokes-sheaf'),
+)
+if clu_derives_session_tokens:
+    grants.SessionBearerDeriver(
+        'themis-clu',
+        member=automation_user.member,
+        key=session_token_key.id,
+        prior=grants.Prior('themis-clu-mac-signer'),
+        opts=pulumi.ResourceOptions(depends_on=[deploy.bindings['roles/cloudkms.admin']]),
+    )
 semantic_scholar = secrets.semantic_scholar_secret(
     project=project,
     region=region,
@@ -531,13 +559,14 @@ for label, invoke_target in (
     ('hello', hello_service.service_name),
     ('evidence', evidence_service.service_name),
 ):
-    gcp.cloudrunv2.ServiceIamMember(
-        f'themis-sandbox-invokes-{label}',
+    grants.ServiceInvoker(
+        'themis-sandbox',
+        member=grants.service_account(sandbox_job.service_account_email),
+        service=invoke_target,
         project=project,
         location=region,
-        name=invoke_target,
-        role='roles/run.invoker',
-        member=pulumi.Output.concat('serviceAccount:', sandbox_job.service_account_email),
+        target=label,
+        prior=grants.Prior(f'themis-sandbox-invokes-{label}'),
     )
 dispatcher_service = sandbox.DispatcherService(
     project=project,
@@ -551,22 +580,14 @@ dispatcher_service = sandbox.DispatcherService(
     reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
     opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
 )
-# The dispatcher runs the sandbox job with per-execution container overrides (the session env), a custom
-# minimal role (§7). runWithOverrides is the override-carrying variant; run.jobs.run alone rejects them.
-sandbox_job_runner_role = gcp.projects.IAMCustomRole(
-    'themis-sandbox-job-runner',
-    project=project,
-    role_id='themisSandboxJobRunner',
-    title='Themis sandbox job runner',
-    permissions=['run.jobs.run', 'run.jobs.runWithOverrides'],
-)
-gcp.cloudrunv2.JobIamMember(
-    'themis-dispatcher-runs-job',
+grants.SandboxSpawner(
+    'themis-dispatcher',
+    member=grants.service_account(dispatcher_service.service_account_email),
+    job=sandbox_job.job_name,
     project=project,
     location=region,
-    name=sandbox_job.job_name,
-    role=sandbox_job_runner_role.name,
-    member=pulumi.Output.concat('serviceAccount:', dispatcher_service.service_account_email),
+    prior=grants.Prior('themis-dispatcher-runs-job'),
+    role_prior=grants.Prior('themis-sandbox-job-runner'),
 )
 
 # The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it.
