@@ -28,6 +28,7 @@ from themis_infra import (
     screenshots,
     secrets,
     services_network,
+    sheaf,
     sql,
     storage,
     store,
@@ -116,7 +117,7 @@ def _live_job_image(job_name: str, container_name: str) -> str:
 
 
 # The deploy SA's build-time roles (bootstrap keeps only the IAM/state/KMS root).
-deploy_iam.grant_deploy_roles(project=project)
+deploy_roles = deploy_iam.grant_deploy_roles(project=project)
 
 base = baseline.Baseline(project=project, region=region)
 database = sql.CloudSqlDatabase(
@@ -184,6 +185,17 @@ hello_service = hello.HelloService(
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
+)
+# The workspace repository's storage protocol, over the store's workspace bucket (sheaf-service.md).
+sheaf_service = sheaf.SheafService(
+    project=project,
+    region=region,
+    image=_image(_SHEAF_IMAGE_ENV, lambda: _live_service_image('themis-sheaf')),
+    auth_url=auth_service.url,
+    vpc_network=services_net.network.id,
+    vpc_subnetwork=services_net.subnetwork.id,
+    workspace_bucket=store_service.workspace_bucket,
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net, store_service]),
 )
 # The litcache corpus the literature interface resolves papers in and the BFF serves objects from.
 fulltext = storage.fulltext_bucket(
@@ -269,6 +281,7 @@ for label, invoker_sa_email in (
     ('store', store_service.service_account_email),
     ('hello', hello_service.service_account_email),
     ('evidence', evidence_service.service_account_email),
+    ('sheaf', sheaf_service.service_account_email),
 ):
     gcp.cloudrunv2.ServiceIamMember(
         f'themis-{label}-invokes-auth',
@@ -413,6 +426,14 @@ gcp.kms.CryptoKeyIAMMember(
     role='roles/cloudkms.signerVerifier',
     member=pulumi.Output.concat('serviceAccount:', site.service_account_email),
 )
+# Lets clu derive the bearer of any live session by hand, to drive a session-scoped service as it.
+gcp.kms.CryptoKeyIAMMember(
+    'themis-clu-mac-signer',
+    crypto_key_id=session_token_key.id,
+    role='roles/cloudkms.signerVerifier',
+    member=automation_user.member,
+    opts=pulumi.ResourceOptions(depends_on=[deploy_roles['roles/cloudkms.admin']]),
+)
 gcp.storage.BucketIAMMember(
     'themis-web-working-document-viewer',
     bucket=store_service.working_document_bucket,
@@ -429,6 +450,15 @@ gcp.cloudrunv2.ServiceIamMember(
     project=project,
     location=region,
     name=evidence_service.service_name,
+    role='roles/run.invoker',
+    member=automation_user.member,
+)
+# Driving the sheaf protocol by hand; no other caller is bound.
+gcp.cloudrunv2.ServiceIamMember(
+    'themis-clu-invokes-sheaf',
+    project=project,
+    location=region,
+    name=sheaf_service.service_name,
     role='roles/run.invoker',
     member=automation_user.member,
 )
@@ -582,6 +612,8 @@ pulumi.export('store_working_document_bucket', store_service.working_document_bu
 pulumi.export('store_workspace_bucket', store_service.workspace_bucket)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
+pulumi.export('sheaf_url', sheaf_service.url)
+pulumi.export('sheaf_sa_email', sheaf_service.service_account_email)
 pulumi.export('resources_bucket', resources.name)
 pulumi.export('gene_disease_refresh_job_name', gene_disease_refresh_job.name)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the

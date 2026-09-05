@@ -95,8 +95,13 @@ is how a fresh environment gets seeded, not as a caution.
 
 ## What it can reach
 
-`themis-clu` holds `run.invoker` on the evidence service, IAP access on the web app, and a database login with the
-migrator's rights.
+`themis-clu` holds `run.invoker` on the evidence and sheaf services, IAP access on the web app, and a database login
+with the migrator's rights. It also holds `signerVerifier` on the session-token MAC key: the bearer of any live session
+is `HMAC(key, session_id)` (`themis.clients.auth.derive`), and the login reads every `session_id`, so the account can
+act as any live session against a session-scoped service such as `themis-sheaf`. The MAC call needs an access token as
+the account, not the ID token above — `gcloud auth application-default login --impersonate-service-account="$CLU"`, or
+impersonated credentials in code — and the key version, `pulumi stack output session_token_signing_key` plus
+`/cryptoKeyVersions/1`.
 
 The convert worker is not among them, for want of a reason rather than on principle: nothing has needed to drive a
 conversion by hand yet, and doing it locally against a scratch bucket is the better first move anyway. Adding it is a

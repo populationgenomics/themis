@@ -241,14 +241,15 @@ of its own ([`services.md`](services.md) has one per interface): the protocol al
 offline mode is the local-directory backend, which mirrors a versioned bucket, not a seeded fixture — a seedable git
 store would have nothing to seed it with. What the service needs of its deployment, wherever it lands:
 
-- **Credential:** the identity it runs as holds `roles/storage.objectUser` on the workspace bucket, and is the only
-  identity that does. Replacing the ref document under `ifGenerationMatch` is an overwrite, and GCS requires
-  `storage.objects.delete` for an overwrite, so a create-and-read role cannot implement the protocol; "nothing deletes"
-  is a property of the protocol, and if it is to be a property of the bucket too that is object versioning or a
-  retention policy on the pack prefix, not the role. The worker's identity holds `run.invoker` on that service and
-  nothing on the bucket.
-- **Ingress:** internal, reached by the worker over the services VPC. The BFF has no VPC egress; when its rpcs are
-  added, ingress becomes IAM-gated public.
+- **Credential:** the identity it runs as holds `roles/storage.objectUser` on the workspace bucket. The store service's
+  identity holds `objectAdmin` on the same bucket for the tar workspaces it keeps there, a role retired with that
+  service; no other identity holds a role on the bucket. Replacing the ref document under `ifGenerationMatch` is an
+  overwrite, and GCS requires `storage.objects.delete` for an overwrite, so a create-and-read role cannot implement the
+  protocol; "nothing deletes" is a property of the protocol, and if it is to be a property of the bucket too that is
+  object versioning or a retention policy on the pack prefix, not the role. The worker's identity holds `run.invoker` on
+  that service and nothing on the bucket.
+- **Ingress:** IAM-gated public — `run.invoker` granted per caller, default-deny otherwise — because two of its callers
+  have no path onto the services VPC: the BFF, and a person driving the protocol by hand through the automation user.
 - **Size:** chunks are sized under gRPC's default 4 MiB message limit. A publish's declared total, and the ref count and
   document size it would leave, are bounded by per-deployment ceilings and refused with `RESOURCE_EXHAUSTED` beyond
   them; the value is deployment configuration, and the ceiling exists because the bytes are whatever the guest pushed
