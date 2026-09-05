@@ -39,6 +39,10 @@ _MAX_COMPONENT_BYTES = 255 - len('.lock')
 # Matched with `fullmatch`: `$` also matches before a trailing newline, which is the one
 # character that wedges `update-ref --stdin` and so the one this must not admit.
 _OBJECT_ID = re.compile(r'[0-9a-f]{40}')
+# Git's marker for "no object" — the `old` of a ref being created, the `new` of one being deleted.
+ZERO_OBJECT_ID = '0' * 40
+# A pack's content hash, and so its key: lowercase hex SHA-256.
+_PACK_ID = re.compile(r'[0-9a-f]{64}')
 
 
 def validate_ref_name(ref: str) -> str:
@@ -106,11 +110,29 @@ def validate_object_id(oid: str) -> str:
     be answered without reading packs, so that stays a caller contract.
 
     Raises:
-        InvalidRefName: If it is not. A malformed id wedges `update-ref` exactly as a bad name does.
+        InvalidRefName: If it is not, or it is the zero id. A malformed id wedges `update-ref`
+            exactly as a bad name does; the zero id is git's "absent" marker, not an object it can
+            hold, and a writer relaying a push maps it to None before the store sees it.
     """
     if not _OBJECT_ID.fullmatch(oid):
         raise errors.InvalidRefName(f'{oid!r} is not an object id')
+    if oid == ZERO_OBJECT_ID:
+        raise errors.InvalidRefName('the zero id marks an absent ref; it is not an object id')
     return oid
+
+
+def validate_pack_id(ident: str) -> str:
+    """Return `ident` if it is a pack id sheaf will store: sixty-four lowercase hex digits.
+
+    A pack id becomes part of an object key and an entry in the manifest, so its form is fixed here
+    rather than left to whichever backend receives it.
+
+    Raises:
+        InvalidPackId: If it is anything else.
+    """
+    if not _PACK_ID.fullmatch(ident):
+        raise errors.InvalidPackId(f'{ident!r} is not a pack id (sixty-four lowercase hex digits)')
+    return ident
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,11 +195,12 @@ def _carries_unknown(message: message_mod.Message) -> bool:
     return False
 
 
-def _read_target(message: refdoc_pb2.RefTarget) -> Target:
-    """Decode a stored target.
+def read_target(message: refdoc_pb2.RefTarget) -> Target:
+    """Decode a target, stored or received.
 
     Raises:
-        ValueError: If neither arm is set, which is a target this code did not write.
+        ValueError: If neither arm is set — a target this code did not write, or a caller's that
+            names nothing.
     """
     which = message.WhichOneof('target')
     if which == 'oid':
@@ -209,7 +232,7 @@ class RefDoc:
         if message is not None:
             self._message.CopyFrom(message)
             if self._message.HasField('head'):
-                _read_target(self._message.head)
+                read_target(self._message.head)
 
     @property
     def refs(self) -> dict[str, str]:
@@ -223,7 +246,7 @@ class RefDoc:
         """
         refs = {}
         for name, target in self._message.refs.items():
-            decoded = _read_target(target)
+            decoded = read_target(target)
             if isinstance(decoded, SymbolicTarget):
                 raise ValueError(f'{name} names another ref, which this build does not resolve')
             refs[name] = decoded.oid
@@ -237,7 +260,7 @@ class RefDoc:
     @property
     def head(self) -> Target | None:
         """Where a clone should start, or None on the synthesised document of a repository with none."""
-        return _read_target(self._message.head) if self._message.HasField('head') else None
+        return read_target(self._message.head) if self._message.HasField('head') else None
 
     @property
     def carries_unmodelled_state(self) -> bool:
@@ -269,6 +292,12 @@ class RefDoc:
         """Serialise for storage, unknown fields included."""
         return self._message.SerializeToString(deterministic=True)
 
+    def to_message(self) -> refdoc_pb2.RefDoc:
+        """A copy of the stored message, unknown fields included, for a caller carrying it on the wire."""
+        message = refdoc_pb2.RefDoc()
+        message.CopyFrom(self._message)
+        return message
+
     @classmethod
     def from_bytes(cls, data: bytes) -> RefDoc:
         """Parse a stored ref document.
@@ -290,7 +319,7 @@ class RefDoc:
             raise ValueError(f'ref document is not a RefDoc: {e}') from e
         if not message.HasField('head'):
             raise ValueError('ref document names no HEAD')
-        _read_target(message.head)  # a HEAD naming neither an object nor a ref is not one either
+        read_target(message.head)  # a HEAD naming neither an object nor a ref is not one either
         return cls(message)
 
     def advance(self, *, refs: Mapping[str, str], packs: Iterable[str], head: Target) -> RefDoc:

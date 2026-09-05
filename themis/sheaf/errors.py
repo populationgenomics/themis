@@ -52,6 +52,22 @@ class InvalidRefName(SheafError):
     """
 
 
+class InvalidPackId(SheafError):
+    """A pack id that is not sixty-four lowercase hex digits, so not a key this store will form."""
+
+
+class BookkeepingOnly(SheafError):
+    """A publish that moves no ref outside sheaf's own namespace.
+
+    Nothing legitimate publishes only sheaf's bookkeeping, and the classification of a publish
+    against a moved document is over exactly the refs outside it, so one moving none has nothing
+    to be classified by.
+    """
+
+    def __init__(self, namespace: str) -> None:
+        super().__init__(f'a publish must move a ref outside {namespace}')
+
+
 class RefDeletionRefused(SheafError):
     """A publish tried to delete a ref. History in a sheaf repository is append-only."""
 

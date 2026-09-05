@@ -43,6 +43,7 @@ _GENE_DISEASE_REFRESH_IMAGE_ENV = 'THEMIS_GENE_DISEASE_REFRESH_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
 _SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
 _EVIDENCE_IMAGE_ENV = 'THEMIS_EVIDENCE_IMAGE'
+_SHEAF_IMAGE_ENV = 'THEMIS_SHEAF_IMAGE'
 # Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
 # it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
 # the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.

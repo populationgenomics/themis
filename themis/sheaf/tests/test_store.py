@@ -216,7 +216,10 @@ def test_a_ref_name_git_cannot_parse_is_refused(backend: sheaf.LocalBackend, ref
 # The trailing newline is the case a `$`-anchored pattern admits, and the one that wedges
 # `update-ref --stdin` — its input is newline-terminated.
 # A 64-hex id is well-formed for SHA-256 and refused by the SHA-1 mirror's `update-ref` all the same.
-@pytest.mark.parametrize('oid', ['', 'zz', SHA_A[:39], SHA_A.upper(), f'{SHA_A} extra', f'{SHA_A}\n', 'f' * 64])
+# The zero id is git's "absent" marker, which a relayed deletion carries as `new`.
+@pytest.mark.parametrize(
+    'oid', ['', 'zz', SHA_A[:39], SHA_A.upper(), f'{SHA_A} extra', f'{SHA_A}\n', 'f' * 64, refdoc.ZERO_OBJECT_ID]
+)
 def test_a_malformed_object_id_is_refused(backend: sheaf.LocalBackend, oid: str) -> None:
     """A bad object id wedges `update-ref` exactly as a bad name does."""
     store = sheaf.Store(backend, 'p')
@@ -553,3 +556,126 @@ def test_a_stale_reflog_old_value_is_a_lost_race_not_a_conflict(backend: sheaf.L
         store.publish(
             stale, conftest.logged(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
         )
+
+
+def test_the_zero_id_is_not_an_object_id() -> None:
+    """Git's marker for an absent ref; a writer relaying a push maps it to None before the store sees it."""
+    with pytest.raises(sheaf.InvalidRefName, match='zero id'):
+        refdoc.validate_object_id(refdoc.ZERO_OBJECT_ID)
+
+
+@pytest.mark.parametrize('ident', ['', 'f' * 63, 'F' * 64, 'f' * 64 + '\n', 'g' * 64, SHA_A])
+def test_a_malformed_pack_id_is_refused(ident: str) -> None:
+    """A pack id becomes an object key and a manifest entry, so its form is fixed before either."""
+    with pytest.raises(sheaf.InvalidPackId):
+        refdoc.validate_pack_id(ident)
+
+
+def test_a_well_formed_pack_id_is_accepted() -> None:
+    assert refdoc.validate_pack_id(sheaf.pack_id(b'PACK-1')) == sheaf.pack_id(b'PACK-1')
+
+
+def test_a_stored_pack_is_named_by_the_publish_that_follows(backend: sheaf.LocalBackend) -> None:
+    """Packs arriving one at a time are stored as each completes and named together at the end."""
+    store = sheaf.Store(backend, 'p')
+    first = store.put_pack(b'PACK-1')
+    second = store.put_pack(b'PACK-2')
+    assert {first, second} == {sheaf.pack_id(b'PACK-1'), sheaf.pack_id(b'PACK-2')}
+    assert store.read().generation is None, 'storing a pack publishes nothing'
+
+    base = store.read()
+    after = store.publish(
+        base,
+        conftest.logged(
+            base,
+            sheaf.Intent(
+                ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-3'], stored_packs=[first, second]
+            ),
+        ),
+    )
+
+    assert set(after.packs) == {first, second, sheaf.pack_id(b'PACK-3')}
+    assert store.fetch_pack(first) == b'PACK-1'
+
+
+def test_a_stored_pack_id_is_validated_before_it_enters_the_manifest(backend: sheaf.LocalBackend) -> None:
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    with pytest.raises(sheaf.InvalidPackId):
+        store.publish(
+            base,
+            conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, stored_packs=['nope'])),
+        )
+    assert store.read().generation is None
+
+
+def test_plan_is_the_document_publish_writes_and_uploads_nothing(backend: sheaf.LocalBackend) -> None:
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    intent = conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1']))
+
+    planned = store.plan(base, intent)
+
+    assert not list(backend.list_immutable(store.pack_prefix))
+    assert store.read().generation is None
+    assert store.publish(base, intent).doc == planned
+
+
+def test_plan_refuses_what_publish_refuses(backend: sheaf.LocalBackend) -> None:
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    with pytest.raises(sheaf.RefConflict):
+        store.plan(base, conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_A)})))
+    with pytest.raises(sheaf.ReflogRequired):
+        store.plan(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+
+
+def _logged_updates(base: sheaf.Snapshot, **moves: tuple[str | None, str]) -> dict[str, sheaf.RefUpdate]:
+    updates = {ref: sheaf.RefUpdate(*move) for ref, move in moves.items()}
+    return dict(conftest.logged(base, sheaf.Intent(ref_updates=updates)).ref_updates)
+
+
+def test_a_moved_document_holding_every_new_tip_means_the_publish_landed(backend: sheaf.LocalBackend) -> None:
+    """The receipt arm: only the response was lost, so a retry of the same intent is a success."""
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    updates = _logged_updates(base, **{REF: (None, SHA_A), 'refs/heads/side': (None, SHA_B)})
+    live = store.publish(base, sheaf.Intent(ref_updates=updates))
+
+    verdict = sheaf.classify(live.refs, updates)
+
+    assert verdict == sheaf.Classification(sheaf.Verdict.LANDED, (REF, 'refs/heads/side'))
+
+
+def test_a_moved_document_with_every_old_tip_intact_is_a_lost_race(backend: sheaf.LocalBackend) -> None:
+    """The reflog ref has moved too, and must not count: it moves on every publish."""
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    unrelated = store.publish(
+        base, sheaf.Intent(ref_updates=_logged_updates(base, **{'refs/heads/other': (None, SHA_C)}))
+    )
+    assert unrelated.tip(refdoc.REFLOG_REF) is not None
+
+    verdict = sheaf.classify(unrelated.refs, _logged_updates(base, **{REF: (None, SHA_A)}))
+
+    assert verdict == sheaf.Classification(sheaf.Verdict.LOST_RACE, (REF,))
+
+
+def test_a_moved_document_where_a_moved_ref_moved_names_that_ref(backend: sheaf.LocalBackend) -> None:
+    """The non-fast-forward arm, naming only the refs that moved under the caller."""
+    store = sheaf.Store(backend, 'p')
+    base = store.read()
+    seeded = store.publish(base, sheaf.Intent(ref_updates=_logged_updates(base, **{REF: (None, SHA_A)})))
+    updates = _logged_updates(seeded, **{REF: (SHA_A, SHA_B), 'refs/heads/side': (None, SHA_C)})
+    winner = store.publish(seeded, sheaf.Intent(ref_updates=_logged_updates(seeded, **{REF: (SHA_A, SHA_C)})))
+
+    verdict = sheaf.classify(winner.refs, updates)
+
+    assert verdict == sheaf.Classification(sheaf.Verdict.REF_MOVED, (REF,))
+
+
+def test_a_publish_moving_only_bookkeeping_cannot_be_classified() -> None:
+    """Over no refs, every arm would hold vacuously and every stale publish would read as landed."""
+    updates = {refdoc.REFLOG_REF: sheaf.RefUpdate(None, SHA_A), 'refs/sheaf/other': sheaf.RefUpdate(None, SHA_B)}
+    with pytest.raises(sheaf.BookkeepingOnly, match='refs/sheaf/'):
+        sheaf.classify({}, updates)

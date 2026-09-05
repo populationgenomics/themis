@@ -15,7 +15,9 @@ from __future__ import annotations
 from themis.sheaf.backend import Backend, Generation, ObjectInfo, StoredBlob
 from themis.sheaf.backends.local import LocalBackend
 from themis.sheaf.errors import (
+    BookkeepingOnly,
     CorruptRepository,
+    InvalidPackId,
     InvalidRefName,
     NotFound,
     PreconditionFailed,
@@ -27,14 +29,27 @@ from themis.sheaf.errors import (
     SheafError,
 )
 from themis.sheaf.refdoc import DirectTarget, RefDoc, SymbolicTarget, Target
-from themis.sheaf.store import Intent, RefUpdate, Snapshot, Store, pack_id
+from themis.sheaf.store import (
+    Classification,
+    Intent,
+    RefUpdate,
+    Snapshot,
+    Store,
+    Verdict,
+    classify,
+    pack_id,
+    validate_intent,
+)
 
 __all__ = [
     'Backend',
+    'BookkeepingOnly',
+    'Classification',
     'CorruptRepository',
     'DirectTarget',
     'Generation',
     'Intent',
+    'InvalidPackId',
     'InvalidRefName',
     'LocalBackend',
     'NotFound',
@@ -53,5 +68,8 @@ __all__ = [
     'StoredBlob',
     'SymbolicTarget',
     'Target',
+    'Verdict',
+    'classify',
     'pack_id',
+    'validate_intent',
 ]

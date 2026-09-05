@@ -7,6 +7,7 @@ serialisation point in the system. Design: `docs/design/sheaf.md`.
 from __future__ import annotations
 
 import dataclasses
+import enum
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 
@@ -57,10 +58,18 @@ class RefUpdate:
 
 @dataclasses.dataclass(frozen=True)
 class Intent:
-    """What one transaction attempt wants to publish."""
+    """What one transaction attempt wants to publish.
+
+    `packs` are uploaded by `Store.publish`; `stored_packs` are the ids of packs the writer has
+    already put through `Store.put_pack`, so a writer receiving packs one at a time can store each
+    as it completes and name them all in one publish. Both end up in the manifest alike; that a
+    stored id names a pack the backend holds is the writer's contract, since checking would cost
+    a round trip per pack — a manifest naming an absent pack is the one damage this store cannot undo.
+    """
 
     ref_updates: Mapping[str, RefUpdate]
     packs: Sequence[bytes] = dataclasses.field(default_factory=tuple)
+    stored_packs: Sequence[str] = dataclasses.field(default_factory=tuple)
     # None carries the document's existing HEAD over. A repository's first publish has none to carry,
     # so it must name one: nothing on a push tells the server which ref the client considers primary,
     # and a mirror left to guess re-guesses on every hydrate.
@@ -74,6 +83,104 @@ def pack_id(data: bytes) -> str:
     the same key, and two writers racing on the same pack are not in conflict at all.
     """
     return hashlib.sha256(data).hexdigest()
+
+
+def moved_refs(ref_updates: Mapping[str, RefUpdate]) -> list[str]:
+    """The refs `ref_updates` moves outside sheaf's own namespace, in name order.
+
+    The reflog ref advances on every publish, so it says nothing about which publish a document
+    holds; these refs are what a publish is about, and what it is classified by.
+    """
+    return sorted(ref for ref in ref_updates if not ref.startswith(refdoc.SHEAF_NAMESPACE))
+
+
+def require_moved_refs(ref_updates: Mapping[str, RefUpdate]) -> list[str]:
+    """`moved_refs`, refusing an intent that moves none.
+
+    Not part of `Store.publish`: an in-process writer may legitimately publish only a HEAD, moving
+    no ref at all. A publish arriving over the wire may not — nothing legitimate publishes only
+    sheaf's bookkeeping — and a classification over no refs would call every stale publish landed.
+
+    Raises:
+        BookkeepingOnly: If every ref in `ref_updates` is under `refs/sheaf/`.
+    """
+    moved = moved_refs(ref_updates)
+    if not moved:
+        raise errors.BookkeepingOnly(refdoc.SHEAF_NAMESPACE)
+    return moved
+
+
+class Verdict(enum.Enum):
+    """What the live document says about a publish built against a generation it has left."""
+
+    # Every moved ref already holds its `new`: this publish landed and only its response was lost.
+    LANDED = 'landed'
+    # Every moved ref still holds its `old`: an unrelated publish won; rebuild against the live
+    # document and publish again.
+    LOST_RACE = 'lost_race'
+    # A moved ref holds neither: it moved under the caller, whose view of it is behind.
+    REF_MOVED = 'ref_moved'
+
+
+@dataclasses.dataclass(frozen=True)
+class Classification:
+    """A `Verdict` and the refs it rests on: every moved ref, or for `REF_MOVED` the ones that moved."""
+
+    verdict: Verdict
+    refs: tuple[str, ...]
+
+
+def classify(live_refs: Mapping[str, str], ref_updates: Mapping[str, RefUpdate]) -> Classification:
+    """Classify a publish whose base generation the document has moved past.
+
+    Over the refs the intent moves outside `refs/sheaf/`, in a fixed order: landed if every one
+    already holds its `new`; a lost race if every one still holds its `old`; otherwise a ref moved
+    under the caller. Pure: the caller reads the live document and decides what each verdict means.
+    `ref_updates` is taken as already validated — a deletion, whose `new` is None, would otherwise
+    read as landed against an absent ref.
+
+    Args:
+        live_refs: The current document's refs.
+        ref_updates: The intent's updates.
+
+    Raises:
+        BookkeepingOnly: If the intent moves no ref outside `refs/sheaf/`.
+    """
+    moved = tuple(require_moved_refs(ref_updates))
+    if all(live_refs.get(ref) == ref_updates[ref].new for ref in moved):
+        return Classification(Verdict.LANDED, moved)
+    if all(live_refs.get(ref) == ref_updates[ref].old for ref in moved):
+        return Classification(Verdict.LOST_RACE, moved)
+    return Classification(Verdict.REF_MOVED, tuple(ref for ref in moved if live_refs.get(ref) != ref_updates[ref].old))
+
+
+def validate_intent(intent: Intent) -> None:
+    """Refuse what is wrong with `intent` on its own, before any document is read.
+
+    The checks that need the document — that each `old` matches, that the resulting ref set is one
+    git can store — are `Store.plan`'s, which runs this first.
+
+    Raises:
+        InvalidRefName: If a ref name or object id, or the HEAD it names, is one git would reject.
+        RefDeletionRefused: If an update deletes a ref.
+        ReflogRequired: If an update moves a ref outside sheaf's own namespace without also
+            advancing the reflog ref.
+        InvalidPackId: If a stored pack id is not one this store forms.
+    """
+    if intent.head is not None:
+        refdoc.validate_target(intent.head)
+    for ref, update in intent.ref_updates.items():
+        refdoc.validate_ref_name(ref)
+        if update.new is None:
+            raise errors.RefDeletionRefused(ref)
+        for oid in (update.old, update.new):
+            if oid is not None:
+                refdoc.validate_object_id(oid)
+    moved = moved_refs(intent.ref_updates)
+    if moved and refdoc.REFLOG_REF not in intent.ref_updates:
+        raise errors.ReflogRequired(moved)
+    for ident in intent.stored_packs:
+        refdoc.validate_pack_id(ident)
 
 
 _BRANCH_PREFIX = 'refs/heads/'
@@ -176,13 +283,16 @@ class Store:
         """
         return [self._decode(blob.data) for blob in self.backend.history_mutable(self.ref_key)]
 
-    def publish(self, base: Snapshot, intent: Intent) -> Snapshot:
-        """Attempt one publish against the state in `base`.
+    def plan(self, base: Snapshot, intent: Intent) -> refdoc.RefDoc:
+        """The document `publish` would write for `intent` against `base`, or the refusal it would raise.
+
+        Nothing is uploaded and nothing is written: this is `publish`'s validation, exposed so a
+        caller can refuse an intent — and measure the document it would leave — before it holds
+        the packs.
 
         Raises:
             InvalidRefName: If a ref name or object id in `intent`, or the HEAD it names, is one git
-                would reject, or two names in the resulting ref set cannot coexist. Checked before
-                anything is uploaded.
+                would reject, or two names in the resulting ref set cannot coexist.
             RefDeletionRefused: If an update deletes a ref. Whether an update rewrites one is not
                 checkable here — the store holds no objects — so that is the writer's contract: the
                 hook checks ancestry, and a direct writer builds its commit on the tip it publishes
@@ -190,42 +300,51 @@ class Store:
             ReflogRequired: If an update moves a ref outside sheaf's own namespace without also
                 advancing the reflog ref. That the entry's parents include the new tips is the
                 writer's contract, like fast-forwardness; that an entry exists is checked here.
+            InvalidPackId: If a stored pack id is not one this store forms.
             RefConflict: If a ref being updated does not hold its expected value in `base`. Compared
                 against `base` and not the live document, so a writer deriving every `old` from the
                 snapshot it publishes against — the reflog's included — never sees this, and a stale
                 snapshot surfaces as `RaceLost` from the compare-and-swap instead.
-            RaceLost: If the ref document advanced since `base` was read.
         """
-        if intent.head is not None:
-            refdoc.validate_target(intent.head)
+        validate_intent(intent)
         refs = dict(base.doc.refs)
         for ref, update in intent.ref_updates.items():
-            refdoc.validate_ref_name(ref)
-            if update.new is None:
-                raise errors.RefDeletionRefused(ref)
-            for oid in (update.old, update.new):
-                if oid is not None:
-                    refdoc.validate_object_id(oid)
             actual = refs.get(ref)
             if actual != update.old:
                 raise errors.RefConflict(ref, update.old, actual)
-            refs[ref] = update.new
+            if update.new is not None:  # validate_intent refused None; the check narrows the type
+                refs[ref] = update.new
         refdoc.validate_ref_set(refs)
-        moved = sorted(ref for ref in intent.ref_updates if not ref.startswith(refdoc.SHEAF_NAMESPACE))
-        if moved and refdoc.REFLOG_REF not in intent.ref_updates:
-            raise errors.ReflogRequired(moved)
-
-        # Objects before refs, always. A pack no ref names is inert litter, counted by `themis.sheaf.orphans`.
-        new_packs: list[str] = []
-        for data in intent.packs:
-            ident = pack_id(data)
-            self.backend.put_immutable(self.pack_key(ident), data)
-            if ident not in base.doc.packs and ident not in new_packs:
-                new_packs.append(ident)
-
         head = intent.head or _carry_head(base.doc.head, refs) or _head_for(refs)
+        packs = (*base.doc.packs, *(pack_id(data) for data in intent.packs), *intent.stored_packs)
+        return base.doc.advance(refs=refs, packs=packs, head=head)
 
-        doc = base.doc.advance(refs=refs, packs=(*base.doc.packs, *new_packs), head=head)
+    def put_pack(self, data: bytes) -> str:
+        """Upload one packfile under its content id and return that id.
+
+        For a writer that receives packs one at a time: store each as it completes, then name them
+        all through `Intent.stored_packs`. A pack no document names yet is inert litter, counted by
+        `themis.sheaf.orphans`, so a publish that never follows costs bytes and nothing else.
+        """
+        ident = pack_id(data)
+        self.backend.put_immutable(self.pack_key(ident), data)
+        return ident
+
+    def publish(self, base: Snapshot, intent: Intent) -> Snapshot:
+        """Attempt one publish against the state in `base`.
+
+        Raises:
+            InvalidRefName: As `plan`. Checked before anything is uploaded.
+            RefDeletionRefused: As `plan`.
+            ReflogRequired: As `plan`.
+            InvalidPackId: As `plan`.
+            RefConflict: As `plan`.
+            RaceLost: If the ref document advanced since `base` was read.
+        """
+        doc = self.plan(base, intent)
+        # Objects before refs, always. A pack no ref names is inert litter, counted by `themis.sheaf.orphans`.
+        for data in intent.packs:
+            self.put_pack(data)
         try:
             generation = self.backend.cas_mutable(self.ref_key, doc.to_bytes(), base.generation)
         except errors.PreconditionFailed as exc:

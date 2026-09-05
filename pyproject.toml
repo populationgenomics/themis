@@ -87,6 +87,11 @@ store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage",
 # consumer. grpc.aio server + generated stubs; includes the session client — every request is
 # authorized through auth. No storage backend of its own.
 hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "session" }]
+# sheaf service (themis/services/sheaf): sheaf's storage protocol served over gRPC for the
+# repository the session names. grpc.aio server + generated stubs over the sheaf library (the
+# GCS backend and the ref document's encoding); includes the session client — every request is
+# authorized through auth before it touches the bucket.
+sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sheaf" }, { include-group = "session" }]
 # evidence service (themis/services/evidence): one image serving every data-plane evidence interface —
 # literature (litcache resolution + quote location) and the database-backed interfaces SVCv4 classification reaches.
 # grpc.aio server + generated stubs. Includes the session client: every interface authorizes through
@@ -169,7 +174,7 @@ classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp"]
@@ -177,11 +182,11 @@ infra = ["pulumi", "pulumi-gcp"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
 # dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "classifier_eval" }, { include-group = "curation" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
+testpaths = ["tests", "schema/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
 markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
 # An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
 # otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —

@@ -3676,6 +3676,14 @@ sheaf = [
     { name = "google-cloud-storage" },
     { name = "protobuf" },
 ]
+sheaf-service = [
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
 store = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
@@ -3913,6 +3921,14 @@ session = [
 sheaf = [
     { name = "google-cloud-storage" },
     { name = "protobuf" },
+]
+sheaf-service = [
+    { name = "google-auth" },
+    { name = "google-cloud-storage" },
+    { name = "grpcio" },
+    { name = "grpcio-health-checking" },
+    { name = "protobuf" },
+    { name = "requests" },
 ]
 store = [
     { name = "google-auth" },
