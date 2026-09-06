@@ -210,8 +210,8 @@ def read_target(message: refdoc_pb2.RefTarget) -> Target:
     raise ValueError('a ref target names neither an object nor a ref')
 
 
-def _write_target(message: refdoc_pb2.RefTarget, target: Target) -> None:
-    """Encode a target into `message`."""
+def write_target(message: refdoc_pb2.RefTarget, target: Target) -> None:
+    """Encode a target into `message`, stored or sent."""
     if isinstance(target, SymbolicTarget):
         message.ref = target.ref
     else:
@@ -347,5 +347,5 @@ class RefDoc:
             message.refs[name].oid = oid
         message.ClearField('packs')
         message.packs.extend(sorted(set(packs)))
-        _write_target(message.head, head)
+        write_target(message.head, head)
         return RefDoc(message)

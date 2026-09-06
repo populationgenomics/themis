@@ -6,13 +6,15 @@ serialisation point in the system. Design: `docs/design/sheaf.md`.
 
 from __future__ import annotations
 
+import abc
 import dataclasses
 import enum
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
+from typing import override
 
 from themis.sheaf import backend as backend_mod
-from themis.sheaf import errors, refdoc
+from themis.sheaf import backends, errors, refdoc
 
 DEFAULT_RETRIES = 8
 
@@ -158,7 +160,7 @@ def validate_intent(intent: Intent) -> None:
     """Refuse what is wrong with `intent` on its own, before any document is read.
 
     The checks that need the document — that each `old` matches, that the resulting ref set is one
-    git can store — are `Store.plan`'s, which runs this first.
+    git can store — are `plan`'s, which runs this first.
 
     Raises:
         InvalidRefName: If a ref name or object id, or the HEAD it names, is one git would reject.
@@ -216,7 +218,102 @@ def _carry_head(head: refdoc.Target | None, refs: Mapping[str, str]) -> refdoc.T
     return head
 
 
-class Store:
+def plan(base: Snapshot, intent: Intent) -> refdoc.RefDoc:
+    """The document a publish of `intent` against `base` leaves, or the refusal it meets.
+
+    Every writer of a repository — the in-process store and the client publishing through the
+    service alike — derives its successor document here, so two writers cannot record different
+    HEADs or manifests for one publish. Nothing is uploaded and nothing is written.
+
+    Raises:
+        InvalidRefName: If a ref name or object id in `intent`, or the HEAD it names, is one git
+            would reject, or two names in the resulting ref set cannot coexist.
+        RefDeletionRefused: If an update deletes a ref. Whether an update rewrites one is not
+            checkable here — the store holds no objects — so that is the writer's contract: the
+            hook checks ancestry, and a direct writer builds its commit on the tip it publishes
+            against, which is a fast-forward by construction.
+        ReflogRequired: If an update moves a ref outside sheaf's own namespace without also
+            advancing the reflog ref. That the entry's parents include the new tips is the
+            writer's contract, like fast-forwardness; that an entry exists is checked here.
+        InvalidPackId: If a stored pack id is not one this store forms.
+        RefConflict: If a ref being updated does not hold its expected value in `base`. Compared
+            against `base` and not the live document, so a writer deriving every `old` from the
+            snapshot it publishes against — the reflog's included — never sees this, and a stale
+            snapshot surfaces as `RaceLost` from the compare-and-swap instead.
+    """
+    validate_intent(intent)
+    refs = dict(base.doc.refs)
+    for ref, update in intent.ref_updates.items():
+        actual = refs.get(ref)
+        if actual != update.old:
+            raise errors.RefConflict(ref, update.old, actual)
+        if update.new is not None:  # validate_intent refused None; the check narrows the type
+            refs[ref] = update.new
+    refdoc.validate_ref_set(refs)
+    head = intent.head or _carry_head(base.doc.head, refs) or _head_for(refs)
+    packs = (*base.doc.packs, *(pack_id(data) for data in intent.packs), *intent.stored_packs)
+    return base.doc.advance(refs=refs, packs=packs, head=head)
+
+
+class Repository(abc.ABC):
+    """One sheaf repository, wherever its bytes live: what a mirror and its hook need of a store.
+
+    `Store` is the implementation over a `Backend`, in the process that holds the bucket credential;
+    `themis.clients.sheaf.store.RemoteStore` is the one over the `Sheaf` service, for a caller that
+    holds none. The wire layer is written against this surface and runs over either unchanged.
+    """
+
+    # The repository's name, for paths and messages. Which repository a call reaches is the
+    # implementation's to decide — a remote store's is fixed by its session, not by this name.
+    repo: str
+
+    @abc.abstractmethod
+    def read(self) -> Snapshot:
+        """Read the ref document, or an empty snapshot if the repository does not exist yet.
+
+        Raises:
+            CorruptRepository: If the stored document is not one this code wrote.
+        """
+
+    @abc.abstractmethod
+    def fetch_pack(self, ident: str) -> bytes:
+        """Download one packfile.
+
+        Raises:
+            InvalidPackId: If `ident` is not a pack id.
+            NotFound: If the pack is absent.
+        """
+
+    @abc.abstractmethod
+    def publish(self, base: Snapshot, intent: Intent) -> Snapshot:
+        """Attempt one publish against the state in `base`; the snapshot it leaves on success.
+
+        Raises:
+            InvalidRefName: As `plan`. Checked before anything is uploaded.
+            RefDeletionRefused: As `plan`.
+            ReflogRequired: As `plan`.
+            InvalidPackId: As `plan`.
+            RefConflict: As `plan`, or — for a remote repository, whose service re-reads the live
+                document — if a ref the intent moves has moved since `base` was read.
+            RaceLost: If the ref document advanced since `base` was read. The in-process store
+                reports every advance this way; only the service makes the split above.
+            PublishRefused: If the service behind a remote repository refused the intent on what it
+                decides alone, or the publish is over one of its ceilings.
+            ServiceFault: If a remote repository's service could not be reached or did not admit
+                the caller.
+        """
+
+    @abc.abstractmethod
+    def descriptor(self) -> dict[str, str]:
+        """Describe this repository so `themis.sheaf.stores.from_descriptor` can rebuild it.
+
+        For the pre-receive hook, a separate process git spawns, which cannot be handed a live
+        object. The descriptor is written to a file the hook reads, so it names where the state
+        lives and never holds a credential.
+        """
+
+
+class Store(Repository):
     """A single sheaf repository living under one key prefix."""
 
     def __init__(self, backend: backend_mod.Backend, repo: str) -> None:
@@ -237,6 +334,7 @@ class Store:
         """Key prefix holding every packfile, live and orphaned."""
         return f'{self.repo}/packs/'
 
+    @override
     def read(self) -> Snapshot:
         """Read the ref document, or an empty snapshot if the repository does not exist yet.
 
@@ -259,13 +357,27 @@ class Store:
             raise errors.CorruptRepository(f'{self.ref_key}: {exc}') from exc
         return doc
 
+    @override
     def fetch_pack(self, ident: str) -> bytes:
         """Download one packfile.
 
         Raises:
+            InvalidPackId: If `ident` is not a pack id, so not a key this store forms.
             NotFound: If the pack is absent.
         """
-        return self.backend.get_immutable(self.pack_key(ident))
+        return self.backend.get_immutable(self.pack_key(refdoc.validate_pack_id(ident)))
+
+    @override
+    def descriptor(self) -> dict[str, str]:
+        """The backend's descriptor with this repository's name folded in.
+
+        Raises:
+            TypeError: If the backend has no descriptor form.
+            ValueError: If it has one that names nothing reachable.
+            ImportError: If this build has no GCS client, so no backend but the local one can be
+                recognised.
+        """
+        return {**backends.descriptor_for(self.backend), 'repo': self.repo}
 
     def transitions(self) -> list[refdoc.RefDoc]:
         """Return every retained ref document, newest first.
@@ -283,42 +395,6 @@ class Store:
         """
         return [self._decode(blob.data) for blob in self.backend.history_mutable(self.ref_key)]
 
-    def plan(self, base: Snapshot, intent: Intent) -> refdoc.RefDoc:
-        """The document `publish` would write for `intent` against `base`, or the refusal it would raise.
-
-        Nothing is uploaded and nothing is written: this is `publish`'s validation, exposed so a
-        caller can refuse an intent — and measure the document it would leave — before it holds
-        the packs.
-
-        Raises:
-            InvalidRefName: If a ref name or object id in `intent`, or the HEAD it names, is one git
-                would reject, or two names in the resulting ref set cannot coexist.
-            RefDeletionRefused: If an update deletes a ref. Whether an update rewrites one is not
-                checkable here — the store holds no objects — so that is the writer's contract: the
-                hook checks ancestry, and a direct writer builds its commit on the tip it publishes
-                against, which is a fast-forward by construction.
-            ReflogRequired: If an update moves a ref outside sheaf's own namespace without also
-                advancing the reflog ref. That the entry's parents include the new tips is the
-                writer's contract, like fast-forwardness; that an entry exists is checked here.
-            InvalidPackId: If a stored pack id is not one this store forms.
-            RefConflict: If a ref being updated does not hold its expected value in `base`. Compared
-                against `base` and not the live document, so a writer deriving every `old` from the
-                snapshot it publishes against — the reflog's included — never sees this, and a stale
-                snapshot surfaces as `RaceLost` from the compare-and-swap instead.
-        """
-        validate_intent(intent)
-        refs = dict(base.doc.refs)
-        for ref, update in intent.ref_updates.items():
-            actual = refs.get(ref)
-            if actual != update.old:
-                raise errors.RefConflict(ref, update.old, actual)
-            if update.new is not None:  # validate_intent refused None; the check narrows the type
-                refs[ref] = update.new
-        refdoc.validate_ref_set(refs)
-        head = intent.head or _carry_head(base.doc.head, refs) or _head_for(refs)
-        packs = (*base.doc.packs, *(pack_id(data) for data in intent.packs), *intent.stored_packs)
-        return base.doc.advance(refs=refs, packs=packs, head=head)
-
     def put_pack(self, data: bytes) -> str:
         """Upload one packfile under its content id and return that id.
 
@@ -330,6 +406,7 @@ class Store:
         self.backend.put_immutable(self.pack_key(ident), data)
         return ident
 
+    @override
     def publish(self, base: Snapshot, intent: Intent) -> Snapshot:
         """Attempt one publish against the state in `base`.
 
@@ -341,7 +418,7 @@ class Store:
             RefConflict: As `plan`.
             RaceLost: If the ref document advanced since `base` was read.
         """
-        doc = self.plan(base, intent)
+        doc = plan(base, intent)
         # Objects before refs, always. A pack no ref names is inert litter, counted by `themis.sheaf.orphans`.
         for data in intent.packs:
             self.put_pack(data)

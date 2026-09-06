@@ -17,7 +17,7 @@ from themis.rpc import auth_pb2
 
 def session_metadata(session_token: str) -> tuple[tuple[str, str], ...]:
     """The call metadata a client carries ``session_token`` in."""
-    return ((session._SESSION_TOKEN_METADATA, session_token),)
+    return ((session.SESSION_TOKEN_METADATA, session_token),)
 
 
 GOOD_TOKEN = 'good'

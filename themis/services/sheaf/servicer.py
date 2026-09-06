@@ -127,7 +127,7 @@ def _decode_intent(message: sheaf_pb2.PublishIntent, limits: Limits) -> store_mo
     return intent
 
 
-def _plan(store: store_mod.Store, base: store_mod.Snapshot, intent: store_mod.Intent, limits: Limits) -> None:
+def _plan(base: store_mod.Snapshot, intent: store_mod.Intent, limits: Limits) -> None:
     """Refuse what the intent gets wrong against the document it claims to have read, and the ceilings.
 
     `base` is at the intent's generation, so a ref not holding its `old` is the caller's error —
@@ -138,7 +138,7 @@ def _plan(store: store_mod.Store, base: store_mod.Snapshot, intent: store_mod.In
             hold; RESOURCE_EXHAUSTED when the document the publish would leave is over a ceiling.
     """
     try:
-        planned = store.plan(base, intent)
+        planned = store_mod.plan(base, intent)
     except (*_INVALID_INTENT, errors.RefConflict) as exc:
         raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
     refs = len(planned.refs)
@@ -345,7 +345,7 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
         base = await _read(store)
         if _generation(base) != first.intent.base_generation:
             return _settle(base, intent)
-        _plan(store, base, intent, self._limits)
+        _plan(base, intent, self._limits)
         await _store_packs(store, requests, list(first.intent.packs))
         try:
             published = await asyncio.to_thread(store.publish, base, intent)

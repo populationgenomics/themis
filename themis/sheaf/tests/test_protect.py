@@ -60,7 +60,7 @@ def protected(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> Iterator[s
     commit that wrote it and force-push — is closed without configuration; only the path half is
     opted into here.
     """
-    instance = server.SheafGitServer(
+    instance = server.SheafGitServer.over_backend(
         backend,
         tmp_path / 'bare',
         repos={REPO},
@@ -199,7 +199,9 @@ def test_a_quoted_path_cannot_dodge_a_glob(
     """
     _sign_off(curator, 'PM2')
     protection = protect.Protection(paths=('annotations/*',))
-    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}, protection=protection) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protection
+    ) as instance:
         work = _clone(instance, tmp_path, 'work')
         smuggled = 'annotations/naïve.jsonl'
         (work / smuggled).write_text('{"code": "PP3", "state": "reviewed", "by": "fabricated"}\n', 'utf-8')
@@ -215,7 +217,10 @@ def test_a_quoted_path_cannot_dodge_a_glob(
 
 
 def test_an_unprotected_sibling_path_stays_writable(
-    protected: server.SheafGitServer, curator: conftest.GitRepo, tmp_path: pathlib.Path
+    protected: server.SheafGitServer,
+    curator: conftest.GitRepo,
+    backend: sheaf.LocalBackend,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The split that makes a one-line glob sufficient.
 
@@ -230,7 +235,7 @@ def test_an_unprotected_sibling_path_stays_writable(
     conftest.run_git('commit', '-m', 're-anchor PM2 after editing the report', cwd=work)
     conftest.run_git('push', 'origin', 'main', cwd=work)
 
-    verify = conftest.GitRepo.open(protected.backend, REPO, tmp_path / 'verify.git')
+    verify = conftest.GitRepo.open(backend, REPO, tmp_path / 'verify.git')
     assert verify.read_log(ref=REF, path=ANCHORS) == ['{"code": "PM2", "span": [120, 180]}']
     assert len(verify.read_log(ref=REF, path=ASSERTIONS)) == 1
 
@@ -240,7 +245,7 @@ def test_without_protection_the_same_push_is_accepted(
 ) -> None:
     """Policy lives in the wire layer and is opt-in; the store itself has no opinion."""
     _sign_off(curator, 'PM2')
-    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
         work = _clone(instance, tmp_path, 'work')
         (work / ASSERTIONS).write_text('{"code": "PP3", "state": "reviewed"}\n', 'utf-8')
         conftest.run_git('commit', '-am', 'write the log', cwd=work)

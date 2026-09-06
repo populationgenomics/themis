@@ -22,7 +22,7 @@ from google.protobuf import json_format
 from themis.clients import id_token
 from themis.rpc import auth_pb2, auth_pb2_grpc
 
-_SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
+SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
 
 SessionResolver = Callable[[str], Awaitable[auth_pb2.SessionContext]]
 
@@ -39,7 +39,7 @@ def session_resolver(auth_url: str) -> SessionResolver:
     ``UnresolvedSessionError``; any other gRPC failure — an outage, timeout, or IAM
     misconfiguration — propagates so it surfaces loudly rather than as a bad token.
     """
-    channel = grpc.aio.secure_channel(_target(auth_url), id_token.channel_credentials(auth_url))
+    channel = grpc.aio.secure_channel(grpc_target(auth_url), id_token.channel_credentials(auth_url))
     return _session_resolver_over_stub(auth_pb2_grpc.AuthStub(channel))
 
 
@@ -147,14 +147,14 @@ def _session_token(context: grpc.aio.ServicerContext) -> str | None:
     if metadata is None:
         return None
     for key, value in metadata:
-        if key == _SESSION_TOKEN_METADATA:
+        if key == SESSION_TOKEN_METADATA:
             return value
     return None
 
 
-def _target(auth_url: str) -> str:
+def grpc_target(url: str) -> str:
     """Strip the scheme from a Cloud Run URL, yielding the ``host:port`` gRPC target (default 443)."""
-    host = auth_url.split('://', 1)[-1].rstrip('/')
+    host = url.split('://', 1)[-1].rstrip('/')
     if ':' in host:
         return host
     return f'{host}:443'

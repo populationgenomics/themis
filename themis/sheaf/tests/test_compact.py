@@ -289,7 +289,7 @@ def test_a_clone_still_works_after_compaction(
     del seeded
     store = sheaf.Store(backend, REPO)
     compact.compact(store, _mirror(backend, tmp_path))
-    with server.SheafGitServer(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
         work = tmp_path / 'work'
         subprocess.run(
             ['git', 'clone', '-q', instance.url(REPO), str(work)],

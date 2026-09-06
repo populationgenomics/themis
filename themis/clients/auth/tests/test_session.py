@@ -136,7 +136,7 @@ def test_require_session_unresolvable_token_is_permission_denied() -> None:
     ],
 )
 def test_target_yields_host_port(auth_url: str, expected: str) -> None:
-    assert session._target(auth_url) == expected
+    assert session.grpc_target(auth_url) == expected
 
 
 def test_session_resolver_from_env_requires_url(monkeypatch: pytest.MonkeyPatch) -> None:

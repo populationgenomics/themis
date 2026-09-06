@@ -19,11 +19,11 @@ import os
 import pathlib
 import subprocess
 import threading
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from typing import Self, override
 
 from themis.sheaf import backend as backend_mod
-from themis.sheaf import backends, errors
+from themis.sheaf import errors
 from themis.sheaf import store as store_mod
 from themis.sheaf.wire import bare as bare_mod
 from themis.sheaf.wire import protect
@@ -34,8 +34,14 @@ CHUNK = 64 * 1024
 _logger = logging.getLogger(__name__)
 
 
+class _HttpServer(http.server.ThreadingHTTPServer):
+    # Request threads are joined by `server_close`: a push mid-hook keeps its server until it is
+    # answered, rather than losing it when the caller stops serving.
+    daemon_threads = False
+
+
 class SheafGitServer:
-    """A loopback git server whose object database is a sheaf store.
+    """A loopback git server whose object database is a sheaf repository.
 
     Requests for one repository are serialised: sync writes refs, and two concurrent syncs on the
     same bare repo would race for no benefit. The store's compare-and-swap is the real concurrency
@@ -44,21 +50,20 @@ class SheafGitServer:
 
     def __init__(
         self,
-        backend: backend_mod.Backend,
+        repositories: Iterable[store_mod.Repository],
         root: str | os.PathLike[str],
         *,
-        repos: Collection[str],
         host: str = '127.0.0.1',
         port: int = 0,
         protection: protect.Protection | None = None,
     ) -> None:
-        """Serve repositories from `backend`, keeping bare mirrors under `root`.
+        """Serve `repositories`, keeping bare mirrors under `root`.
 
         Args:
-            backend: The object store the repositories live in.
+            repositories: The repositories this server will serve at all, each reached at the path
+                its `repo` names. Required: the repository is otherwise taken entirely from the
+                request path.
             root: Directory holding one bare mirror per served repository.
-            repos: The repositories this server will serve at all. Required: the repository is
-                otherwise taken entirely from the request path.
             host: Address to bind.
             port: Port to bind; 0 takes an ephemeral one, which `authority` then reports.
             protection: Paths the pushing side may not write and refs it may not rewrite. It
@@ -66,24 +71,55 @@ class SheafGitServer:
                 tracked config file would be editable in the same push it constrains.
 
         Raises:
-            TypeError: If `repos` is a single name rather than a collection of them, or if
-                `backend` has no descriptor form, so the hook could never be handed one.
-            ValueError: If the backend has a descriptor form that names nothing reachable.
+            TypeError: If a repository has no descriptor form, so the hook could never be handed
+                one.
+            ValueError: If two repositories share a name, or a descriptor names nothing reachable.
         """
-        self.backend = backend
-        self.root = pathlib.Path(root)
+        # Absolute: git runs the hook with the bare repository as its working directory, and the
+        # paths handed to it name this root.
+        self.root = pathlib.Path(root).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
         self.protection = protection or protect.Protection()
+        self._repositories: dict[str, store_mod.Repository] = {}
+        for repository in repositories:
+            if repository.repo in self._repositories:
+                raise ValueError(f'two repositories are named {repository.repo!r}')
+            # A repository with no descriptor form cannot reach the hook, so fail at construction
+            # rather than inside the first push.
+            repository.descriptor()
+            self._repositories[repository.repo] = repository
+        self._locks: dict[str, threading.Lock] = collections.defaultdict(threading.Lock)
+        self._httpd = _HttpServer((host, port), _make_handler(self))
+        self._thread: threading.Thread | None = None
+
+    @classmethod
+    def over_backend(
+        cls,
+        backend: backend_mod.Backend,
+        root: str | os.PathLike[str],
+        *,
+        repos: Collection[str],
+        host: str = '127.0.0.1',
+        port: int = 0,
+        protection: protect.Protection | None = None,
+    ) -> Self:
+        """Serve the named repositories of `backend` through in-process stores.
+
+        Raises:
+            TypeError: If `repos` is a single name rather than a collection of them, or if
+                `backend` has no descriptor form.
+            ValueError: If the backend has a descriptor form that names nothing reachable.
+        """
         # A bare string would become a set of characters, and every request would 404.
         if isinstance(repos, str):
             raise TypeError('repos takes a collection of repository names, not one name')
-        self.repos = frozenset(repos)
-        # A backend with no descriptor form cannot reach the hook, so fail at construction rather
-        # than inside the first push.
-        backends.descriptor_for(backend)
-        self._locks: dict[str, threading.Lock] = collections.defaultdict(threading.Lock)
-        self._httpd = http.server.ThreadingHTTPServer((host, port), _make_handler(self))
-        self._thread: threading.Thread | None = None
+        stores = [store_mod.Store(backend, repo) for repo in repos]
+        return cls(stores, root, host=host, port=port, protection=protection)
+
+    @property
+    def repos(self) -> frozenset[str]:
+        """The names of the repositories served."""
+        return frozenset(self._repositories)
 
     def start(self) -> None:
         """Serve in a background thread."""
@@ -91,7 +127,7 @@ class SheafGitServer:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop serving and release the port. Safe on a server that was never started."""
+        """Stop accepting, wait for in-flight requests, release the port. Safe on a server that was never started."""
         # `shutdown()` waits on an event `serve_forever` sets, so calling it on a server that never
         # served blocks forever. The socket is bound in `__init__`, so the close is unconditional.
         if self._thread is not None:
@@ -119,8 +155,12 @@ class SheafGitServer:
         return f'http://{self.authority}/{repo.strip("/")}'
 
     def bare(self, repo: str) -> bare_mod.BareRepo:
-        """The bare mirror of `repo`."""
-        return bare_mod.BareRepo(store_mod.Store(self.backend, repo), self.root / repo)
+        """The bare mirror of `repo`.
+
+        Raises:
+            KeyError: If `repo` is not one this server serves.
+        """
+        return bare_mod.BareRepo(self._repositories[repo], self.root / repo)
 
     def lock_for(self, repo: str) -> threading.Lock:
         """The per-repository serialisation lock."""

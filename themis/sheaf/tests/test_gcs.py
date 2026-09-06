@@ -128,7 +128,7 @@ def test_clone_and_push_against_gcs(
     writer.append_line(ref=REF, path=LOG, line='{"code":"PM2"}', author=REVIEWER, message='review PM2')
 
     git = ['git', '-c', 'user.email=agent@x', '-c', 'user.name=Agent', '-c', 'init.defaultBranch=main']
-    with server.SheafGitServer(gcs_backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(gcs_backend, tmp_path / 'bare', repos={REPO}) as instance:
         work = tmp_path / 'work'
         subprocess.run(
             [*git, 'clone', '-q', instance.url(REPO), str(work)], capture_output=True, check=True, timeout=180

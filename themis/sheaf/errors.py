@@ -89,6 +89,38 @@ class ReflogRequired(SheafError):
         self.refs = refs
 
 
+class PublishRefused(SheafError):
+    """The `Sheaf` service refused a publish on what the intent and the document alone decide.
+
+    An intent the service found malformed, or a publish over one of the deployment's ceilings, in
+    the service's own words. Not a race and not a conflict: retrying the same publish never lands
+    it. The store-level refusals — a bad name, a deletion, a missing reflog entry — are raised as
+    their own types before the intent is sent, so this is what remains once the service has seen it.
+    """
+
+
+class ServiceFault(SheafError):
+    """The `Sheaf` service could not be reached or refused the caller's identity.
+
+    Every status that is not one of the protocol's refusals — an outage, a deadline, a token the
+    service does not resolve — in the service's own words. A deployment fault, not the caller's
+    intent: the hook reports it as such rather than as anything about the push.
+    """
+
+    def __init__(self, code: str, details: str) -> None:
+        super().__init__(f'the sheaf service answered {code}: {details}')
+        self.code = code
+        self.details = details
+
+
+class CredentialsUnusable(SheafError):
+    """The token file a remote store presents cannot be used: unreadable, open to others, malformed.
+
+    A deployment fault, not the caller's: the file is written by whoever runs the store, never by
+    the pusher, so the hook reports it as such rather than letting the error escape as a traceback.
+    """
+
+
 class RetriesExhausted(SheafError):
     """A transaction lost the race more times than the retry budget allows."""
 

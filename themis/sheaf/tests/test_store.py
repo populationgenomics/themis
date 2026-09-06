@@ -614,7 +614,7 @@ def test_plan_is_the_document_publish_writes_and_uploads_nothing(backend: sheaf.
     base = store.read()
     intent = conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}, packs=[b'PACK-1']))
 
-    planned = store.plan(base, intent)
+    planned = sheaf.plan(base, intent)
 
     assert not list(backend.list_immutable(store.pack_prefix))
     assert store.read().generation is None
@@ -625,9 +625,9 @@ def test_plan_refuses_what_publish_refuses(backend: sheaf.LocalBackend) -> None:
     store = sheaf.Store(backend, 'p')
     base = store.read()
     with pytest.raises(sheaf.RefConflict):
-        store.plan(base, conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_A)})))
+        sheaf.plan(base, conftest.logged(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(SHA_B, SHA_A)})))
     with pytest.raises(sheaf.ReflogRequired):
-        store.plan(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
+        sheaf.plan(base, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)}))
 
 
 def _logged_updates(base: sheaf.Snapshot, **moves: tuple[str | None, str]) -> dict[str, sheaf.RefUpdate]:

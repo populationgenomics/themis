@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import sys
 
-from themis.sheaf import backends, errors
+from themis.sheaf import errors, stores
 from themis.sheaf import store as store_mod
 from themis.sheaf.wire import bare, protect, reflog
 
@@ -83,21 +83,20 @@ def main(argv: list[str] | None = None) -> int:
         A process exit status: zero to accept the push, non-zero to refuse it.
 
     Anything the store refuses — a lost race, a non-fast-forward, a name git cannot hold — is a
-    refusal message to the client, never a traceback.
+    refusal message to the client, never a traceback; so is a deployment fault — an unreadable
+    state file or token file, a descriptor this build cannot rebuild, a service that cannot be
+    reached or does not admit the caller, a document this code did not write.
 
     Raises:
-        KeyError: If the sync state the server wrote is missing a field.
-        FileNotFoundError: If the path it names does not exist.
-        ValueError: If the backend descriptor names a kind this build has no backend for.
         RuntimeError: If git fails while the pack of new objects is being built.
-        SheafError: If the store cannot be read or written for a reason that is not a refusal.
+        SheafError: If the store cannot be read or written for a reason that is neither a refusal
+            nor one of the deployment faults above.
     """
     del argv
     state_path = os.environ.get(SYNC_STATE_ENV)
     if not state_path:
         return _refuse([f'{SYNC_STATE_ENV} is not set'], 'this is a deployment fault, not yours.')
 
-    state = bare.SyncState.load(state_path)
     try:
         updates = parse_stdin(sys.stdin.read().splitlines())
     except ValueError as exc:
@@ -105,7 +104,14 @@ def main(argv: list[str] | None = None) -> int:
     if not updates:
         return 0
 
-    store = store_mod.Store(backends.backend_from_descriptor(state.backend), state.repo)
+    # The state file and the descriptor are written by the process that installed this hook, so a
+    # fault in either is that deployment's, and is reported to the pusher as such rather than as
+    # the traceback git would otherwise relay.
+    try:
+        state = bare.SyncState.load(state_path)
+        store = stores.from_descriptor(state.store)
+    except (OSError, ValueError, KeyError, ImportError, errors.CredentialsUnusable) as exc:
+        return _refuse([f'{type(exc).__name__}: {exc}'], 'this is a deployment fault, not yours.')
     repo = bare.BareRepo(store, os.environ.get(GIT_DIR_ENV) or os.environ.get('GIT_DIR', '.'))
 
     # Policy first: a protection violation is a definite refusal, so report it even where the push
@@ -117,8 +123,28 @@ def main(argv: list[str] | None = None) -> int:
     # The client built its push against the refs advertised at `state.generation`. Anything else
     # there now means somebody landed in between, and the push has to be rebuilt rather than merged
     # blindly on this side.
+    try:
+        return _publish(store, repo, updates, state.generation)
+    except (errors.ServiceFault, errors.CorruptRepository, errors.CredentialsUnusable) as exc:
+        return _refuse([str(exc)], 'this is a deployment fault, not yours.')
+
+
+def _publish(
+    store: store_mod.Repository,
+    repo: bare.BareRepo,
+    updates: dict[str, store_mod.RefUpdate],
+    synced_generation: int | None,
+) -> int:
+    """Read once more, write the reflog entry, pack, publish; the hook's exit status.
+
+    Raises:
+        ServiceFault: If the service could not be reached or did not admit the caller.
+        CredentialsUnusable: If the token file a remote store presents cannot be used.
+        CorruptRepository: If the stored document is not one this code wrote.
+        RuntimeError: If git fails while the pack of new objects is being built.
+    """
     snapshot = store.read()
-    if snapshot.generation != state.generation:
+    if snapshot.generation != synced_generation:
         return _refuse([_MOVED], _MOVED_HINT)
     # Every update is a create or a fast-forward by now, so each has a new tip to log. The reflog
     # commit is written into git's quarantine alongside the pushed objects and travels in the same
@@ -142,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
         return _refuse(
             [_MOVED if raced else str(exc)],
             _MOVED_HINT if raced else 'fetch first, then push again.',
+        )
+    except errors.PublishRefused as exc:
+        return _refuse(
+            [str(exc)], 'the service refused this publish; the same push will not land, so fix what it names.'
         )
     return 0
 
