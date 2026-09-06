@@ -24,28 +24,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import shutil
 import socket
 import subprocess
 import time
 
-_INSTANCE = 'themis-sql'
-_REGION = 'australia-southeast1'
-_DATABASE = 'themis'
-_DEFAULT_PROJECT = 'cpg-themis-dev'
+from tools import clu
+
 _PROXY = 'cloud-sql-proxy'
 _PSQL = 'psql'
-_IAM_SA_SUFFIX = '.gserviceaccount.com'
-# The automation identity: impersonated rather than anyone holding a database login of their own.
-_DEFAULT_IMPERSONATE = 'themis-clu@{project}.iam.gserviceaccount.com'
-
-
-def _resolve_binary(name: str) -> str:
-    """Absolute path to ``name``, or exit loudly if it isn't on PATH."""
-    path = shutil.which(name)
-    if path is None:
-        raise SystemExit(f'{name!r} not found on PATH; install it before running this tool')
-    return path
 
 
 def _free_loopback_port() -> int:
@@ -57,7 +43,7 @@ def _free_loopback_port() -> int:
 
 def _active_gcloud_account() -> str:
     result = subprocess.run(  # noqa: S603 — fixed argv, resolved path
-        [_resolve_binary('gcloud'), 'config', 'get-value', 'account'],
+        [clu.resolve_binary('gcloud'), 'config', 'get-value', 'account'],
         capture_output=True,
         text=True,
         check=True,
@@ -70,8 +56,7 @@ def _active_gcloud_account() -> str:
 
 def _login_role(impersonate: str | None) -> str:
     """The Postgres role to log in as: the IAM principal, minus the suffix Cloud SQL strips off SAs."""
-    principal = impersonate or _active_gcloud_account()
-    return principal.removesuffix(_IAM_SA_SUFFIX)
+    return clu.db_user(impersonate or _active_gcloud_account())
 
 
 def _wait_until_listening(port: int, timeout: float = 15.0) -> None:
@@ -85,9 +70,9 @@ def _wait_until_listening(port: int, timeout: float = 15.0) -> None:
 
 
 def _run(project: str, impersonate: str | None, psql_args: list[str]) -> int:
-    proxy_bin = _resolve_binary(_PROXY)
-    psql_bin = _resolve_binary(_PSQL)
-    connection_name = f'{project}:{_REGION}:{_INSTANCE}'
+    proxy_bin = clu.resolve_binary(_PROXY)
+    psql_bin = clu.resolve_binary(_PSQL)
+    connection_name = f'{project}:{clu.REGION}:{clu.SQL_INSTANCE}'
     port = _free_loopback_port()
     # --quota-project pins the Admin-API ephemeral-cert call to the target project; without it the
     # call bills to the caller's ADC quota project, which may not have sqladmin enabled.
@@ -99,7 +84,7 @@ def _run(project: str, impersonate: str | None, psql_args: list[str]) -> int:
     proxy = subprocess.Popen(proxy_cmd)  # noqa: S603 — resolved path, argv from fixed config + flags
     try:
         _wait_until_listening(port)
-        dsn = f'host=127.0.0.1 port={port} dbname={_DATABASE} user={_login_role(impersonate)} sslmode=disable'
+        dsn = f'host=127.0.0.1 port={port} dbname={clu.SQL_DATABASE} user={_login_role(impersonate)} sslmode=disable'
         return subprocess.run([psql_bin, dsn, *psql_args], check=False).returncode  # noqa: S603 — resolved path
     finally:
         proxy.terminate()
@@ -109,7 +94,7 @@ def _run(project: str, impersonate: str | None, psql_args: list[str]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--project', default=_DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
     parser.add_argument(
         '--as',
         dest='impersonate',
@@ -123,8 +108,12 @@ def main() -> None:
     # (psql treats everything after its own `--` as positional and would ignore the query).
     if psql_args and psql_args[0] == '--':
         psql_args = psql_args[1:]
-    impersonate = _DEFAULT_IMPERSONATE.format(project=args.project) if args.impersonate is None else args.impersonate
-    raise SystemExit(_run(args.project, impersonate or None, psql_args))
+    impersonate = clu.service_account(args.project) if args.impersonate is None else args.impersonate
+    try:
+        status = _run(args.project, impersonate or None, psql_args)
+    except clu.GcloudError as exc:
+        raise SystemExit(str(exc)) from exc
+    raise SystemExit(status)
 
 
 if __name__ == '__main__':

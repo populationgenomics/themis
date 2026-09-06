@@ -93,6 +93,27 @@ SET ROLE "themis-deploy@cpg-themis-dev.iam";
 So the account can write `project_members`, which decides the Projects a signed-in user sees — worth knowing because it
 is how a fresh environment gets seeded, not as a caution.
 
+## A git remote over the sheaf service
+
+An Analysis's repository lives behind the `Sheaf` service, which scopes every call by a session token rather than by a
+name. Cloning it from a laptop takes two steps: derive the Analysis's session token, then serve a loopback git remote
+that presents it, together with an ID token minted as above, on every call.
+
+```bash
+uv run --group tools_sheaf python -m tools.session_token --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
+uv run --group tools_sheaf python -m tools.sheaf_remote --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
+git clone http://127.0.0.1:<port>/"$ANALYSIS"        # the port is printed; push works the same way
+```
+
+The first reads the Analysis's session id from the database and MAC-signs it through the session-token KMS key, both as
+`themis-clu`, so the account needs `cloudkms.signerVerifier` on that key besides the database login, and `run.invoker`
+on the sheaf service for the second; both land with the sheaf deploy, and until they do the tools fail with the KMS or
+gRPC error as is. The signing grant is a decision, not a convenience: whoever can sign can derive any Analysis's session
+token, the credential that scopes the sandbox's every call. The second keeps the ID token fresh in the token file while
+it runs and removes it on Ctrl-C. Every read goes through `ReadRefDoc` and `FetchPack` and every push through `Publish`,
+so a push refused by the service reads back in the hook's wording, as it would for the sandbox worker. The token is only
+ever in that file; it is never on the command line or in the environment.
+
 ## What it can reach
 
 `themis-clu` holds `run.invoker` on the evidence and sheaf services, IAP access on the web app, and a database login

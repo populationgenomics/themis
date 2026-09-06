@@ -15,6 +15,7 @@ import base64
 from collections.abc import Awaitable, Callable
 
 import google_crc32c
+from google.auth import credentials as credentials_mod
 from google.cloud import kms_v1
 
 SessionTokenDeriver = Callable[[str], Awaitable[str]]
@@ -33,17 +34,19 @@ def _verified_bearer(mac: bytes, mac_crc32c: int | None, *, verified_data_crc32c
     return _encode(mac)
 
 
-def kms_deriver(key_version: str) -> SessionTokenDeriver:
+def kms_deriver(key_version: str, *, credentials: credentials_mod.Credentials | None = None) -> SessionTokenDeriver:
     """Build a deriver that MAC-signs each ``session_id`` through the Cloud KMS MAC key version.
 
     Args:
         key_version: The MAC key's ``.../cryptoKeyVersions/<n>`` resource name — pinned, since a
             different version derives different bearers and would strand every live session.
+        credentials: The identity that signs; the ambient credentials when None. An operator's
+            tool passes impersonated credentials for the service account that holds the grant.
 
     Returns:
         A ``SessionTokenDeriver`` returning the base64url bearer for a session id.
     """
-    client = kms_v1.KeyManagementServiceAsyncClient()
+    client = kms_v1.KeyManagementServiceAsyncClient(credentials=credentials)
 
     async def derive(session_id: str) -> str:
         data = session_id.encode()
