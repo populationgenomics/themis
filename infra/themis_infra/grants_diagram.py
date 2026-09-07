@@ -27,7 +27,7 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 OUTPUT_DIR = _REPO / 'docs' / 'design' / 'grants'
 # bunx from apps/web so its bunfig's release-age gate applies to what it fetches.
 _MERMAID_CLI_CWD = _REPO / 'apps' / 'web'
-_MERMAID_CLI = '@mermaid-js/mermaid-cli@11.17.0'
+_MERMAID_CLI = '@mermaid-js/mermaid-cli@11.16.0'
 COMMAND = 'cd infra && uv run --frozen --group infra python -m themis_infra.grants_diagram'
 # SVG text labels rather than HTML ones: an <img> viewer need not render foreignObject.
 _INIT = (
@@ -79,6 +79,7 @@ VIEWS = (
                 'DatabaseConnector',
                 'SecretReader',
                 'SessionBearerDeriver',
+                'MetricWriter',
             }
         ),
         direction='LR',
@@ -94,6 +95,16 @@ VIEWS = (
 _SERVICE_AGENTS = {'iap': 'IAP', 'cloudtasks': 'Cloud Tasks'}
 _DATAFLOW_AGENT_DOMAIN = 'dataflow-service-producer-prod.iam.gserviceaccount.com'
 _SERVICE_ACCOUNT_RESOURCE = re.compile(r'^projects/[^/]+/serviceAccounts/(.+)$')
+
+# Capabilities over a resource the label names outright, not the binding's target: project-wide roles, and
+# the one key.
+_FIXED_TARGET_LABEL = {
+    'SessionBearerDeriver': 'KMS session-token key',
+    'DatabaseConnector': 'Cloud SQL, project-wide',
+    'MetricWriter': 'Cloud Monitoring, project-wide',
+    'DeployAccountBuilder': 'project',
+    'DataflowWorker': 'project',
+}
 
 _PRINCIPAL = 'principal'
 _WORKLOAD = 'workload'
@@ -157,12 +168,8 @@ def _target(binding: capture.Binding, project: str) -> _Node:
             return _Node(_RESOURCE, f'bucket {target.removeprefix(f"{project}-")}')
         case 'SecretReader':
             return _Node(_RESOURCE, f'secret {target}')
-        case 'SessionBearerDeriver':
-            return _Node(_RESOURCE, 'KMS session-token key')
-        case 'DatabaseConnector':
-            return _Node(_RESOURCE, 'Cloud SQL, project-wide')
-        case 'DeployAccountBuilder' | 'DataflowWorker':
-            return _Node(_RESOURCE, 'project')
+        case str(capability) if capability in _FIXED_TARGET_LABEL:
+            return _Node(_RESOURCE, _FIXED_TARGET_LABEL[capability])
         case 'SubnetUser':
             return _Node(_RESOURCE, f'subnet {target}')
     raise ValueError(f'{binding.capability}: no target rendering for this capability ({binding.urn})')

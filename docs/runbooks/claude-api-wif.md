@@ -61,9 +61,8 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | rule `cpg-themis-dev-web-rule` (Path B)                   | `fdrl_01JXLFyrG8PnJ62qPFzTmp4P`        |
 | svac `cpg-themis-convert-worker` (Path B)                 | `svac_013a2rMRQihX3fzRKDnk7o2v`        |
 | rule `cpg-themis-convert-worker-rule` (Path B)            | `fdrl_01GQqwA9kP4Fve93ycq2q6kE`        |
-
-The cost exporter has no rows yet: its rule pins a GCP service account that the environment's first `up` mints, so
-registration follows the first deploy (Path B) and the issued `svac_…` / `fdrl_…` are recorded here then.
+| svac `cpg-themis-dev-cost-exporter` (Path B)              | `svac_01Wh612pvuxbauiTokVBBNV7`        |
+| rule `cpg-themis-dev-cost-exporter-rule` (Path B)         | `fdrl_01GZB8c9yJ3B6QPjBg7rn3QR`        |
 
 These rows are the **dev** set. CI (the review and doc-garden) is repo-scoped and only ever runs against dev, so prod
 adds no ci-review counterpart — just its own `cpg-themis-prod` workspace, `cpg-themis-prod-web` and
@@ -215,32 +214,40 @@ For `themis-cost-exporter`, the workspace-spend monitor ([`../design/cost-monito
 request.
 
 1. **Issuer**: already registered — the `gcp` issuer above covers every GCP surface.
-1. **Service account**: `cpg-themis-dev-cost-exporter`; add to the `cpg-themis-dev` workspace.
+1. **Service account**: `cpg-themis-dev-cost-exporter` (`svac_01Wh612pvuxbauiTokVBBNV7`); add to the `cpg-themis-dev`
+   workspace.
 1. **GCP SA unique ID** (the stable `sub`) — the SA is Pulumi-managed (`cost` module), so read it from the stack output
    (or `gcloud`):
    ```sh
    pulumi stack output cost_exporter_sa_unique_id   # email: pulumi stack output cost_exporter_sa_email
    ```
-1. **Federation rule** `cpg-themis-dev-cost-exporter-rule` — match `sub` + `email`, as the web rule does:
+   For `cpg-themis-dev` this is currently `101156525731773951042` — a snapshot, as for the web app; the stack output is
+   the source of truth.
+1. **Federation rule** `cpg-themis-dev-cost-exporter-rule` (`fdrl_01GZB8c9yJ3B6QPjBg7rn3QR`) — match `sub` + `email`, as
+   the web rule does:
    ```json
    {
      "match": {
        "audience": "https://api.anthropic.com",
        "claims": {
-         "sub": "<cost_exporter_sa_unique_id>",
+         "sub": "101156525731773951042",
          "email": "themis-cost-exporter@cpg-themis-dev.iam.gserviceaccount.com"
        }
      },
-     "target": { "type": "service_account", "service_account_id": "<the svac from step 2>" },
+     "target": { "type": "service_account", "service_account_id": "svac_01Wh612pvuxbauiTokVBBNV7" },
      "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
      "oauth_scope": "workspace:developer",
      "token_lifetime_seconds": 600
    }
    ```
    `workspace:developer` because nothing narrower reaches Managed-Agents sessions — `workspace:inference` excludes them,
-   and there is no read-only workspace scope. Record the issued `svac_…` and `fdrl_…` in the ID table above.
+   and there is no read-only workspace scope.
 1. **Runtime** — the exporter fetches its Google ID token from the metadata server with
-   `audience=https://api.anthropic.com&format=full` (`format=full` carries the `email` claim), same as the web app.
+   `audience=https://api.anthropic.com&format=full` (`format=full` carries the `email` claim), same as the web app. The
+   stack carries the two ids as `themis:anthropicCostExporterServiceAccountId` and
+   `themis:anthropicCostExporterFederationRuleId` (on a fresh environment, placeholders until this registration is done
+   — [`fresh-environment.md`](fresh-environment.md) §3), and `cost.py` sets them, with the shared org and workspace, as
+   the job's four `ANTHROPIC_*` env vars.
 
 ## Path C — GitHub Actions (scheduled, `main` ref) → Claude API
 

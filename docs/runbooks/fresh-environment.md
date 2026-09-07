@@ -54,9 +54,10 @@ rules). Idempotent. The deploy/preview SA emails and the WIF provider path it pr
 The registry is created by the program, so the first `pulumi up` uses a public placeholder image — that one `up` creates
 the registry *and* brings the edge up running the placeholder; later deploys push real images to that registry.
 
-Two of the required keys name values this same `up` produces, so they carry placeholders for this one run —
-[§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads must already hold its real value:
-`preview` stops at the first `config.require*` the stack does not satisfy, before anything is created.
+A few of the required keys name values this same `up` produces, or registrations that can only follow it, so they carry
+placeholders for this one run — [§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads
+must already hold its real value: `preview` stops at the first `config.require*` the stack does not satisfy, before
+anything is created.
 
 ```sh
 cd infra
@@ -75,24 +76,27 @@ the mirror). Requires the operator KMS grant from the prerequisites above.
 ## 3. Values that only exist after the first `up`
 
 Some of what the program requires, the program itself produces — circular by construction, so a fresh environment cannot
-declare it up front. The first `up` runs against placeholders; each real value is then read from a stack output and set,
-and a second `up` applies it. Whatever each one feeds stays inert until then, which costs nothing on a first bring-up:
-the edge is still serving the placeholder image.
+declare it up front. The first `up` runs against placeholders; each real value is then read from a stack output (or
+registered against one) and set, and a second `up` applies it. What each one feeds is inert or fails loudly until then —
+the table says which — and on a first bring-up neither costs anything: the edge is still serving the placeholder image.
 
-| Key                                | Real value                                                                                                                                    | Inert until set                                                                                        |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `themis:iapBackendServiceId`       | `pulumi stack output web_backend_service_id`                                                                                                  | The web app verifies the IAP-JWT audience against this id, so it refuses every assertion IAP hands it. |
-| `themis:anthropicFederationRuleId` | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B | The BFF cannot mint a Managed-Agents token.                                                            |
+| Key                                                                                            | Real value                                                                                                                                                   | Inert until set                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `themis:iapBackendServiceId`                                                                   | `pulumi stack output web_backend_service_id`                                                                                                                 | The web app verifies the IAP-JWT audience against this id, so it refuses every assertion IAP hands it. |
+| `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                | The BFF cannot mint a Managed-Agents token.                                                            |
+| `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty.     |
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
-remaining `themis:anthropic*` ids are set for real from the start: the svacs, org and workspace are Anthropic-side
-entities that exist before any GCP service account does, and `themis:anthropicWorkerFederationRuleId` pins a service
-account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so its rule can
-be registered before the first `up`.
+remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
+Anthropic-side entities that exist before any GCP service account does, and `themis:anthropicWorkerFederationRuleId`
+pins a service account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so
+its rule can be registered before the first `up`.
 
 ```sh
 pulumi config set themis:iapBackendServiceId "$(pulumi stack output web_backend_service_id)"
 pulumi config set themis:anthropicFederationRuleId fdrl_...   # from the Anthropic console
+pulumi config set themis:anthropicCostExporterServiceAccountId svac_...
+pulumi config set themis:anthropicCostExporterFederationRuleId fdrl_...
 pulumi up
 ```
 
@@ -102,10 +106,10 @@ rather than a wrong constant.
 
 ### Retiring a first-deploy image placeholder
 
-`preview` reads each Cloud Run service's live image so a plan shows no spurious image change, which needs the service to
-exist. A service added in the same change has none, so `preview.yml` passes a placeholder for it. Once the first deploy
-creates the service, delete that line: the override keeps winning otherwise, and every later preview plans the real
-image back to the placeholder.
+`preview` reads each Cloud Run service's or job's live image so a plan shows no spurious image change, which needs the
+resource to exist. One added in the same change has none, so `preview.yml` passes a placeholder for it. Once the first
+deploy creates it, delete that line: the override keeps winning otherwise, and every later preview plans the real image
+back to the placeholder.
 
 ### Adopting a service account created ahead of the program
 

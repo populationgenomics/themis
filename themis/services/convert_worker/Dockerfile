@@ -25,8 +25,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 # The worker runs the whole fetch/convert ladder, so it carries the full litcache package and the
 # vendored buf/validate stubs litcache_pb2 imports — not the read service's lean models-only subset.
-# themis/common is litcache's only cross-package themis import (writer/oa/crossref: storage + constants).
+# themis/common is litcache's only cross-package themis import (writer/oa/crossref: storage + constants);
+# anthropic_wif is the federation credential the PDF branch authenticates to the Claude API with — the
+# rest of themis/clients is gRPC-side and has no consumer here.
 COPY buf ./buf
+COPY themis/clients/anthropic_wif.py ./themis/clients/anthropic_wif.py
 COPY themis/common ./themis/common
 COPY themis/litcache ./themis/litcache
 COPY themis/services/convert_worker ./themis/services/convert_worker

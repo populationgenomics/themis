@@ -26,6 +26,7 @@ from google.api_core import exceptions as api_exceptions
 from google.auth import credentials
 from google.cloud import storage
 
+from themis.clients import anthropic_wif
 from themis.litcache import anthropic_ocr, ocr, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
@@ -308,28 +309,13 @@ def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch
     # well-formed, the revision deploys healthy, and only the first token exchange fails.
     federation = _bound_converter(monkeypatch).keywords['credentials']
     assert isinstance(federation, functools.partial)
+    assert federation.func is anthropic_wif.credentials
     assert federation.keywords == {
-        'identity_token_provider': main_mod._identity_token,
         'federation_rule_id': _FEDERATION_ENV['ANTHROPIC_FEDERATION_RULE_ID'],
         'organization_id': _FEDERATION_ENV['ANTHROPIC_ORGANIZATION_ID'],
         'service_account_id': _FEDERATION_ENV['ANTHROPIC_SERVICE_ACCOUNT_ID'],
         'workspace_id': _FEDERATION_ENV['ANTHROPIC_WORKSPACE_ID'],
     }
-
-
-def test_the_identity_token_is_minted_for_the_claude_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The audience is half of what the federation rule matches on, and the only input to the exchange
-    # that no environment variable carries — a wrong one is refused at the exchange, not at deploy.
-    seen: list[str] = []
-
-    def fetch_id_token(_request: object, audience: str) -> str:
-        seen.append(audience)
-        return 'header.payload.signature'
-
-    monkeypatch.setattr(main_mod.id_token, 'fetch_id_token', fetch_id_token)
-
-    assert main_mod._identity_token() == 'header.payload.signature'
-    assert seen == ['https://api.anthropic.com']
 
 
 def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: pytest.MonkeyPatch) -> None:

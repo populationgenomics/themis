@@ -46,6 +46,7 @@ _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
 _SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
 _EVIDENCE_IMAGE_ENV = 'THEMIS_EVIDENCE_IMAGE'
 _SHEAF_IMAGE_ENV = 'THEMIS_SHEAF_IMAGE'
+_COST_EXPORTER_IMAGE_ENV = 'THEMIS_COST_EXPORTER_IMAGE'
 # Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
 # it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
 # the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.
@@ -84,6 +85,11 @@ anthropic_workspace_id = config.require('anthropicWorkspaceId')
 # SA; the org and workspace above are shared.
 anthropic_worker_federation_rule_id = config.require('anthropicWorkerFederationRuleId')
 anthropic_worker_service_account_id = config.require('anthropicWorkerServiceAccountId')
+# The cost exporter's own Path B identifiers, likewise pinned to its runtime SA. On a fresh environment,
+# placeholders until the org-admin registration, which can only follow the deploy that mints that SA
+# (docs/runbooks/fresh-environment.md §3).
+anthropic_cost_exporter_federation_rule_id = config.require('anthropicCostExporterFederationRuleId')
+anthropic_cost_exporter_service_account_id = config.require('anthropicCostExporterServiceAccountId')
 # IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
 # lookup) and the backend service's numeric id — this stack's own web_backend_service_id
 # output, fed back as config (docs/runbooks/fresh-environment.md §3).
@@ -593,7 +599,13 @@ grants.SandboxSpawner(
 # The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it.
 cost_exporter = cost.CostExporter(
     project=project,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
+    region=region,
+    image=_image(_COST_EXPORTER_IMAGE_ENV, lambda: _live_job_image('themis-cost-exporter', 'exporter')),
+    anthropic_federation_rule_id=anthropic_cost_exporter_federation_rule_id,
+    anthropic_organization_id=anthropic_organization_id,
+    anthropic_service_account_id=anthropic_cost_exporter_service_account_id,
+    anthropic_workspace_id=anthropic_workspace_id,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 
 # Developer-workflow storage, unattached to the data plane: the review screenshots a
@@ -672,3 +684,4 @@ pulumi.export('convert_invoker_sa_email', convert_invoker.service_account_email)
 # matches (docs/runbooks/claude-api-wif.md, Path B).
 pulumi.export('cost_exporter_sa_email', cost_exporter.service_account_email)
 pulumi.export('cost_exporter_sa_unique_id', cost_exporter.service_account_unique_id)
+pulumi.export('cost_exporter_job_name', cost_exporter.job_name)

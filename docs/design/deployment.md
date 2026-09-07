@@ -152,9 +152,9 @@ all three graphs is within its reach, though none is drawn for it.
 
 ![Calls: who may call what](grants/calls.svg)
 
-**Data** — who may read or write which store, secret or key.
+**Data** — who may read or write which store, secret, key or metric.
 
-![Data: who may read or write which store, secret or key](grants/data.svg)
+![Data: who may read or write which store, secret, key or metric](grants/data.svg)
 
 **Platform** — who may build or run on the project itself.
 

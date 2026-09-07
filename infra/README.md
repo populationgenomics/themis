@@ -19,7 +19,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/sql.py`         | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                     |
 | `themis_infra/storage.py`     | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                               |
 | `themis_infra/convert.py`     | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                     |
-| `themis_infra/cost.py`        | The workspace-spend monitor: the cost exporter's runtime SA, the GCP side of its Anthropic WIF identity.                                                                                  |
+| `themis_infra/cost.py`        | The workspace-spend monitor: the cost exporter Cloud Run Job and its schedule, its runtime SA (the GCP side of its Anthropic WIF identity), and the list-cost gauge's metric descriptor.  |
 | `themis_infra/screenshots.py` | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                                                  |
 | `themis_infra/secrets.py`     | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                                                 |
 | `themis_infra/ingest.py`      | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md). |
@@ -97,9 +97,17 @@ IAM-gated `gcloud` ADC.
 
 ## Deletion guards
 
-Guarded only where loss is unrecoverable or externally bound: the reserved load-balancer IP (DNS points at it), the
-Cloud SQL instance and its database, and the web runtime and convert-worker SAs whose never-reissued `unique_id`s their
-Anthropic WIF rules pin, and the cost-exporter SA a rule will pin (`protect`, plus `retain_on_delete` on the SAs).
+Guarded only where loss is unrecoverable or externally bound (`protect`, plus `retain_on_delete` where dropping the
+declaration must leave the resource standing):
+
+- The reserved load-balancer IP: DNS points at it.
+- The Cloud SQL instance and its database.
+- The web runtime and convert-worker SAs, whose never-reissued `unique_id`s their Anthropic WIF rules pin, and the
+  cost-exporter SA a rule will pin.
+- The spend gauge's metric descriptor: its type, kind, value type and labels are immutable, so a change to any of them
+  plans a replacement, and a deleted descriptor takes its history with it — Monitoring accepts no backfill. A new
+  breakdown dimension is a new metric type beside it, never an edit.
+
 Buckets rely on the non-empty refusal above.
 
 Cloud Run services and jobs set `deletion_protection=False` explicitly: the provider defaults it to true, and it is a
@@ -131,8 +139,9 @@ Per-environment, in `Pulumi.<stack>.yaml`. The `config.require*` calls at the to
 the program reads — a missing key fails `pulumi up`; `Pulumi.dev.yaml` is the worked example of every one. Two things
 that list cannot express:
 
-- `themis:iapBackendServiceId` and `themis:anthropicFederationRuleId` name values the stack itself produces, so a fresh
-  environment holds placeholders for them until its first `up`
+- `themis:iapBackendServiceId`, `themis:anthropicFederationRuleId` and the cost exporter's
+  `themis:anthropicCostExporterServiceAccountId` / `…FederationRuleId` name values the stack itself produces, or
+  registrations that can only follow them, so a fresh environment holds placeholders for them until its first `up`
   ([`fresh-environment.md`](../docs/runbooks/fresh-environment.md) §3).
 
 The deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to deploy a specific image
@@ -156,15 +165,15 @@ shows no spurious diff — except on a first bring-up, when no live service exis
 Run `PROJECT=cpg-themis-prod infra/bootstrap/bootstrap.sh` first — it creates the state bucket and the KMS key the
 stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.yaml` and replace every value, including
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
-each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId` and
-`themis:anthropicFederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a
-copied one breaks loudly. Two are quiet instead, deploying clean onto a wrong outcome:
-`themis:enablePrScreenshotBucket`, because a copied `true` creates a world-readable bucket in an environment that has no
-review workflow to justify one; `themis:cluDerivesSessionTokens`, because a copied `true` lets whoever can impersonate
-`themis-clu` act as any live session in an environment whose sessions may be real; and
-`themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's service account, so the convert
-worker deploys healthy and fails only when it first tries to transcribe. No program change; the full sequence is
-[`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId`,
+`themis:anthropicFederationRuleId` and the cost exporter's `themis:anthropicCostExporterServiceAccountId` /
+`…FederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a copied one breaks
+loudly. Three are quiet instead, deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a
+copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one;
+`themis:cluDerivesSessionTokens`, because a copied `true` lets whoever can impersonate `themis-clu` act as any live
+session in an environment whose sessions may be real; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned
+to another environment's service account, so the convert worker deploys healthy and fails only when it first tries to
+transcribe. No program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

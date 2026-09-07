@@ -138,7 +138,7 @@ class _Mocks(mocks.Mocks):
             case 'gcp:cloudrunv2/getService:getService':
                 return {'templates': [{'containers': [image]}]}, []
             case 'gcp:cloudrunv2/getJob:getJob':
-                containers = [{'name': container, **image} for container in ('refresh', 'worker')]
+                containers = [{'name': container, **image} for container in ('exporter', 'refresh', 'worker')]
                 return {'templates': [{'templates': [{'containers': containers}]}]}, []
         raise NotImplementedError(f'the program invoked {args.token}, which this mock does not answer')
 

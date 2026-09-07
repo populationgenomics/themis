@@ -596,6 +596,35 @@ class DatabaseConnector(_Capability):
         self.register_outputs({})
 
 
+class MetricWriter(_Capability):
+    """May write time-series points to every custom metric in the project, and declare new ones.
+
+    Project-wide, since the role has no per-metric scope: the holder writes points to any custom metric in
+    the project, not only the ones it declared, and a point it writes is what every dashboard and alert over
+    that metric reads. It reads no points back; the role lists and reads descriptors only.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        project: str,
+        prior: Prior | None = None,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        name = f'{holder}-writes-metrics'
+        super().__init__(name, opts)
+        gcp.projects.IAMMember(
+            name,
+            project=project,
+            role='roles/monitoring.metricWriter',
+            member=member,
+            opts=self._binding(prior),
+        )
+        self.register_outputs({})
+
+
 class DataflowWorker(_Capability):
     """May run as a Dataflow worker in the project: claim work items and report status for any job there.
 
