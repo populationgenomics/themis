@@ -26,7 +26,7 @@ from themis.sheaf import backend as backend_mod
 from themis.sheaf import errors
 from themis.sheaf import store as store_mod
 from themis.sheaf.wire import bare as bare_mod
-from themis.sheaf.wire import protect
+from themis.sheaf.wire import hook, protect
 
 ENDPOINTS = ('/info/refs', '/git-upload-pack', '/git-receive-pack')
 CHUNK = 64 * 1024
@@ -167,23 +167,11 @@ class SheafGitServer:
         return self._locks[repo]
 
     def cgi_env(self, bare: bare_mod.BareRepo) -> dict[str, str]:
-        """Environment for `git http-backend`, including what the hook needs.
-
-        Deliberately scrubbed: the hook must not inherit the host's secrets, so only the variables
-        named here reach it.
-        """
-        # STORAGE_EMULATOR_HOST is the storage SDK's own contract for redirecting the client, and
-        # carrying it through is what lets the whole path run against an emulator. Unset in
-        # production, where it does nothing.
-        emulator = os.environ.get('STORAGE_EMULATOR_HOST')
+        """Environment for `git http-backend`: what the hook needs (`hook.environment`) plus the CGI export."""
         return {
-            **self.protection.as_env(),
-            **({'STORAGE_EMULATOR_HOST': emulator} if emulator else {}),
-            'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+            **hook.environment(bare, self.protection),
             'GIT_PROJECT_ROOT': str(self.root),
             'GIT_HTTP_EXPORT_ALL': '1',
-            'SHEAF_SYNC_STATE': str(bare.sync_state_path),
-            'SHEAF_GIT_DIR': str(bare.path),
         }
 
 

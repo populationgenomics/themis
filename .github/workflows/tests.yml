@@ -57,5 +57,14 @@ jobs:
       - run: uv sync --locked --group test --python 3.13
       # `-m sandbox` is the complement of the `pytest` job's expression: a test outside both is
       # collected by neither and reports green. `CI` is set, so the bubblewrap fixture errors rather
-      # than skips when the step above left no bwrap on PATH.
-      - run: uv run pytest -m sandbox
+      # than skips when the step above left no bwrap on PATH. The `sandbox_root` tests (every one also
+      # `sandbox`, by the worker suite's conftest) run in the next step instead.
+      - run: uv run pytest -m 'sandbox and not sandbox_root'
+      # bwrap drops to the profile's host uid only from a root worker, so the tests of that mapping
+      # run as root. Absolute `uv`, since sudo's secure_path drops the runner's PATH; `-E` keeps `CI`
+      # and the uv cache; `--no-sync` reuses the venv the step above synced. The guest, as that uid,
+      # bind-mounts postern's guest files out of the venv, and `/home/runner` is 0750: open the path
+      # for traversal, as the deployed image's `/app` already is.
+      - run: |-
+          sudo chmod o+x "$HOME"
+          sudo -E "$(command -v uv)" run --frozen --no-sync pytest -m sandbox_root

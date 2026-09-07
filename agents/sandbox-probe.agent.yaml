@@ -1,6 +1,7 @@
 # The sandbox probe agent — a control-plane resource, applied by a workspace admin via `ant` (or the
-# Console); see docs/runbooks/self-hosted-sandbox.md. It exercises both data-plane legs end to end: a
-# code-mode call to an internal service over the hatch, and a working-document write.
+# Console); see docs/runbooks/self-hosted-sandbox.md. It exercises the data-plane legs end to end: a
+# code-mode call to an internal service over the hatch, a working-document write, and a commit pushed to
+# the Analysis repository over the git hatches.
 # Sessions are the data plane, created from the BFF against this agent + the self-hosted environment
 # (agents/selfhosted.environment.yaml); `model`/`system`/`tools` live here on the agent, never on the
 # session. No mcp_toolset / mcp_servers: the working document is a file the model edits, not an
@@ -10,12 +11,21 @@ name: self-hosted sandbox probe
 model: claude-sonnet-5
 system: |
   You are the Themis sandbox probe agent. This is a self-hosted execution environment: your tool calls run
-  inside our own sandbox, you hold no credentials or service URLs, and your only durable deliverable is a
-  markdown working document at the contract path `/workspace/working_document.md`.
+  inside our own sandbox, you hold no credentials or service URLs, and your deliverable is what you commit and
+  push in `/workspace`, a git clone of this Analysis's repository — first among them the markdown working document
+  at the contract path `/workspace/working_document.md`.
 
-  - Author `/workspace/working_document.md` directly with the file tools (`read`/`write`/`edit`). It is read back at
-    each turn boundary, so it is the document. Everything else under `/workspace` is ephemeral scratch,
-    discarded between sessions.
+  - Author `/workspace/working_document.md` directly with the file tools (`read`/`write`/`edit`). It is an ordinary
+    file in the repository: commit and push it with the rest of your work. It is also read back after each `shell`
+    call and at the end of the session, so its latest content reaches the reviewer before you commit — but the next
+    session starts from what was committed, so commit the document after your final edit to it.
+  - `origin` is the store. Commit your work and push it. What is not pushed when the session ends is lost — the
+    worker pushes commits you made and forgot to push, and nothing else; uncommitted files are gone.
+  - History here is append-only. A push is refused if it would rewrite or delete anything; run
+    `git pull --rebase` and push again. Do not force-push; it will not work.
+  - `scratch/` is yours and ignored; `skills/` is the platform's. Neither can be pushed.
+  - `refs/sheaf/reflog` is the record of what each ref pointed at and when. Read it if you need it
+    (`git fetch origin 'refs/sheaf/*:refs/sheaf/*'`); you cannot write it.
   - Run code with `shell`: it executes a command inside the sandbox (`python3 script.py`, or
     `python3 -c '…'`) — this is where you reach internal services in "code mode" (below). Every `shell` call
     requires an `intent` argument — a few words naming what the command does (e.g. `intent="lint the working
@@ -89,7 +99,7 @@ tools:
   # may not reuse a reserved prebuilt name.
   - type: custom
     name: shell
-    description: Run a shell command in the sandbox's persistent /workspace. python3, the gRPC stubs, and the services/linter helpers are importable.
+    description: Run a shell command in the sandbox's /workspace, a git clone of this Analysis's repository. git, python3, the gRPC stubs, and the services/linter helpers are available.
     input_schema:
       type: object
       properties:

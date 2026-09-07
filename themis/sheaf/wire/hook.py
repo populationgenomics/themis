@@ -36,6 +36,27 @@ _MOVED = 'the workspace moved while your push was in flight'
 _MOVED_HINT = 'run `git pull --rebase` (or merge) and push again.'
 
 
+def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str, str]:
+    """The environment a `git` serving `repo` runs with, so that this hook can find its inputs.
+
+    Scrubbed on purpose: the hook holds the store credential and reads a pack the client composed,
+    so it must not inherit the host's secrets, and only the variables named here reach it. A server
+    hands this to the `git` it spawns — `http-backend`, `upload-pack`, `receive-pack` — and adds
+    whatever that command itself needs.
+    """
+    # STORAGE_EMULATOR_HOST is the storage SDK's own contract for redirecting the client, and
+    # carrying it through is what lets the whole path run against an emulator. Unset in
+    # production, where it does nothing.
+    emulator = os.environ.get('STORAGE_EMULATOR_HOST')
+    return {
+        **protection.as_env(),
+        **({'STORAGE_EMULATOR_HOST': emulator} if emulator else {}),
+        'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+        SYNC_STATE_ENV: str(repo.sync_state_path),
+        GIT_DIR_ENV: str(repo.path),
+    }
+
+
 def _refuse(reasons: list[str], hint: str) -> int:
     """Report a refusal to the client and return the hook's exit status.
 

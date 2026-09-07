@@ -84,6 +84,28 @@ def test_a_mirror_left_without_its_hook_is_repaired_before_it_serves(
     assert sheaf.Store(backend, REPO).read().refs[REF] == local_tip, 'the push was accepted but not published'
 
 
+def test_a_hook_left_unexecutable_is_repaired_before_it_serves(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    """The hook is written, then made executable; a death in between leaves the source right and the mode wrong.
+
+    Git skips an unexecutable `pre-receive` and accepts the push unpublished, so `ensure` has to
+    repair the mode even when the content needs no rewrite.
+    """
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'notes.md', 'first\n', 'add notes')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+
+    hook = git_server.bare(REPO).path / 'hooks' / bare.HOOK_NAME
+    hook.chmod(0o644)
+
+    _commit(work, 'notes.md', 'second\n', 'extend notes')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+
+    local_tip = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+    assert sheaf.Store(backend, REPO).read().refs[REF] == local_tip, 'the push was accepted but not published'
+
+
 def test_a_store_that_cannot_be_read_is_a_status_not_a_hang_up(
     git_server: server.SheafGitServer,
     backend: sheaf.LocalBackend,
@@ -553,3 +575,19 @@ def test_a_root_commit_shaped_like_an_entry_cannot_reach_the_reader(
     mirror.sync()
 
     assert reflog.read(mirror.git, entry) == [[reflog.Transition(REF, None, tip)]]
+
+
+def test_the_mirrors_git_does_not_inherit_the_callers_environment(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The process that drives a mirror holds credentials; the git it spawns indexes packs a pusher composed. Git's
+    # own variables carry through: inside a hook they name the quarantine the pushed objects wait in.
+    monkeypatch.setenv('WORKER_SECRET', 'do-not-leak')
+    monkeypatch.setenv('GIT_SHEAF_TEST_SENTINEL', 'carried')
+    repo = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
+    repo.sync()
+
+    environment = repo.git('-c', 'alias.env-probe=!env', 'env-probe').decode()
+
+    assert 'WORKER_SECRET' not in environment
+    assert 'GIT_SHEAF_TEST_SENTINEL=carried' in environment

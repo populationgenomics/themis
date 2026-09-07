@@ -1,16 +1,15 @@
-"""The store client: the worker syncs ``/workspace`` to the store service.
+"""The store client: the worker syncs the working document to the store service.
 
-The trusted worker is the store's client for checkpoint/restore (sandbox-worker.md §"The data path is
-the trusted worker's"), injecting the session token as ``x-themis-session-token`` metadata on its own
-put/get calls; the channel carries the job SA's ID token. ``Store`` is the port so the sync
-orchestration tests offline against a fixture. A ``NOT_FOUND`` (the genuine first spawn) maps to
-``None``; every other gRPC failure propagates so restore can fail closed.
+The trusted worker is the store's client for the document's checkpoint/restore (sandbox-worker.md
+"The workspace is a repository"), injecting the session token as ``x-themis-session-token``
+metadata on its own put/get calls; the channel carries the job SA's ID token. ``Store`` is the port
+so the sync orchestration tests offline against a fixture. A ``NOT_FOUND`` (the genuine first spawn)
+maps to ``None``; every other gRPC failure propagates so restore can fail closed.
 """
 
 from __future__ import annotations
 
 import abc
-from collections.abc import AsyncIterator
 from typing import override
 
 import grpc
@@ -20,23 +19,16 @@ from google.protobuf import empty_pb2
 from themis.rpc import store_pb2, store_pb2_grpc
 
 _SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
-_CHUNK_SIZE = 1 << 20  # 1 MiB per workspace-archive chunk
 
 
 class Store(abc.ABC):
-    """The store operations the worker's workspace sync needs."""
+    """The store operations the worker's document sync needs."""
 
     @abc.abstractmethod
     async def get_working_document(self) -> str | None: ...
 
     @abc.abstractmethod
     async def put_working_document(self, markdown: str) -> int: ...
-
-    @abc.abstractmethod
-    async def get_workspace(self) -> bytes | None: ...
-
-    @abc.abstractmethod
-    async def put_workspace(self, archive: bytes) -> None: ...
 
 
 class GrpcStore(Store):
@@ -63,32 +55,13 @@ class GrpcStore(Store):
         )
         return response.version
 
-    @override
-    async def get_workspace(self) -> bytes | None:
-        call = self._stub.GetWorkspace(empty_pb2.Empty(), metadata=self._metadata)
-        chunks: list[bytes] = []
-        try:
-            async for chunk in call:
-                chunks.append(chunk.content)
-        except grpc.aio.AioRpcError as e:
-            if e.code() is grpc.StatusCode.NOT_FOUND:
-                return None
-            raise
-        return b''.join(chunks)
-
-    @override
-    async def put_workspace(self, archive: bytes) -> None:
-        await self._stub.PutWorkspace(_chunks(archive), metadata=self._metadata)
-
 
 class FixtureStore(Store):
-    """In-memory store for the sync orchestration tests; records puts, returns seeded gets."""
+    """In-memory store for the sync orchestration tests; records puts, returns the seeded get."""
 
-    def __init__(self, *, document: str | None = None, workspace: bytes | None = None) -> None:
+    def __init__(self, *, document: str | None = None) -> None:
         self._document = document
-        self._workspace = workspace
         self.put_documents: list[str] = []
-        self.put_workspaces: list[bytes] = []
 
     @override
     async def get_working_document(self) -> str | None:
@@ -98,16 +71,3 @@ class FixtureStore(Store):
     async def put_working_document(self, markdown: str) -> int:
         self.put_documents.append(markdown)
         return len(self.put_documents)
-
-    @override
-    async def get_workspace(self) -> bytes | None:
-        return self._workspace
-
-    @override
-    async def put_workspace(self, archive: bytes) -> None:
-        self.put_workspaces.append(archive)
-
-
-async def _chunks(archive: bytes) -> AsyncIterator[store_pb2.WorkspaceChunk]:
-    for start in range(0, len(archive), _CHUNK_SIZE):
-        yield store_pb2.WorkspaceChunk(content=archive[start : start + _CHUNK_SIZE])

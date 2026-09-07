@@ -3,8 +3,8 @@
 # The self-hosted sandbox worker image (sandbox-worker.md §"The guest's world is assembled at build
 # time"). Build context is the repo ROOT (`docker build -f themis/services/sandbox_worker/Dockerfile .`).
 # One trusted process: it holds the Anthropic environment key and the session token, runs the
-# EnvironmentWorker loop, and marshals every `shell` command into a bubblewrap sandbox whose only exit
-# is the hello/evidence-forwarding hatch.
+# EnvironmentWorker loop, and marshals every `shell` command into a bubblewrap sandbox whose exits are
+# the hello/evidence-forwarding hatch and the two git hatches onto the Analysis repository's mirror.
 #
 # Four stages: worker deps (uv), the curated guest rootfs, then assemble. The guest rootfs is bound
 # read-only at runtime by postern (SandboxProfile(rootfs='/opt/guest-root')) — no runtime container
@@ -28,6 +28,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #     SDK. This stage's whole filesystem becomes the guest's world, so the guest sees none of the
 #     worker's userland or credentials. ---
 FROM base AS guest
+# The agent's git, and the system gitconfig its clone of the Analysis repository needs: `ext::` is how git reaches
+# the stream hatch and is gated behind protocol.ext.allow; the identity is what its commits carry. postern binds
+# only the rootfs's /usr, /lib and /bin, so the worker binds this file into the guest's /etc on its own.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --system protocol.ext.allow always \
+    && git config --system user.name 'Themis agent' \
+    && git config --system user.email 'agent@localhost'
 # Install the guest's grpcio/protobuf from the committed lock (not a floating pip install) so it inherits the
 # 7-day age gate and the same pins as the worker. The lock + uv are bind-mounted, not copied, so no build
 # tooling lands in the rootfs; --only-group guest + --no-deps install exactly the locked set.
@@ -55,10 +64,10 @@ COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_wo
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py
 
-# --- assemble: bubblewrap + the worker venv + the themis subtrees + the guest rootfs. ---
+# --- assemble: bubblewrap + the mirror's git + the worker venv + the themis subtrees + the guest rootfs. ---
 FROM base AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bubblewrap \
+    && apt-get install -y --no-install-recommends bubblewrap git \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
@@ -68,7 +77,16 @@ COPY themis/rpc ./themis/rpc
 COPY themis/evidence/models ./themis/evidence/models
 COPY themis/clients/id_token.py ./themis/clients/id_token.py
 COPY themis/clients/work_queue/__init__.py themis/clients/work_queue/client.py ./themis/clients/work_queue/
+# The Sheaf service's client, over which the mirror hydrates and the hook publishes; it rides the session client's
+# metadata key and target form.
+COPY themis/clients/auth/__init__.py themis/clients/auth/session.py ./themis/clients/auth/
+COPY themis/clients/sheaf/__init__.py themis/clients/sheaf/store.py ./themis/clients/sheaf/
+# sheaf whole: the mirror and the pre-receive hook git spawns, which imports it from this tree by its baked path.
+COPY themis/sheaf ./themis/sheaf
 COPY themis/services/sandbox_worker ./themis/services/sandbox_worker
+# Import the worker and the hook's store at build time, so a module the COPY set misses, or a wheel the locked
+# group lacks, fails the build rather than the first session. The hook imports under this interpreter too.
+RUN python -c 'import themis.services.sandbox_worker.worker, themis.clients.sheaf.store, themis.sheaf.wire.hook'
 # postern binds /opt/guest-root/{usr,lib,...} read-only as the guest's system dirs (copying '/'
 # preserves the usrmerge symlink layout). Cloud Run gen2 provides the unprivileged user namespaces
 # bubblewrap needs; the worker's verify() gate refuses to serve if they are absent.

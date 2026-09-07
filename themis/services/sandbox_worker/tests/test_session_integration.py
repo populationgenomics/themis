@@ -8,9 +8,13 @@ a non-allowlisted method are postern's own e2e (``tests/test_hatch_e2e.py``); th
 
 from __future__ import annotations
 
+import pathlib
+
 import postern
 import pytest
 from postern import grpc as postern_grpc
+
+from themis.services.sandbox_worker import worker
 
 pytestmark = [pytest.mark.sandbox, pytest.mark.usefixtures('bubblewrap')]
 
@@ -49,3 +53,16 @@ def test_hatch_socket_is_bound_in_and_connectable() -> None:
         hatch.close()
     assert result.ok, result.stderr
     assert 'HATCH_OK' in result.stdout
+
+
+def test_a_gitconfig_bound_at_etc_reaches_the_guests_git(tmp_path: pathlib.Path) -> None:
+    # postern binds none of the rootfs's /etc, so the worker's profile binds the system gitconfig on its own; the
+    # bind is `--ro-bind-try`, which would leave the guest's git silently unconfigured were the source path wrong.
+    gitconfig = tmp_path / 'gitconfig'
+    gitconfig.write_text('[protocol "ext"]\n\tallow = always\n', 'utf-8')
+    profile = postern.SandboxProfile(ro_binds=[(str(gitconfig), worker._GUEST_GITCONFIG)])
+
+    result = postern.Sandbox(profile).run(['git', 'config', '--system', '--get', 'protocol.ext.allow'], timeout=30)
+
+    assert result.ok, result.stderr
+    assert result.stdout.strip() == 'always'

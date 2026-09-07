@@ -3,16 +3,27 @@
 The narrowest real boundary is ``client.beta.sessions.events`` — the transport ``SessionToolRunner`` reads tool-call
 events from (``list`` / ``stream``) and posts results to (``send``). Faking it drives the *real* runner + tool dispatch
 without a live managed-agents session or credentials. ``FakeSandbox`` stands in for ``postern.Sandbox`` where a real
-bwrap guest is not available (the isolation itself is exercised in ``test_session_integration.py`` on a bwrap host).
+bwrap guest is not available (the isolation itself is exercised in ``test_session_integration.py`` on a bwrap host);
+``HostGitSandbox`` runs the worker's own git commands host-side against the real hatches.
 """
 
 from __future__ import annotations
 
+import os
+import pathlib
+import subprocess
+import sys
 import types
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import Any
 
 import postern
+from postern import stream
+
+# The worker's guest git has the identity and the ext:: allowance from the guest rootfs's /etc/gitconfig; a host
+# stand-in supplies them per invocation, and reads no configuration of the developer's own.
+_GIT_CONFIG = ['-c', 'protocol.ext.allow=always', '-c', 'user.name=Themis agent', '-c', 'user.email=agent@localhost']
+_CONNECT = pathlib.Path(stream.__file__).parent / '_stream_connect.py'
 
 
 def tool_use_event(tool_use_id: str, name: str, tool_input: dict[str, Any]) -> types.SimpleNamespace:
@@ -94,3 +105,38 @@ class FakeSandbox:
         del timeout
         self.calls.append(code)
         return self._run(code)
+
+
+class HostGitSandbox:
+    """A `guest_git.Guest` for hosts without bubblewrap: the commands run host-side in `workspace`.
+
+    Where the real guest reaches a hatch at ``/run/postern/<name>.sock`` through the bound-in connector, this runs
+    the same connector against the hatch's host-side socket (`url`), so everything but the isolation is the
+    production path: the ``ext::`` transport, the sync-before-serve handler, the hook. Only the two commands the
+    worker itself issues — ``git`` and Python — are runnable.
+    """
+
+    def __init__(self, workspace: pathlib.Path) -> None:
+        self.workspace = workspace
+        self.calls: list[list[str]] = []
+
+    @staticmethod
+    def url(hatch: stream.StreamHatch) -> str:
+        """The ``ext::`` URL a host-side git reaches `hatch` by."""
+        return f'ext::{sys.executable} {_CONNECT} {hatch.socket_path}'
+
+    def run(self, argv: list[str], *, timeout: float = 60) -> postern.ProcResult:
+        if argv[0] != 'git':
+            raise ValueError(f'the worker runs only git in the guest, not {argv[0]!r}')
+        self.calls.append(argv)
+        return self._run(['git', *_GIT_CONFIG, *argv[1:]], timeout=timeout)
+
+    def run_python(self, code: str, *, timeout: float = 60) -> postern.ProcResult:
+        return self._run([sys.executable, '-c', code], timeout=timeout)
+
+    def _run(self, argv: list[str], *, timeout: float) -> postern.ProcResult:
+        env = {'PATH': os.environ['PATH'], 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull}
+        result = subprocess.run(  # noqa: S603 — a test double for the sandbox; argv is the worker's own
+            argv, cwd=self.workspace, env=env, capture_output=True, text=True, timeout=timeout, check=False
+        )
+        return postern.ProcResult(result.returncode, result.stdout, result.stderr)

@@ -262,12 +262,18 @@ class SandboxJob(pulumi.ComponentResource):
     ``shell`` command inside a postern bubblewrap sandbox, so no untrusted code shares the container.
 
     Direct VPC egress on the shared services network reaches the internal-ingress store, hello and evidence
-    services. There is no dedicated sandbox VPC and no egress firewall — the guest has zero network
-    regardless, so containment rests on that rather than on shaping the trusted worker's egress.
+    services; the IAM-gated sheaf service is reached the same way. There is no dedicated sandbox VPC and no
+    egress firewall — the guest has zero network regardless, so containment rests on that rather than on
+    shaping the trusted worker's egress.
+
+    The Analysis repository the agent works in is a sheaf repository, mirrored inside the worker
+    (sheaf-changeover.md) and reached only through the sheaf service, which scopes every call by the session
+    token the worker presents: the job holds no credential on the workspace bucket and makes no auth call.
 
     Attributes:
-        service_account_email: The job's runtime SA — ``run.invoker`` on the store it checkpoints to and on
-            the hatch's forward targets; inert without the session token the worker holds.
+        service_account_email: The job's runtime SA — ``run.invoker`` on the store it checkpoints the working
+            document to, on the sheaf service its mirror runs over, and on the hatch's forward targets; inert
+            without the session token the worker holds.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
     """
 
@@ -282,6 +288,7 @@ class SandboxJob(pulumi.ComponentResource):
         store_url: pulumi.Input[str],
         hello_url: pulumi.Input[str],
         evidence_url: pulumi.Input[str],
+        sheaf_url: pulumi.Input[str],
         task_timeout_seconds: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
@@ -332,6 +339,7 @@ class SandboxJob(pulumi.ComponentResource):
                                 _job_env('THEMIS_STORE_URL', store_url),
                                 _job_env('THEMIS_HELLO_URL', hello_url),
                                 _job_env('THEMIS_EVIDENCE_URL', evidence_url),
+                                _job_env('THEMIS_SHEAF_URL', sheaf_url),
                             ],
                             # Bounds the trusted worker + the co-located guest together (the one-session
                             # blast radius review L3 accepts): a guest memory bomb OOMs only this execution.

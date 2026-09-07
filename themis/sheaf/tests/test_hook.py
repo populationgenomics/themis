@@ -16,7 +16,7 @@ import pytest
 
 from themis import sheaf
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import bare, hook
+from themis.sheaf.wire import bare, hook, protect
 
 REPO = 'projects/demo'
 REF = 'refs/heads/main'
@@ -97,3 +97,21 @@ def test_an_empty_push_is_accepted_without_touching_the_store(
 def test_a_missing_sync_state_refuses_rather_than_guessing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(hook.SYNC_STATE_ENV, raising=False)
     assert hook.main() == 1
+
+
+def test_environment_carries_only_what_the_hook_reads(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The env a served `git` runs with names the hook's inputs and nothing of the host's beyond PATH."""
+    monkeypatch.setenv('WORKER_SECRET', 'do-not-leak')
+    monkeypatch.delenv('STORAGE_EMULATOR_HOST', raising=False)
+    repo = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
+    protection = protect.Protection(paths=('scratch/**',))
+
+    env = hook.environment(repo, protection)
+
+    assert 'WORKER_SECRET' not in env
+    assert env[hook.SYNC_STATE_ENV] == str(repo.sync_state_path)
+    assert env[hook.GIT_DIR_ENV] == str(repo.path)
+    assert protect.Protection.from_env(env) == protection
+    assert set(env) == {hook.SYNC_STATE_ENV, hook.GIT_DIR_ENV, protect.PATHS_ENV, 'PATH'}

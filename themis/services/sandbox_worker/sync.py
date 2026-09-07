@@ -1,90 +1,111 @@
-"""Restore and checkpoint ``/workspace`` (sandbox-worker.md §"The data path is the trusted worker's").
+"""Restore and checkpoint ``/workspace`` (sandbox-worker.md, "The workspace is a repository").
 
-Restore runs before the first ``run_python``; a checkpoint runs when a sandboxed command returns, and once more after
-the session loop returns. The working document is fail-closed (any store error but a positive ``NOT_FOUND`` fails the
-spawn, so a served turn never mints a version over a blank restore); the ephemeral scratch is fail-open (empty on any
-error — the next checkpoint overwrites it). The checkpoint writes the document first, then the scratch.
+``/workspace`` is the Analysis repository, and the agent's: restore is a guest-side clone (`guest_git`), the agent
+commits and pushes as it sees fit, and the worker's part at teardown is one guest-side push of every branch, so a
+commit the agent made and forgot to push survives. The working document is an ordinary file in that repository,
+committed and pushed like anything else. The worker also keeps it checkpointed through the store rpc — when a
+sandboxed command returns, and once more at teardown — for the reader that still takes the document from the store
+rather than from git; the checkpoint is a copy of the tree's file, never the other way round. At restore the
+repository's copy wins: the store's is written into the working tree only when the clone left no document, and fails
+closed — any store error but a positive ``NOT_FOUND`` fails the spawn, so a served turn never mints a version over a
+blank restore. Both restores are fail-closed.
 
-All ``/workspace`` access goes through a postern :class:`~postern.Workspace`, the reference-closed accessor: every
-read, write, pack, and extract resolves one component at a time under ``O_NOFOLLOW``, so a symlink/``..``/special the
-guest planted (e.g. ``working_document.md`` → ``/proc/self/environ``) is never followed out of the tree in the
-trusted worker.
-
-Concurrent checkpoints are serialized, and a document unchanged since its last write mints no new version — so a
-command that touched nothing does not inflate the version history. ``exclude`` names top-level entries pruned from
-the scratch snapshot: the working document (persisted separately) and paths re-materialised each spawn — the SDK
-re-downloads its skills into ``/workspace/skills`` every session, so a stale copy must not persist in a checkpoint.
+The document is read and written through a postern :class:`~postern.Workspace`, the reference-closed accessor:
+every access resolves one component at a time under ``O_NOFOLLOW``, so a symlink or special the guest planted
+(``working_document.md`` → ``/proc/self/environ``, say) is never followed out of the tree in the trusted worker.
+Concurrent checkpoints are serialized, and a document unchanged since its last write mints no new version.
 """
 
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
-from collections.abc import Iterable
+import shutil
+import stat
+from collections.abc import Callable
 
 import postern
 
-from themis.services.sandbox_worker import store_client
+from themis.services.sandbox_worker import guest_git, store_client
 
 _WORKING_DOCUMENT_NAME = 'working_document.md'
-_MAX_ENTRIES = 20_000
-_MAX_TOTAL_BYTES = 512 * 1024 * 1024  # 512 MiB
+# Where the SDK downloads the session agent's skills, each spawn.
+_SKILLS_DIRNAME = 'skills'
 
 _logger = logging.getLogger(__name__)
 
 
 class WorkspaceSync:
-    """Owns the document + scratch round-trip between ``/workspace`` and the store, via the confined accessor."""
+    """Owns the document round-trip with the store and the repository's guest-side restore and teardown push."""
 
     def __init__(
         self,
         store: store_client.Store,
         *,
         accessor: postern.Workspace,
+        repository: guest_git.GuestGit,
         document_name: str = _WORKING_DOCUMENT_NAME,
-        exclude: Iterable[str] = (),
     ) -> None:
         self._store = store
         self._accessor = accessor
+        self._repository = repository
         self._document_name = document_name
-        self._excluded_top = frozenset({document_name, *exclude})
         self._checkpoint_lock = asyncio.Lock()
         self._last_document: str | None = None
 
-    def _exclude(self, rel: str) -> bool:
-        """Whether a workspace-relative path is pruned from the scratch pack (by top-level entry)."""
-        return rel.split('/', 1)[0] in self._excluded_top
-
     async def restore(self) -> None:
-        """Restore the working document (fail-closed) then the scratch (fail-open) into ``/workspace``.
+        """Clone the repository into ``/workspace``, then the working document where the clone left none.
+
+        The clone comes first because it needs an empty working tree. The repository's document, when
+        it tracks one, is the one the session works on; the store's checkpoint is written into the tree
+        only when the repository has no document yet — as an untracked file, for the agent to commit.
+        Either way the checkpoint is read, and fails closed: what the store holds is the baseline the
+        next checkpoint is compared against, so a tree that disagrees with it is checkpointed on the
+        first command.
 
         Raises:
+            SheafError: If the repository's store cannot be read or is corrupt.
+            guest_git.GitError: If a guest git command fails.
             Exception: Any store failure resolving the working document other than a positive
                 NOT_FOUND — the spawn must fail rather than boot onto a blank document.
         """
-        document = await self._store.get_working_document()
-        if document is not None:
-            (self._accessor / self._document_name).write_text(document)
-        self._last_document = document
-        await self._restore_scratch()
+        await asyncio.to_thread(self._repository.hydrate)
+        self._clear_planted(_SKILLS_DIRNAME, stat.S_ISDIR)
+        self._clear_planted(self._document_name, stat.S_ISREG)
+        checkpointed = await self._store.get_working_document()
+        document_path = self._accessor / self._document_name
+        if not document_path.is_file():
+            if checkpointed is not None:
+                document_path.write_text(checkpointed)
+        elif checkpointed is not None and checkpointed.encode('utf-8') != document_path.read_bytes():
+            _logger.warning(
+                "the repository's working document differs from the store's checkpoint; the repository's stands"
+                ' and the store is brought up to it on the first command'
+            )
+        self._last_document = checkpointed
 
-    async def _restore_scratch(self) -> None:
+    def _clear_planted(self, name: str, expected: Callable[[int], bool]) -> None:
+        """Remove what the clone put at a top-level path the worker writes to, unless it is the expected kind.
+
+        The SDK resolves `skills` before it writes there, and the confined document write would ELOOP
+        on a symlink and wedge every later spawn; so anything but the expected kind is cleared rather
+        than left for the worker to follow. A direct child of the root, handled without following it.
+        """
+        path = self._accessor.host_root / name
         try:
-            archive = await self._store.get_workspace()
-            if archive:
-                report = self._accessor.restore_tar(
-                    io.BytesIO(archive), max_entries=_MAX_ENTRIES, max_bytes=_MAX_TOTAL_BYTES
-                )
-                if not report.ok:
-                    _logger.warning(
-                        'scratch restore neutralized %d unsafe entries: %s', len(report.skipped), report.skipped
-                    )
-        except Exception:
-            _logger.exception('scratch restore failed; continuing with empty scratch')
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            return
+        if expected(mode):
+            return
+        _logger.warning('the clone put an unexpected entry at %s; removing it', name)
+        if stat.S_ISDIR(mode):
+            shutil.rmtree(path)
+        else:
+            path.unlink()
 
     async def checkpoint(self) -> None:
-        """Snapshot the durable document (a new version only if it changed) then the scratch to the store."""
+        """Snapshot the working document to the store — a new version only if it changed."""
         async with self._checkpoint_lock:
             document_path = self._accessor / self._document_name
             if document_path.is_file():
@@ -96,8 +117,24 @@ class WorkspaceSync:
                 # A non-regular document (guest replaced it with a symlink/special) is skipped, never
                 # dereferenced — the confined read would ELOOP anyway, but skip loudly and leave the store version.
                 _logger.warning('working document is not a regular file; not checkpointing it this turn')
-            buffer = io.BytesIO()
-            report = self._accessor.pack_tar(buffer, exclude=self._exclude)
-            if not report.ok:
-                _logger.warning('checkpoint neutralized %d unsafe entries: %s', len(report.skipped), report.skipped)
-            await self._store.put_workspace(buffer.getvalue())
+
+    async def teardown(self, session_id: str) -> None:
+        """The session's last word: checkpoint the document, then push what the agent committed and left unpushed.
+
+        Args:
+            session_id: Names the stranded refs should the push be refused (`guest_git.GuestGit.push_all`).
+
+        Raises:
+            guest_git.GitError: If neither the push nor the stranded fallback lands.
+            Exception: Whatever the checkpoint raised, after the push has been attempted — the two are
+                independent, and a store outage must not cost the commits the push exists to save.
+        """
+        checkpoint_failure: Exception | None = None
+        try:
+            await self.checkpoint()
+        except Exception as exc:
+            _logger.exception('the last checkpoint failed; pushing the repository regardless')
+            checkpoint_failure = exc
+        await asyncio.to_thread(self._repository.push_all, session_id)
+        if checkpoint_failure is not None:
+            raise checkpoint_failure

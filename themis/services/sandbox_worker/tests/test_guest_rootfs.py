@@ -20,7 +20,7 @@ import re
 import sys
 import tomllib
 
-from themis.services.sandbox_worker import _generated
+from themis.services.sandbox_worker import _generated, worker
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / 'Dockerfile'
@@ -31,6 +31,7 @@ _GUEST_CONTRACT = 'themis/services/sandbox_worker/guest_contract/'
 # Where the guest stage lands the contract sources for the model to read.
 _PROTO_ROOT = '/usr/local/share/themis/proto/'
 _COPY = re.compile(r'^[ \t]*(?i:COPY|ADD)[ \t]+(?P<argv>.+)$', re.MULTILINE)
+_RUN = re.compile(r'^[ \t]*(?i:RUN)[ \t]+(?P<argv>.+)$', re.MULTILINE)
 _FROM = re.compile(r'^[ \t]*(?i:FROM)[ \t]+\S+(?:[ \t]+(?i:AS)[ \t]+(?P<stage>\S+))?[ \t]*$', re.MULTILINE)
 
 
@@ -290,3 +291,18 @@ def test_the_guest_ships_the_distributions_its_modules_import() -> None:
     assert any(_third_party_roots(source) for source in _guest_modules().values()), 'no third-party import parsed'
     missing = {landing: roots for landing, roots in unsatisfied.items() if roots}
     assert not missing, f'guest modules import distributions the `guest` group does not carry: {missing}'
+
+
+def test_the_guest_stage_writes_the_gitconfig_the_profile_binds() -> None:
+    """The guest's git reaches the hatch only with `protocol.ext.allow`, and postern binds none of the rootfs's /etc.
+
+    So the file the guest stage writes and the file the worker's profile binds into the guest have to be the same
+    one: a rename on either side leaves the agent's `git` unable to clone, a session away from any test here.
+    """
+    runs = [match['argv'] for match in _RUN.finditer(_guest_stage())]
+    configured = [run for run in runs if 'git config --system protocol.ext.allow always' in run]
+    assert configured, 'the guest stage does not allow the ext:: transport its clone runs over'
+    assert any('user.name' in run and 'user.email' in run for run in configured), 'no identity for the agent'
+    bound = dict(worker._build_profile(None).ro_binds)
+    assert bound[worker._GUEST_ROOTFS + worker._GUEST_GITCONFIG] == worker._GUEST_GITCONFIG
+    assert worker._GUEST_GITCONFIG == '/etc/gitconfig'  # where `git config --system` writes

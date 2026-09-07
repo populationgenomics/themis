@@ -555,13 +555,19 @@ sandbox_job = sandbox.SandboxJob(
     store_url=store_service.url,
     hello_url=hello_service.url,
     evidence_url=evidence_service.url,
+    sheaf_url=sheaf_service.url,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net, store_service, hello_service, evidence_service]),
+    opts=pulumi.ResourceOptions(
+        depends_on=[base, services_net, store_service, hello_service, evidence_service, sheaf_service]
+    ),
 )
-# The job SA invokes the services the worker reaches: the store it checkpoints to, and the hatch's forward
-# targets. Inert without the worker-held session token (§7).
+# The job SA invokes the services the worker reaches: the store it checkpoints the working document to, the sheaf
+# service its mirror of the Analysis repository hydrates from and publishes to, and the hatch's forward targets.
+# Every one is session-scoped, so the binding is inert without the worker-held session token (§7); the job holds
+# nothing on the workspace bucket.
 for label, invoke_target in (
     ('store', store_service.service_name),
+    ('sheaf', sheaf_service.service_name),
     ('hello', hello_service.service_name),
     ('evidence', evidence_service.service_name),
 ):

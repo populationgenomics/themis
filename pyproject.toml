@@ -155,9 +155,11 @@ sheaf = ["google-cloud-storage", "protobuf"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
-# id_token + the store stubs (the worker's own checkpoint client). clinvar_proto and pubmed_proto: the
-# clinvar and literature contracts embed the upstream record schemas, so importing the generated stubs
-# pulls in the wheels' message modules.
+# id_token + the store and sheaf stubs: the worker's own document client, and the Sheaf service client the
+# Analysis repository's mirror and its hook run over — the sheaf library itself needs only that group's
+# protobuf, since the worker holds no bucket credential and never loads the GCS backend. clinvar_proto and
+# pubmed_proto: the clinvar and literature contracts embed the upstream record schemas, so importing the
+# generated stubs pulls in the wheels' message modules.
 sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", { include-group = "session" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
@@ -197,7 +199,10 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
 testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
-markers = ["sandbox: needs a real bubblewrap launch (Linux only)"]
+markers = [
+  "sandbox: needs a real bubblewrap launch (Linux only)",
+  "sandbox_root: needs a real bubblewrap launch from a root worker (the host uid drop); implies sandbox",
+]
 # An unregistered marker is a collection error, not a warning: a misspelled `sandbox` would
 # otherwise deselect the test from both CI jobs, which reports as a pass. Has to be the ini option —
 # `--strict-markers` only rewrites ini values, and `addopts` is parsed after those are read.

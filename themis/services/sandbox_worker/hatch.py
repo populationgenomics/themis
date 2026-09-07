@@ -8,6 +8,7 @@ so the forward stubs dial over synchronous channels — distinct from the worker
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import override
 
@@ -333,14 +334,16 @@ def build_hatch(
     hello_channel: grpc.Channel,
     evidence_channel: grpc.Channel,
     session_token: str,
+    socket_path: str | os.PathLike[str] | None = None,
 ) -> postern_grpc.GrpcHatch:
     """A hatch exposing the allowlisted hello and evidence methods, forwarded with the session token injected.
 
     Every evidence forwarder dials ``evidence_channel``: the evidence interfaces are one deployment serving
     one gRPC service each. Both channels are keyword-only — they are the same type, and transposing them
-    leaves every rpc dialling the wrong deployment.
+    leaves every rpc dialling the wrong deployment. ``socket_path`` is where the host-side socket is bound;
+    left unset, postern picks a private temp dir of its own.
     """
-    hatch = postern_grpc.GrpcHatch(allowlist=GUEST_METHODS, max_workers=_HATCH_WORKERS)
+    hatch = postern_grpc.GrpcHatch(allowlist=GUEST_METHODS, socket_path=socket_path, max_workers=_HATCH_WORKERS)
     hatch.add_servicer(
         hello_pb2_grpc.add_HelloServicer_to_server,
         HelloForwarder(hello_channel, session_token=session_token),

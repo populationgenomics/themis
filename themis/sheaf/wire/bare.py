@@ -72,16 +72,28 @@ class SyncState:
         return cls(generation=payload['generation'], store=payload['store'])
 
 
+def _git_environment() -> dict[str, str]:
+    return {
+        'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
+        **{name: value for name, value in os.environ.items() if name.startswith('GIT_')},
+    }
+
+
 def git(
     *args: str, cwd: str | os.PathLike[str], stdin: bytes | None = None, env: Mapping[str, str] | None = None
 ) -> bytes:
     """Run a git command, returning stdout.
 
+    The command gets `PATH`, git's own `GIT_*` variables and `env`, nothing else of the caller's
+    environment: a mirror's git indexes packs and reads refs that a pusher composed, and the process
+    that runs it holds credentials git has no use for. The `GIT_*` variables carry through because
+    inside a hook they name the quarantine the pushed objects wait in.
+
     Args:
         args: The git subcommand and its arguments.
         cwd: The repository to run in.
         stdin: Bytes to feed the command.
-        env: Variables to set over the inherited environment.
+        env: Variables to set for the command, over those.
 
     Raises:
         RuntimeError: If git exits non-zero, with its stderr attached.
@@ -92,7 +104,7 @@ def git(
         input=stdin,
         capture_output=True,
         check=False,
-        env={**os.environ, **env} if env else None,
+        env={**_git_environment(), **(env or {})},
     )
     if result.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {result.stderr.decode(errors="replace")}')
@@ -146,7 +158,12 @@ class BareRepo:
     def _write_hook(self) -> None:
         hook = self.path / 'hooks' / HOOK_NAME
         hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text(_HOOK_SOURCE.format(python=sys.executable, syspath=[str(_IMPORT_ROOT)]), 'utf-8')
+        source = _HOOK_SOURCE.format(python=sys.executable, syspath=[str(_IMPORT_ROOT)])
+        # Left alone when unchanged: a receive-pack already running may be about to exec it.
+        if not (hook.is_file() and hook.read_text('utf-8') == source):
+            hook.write_text(source, 'utf-8')
+        # Unconditional: a death between the write and this leaves the content right and the hook
+        # unexecutable, and git skips an unexecutable hook and accepts the push unpublished.
         hook.chmod(0o755)
 
     @property

@@ -1,8 +1,9 @@
 """The ``shell`` tool the worker exposes to the agent (sandbox-worker.md §"Only arbitrary execution is sandboxed").
 
 ``EnvironmentWorker`` dispatches each ``custom_tool_use`` to this ``@beta_async_tool``; its inferred name/schema is
-``shell(command, intent)``. Every call runs ``command`` inside the postern sandbox and checkpoints ``/workspace`` on
-return. The command runs via postern's hatch-bound ``run_python`` path (a subprocess shim), so a ``python3`` the command
+``shell(command, intent)``. Every call runs ``command`` inside the postern sandbox and checkpoints the working
+document on return; the rest of ``/workspace`` is the agent's repository, and the agent commits and pushes it itself.
+The command runs via postern's hatch-bound ``run_python`` path (a subprocess shim), so a ``python3`` the command
 spawns inherits ``$POSTERN_HATCH`` and can reach the allowlisted internal services in code mode.
 """
 
@@ -40,7 +41,7 @@ def _format(result: postern.ProcResult) -> str:
 def make_shell(
     sandbox: postern.Sandbox, workspace_sync: sync_mod.WorkspaceSync, *, timeout: float = 60
 ) -> tools.BetaAsyncFunctionTool:
-    """Build the ``shell`` tool bound to ``sandbox``, checkpointing after each call."""
+    """Build the ``shell`` tool bound to ``sandbox``, checkpointing the working document after each call."""
 
     @tools.beta_async_tool
     async def shell(command: str, intent: str) -> str:
