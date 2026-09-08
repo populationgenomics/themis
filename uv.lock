@@ -1938,14 +1938,14 @@ wheels = [
 
 [[package]]
 name = "litdown"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/60/28efcd6af761095bab7343e4d5fa142c77e420bb907564afadee0a21d5df/litdown-0.6.0.tar.gz", hash = "sha256:186d040f30d4911b2b37bd8f6f03960d97902f5f360962a38130dfef09831865", size = 74640, upload-time = "2026-09-02T07:39:41.322Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/2e/46861e241a4e17ce6e0ae012c6e08b8a838158778079a69761110f2b2c52/litdown-0.7.0.tar.gz", hash = "sha256:6d30f95edb86a81fc526f90e51b9ec511f9323498a5fd6d89acdbaa84e4f3d86", size = 84587, upload-time = "2026-09-08T13:06:12.28Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/d8/ffb4c9aba2d1dd7555f77a2f1826e24e6183f731050a321c5e04e5639ae2/litdown-0.6.0-py3-none-any.whl", hash = "sha256:8f17823e427429eb1b12149f401fb4c5b56e2563358862c5df9c2eebd9a08847", size = 55999, upload-time = "2026-09-02T07:39:40.085Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/4a/a179eba222940b4d351fa2fa9a4aa2e6f832f7495fba311429569811f541/litdown-0.7.0-py3-none-any.whl", hash = "sha256:cd1f3021f2c2db74fa7aa5de46126aed5b3879d0b991e791deddd96a60eff804", size = 61114, upload-time = "2026-09-08T13:06:10.863Z" },
 ]
 
 [[package]]
@@ -4074,7 +4074,7 @@ convert-worker = [
     { name = "anthropic" },
     { name = "google-auth" },
     { name = "google-cloud-storage" },
-    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.4.0" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -4110,7 +4110,7 @@ dataflow = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "pg8000" },
@@ -4181,7 +4181,7 @@ lint = [
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "lxml-stubs" },
@@ -4217,7 +4217,7 @@ litcache = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "pg8000" },
@@ -4297,7 +4297,7 @@ test = [
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
     { name = "httpx2" },
-    { name = "litdown", specifier = "==0.6.0" },
+    { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.4.0" },
     { name = "lxml" },
     { name = "matplotlib" },
