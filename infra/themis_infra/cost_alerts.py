@@ -52,7 +52,11 @@ def check_tuning(*, spike_window_minutes: int, freshness_minutes: int, tick_minu
 
 
 class CostAlerts(pulumi.ComponentResource):
-    """The spend monitor's alerting: a Slack channel, and the spike, freshness and unpriced-usage policies."""
+    """The spend monitor's alerting: a Slack channel, and the spike, freshness and unpriced-usage policies.
+
+    Attributes:
+        notification_channel_name: The Slack notification channel's resource name, for a policy declared elsewhere.
+    """
 
     def __init__(
         self,
@@ -105,6 +109,7 @@ class CostAlerts(pulumi.ComponentResource):
             sensitive_labels=gcp.monitoring.NotificationChannelSensitiveLabelsArgs(auth_token=slack_bot_token),
             opts=child,
         )
+        self.notification_channel_name = channel.name
         dashboard_link = gcp.monitoring.AlertPolicyDocumentationLinkArgs(
             display_name='Spend dashboard', url=dashboard_url
         )
@@ -235,4 +240,4 @@ class CostAlerts(pulumi.ComponentResource):
             ),
             opts=child,
         )
-        self.register_outputs({})
+        self.register_outputs({'notification_channel_name': self.notification_channel_name})

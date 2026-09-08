@@ -689,6 +689,34 @@ class TelemetryWriter(_Capability):
         self.register_outputs({})
 
 
+class MetricReader(_Capability):
+    """May read every metric and time series in the project, and list its alerting and dashboard configuration.
+
+    Project-wide, since Monitoring grants nothing below the project: the holder reads any series any workload
+    writes, not only the ones it is meant to report on. It writes nothing.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        project: str,
+        prior: Prior | None = None,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        name = f'{holder}-reads-metrics'
+        super().__init__(name, opts)
+        gcp.projects.IAMMember(
+            name,
+            project=project,
+            role='roles/monitoring.viewer',
+            member=member,
+            opts=self._binding(prior),
+        )
+        self.register_outputs({})
+
+
 class DataflowWorker(_Capability):
     """May run as a Dataflow worker in the project: claim work items and report status for any job there.
 

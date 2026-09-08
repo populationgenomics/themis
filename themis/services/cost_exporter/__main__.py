@@ -23,7 +23,7 @@ import anthropic
 from opentelemetry.sdk import metrics as sdk_metrics
 
 from themis.clients import anthropic_wif
-from themis.services.cost_exporter import export, gauges, sessions
+from themis.services.cost_exporter import env, export, gauges, sessions
 from themis.telemetry import metrics as telemetry_metrics
 from themis.telemetry import names
 
@@ -61,26 +61,16 @@ class Settings:
     deadline_seconds: int
 
 
-def _require(environ: Mapping[str, str], name: str) -> str:
-    value = environ.get(name)
-    if not value:
-        raise SystemExit(f'required environment variable {name} is unset or empty')
-    return value
-
-
 def settings_from(environ: Mapping[str, str]) -> Settings:
     """Read the run's settings from `environ`; a missing or malformed value exits naming it."""
-    deadline = _require(environ, _DEADLINE_VAR)
-    if not deadline.isdigit() or int(deadline) == 0:
-        raise SystemExit(f'{_DEADLINE_VAR} must be a positive whole number of seconds, got {deadline!r}')
     return Settings(
-        federation_rule_id=_require(environ, 'ANTHROPIC_FEDERATION_RULE_ID'),
-        organization_id=_require(environ, 'ANTHROPIC_ORGANIZATION_ID'),
-        service_account_id=_require(environ, 'ANTHROPIC_SERVICE_ACCOUNT_ID'),
-        workspace_id=_require(environ, 'ANTHROPIC_WORKSPACE_ID'),
-        project=_require(environ, 'THEMIS_COST_EXPORTER_PROJECT'),
-        location=_require(environ, 'THEMIS_COST_EXPORTER_LOCATION'),
-        deadline_seconds=int(deadline),
+        federation_rule_id=env.require(environ, 'ANTHROPIC_FEDERATION_RULE_ID'),
+        organization_id=env.require(environ, 'ANTHROPIC_ORGANIZATION_ID'),
+        service_account_id=env.require(environ, 'ANTHROPIC_SERVICE_ACCOUNT_ID'),
+        workspace_id=env.require(environ, 'ANTHROPIC_WORKSPACE_ID'),
+        project=env.require(environ, 'THEMIS_COST_EXPORTER_PROJECT'),
+        location=env.require(environ, 'THEMIS_COST_EXPORTER_LOCATION'),
+        deadline_seconds=env.positive_seconds(environ, _DEADLINE_VAR),
     )
 
 

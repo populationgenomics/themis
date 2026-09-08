@@ -81,6 +81,7 @@ VIEWS = (
                 'SecretReader',
                 'SessionBearerDeriver',
                 'TelemetryWriter',
+                'MetricReader',
             }
         ),
         direction='LR',
@@ -107,6 +108,7 @@ _FIXED_TARGET_LABEL = {
     'SessionBearerDeriver': 'KMS session-token key',
     'DatabaseConnector': 'Cloud SQL, project-wide',
     'TelemetryWriter': 'Cloud Monitoring, project-wide',
+    'MetricReader': 'Cloud Monitoring, project-wide',
     'DeployAccountBuilder': 'project',
     'DataflowWorker': 'project',
 }

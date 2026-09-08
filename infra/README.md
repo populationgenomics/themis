@@ -27,6 +27,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/cost_promql.py`         | PromQL over the spend metrics: selectors (UTF-8 quoted where a name has dots), window figures per metric kind, the table-priced convert figure, the guarded workspace total, cents to dollars.         |
 | `themis_infra/cost_dashboard.py`      | The spend dashboard: a workspace section over every producer, then one section each for sessions, the convert worker and CI (Claude Code).                                                             |
 | `themis_infra/cost_alerts.py`         | The spend alerts: the Slack notification channel, the spike policy (PromQL over the workspace total), the exporter-freshness policy (its heartbeat silent) and the unpriced-usage policy.              |
+| `themis_infra/cost_report.py`         | The morning spend report: a viewer-only Cloud Run Job from the exporter image on a daily Sydney schedule, the Slack bot-token secret it posts with, and its PromQL rendered as the JSON it reads.      |
 | `themis_infra/screenshots.py`         | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                                                               |
 | `themis_infra/secrets.py`             | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                                                              |
 | `themis_infra/ingest.py`              | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md).              |
@@ -136,8 +137,9 @@ deploy, not just its own.
   (`pulumi config set --secret themis:<key>`), the program reads it with `config.require_secret(...)`, and — for a
   runtime credential — provisions it into Secret Manager (`themis_infra/secrets.py`) so the workload reads it there, not
   from Pulumi config. First one landed: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret. A
-  credential a Google-managed service holds for us — the Slack bot token behind the spend alerts' notification channel,
-  `themis:slackBotToken` — goes to that resource's sensitive field directly; no workload of ours reads it.
+  credential a Google-managed service also holds for us — the Slack bot token, `themis:slackBotToken`, behind the spend
+  alerts' notification channel — goes to that resource's sensitive field directly as well as into Secret Manager
+  (`slack-bot-token`), which the morning report Job reads (`themis_infra/cost_report.py`).
 
 ## Config
 

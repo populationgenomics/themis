@@ -140,8 +140,9 @@ convert_worker = [
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the
 # workspace's Managed Agents sessions, whose cumulative usage is the signal; google-auth mints the Google identity
 # token the SDK exchanges for a federation token, and requests is its transport; the telemetry group carries the
-# per-agent gauges to Cloud Monitoring.
-cost_exporter = ["anthropic", "google-auth", "requests", { include-group = "telemetry" }]
+# per-agent gauges to Cloud Monitoring. The morning report runs from the same image: matplotlib draws its chart,
+# slack-sdk posts it.
+cost_exporter = ["anthropic", "google-auth", "requests", "matplotlib", "slack-sdk", { include-group = "telemetry" }]
 # metrics pipeline (themis/telemetry), shared by every workload that emits a metric: the OpenTelemetry API the
 # instruments are typed against, the SDK's meter provider, its OTLP/gRPC exporter to Google Cloud's Telemetry API,
 # the GCP resource detector that places a Cloud Run service's series, google-auth for the Application Default

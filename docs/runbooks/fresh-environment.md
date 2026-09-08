@@ -57,7 +57,12 @@ the registry *and* brings the edge up running the placeholder; later deploys pus
 A few of the required keys name values this same `up` produces, or registrations that can only follow it, so they carry
 placeholders for this one run — [§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads
 must already hold its real value: `preview` stops at the first `config.require*` the stack does not satisfy, before
-anything is created.
+anything is created. One of them is an external registration: `themis:slackBotToken`, the bot token of the Slack app the
+spend monitor's notifications and morning report post through ([`cost-monitoring.md`](../design/cost-monitoring.md)).
+Create the app in the Slack workspace with the bot scopes `chat:write` and `files:write` (the report's chart is a file
+upload), install it, invite it to the channel `themis:slackChannel` names — a file upload needs the bot in the channel
+whatever the channel's visibility — set `themis:slackChannelId` to that channel's id, and set the token with
+`pulumi config set --secret themis:slackBotToken`.
 
 ```sh
 cd infra

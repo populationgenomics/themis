@@ -48,10 +48,12 @@ config:
   # (docs/runbooks/claude-api-wif.md); the org and workspace above are shared.
   themis:anthropicCostExporterFederationRuleId: fdrl_01GZB8c9yJ3B6QPjBg7rn3QR
   themis:anthropicCostExporterServiceAccountId: svac_01Wh612pvuxbauiTokVBBNV7
-  # The spend monitor's Slack channel (docs/design/cost-monitoring.md) and its alert tuning: a spike is this many
-  # cents of workspace spend, every producer summed, within the window; freshness is how long the exporter's gauge
-  # may go unwritten. The bot token of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
+  # The spend monitor's Slack channel (docs/design/cost-monitoring.md), by name for the alerts and by id for the
+  # morning report's file uploads, and the alert tuning: a spike is this many cents of workspace spend, every
+  # producer summed, within the window; freshness is how long the exporter's gauge may go unwritten. The bot token
+  # of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
   themis:slackChannel: "#themis-dev-cost"
+  themis:slackChannelId: C0BVCG38L14
   themis:slackBotToken:
     secure: v1:92S9qybuELcCA6Iw:qXhCmv75AtauZWSvwaX1j4BGF1dypezI+QM6qn5iaXOQ1oKZKeZ3ZjxHIBMhi2S3TJSAo19vwPWR4rTeGORSzKokH13b5zxq7og=
   themis:costSpikeAlertCents: 10000

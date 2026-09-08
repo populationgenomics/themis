@@ -22,6 +22,7 @@ from themis_infra import (
     cost,
     cost_alerts,
     cost_dashboard,
+    cost_report,
     deploy_iam,
     evidence,
     grants,
@@ -93,9 +94,11 @@ anthropic_worker_service_account_id = config.require('anthropicWorkerServiceAcco
 # (docs/runbooks/fresh-environment.md §3).
 anthropic_cost_exporter_federation_rule_id = config.require('anthropicCostExporterFederationRuleId')
 anthropic_cost_exporter_service_account_id = config.require('anthropicCostExporterServiceAccountId')
-# The spend monitor's Slack channel, the bot token of the Slack app that posts to it (encrypted config), and the
-# alert tuning the design leaves to the stack (docs/design/cost-monitoring.md).
+# The spend monitor's Slack channel — by name for the alerts' notification channel, by id for the report's file
+# uploads — the bot token of the Slack app that posts to it (encrypted config), and the alert tuning the design
+# leaves to the stack (docs/design/cost-monitoring.md).
 slack_channel = config.require('slackChannel')
+slack_channel_id = config.require('slackChannelId')
 slack_bot_token = config.require_secret('slackBotToken')
 cost_spike_alert_cents = config.require_int('costSpikeAlertCents')
 cost_spike_window_minutes = config.require_int('costSpikeWindowMinutes')
@@ -612,11 +615,13 @@ grants.SandboxSpawner(
     role_prior=grants.Prior('themis-sandbox-job-runner'),
 )
 
-# The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it.
+# The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it. The
+# exporter and the morning report are two Jobs from one image; the report reads the live image off the exporter's.
+cost_exporter_image = _image(_COST_EXPORTER_IMAGE_ENV, lambda: _live_job_image('themis-cost-exporter', 'exporter'))
 cost_exporter = cost.CostExporter(
     project=project,
     region=region,
-    image=_image(_COST_EXPORTER_IMAGE_ENV, lambda: _live_job_image('themis-cost-exporter', 'exporter')),
+    image=cost_exporter_image,
     anthropic_federation_rule_id=anthropic_cost_exporter_federation_rule_id,
     anthropic_organization_id=anthropic_organization_id,
     anthropic_service_account_id=anthropic_cost_exporter_service_account_id,
@@ -636,7 +641,7 @@ spend_dashboard = cost_dashboard.CostDashboard(
     tick_minutes=cost.TICK_MINUTES,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
-cost_alerts.CostAlerts(
+spend_alerts = cost_alerts.CostAlerts(
     project=project,
     region=region,
     slack_channel=slack_channel,
@@ -646,6 +651,16 @@ cost_alerts.CostAlerts(
     freshness_minutes=cost_freshness_minutes,
     tick_minutes=cost.TICK_MINUTES,
     exporter_job_name=cost_exporter.job_name,
+    dashboard_url=spend_dashboard.console_url,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+)
+cost_report.CostReport(
+    project=project,
+    region=region,
+    image=cost_exporter_image,
+    slack_channel_id=slack_channel_id,
+    slack_bot_token=slack_bot_token,
+    slack_notification_channel=spend_alerts.notification_channel_name,
     dashboard_url=spend_dashboard.console_url,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
