@@ -244,7 +244,9 @@ class CostReport(pulumi.ComponentResource):
                         ),
                         comparison='COMPARISON_GT',
                         threshold_value=0,
-                        duration='0s',
+                        # A missing-data setting is refused with a zero duration, and Monitoring takes whole minutes;
+                        # one minute inside an hour-long aligned window changes nothing about when a failure pages.
+                        duration='60s',
                         aggregations=[
                             gcp.monitoring.AlertPolicyConditionConditionThresholdAggregationArgs(
                                 alignment_period=f'{_FAILURE_WINDOW_SECONDS}s',

@@ -114,6 +114,10 @@ def test_a_failed_execution_pages_the_spend_channel_once(program: capture.Captur
     [aggregation] = [_mapping(a) for a in _sequence(threshold['aggregations'])]
     assert int(str(aggregation['alignmentPeriod']).removesuffix('s')) >= 240
     assert threshold['evaluationMissingData'] == 'EVALUATION_MISSING_DATA_INACTIVE'
+    # Monitoring refuses a missing-data setting on a zero duration, and takes the duration in whole minutes.
+    duration = int(str(threshold['duration']).removesuffix('s'))
+    assert duration > 0
+    assert duration % 60 == 0
     assert policy['notificationChannels'] == [channel['name']]
     assert _sequence(_mapping(policy['alertStrategy'])['notificationPrompts']) == ['OPENED']
     content = str(_mapping(policy['documentation'])['content'])
