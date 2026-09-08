@@ -48,6 +48,15 @@ config:
   # (docs/runbooks/claude-api-wif.md); the org and workspace above are shared.
   themis:anthropicCostExporterFederationRuleId: fdrl_01GZB8c9yJ3B6QPjBg7rn3QR
   themis:anthropicCostExporterServiceAccountId: svac_01Wh612pvuxbauiTokVBBNV7
+  # The spend monitor's Slack channel (docs/design/cost-monitoring.md) and its alert tuning: a spike is this many
+  # cents of workspace spend, every producer summed, within the window; freshness is how long the exporter's gauge
+  # may go unwritten. The bot token of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
+  themis:slackChannel: "#themis-dev-cost"
+  themis:slackBotToken:
+    secure: v1:92S9qybuELcCA6Iw:qXhCmv75AtauZWSvwaX1j4BGF1dypezI+QM6qn5iaXOQ1oKZKeZ3ZjxHIBMhi2S3TJSAo19vwPWR4rTeGORSzKokH13b5zxq7og=
+  themis:costSpikeAlertCents: 10000
+  themis:costSpikeWindowMinutes: 30
+  themis:costFreshnessMinutes: 30
   # The IAP backend service's numeric id (= the web_backend_service_id output) — the web app
   # verifies the IAP-JWT audience against it.
   themis:iapBackendServiceId: "7475211739280005859"

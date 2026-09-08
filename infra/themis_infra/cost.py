@@ -21,8 +21,10 @@ import pulumi_gcp as gcp
 from themis_infra import grants
 
 # Every five minutes: spend appears with at most one tick of latency, and a full scan of the workspace is a
-# handful of pages against the sessions API's per-minute ceiling.
-_SCHEDULE = '*/5 * * * *'
+# handful of pages against the sessions API's per-minute ceiling. The dashboard's instant reads and the alerts'
+# evaluation cadence are phrased in this tick.
+TICK_MINUTES = 5
+_SCHEDULE = f'*/{TICK_MINUTES} * * * *'
 # The scan's in-process deadline, well under the schedule so executions do not pile up; the Job's own timeout
 # backstops it with room for a write that hangs past it.
 _RUN_DEADLINE_SECONDS = 180

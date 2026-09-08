@@ -163,8 +163,8 @@ class _Monitor(mocks.MockMonitor):
         return response
 
 
-def _dev_stack_config() -> dict[str, str]:
-    """The dev stack's config, every secret a placeholder and every opt-in on."""
+def dev_stack_config() -> dict[str, str]:
+    """The dev stack's config, every secret a placeholder and every opt-in on: what the captured program read."""
     stack = yaml.safe_load(_DEV_STACK.read_text('utf-8'))
     config = {}
     for key, value in stack['config'].items():
@@ -245,7 +245,7 @@ def capture_program() -> Capture:
 
     `set_mocks` configures Pulumi's process-global runtime, so one process runs one program.
     """
-    config = _dev_stack_config()
+    config = dev_stack_config()
     program_mocks = _Mocks(config['gcp:project'])
     monitor = _Monitor(program_mocks)
     # The project name is the namespace `pulumi.Config()` reads `themis:*` keys under.

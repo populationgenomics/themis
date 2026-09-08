@@ -20,6 +20,8 @@ from themis_infra import (
     clu,
     convert,
     cost,
+    cost_alerts,
+    cost_dashboard,
     deploy_iam,
     evidence,
     grants,
@@ -91,6 +93,13 @@ anthropic_worker_service_account_id = config.require('anthropicWorkerServiceAcco
 # (docs/runbooks/fresh-environment.md §3).
 anthropic_cost_exporter_federation_rule_id = config.require('anthropicCostExporterFederationRuleId')
 anthropic_cost_exporter_service_account_id = config.require('anthropicCostExporterServiceAccountId')
+# The spend monitor's Slack channel, the bot token of the Slack app that posts to it (encrypted config), and the
+# alert tuning the design leaves to the stack (docs/design/cost-monitoring.md).
+slack_channel = config.require('slackChannel')
+slack_bot_token = config.require_secret('slackBotToken')
+cost_spike_alert_cents = config.require_int('costSpikeAlertCents')
+cost_spike_window_minutes = config.require_int('costSpikeWindowMinutes')
+cost_freshness_minutes = config.require_int('costFreshnessMinutes')
 # IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
 # lookup) and the backend service's numeric id — this stack's own web_backend_service_id
 # output, fed back as config (docs/runbooks/fresh-environment.md §3).
@@ -620,6 +629,26 @@ ci_telemetry_account = ci_telemetry.CiTelemetryAccount(
     project_number=project_number,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+# What reads the spend metrics: the dashboard over every producer, and the policies that page on them. Both are
+# Monitoring resources the deploy SA edits under `roles/monitoring.editor`.
+spend_dashboard = cost_dashboard.CostDashboard(
+    project=project,
+    tick_minutes=cost.TICK_MINUTES,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+)
+cost_alerts.CostAlerts(
+    project=project,
+    region=region,
+    slack_channel=slack_channel,
+    slack_bot_token=slack_bot_token,
+    spike_cents=cost_spike_alert_cents,
+    spike_window_minutes=cost_spike_window_minutes,
+    freshness_minutes=cost_freshness_minutes,
+    tick_minutes=cost.TICK_MINUTES,
+    exporter_job_name=cost_exporter.job_name,
+    dashboard_url=spend_dashboard.console_url,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+)
 
 # Developer-workflow storage, unattached to the data plane: the review screenshots a
 # rendered-surface PR ships with (docs/design/pr-screenshots.md).
@@ -700,3 +729,4 @@ pulumi.export('cost_exporter_sa_unique_id', cost_exporter.service_account_unique
 pulumi.export('cost_exporter_job_name', cost_exporter.job_name)
 # The account the Claude Code workflows' auth step names (.github/workflows/internal-*.yml).
 pulumi.export('ci_telemetry_sa_email', ci_telemetry_account.service_account_email)
+pulumi.export('cost_dashboard_url', spend_dashboard.console_url)
