@@ -132,6 +132,8 @@ done
 gcloud iam service-accounts add-iam-policy-binding "${PREVIEW_SA}" --project="${PROJECT}" \
   --role=roles/iam.workloadIdentityUser \
   --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.event_name/pull_request" >/dev/null
+# The third account bound to this pool, the CI telemetry writer any run of the repo may take,
+# is not needed before Pulumi runs: themis_infra/ci_telemetry.py creates and binds it.
 
 # --- Network hardening: drop the auto-created default VPC and its permissive ---
 # default-allow-ssh/rdp/icmp/internal rules. The skeleton runs on Cloud Run +

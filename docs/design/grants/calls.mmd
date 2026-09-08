@@ -2,71 +2,74 @@
 flowchart TB
     n0["Cloud Tasks service agent"]
     n1["IAP service agent"]
-    n2["allUsers"]
-    n3["group themis-clu"]
-    n4["group themis-dev-access"]
-    n5["themis-auth"]
-    n6["themis-clu"]
-    n7["themis-convert-invoker"]
-    n8["themis-convert-worker"]
-    n9["themis-cost-exporter"]
-    n10["themis-cost-scheduler"]
-    n11["themis-dispatcher"]
-    n12["themis-evidence"]
-    n13["themis-gene-disease-refresh"]
-    n14["themis-gene-disease-scheduler"]
-    n15["themis-hello"]
-    n16["themis-sandbox-job"]
-    n17["themis-sheaf"]
-    n18["themis-store"]
-    n19["themis-web"]
-    n20[("IAP themis-backend")]
-    n21[("queue themis-convert")]
-    n22[["themis-auth"]]
-    n23[["themis-convert-worker"]]
-    n24[["themis-cost-exporter"]]
-    n25[["themis-dispatcher"]]
-    n26[["themis-evidence"]]
-    n27[["themis-gene-disease-refresh"]]
-    n28[["themis-hello"]]
-    n29[["themis-sandbox"]]
-    n30[["themis-sheaf"]]
-    n31[["themis-store"]]
-    n32[["themis-web"]]
-    n0 -->|AccountImpersonator| n7
-    n0 -->|AccountUser| n7
-    n1 -->|ServiceInvoker| n32
-    n2 -->|PublicService| n25
-    n3 -->|AccountImpersonator| n6
-    n4 -->|IapAccessor| n20
-    n6 -->|IapAccessor| n20
-    n6 -->|ServiceInvoker| n26
-    n6 -->|ServiceInvoker| n30
-    n7 -->|ServiceInvoker| n23
-    n10 -->|JobRunner| n24
-    n11 -->|SandboxSpawner| n29
-    n12 -->|AccountUser| n7
-    n12 -->|ServiceInvoker| n22
-    n12 -->|TaskEnqueuer| n21
-    n14 -->|JobRunner| n27
-    n15 -->|ServiceInvoker| n22
-    n16 -->|ServiceInvoker| n26
-    n16 -->|ServiceInvoker| n28
-    n16 -->|ServiceInvoker| n30
-    n16 -->|ServiceInvoker| n31
-    n17 -->|ServiceInvoker| n22
-    n18 -->|ServiceInvoker| n22
-    n19 -->|SelfSigner| n19
-    n19 -->|ServiceInvoker| n26
-    n20 -. fronts .-> n32
-    n22 -. runs as .-> n5
-    n23 -. runs as .-> n8
-    n24 -. runs as .-> n9
-    n25 -. runs as .-> n11
-    n26 -. runs as .-> n12
+    n2["WIF pool github: repository populationgenomics/themis-internal"]
+    n3["allUsers"]
+    n4["group themis-clu"]
+    n5["group themis-dev-access"]
+    n6["themis-auth"]
+    n7["themis-ci-telemetry"]
+    n8["themis-clu"]
+    n9["themis-convert-invoker"]
+    n10["themis-convert-worker"]
+    n11["themis-cost-exporter"]
+    n12["themis-cost-scheduler"]
+    n13["themis-dispatcher"]
+    n14["themis-evidence"]
+    n15["themis-gene-disease-refresh"]
+    n16["themis-gene-disease-scheduler"]
+    n17["themis-hello"]
+    n18["themis-sandbox-job"]
+    n19["themis-sheaf"]
+    n20["themis-store"]
+    n21["themis-web"]
+    n22[("IAP themis-backend")]
+    n23[("queue themis-convert")]
+    n24[["themis-auth"]]
+    n25[["themis-convert-worker"]]
+    n26[["themis-cost-exporter"]]
+    n27[["themis-dispatcher"]]
+    n28[["themis-evidence"]]
+    n29[["themis-gene-disease-refresh"]]
+    n30[["themis-hello"]]
+    n31[["themis-sandbox"]]
+    n32[["themis-sheaf"]]
+    n33[["themis-store"]]
+    n34[["themis-web"]]
+    n0 -->|AccountImpersonator| n9
+    n0 -->|AccountUser| n9
+    n1 -->|ServiceInvoker| n34
+    n2 -->|FederatedImpersonator| n7
+    n3 -->|PublicService| n27
+    n4 -->|AccountImpersonator| n8
+    n5 -->|IapAccessor| n22
+    n8 -->|IapAccessor| n22
+    n8 -->|ServiceInvoker| n28
+    n8 -->|ServiceInvoker| n32
+    n9 -->|ServiceInvoker| n25
+    n12 -->|JobRunner| n26
+    n13 -->|SandboxSpawner| n31
+    n14 -->|AccountUser| n9
+    n14 -->|ServiceInvoker| n24
+    n14 -->|TaskEnqueuer| n23
+    n16 -->|JobRunner| n29
+    n17 -->|ServiceInvoker| n24
+    n18 -->|ServiceInvoker| n28
+    n18 -->|ServiceInvoker| n30
+    n18 -->|ServiceInvoker| n32
+    n18 -->|ServiceInvoker| n33
+    n19 -->|ServiceInvoker| n24
+    n20 -->|ServiceInvoker| n24
+    n21 -->|SelfSigner| n21
+    n21 -->|ServiceInvoker| n28
+    n22 -. fronts .-> n34
+    n24 -. runs as .-> n6
+    n25 -. runs as .-> n10
+    n26 -. runs as .-> n11
     n27 -. runs as .-> n13
-    n28 -. runs as .-> n15
-    n29 -. runs as .-> n16
+    n28 -. runs as .-> n14
+    n29 -. runs as .-> n15
     n30 -. runs as .-> n17
     n31 -. runs as .-> n18
     n32 -. runs as .-> n19
+    n33 -. runs as .-> n20
+    n34 -. runs as .-> n21

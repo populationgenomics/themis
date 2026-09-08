@@ -129,6 +129,19 @@ jobs:
             echo 'TIERS_EOF'
           } >> "$GITHUB_ENV"
 
+      # The run's Claude Code token and cost counters go to Cloud Monitoring through the Telemetry API, as
+      # an account that writes metrics and nothing else (infra/themis_infra/ci_telemetry.py). The step yields
+      # only the access token the exporter presents — no credentials file, no exported gcloud env.
+      - uses: google-github-actions/auth@v3
+        id: telemetry
+        continue-on-error: true
+        with:
+          project_id: cpg-themis-dev
+          workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
+          service_account: themis-ci-telemetry@cpg-themis-dev.iam.gserviceaccount.com
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
       - uses: anthropics/claude-code-action@v1
         id: claude
         with:
@@ -139,6 +152,22 @@ jobs:
           anthropic_service_account_id: svac_01KJXbuSvwDHvT8PFQkU7nef
           anthropic_workspace_id: wrkspc_014YcYcGz7XBbARzLRHwvhZt
           allowed_bots: themis-doc-garden
+          # Claude Code's OTel metrics export to Cloud Monitoring (docs/design/cost-monitoring.md).
+          settings: |
+            {
+              "env": {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                "OTEL_METRICS_EXPORTER": "otlp",
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "https://telemetry.googleapis.com",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer ${{ steps.telemetry.outputs.access_token }}",
+                "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
+                "OTEL_METRICS_INCLUDE_SESSION_ID": "false",
+                "OTEL_METRICS_INCLUDE_ACCOUNT_UUID": "false",
+                "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "false",
+                "OTEL_RESOURCE_ATTRIBUTES": "cloud.region=australia-southeast1,service.instance.id=${{ github.run_id }}-${{ github.run_attempt }},gcp.project_id=cpg-themis-dev,service.namespace=merge-followups"
+              }
+            }
           prompt: |
             REPO: ${{ github.repository }}
             MERGED PR: #${{ github.event.pull_request.number }}

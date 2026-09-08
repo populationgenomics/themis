@@ -61,6 +61,8 @@ def test_check_drawable_refuses_a_capability_no_view_draws() -> None:
     [
         'user:someone@example.org',
         'serviceAccount:service-1@gcp-sa-pubsub.iam.gserviceaccount.com',
+        # A whole pool, not one attribute of it.
+        'principalSet://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/github/*',
     ],
 )
 def test_render_refuses_a_principal_it_cannot_name(member: str) -> None:

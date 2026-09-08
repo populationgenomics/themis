@@ -101,7 +101,12 @@ no secrets.
 - The WIF provider's attribute condition pins `attribute.repository == "populationgenomics/themis-internal"`; OIDC
   tokens name the requesting repository, so the public mirror (a different repo, Actions disabled) cannot satisfy it.
   Which SA a token may impersonate is then scoped per SA: deploy to deployable-ref tokens, preview to `pull_request`
-  tokens.
+  tokens, and the CI telemetry account to any token from the repository. The Claude Code workflows report each run's
+  token usage and cost to Cloud Monitoring as it. Its reach is writing points to any metric in the project — a point
+  under a new name creates the metric — and, through the consumer role the Telemetry API requires for quota, listing the
+  project's time series and using its service quota; it reads nothing else. Since nothing needs it before Pulumi can
+  run, it is program-managed ([`infra/themis_infra/ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)) rather
+  than bootstrap's.
 - **Write** access (deploy) runs only from a deployable ref, as the deploy SA — its WIF binding is scoped to
   `refs/heads/main` and `refs/heads/deployed/<env>` tokens (above). A PR's ref is `refs/pull/N/merge`, which matches
   neither. PRs get a **read-only** identity (the preview SA, WIF binding scoped to `pull_request` tokens) used only to

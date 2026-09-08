@@ -16,6 +16,7 @@ import pulumi_gcp as gcp
 from themis_infra import (
     auth,
     baseline,
+    ci_telemetry,
     clu,
     convert,
     cost,
@@ -613,6 +614,12 @@ cost_exporter = cost.CostExporter(
     anthropic_workspace_id=anthropic_workspace_id,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+# The identity the repository's Claude Code workflows report each run's token usage and cost as.
+ci_telemetry_account = ci_telemetry.CiTelemetryAccount(
+    project=project,
+    project_number=project_number,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 
 # Developer-workflow storage, unattached to the data plane: the review screenshots a
 # rendered-surface PR ships with (docs/design/pr-screenshots.md).
@@ -691,3 +698,5 @@ pulumi.export('convert_invoker_sa_email', convert_invoker.service_account_email)
 pulumi.export('cost_exporter_sa_email', cost_exporter.service_account_email)
 pulumi.export('cost_exporter_sa_unique_id', cost_exporter.service_account_unique_id)
 pulumi.export('cost_exporter_job_name', cost_exporter.job_name)
+# The account the Claude Code workflows' auth step names (.github/workflows/internal-*.yml).
+pulumi.export('ci_telemetry_sa_email', ci_telemetry_account.service_account_email)

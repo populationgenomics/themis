@@ -62,6 +62,7 @@ VIEWS = (
                 'SandboxSpawner',
                 'TaskEnqueuer',
                 'AccountImpersonator',
+                'FederatedImpersonator',
                 'AccountUser',
                 'SelfSigner',
                 'IapAccessor',
@@ -95,6 +96,10 @@ VIEWS = (
 _SERVICE_AGENTS = {'iap': 'IAP', 'cloudtasks': 'Cloud Tasks'}
 _DATAFLOW_AGENT_DOMAIN = 'dataflow-service-producer-prod.iam.gserviceaccount.com'
 _SERVICE_ACCOUNT_RESOURCE = re.compile(r'^projects/[^/]+/serviceAccounts/(.+)$')
+# A `principalSet://` over one attribute of a workload identity pool — the only principal-set shape drawn.
+_POOL_ATTRIBUTE_PRINCIPAL_SET = re.compile(
+    r'^//iam\.googleapis\.com/projects/[^/]+/locations/global/workloadIdentityPools/([^/]+)/attribute\.([^/]+)/(.+)$'
+)
 
 # Capabilities over a resource the label names outright, not the binding's target: project-wide roles, and
 # the one key.
@@ -129,6 +134,12 @@ def _principal(member: str) -> _Node:
     if member == 'allUsers':
         return _Node(_PRINCIPAL, 'allUsers')
     kind, _, identity = member.partition(':')
+    if kind == 'principalSet':
+        match = _POOL_ATTRIBUTE_PRINCIPAL_SET.match(identity)
+        if match is None:
+            raise ValueError(f'{member}: a principalSet that is not one attribute of a workload identity pool')
+        pool, attribute, value = match.groups()
+        return _Node(_PRINCIPAL, f'WIF pool {pool}: {attribute} {value}')
     local, _, domain = identity.partition('@')
     if kind == 'group':
         return _Node(_PRINCIPAL, f'group {local}')
@@ -158,7 +169,7 @@ def _target(binding: capture.Binding, project: str) -> _Node:
     match binding.capability:
         case 'ServiceInvoker' | 'PublicService' | 'JobRunner' | 'SandboxSpawner':
             return _Node(_WORKLOAD, target)
-        case 'AccountImpersonator' | 'AccountUser' | 'SelfSigner':
+        case 'AccountImpersonator' | 'FederatedImpersonator' | 'AccountUser' | 'SelfSigner':
             return _account_target(target)
         case 'TaskEnqueuer':
             return _Node(_RESOURCE, f'queue {target}')

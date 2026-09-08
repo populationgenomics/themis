@@ -488,6 +488,49 @@ class AccountImpersonator(_Capability):
         self.register_outputs({})
 
 
+class FederatedImpersonator(_Capability):
+    """May obtain one service account's access and ID tokens by Workload Identity Federation, and so call as it.
+
+    The holder is an external identity with no Google principal of its own — a principal set over a
+    workload identity pool, such as every GitHub Actions run of one repository — that trades its
+    provider's token for a federated token at the STS endpoint and then mints the account's access or ID
+    token with it. From there it calls as the account, reaching everything the account's grants admit,
+    with the exchange audit-logged against the external subject. Narrower than `AccountImpersonator`:
+    tokens only, not the signed blobs and JWTs `serviceAccountTokenCreator` also confers.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        account: pulumi.Input[str],
+        target: str,
+        prior: Prior | None = None,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        """Grant `member` the workload-identity-user role on the account.
+
+        Args:
+            holder: A slug for the holder, for resource names (`github-actions`).
+            member: The holder's IAM member string, a `principalSet://` over a workload identity pool.
+            account: The service account's fully-qualified name (`projects/…/serviceAccounts/…`).
+            target: A slug for the account, for resource names.
+            prior: Where the binding lived before it joined this capability, if it did.
+            opts: Resource options (dependency wiring).
+        """
+        name = f'{holder}-federates-as-{target}'
+        super().__init__(name, opts)
+        gcp.serviceaccount.IAMMember(
+            name,
+            service_account_id=account,
+            role='roles/iam.workloadIdentityUser',
+            member=member,
+            opts=self._binding(prior),
+        )
+        self.register_outputs({})
+
+
 class SelfSigner(_Capability):
     """Signs blobs as itself through the IAM Credentials API, for keyless V4 signed URLs; confers no other identity.
 
