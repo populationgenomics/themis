@@ -69,10 +69,24 @@ def _deadline(seconds: int = 60) -> report.Deadline:
     return report.Deadline(seconds, clock=lambda: 0.0)
 
 
+_DASHBOARD = 'https://console.example/monitoring/dashboards/builder/42?project=themis-test'
+
+
 def _run(source: _Source, channel: _Channel, *, deadline: report.Deadline | None = None) -> report.Outcome:
     return report.run(
-        _QUERIES, source, channel, channel_id='C01', now=lambda: _END, deadline=deadline or _deadline(), tz=_SYDNEY
+        _QUERIES,
+        source,
+        channel,
+        channel_id='C01',
+        now=lambda: _END,
+        deadline=deadline or _deadline(),
+        tz=_SYDNEY,
+        dashboard_url=_DASHBOARD,
     )
+
+
+def _message(day: report.Day) -> list[str]:
+    return report.message(day, _END, _SYDNEY, dashboard_url=_DASHBOARD).splitlines()
 
 
 def _day(**cents: float | None) -> report.Day:
@@ -117,25 +131,31 @@ def test_spend_posts_once_with_the_total_first_then_every_producer() -> None:
         '• Managed Agents sessions: $12.34 — runtime $1.00, tokens $11.00, web search $0.34',
         '• Convert worker: no data',
         '• CI (Claude Code): $2.50',
+        f'<{_DASHBOARD}|Spend dashboard>',
     ]
 
 
+def test_the_message_ends_with_the_dashboard_link_in_slacks_syntax() -> None:
+    for day in (_day(), _day(sessions=500, convert=-20)):
+        assert _message(day)[-1] == f'<{_DASHBOARD}|Spend dashboard>'
+
+
 def test_sessions_with_no_series_carries_no_split() -> None:
-    lines = report.message(_day(convert=500), _END, _SYDNEY).splitlines()
+    lines = _message(_day(convert=500))
 
     assert lines[1] == '• Managed Agents sessions: no data'
     assert lines[0].endswith(': $5.00')
 
 
 def test_a_share_with_no_series_reads_no_data_inside_the_split() -> None:
-    lines = report.message(_day(sessions=500, sessions_runtime=100, sessions_search=0), _END, _SYDNEY).splitlines()
+    lines = _message(_day(sessions=500, sessions_runtime=100, sessions_search=0))
 
     assert lines[1] == '• Managed Agents sessions: $5.00 — runtime $1.00, tokens no data, web search $0.00'
 
 
 def test_no_producer_with_a_series_is_no_total() -> None:
     assert _day().total is None
-    assert report.message(_day(), _END, _SYDNEY).splitlines()[0].endswith(': no data')
+    assert _message(_day())[0].endswith(': no data')
 
 
 def test_a_negative_day_is_shown_as_negative_and_still_posted() -> None:
@@ -201,6 +221,7 @@ def test_a_naive_clock_fails_before_any_query() -> None:
             now=lambda: _END.replace(tzinfo=None),
             deadline=_deadline(),
             tz=_SYDNEY,
+            dashboard_url=_DASHBOARD,
         )
     assert source.instant_queries == []
 
@@ -240,6 +261,7 @@ _ENV = {
     'THEMIS_COST_REPORT_PROJECT': 'themis-test',
     'THEMIS_COST_REPORT_SLACK_CHANNEL_ID': 'C0123',
     'THEMIS_COST_REPORT_SLACK_BOT_TOKEN': 'xoxb-test',
+    'THEMIS_COST_REPORT_DASHBOARD_URL': _DASHBOARD,
     'THEMIS_COST_REPORT_DEADLINE_SECONDS': '120',
     'THEMIS_COST_REPORT_TIME_ZONE': 'Australia/Sydney',
 }
@@ -251,6 +273,7 @@ def test_a_complete_environment_reads_as_the_settings() -> None:
     assert settings.project == 'themis-test'
     assert settings.slack_channel_id == 'C0123'
     assert settings.slack_bot_token == 'xoxb-test'
+    assert settings.dashboard_url == _DASHBOARD
     assert settings.deadline_seconds == 120
     assert settings.time_zone.key == 'Australia/Sydney'
     assert settings.queries.day.sessions == 'q'

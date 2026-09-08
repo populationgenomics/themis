@@ -50,6 +50,7 @@ class Settings:
         project: The GCP project whose metrics are queried.
         slack_channel_id: The channel the report is posted to, by id.
         slack_bot_token: The bot token of the Slack app that posts.
+        dashboard_url: The spend dashboard's console URL, which the message ends with a link to.
         deadline_seconds: The run's time budget, well under the Job's timeout.
         time_zone: The schedule's zone, which the report dates its window in.
     """
@@ -58,6 +59,7 @@ class Settings:
     project: str
     slack_channel_id: str
     slack_bot_token: str = dataclasses.field(repr=False)
+    dashboard_url: str
     deadline_seconds: int
     time_zone: zoneinfo.ZoneInfo
 
@@ -78,6 +80,7 @@ def settings_from(environ: Mapping[str, str]) -> Settings:
         project=env.require(environ, 'THEMIS_COST_REPORT_PROJECT'),
         slack_channel_id=env.require(environ, 'THEMIS_COST_REPORT_SLACK_CHANNEL_ID'),
         slack_bot_token=env.require(environ, 'THEMIS_COST_REPORT_SLACK_BOT_TOKEN'),
+        dashboard_url=env.require(environ, 'THEMIS_COST_REPORT_DASHBOARD_URL'),
         deadline_seconds=env.positive_seconds(environ, _DEADLINE_VAR),
         time_zone=time_zone,
     )
@@ -194,8 +197,11 @@ def read_hourly(
     ]
 
 
-def message(day: Day, at: datetime.datetime, tz: zoneinfo.ZoneInfo) -> str:
-    """The post's text: the total, then one line per producer, the sessions line carrying its split."""
+def message(day: Day, at: datetime.datetime, tz: zoneinfo.ZoneInfo, *, dashboard_url: str) -> str:
+    """The post's text: the total, one line per producer (the sessions line carrying its split), the dashboard link.
+
+    The link is in Slack's own syntax, `<url|text>`, which a file upload's comment renders as a link.
+    """
     split = ''
     if day.sessions is not None:
         split = (
@@ -208,6 +214,7 @@ def message(day: Day, at: datetime.datetime, tz: zoneinfo.ZoneInfo) -> str:
             f'• {_SESSIONS_TITLE}: {figure(day.sessions)}{split}',
             f'• {_CONVERT_TITLE}: {figure(day.convert)}',
             f'• {_CI_TITLE}: {figure(day.ci)}',
+            f'<{dashboard_url}|Spend dashboard>',
         ]
     )
 
@@ -231,6 +238,7 @@ def run(
     now: Callable[[], datetime.datetime],
     deadline: Deadline,
     tz: zoneinfo.ZoneInfo,
+    dashboard_url: str,
 ) -> Outcome:
     """Read the trailing 24 hours, then post the report once — unless no figure moved.
 
@@ -242,6 +250,7 @@ def run(
         now: The clock the window ends at, read once before any query.
         deadline: The run's time budget.
         tz: The zone the report dates its window in.
+        dashboard_url: The spend dashboard's console URL, which the message ends with a link to.
 
     Raises:
         ValueError: `now` returned a naive datetime.
@@ -260,7 +269,7 @@ def run(
     series = read_hourly(queries.hourly, source, start=start, end=end, deadline=deadline)
     png = chart.render(chart_title(end, tz), series, window=(start, end), tz=tz)
     deadline.check()
-    channel.post(channel_id, message(day, end, tz), png, chart_filename(end, tz))
+    channel.post(channel_id, message(day, end, tz, dashboard_url=dashboard_url), png, chart_filename(end, tz))
     return Outcome(day=day, posted=True)
 
 
@@ -284,6 +293,7 @@ def main() -> None:
                 now=functools.partial(datetime.datetime.now, datetime.UTC),
                 deadline=deadline,
                 tz=settings.time_zone,
+                dashboard_url=settings.dashboard_url,
             )
         except TimeoutError:
             raise SystemExit(f'the run exceeded its {settings.deadline_seconds}s deadline') from None

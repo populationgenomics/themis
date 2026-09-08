@@ -57,6 +57,15 @@ def test_the_job_runs_the_report_entrypoint_over_the_rendered_queries(container:
     assert envs['THEMIS_COST_REPORT_SLACK_CHANNEL_ID']['value'] == capture.dev_stack_config()['themis:slackChannelId']
 
 
+def test_the_message_links_the_dashboard_the_failure_page_links(
+    program: capture.Capture, container: dict[str, object]
+) -> None:
+    url = _envs(container)['THEMIS_COST_REPORT_DASHBOARD_URL']['value']
+    [link] = [_mapping(link) for link in _sequence(_mapping(_one(program, _POLICY_CHAIN)['documentation'])['links'])]
+    assert url == link['url']
+    assert 'monitoring/dashboards' in str(url)
+
+
 def test_the_token_reaches_the_job_from_secret_manager_never_as_a_value(container: dict[str, object]) -> None:
     token = _envs(container)['THEMIS_COST_REPORT_SLACK_BOT_TOKEN']
     assert 'value' not in token

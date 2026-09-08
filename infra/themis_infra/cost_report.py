@@ -113,7 +113,7 @@ class CostReport(pulumi.ComponentResource):
             slack_bot_token: The bot token of the Slack app that posts; a secret, kept in Secret Manager for the Job.
             slack_notification_channel: The spend monitor's Monitoring notification channel
                 (`cost_alerts.CostAlerts.notification_channel_name`), which a failed execution pages.
-            dashboard_url: The spend dashboard's console URL, linked from the page.
+            dashboard_url: The spend dashboard's console URL, linked from the report's message and from the page.
             opts: Resource options (dependency wiring).
         """
         super().__init__('themis:infra:CostReport', 'themis', None, opts)
@@ -176,6 +176,7 @@ class CostReport(pulumi.ComponentResource):
                                 _env('THEMIS_COST_REPORT_QUERIES', report_json()),
                                 _env('THEMIS_COST_REPORT_PROJECT', project),
                                 _env('THEMIS_COST_REPORT_SLACK_CHANNEL_ID', slack_channel_id),
+                                _env('THEMIS_COST_REPORT_DASHBOARD_URL', dashboard_url),
                                 _env('THEMIS_COST_REPORT_DEADLINE_SECONDS', str(_RUN_DEADLINE_SECONDS)),
                                 # The schedule's zone, so the report dates its window as the reader's morning.
                                 _env('THEMIS_COST_REPORT_TIME_ZONE', _TIME_ZONE),
