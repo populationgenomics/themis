@@ -150,6 +150,13 @@ class WebService(pulumi.ComponentResource):
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,
+                        # The Next.js server keeps a resident set above 500 MiB between requests.
+                        resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
+                            limits={'cpu': '1', 'memory': '2Gi'},
+                            # A set `resources` flips cpu_idle's default to false; nothing here runs
+                            # between requests, so CPU stays request-billed.
+                            cpu_idle=True,
+                        ),
                         envs=[
                             _env('THEMIS_BACKEND', 'live'),
                             # Anthropic Managed-Agents client credentials: keyless WIF (Path B),
