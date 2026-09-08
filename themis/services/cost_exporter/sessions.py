@@ -4,8 +4,9 @@ The sessions list is the one place a dollar figure is readable with a workspace 
 (`docs/design/cost-monitoring.md`, Background): every session carries its cumulative `usage` — list
 cost, tokens by component, active seconds, web searches — so one paginated listing, archived sessions
 included, which the API leaves out unless asked, is a complete snapshot of the workspace. A session
-the API returns without a field the totals need is a precondition failure, never a zero: a silent
-zero would read as spend shrinking.
+the API returns without a field the totals need is a precondition failure, never a zero: a silent zero
+would read as spend shrinking. The one field the API omits by design is the cache-creation object of a
+session that wrote nothing to the cache, which is zero tokens.
 """
 
 from __future__ import annotations
@@ -108,6 +109,17 @@ def _required[T](session_id: str, value: T | None, field: str) -> T:
     return value
 
 
+def _cache_creation_tokens(
+    session_id: str, cache_creation: anthropic_beta.BetaManagedAgentsCacheCreationUsage | None
+) -> int:
+    """Both cache lifetimes' write tokens; the API omits the object on a session that wrote nothing to the cache."""
+    if cache_creation is None:
+        return 0
+    return _required(
+        session_id, cache_creation.ephemeral_5m_input_tokens, 'cache_creation.ephemeral_5m_input_tokens'
+    ) + _required(session_id, cache_creation.ephemeral_1h_input_tokens, 'cache_creation.ephemeral_1h_input_tokens')
+
+
 def _cents(session_id: str, cost: anthropic.types.BetaMonetaryAmount) -> int:
     if cost.currency != _CURRENCY:
         raise SessionRecordError(
@@ -124,11 +136,11 @@ def session_usage(session: anthropic_beta.BetaManagedAgentsSession) -> SessionUs
     """Read one session's attribution and cumulative usage.
 
     Raises:
-        SessionRecordError: The session lacks any usage field the totals need, lists its cost in a
-            currency other than USD or as anything but a whole number of cents, or names no agent.
+        SessionRecordError: The session lacks a usage field the totals need (the cache-creation object
+            excepted), lists its cost in a currency other than USD or as anything but a whole number of
+            cents, or names no agent.
     """
     usage = session.usage
-    cache_creation = _required(session.id, usage.cache_creation, 'cache_creation')
     server_tools = _required(session.id, usage.server_tool_use, 'server_tool_use')
     if not session.agent.name:
         raise SessionRecordError(f'precondition failed: session {session.id} names no agent')
@@ -139,14 +151,7 @@ def session_usage(session: anthropic_beta.BetaManagedAgentsSession) -> SessionUs
             names.TokenType.INPUT: _required(session.id, usage.input_tokens, 'input_tokens'),
             names.TokenType.OUTPUT: _required(session.id, usage.output_tokens, 'output_tokens'),
             names.TokenType.CACHE_READ: _required(session.id, usage.cache_read_input_tokens, 'cache_read_input_tokens'),
-            names.TokenType.CACHE_CREATION: (
-                _required(
-                    session.id, cache_creation.ephemeral_5m_input_tokens, 'cache_creation.ephemeral_5m_input_tokens'
-                )
-                + _required(
-                    session.id, cache_creation.ephemeral_1h_input_tokens, 'cache_creation.ephemeral_1h_input_tokens'
-                )
-            ),
+            names.TokenType.CACHE_CREATION: _cache_creation_tokens(session.id, usage.cache_creation),
         },
         active_seconds=_required(session.id, usage.active_seconds, 'active_seconds'),
         web_search_requests=_required(

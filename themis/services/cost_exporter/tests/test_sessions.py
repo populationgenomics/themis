@@ -81,6 +81,16 @@ def test_a_session_reads_as_its_agent_and_cumulative_usage() -> None:
     )
 
 
+def test_a_session_without_a_cache_creation_object_wrote_nothing_to_the_cache() -> None:
+    # The API omits the object on such a session while every other field is present; the run goes on.
+    usage = sessions.session_usage(_session(cache_creation=None))
+
+    assert usage.tokens[names.TokenType.CACHE_CREATION] == 0
+    assert usage.tokens[names.TokenType.INPUT] == 1000
+    assert usage.cents == 215
+    assert sessions.NO_SESSIONS.plus(usage).tokens[names.TokenType.CACHE_CREATION] == 0
+
+
 def test_a_session_that_has_done_nothing_is_all_zeros() -> None:
     usage = sessions.session_usage(
         _session(
@@ -110,7 +120,6 @@ def test_a_session_that_has_done_nothing_is_all_zeros() -> None:
         pytest.param(_session(input_tokens=None), 'no usage.input_tokens', id='no-input-tokens'),
         pytest.param(_session(output_tokens=None), 'no usage.output_tokens', id='no-output-tokens'),
         pytest.param(_session(cache_read_input_tokens=None), 'no usage.cache_read_input_tokens', id='no-cache-read'),
-        pytest.param(_session(cache_creation=None), 'no usage.cache_creation', id='no-cache-creation'),
         pytest.param(_session(cache_creation=(None, 2)), 'cache_creation.ephemeral_5m_input_tokens', id='no-5m'),
         pytest.param(_session(cache_creation=(40, None)), 'cache_creation.ephemeral_1h_input_tokens', id='no-1h'),
         pytest.param(_session(active_seconds=None), 'no usage.active_seconds', id='no-active-seconds'),

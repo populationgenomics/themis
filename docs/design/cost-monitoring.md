@@ -351,13 +351,14 @@ the exporter keeps no state, the report reads and posts, and the bot token is a 
 ### Failure posture
 
 Correctness is never traded for liveness. The exporter's run has a hard deadline well under its schedule interval, and
-any error — a page that fails, a session missing a field the totals need, an export the API refuses — aborts the run
-with nothing written, because a partial total written as the gauge would read as spend shrinking, a silent wrong answer,
-where a missing point is a visible gap the freshness alert catches. The full scan is deliberate: at current volume it is
-a handful of pages against a documented per-minute request ceiling, and the deadline is the tripwire that says when to
-revisit (the incremental option is in Alternatives considered). The worker's counter can neither fail a conversion nor
-be failed by one. In CI a telemetry failure costs the run its metrics, never its result, and a healthy export can lose
-at most the last response.
+any error — a page that fails, a session missing a field the totals need (one field excepted: the API omits the
+cache-creation object on a session that wrote nothing to the cache, which reads as zero), an export the API refuses —
+aborts the run with nothing written, because a partial total written as the gauge would read as spend shrinking, a
+silent wrong answer, where a missing point is a visible gap the freshness alert catches. The full scan is deliberate: at
+current volume it is a handful of pages against a documented per-minute request ceiling, and the deadline is the
+tripwire that says when to revisit (the incremental option is in Alternatives considered). The worker's counter can
+neither fail a conversion nor be failed by one. In CI a telemetry failure costs the run its metrics, never its result,
+and a healthy export can lose at most the last response.
 
 ### Consequences accepted
 
