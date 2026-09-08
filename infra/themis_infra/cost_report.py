@@ -43,34 +43,38 @@ _COMPLETED_EXECUTIONS = 'run.googleapis.com/job/completed_execution_count'
 _FAILURE_WINDOW_SECONDS = 3600
 
 
-def report_queries() -> dict[str, dict[str, str]]:
+def report_queries(*, freshness_minutes: int) -> dict[str, dict[str, str]]:
     """The report's PromQL, every figure in cents.
 
     `day` is the trailing day's figure per producer, evaluated at one instant: Managed Agents list cost and its
     runtime, web-search and token shares, the convert worker's spend derived from the price table, and Claude Code's
     own CI figure. `hourly` is the trailing hour's figure per producer, evaluated as a range at hourly steps, for
     the chart.
+
+    Args:
+        freshness_minutes: The freshness window the alerts page the exporter on; every read of its gauges takes the
+            newest sample within it, so a morning after a stale stretch reads the last known totals rather than none.
     """
     return {
         'day': {
-            'sessions': cost_promql.session_cents(_DAY),
-            'sessions_runtime': cost_promql.session_runtime_cents(_DAY),
-            'sessions_search': cost_promql.session_search_cents(_DAY),
-            'sessions_tokens': cost_promql.session_token_cents(_DAY),
+            'sessions': cost_promql.session_cents(_DAY, freshness_minutes=freshness_minutes),
+            'sessions_runtime': cost_promql.session_runtime_cents(_DAY, freshness_minutes=freshness_minutes),
+            'sessions_search': cost_promql.session_search_cents(_DAY, freshness_minutes=freshness_minutes),
+            'sessions_tokens': cost_promql.session_token_cents(_DAY, freshness_minutes=freshness_minutes),
             'convert': cost_promql.convert_cents(_DAY),
             'ci': cost_promql.ci_cents(_DAY),
         },
         'hourly': {
-            'sessions': cost_promql.session_cents(_HOUR),
+            'sessions': cost_promql.session_cents(_HOUR, freshness_minutes=freshness_minutes),
             'convert': cost_promql.convert_cents(_HOUR),
             'ci': cost_promql.ci_cents(_HOUR),
         },
     }
 
 
-def report_json() -> str:
+def report_json(*, freshness_minutes: int) -> str:
     """`report_queries`, as the JSON the Job's environment carries."""
-    return json.dumps(report_queries(), sort_keys=True)
+    return json.dumps(report_queries(freshness_minutes=freshness_minutes), sort_keys=True)
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs:
@@ -101,6 +105,7 @@ class CostReport(pulumi.ComponentResource):
         slack_bot_token: pulumi.Input[str],
         slack_notification_channel: pulumi.Input[str],
         dashboard_url: pulumi.Input[str],
+        freshness_minutes: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         """Declare the Job, its schedule, its identity, the secret and the failure policy.
@@ -109,6 +114,7 @@ class CostReport(pulumi.ComponentResource):
             project: The GCP project the metrics live in.
             region: The Job's region.
             image: The exporter image; the report is another entrypoint in it.
+            freshness_minutes: The freshness window the alerts page the exporter on (`report_queries`).
             slack_channel_id: The Slack channel the report posts to, by id (a file upload addresses a channel by id).
             slack_bot_token: The bot token of the Slack app that posts; a secret, kept in Secret Manager for the Job.
             slack_notification_channel: The spend monitor's Monitoring notification channel
@@ -173,7 +179,7 @@ class CostReport(pulumi.ComponentResource):
                             image=image,
                             commands=['python', '-m', 'themis.services.cost_exporter.report'],
                             envs=[
-                                _env('THEMIS_COST_REPORT_QUERIES', report_json()),
+                                _env('THEMIS_COST_REPORT_QUERIES', report_json(freshness_minutes=freshness_minutes)),
                                 _env('THEMIS_COST_REPORT_PROJECT', project),
                                 _env('THEMIS_COST_REPORT_SLACK_CHANNEL_ID', slack_channel_id),
                                 _env('THEMIS_COST_REPORT_DASHBOARD_URL', dashboard_url),

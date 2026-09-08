@@ -1,17 +1,27 @@
-"""PromQL over the spend metrics, as the dashboard and the alert policies phrase it.
+"""PromQL over the spend metrics, as the dashboard, the alert policies and the report phrase it.
 
 Every producer writes through the Telemetry API, so each metric is a native Prometheus-style series on the
 `prometheus_target` resource, selected by its bare name; Claude Code's two names carry dots, which classic PromQL
-cannot parse, so those take the UTF-8 form `{"name", …}`. Monitoring's PromQL is typed — `rate` and `increase` are
-refused on a gauge — so a running total's window figure is `delta`, which extrapolates to the window's edges and can
-differ from two points' difference by a sample interval's slope, and a counter's is `increase`. Every figure is in
-the producers' unit, cents, until `dollars` divides at display; nothing here is stored.
+cannot parse, so those take the UTF-8 form `{"name", …}`. A counter's window figure is `increase`, which is exact on
+this backend: a cumulative counter carries its start time. A running total's is the exact rise between two samples,
+the newest and the newest a window earlier; `delta` is never used, since it extrapolates to the window's edges — on a
+young series by up to a third, and with a sawtooth as the extrapolated stretch grows between samples. A series younger
+than the window falls back to its rise since its first sample in the window (`min_over_time`, the first sample of a
+monotone series). The one behavioural difference: during a series' first window a session deletion reads as the rise
+since the lowest point rather than as a negative step.
 
-The derived figures, each a builder below: a session's list cost is the provider's (`session_cents`), split into
-runtime and web search at the flat rates with tokens as the remainder; the convert worker's spend is its token counter
-priced by the program's table (`cost_prices`), each model's four token types at their list price as literal
-multipliers (`convert_cents`); Claude Code's is its own USD figure scaled (`ci_cents`). Wherever figures are summed
-each term is guarded to zero (`total`), since a binary operator with an empty side yields nothing.
+Every read of a running total — each end of a rise, and a current value — takes the newest sample within one
+tolerance: the freshness window the alerts page the exporter on, threaded in as `freshness_minutes` so the reads'
+tolerance and the alert's are one stack value. Within it a stale exporter yields its last known total, so a rise is
+measured to the last known point; beyond it the figure is absent — never zero — and the freshness alert is what names
+the fault. A window has to exceed the tolerance, or a rise's two ends could read one sample.
+
+Every figure is in the producers' unit, cents, until `dollars` divides at display; nothing here is stored. The derived
+figures, each a builder below: a session's list cost is the provider's (`session_cents`), split into runtime and web
+search at the flat rates with tokens as the remainder; the convert worker's spend is its token counter priced by the
+program's table (`cost_prices`), each model's four token types at their list price as literal multipliers
+(`convert_cents`); Claude Code's is its own USD figure scaled (`ci_cents`). Wherever figures are summed each term that
+can be empty is guarded to zero (`total`, `guarded`), since a binary operator with an empty side yields nothing.
 """
 
 from __future__ import annotations
@@ -27,18 +37,18 @@ _LEGACY_NAME = re.compile(r'^[A-Za-z_:][A-Za-z0-9_:]*$')
 _REGEX_METACHARACTER = re.compile(r'([.^$*+?()\[\]{}|\\])')
 # What a PromQL double-quoted string escapes.
 _STRING_ESCAPE = re.compile(r'([\\"])')
+# A PromQL duration of one unit, as the windows here are written.
+_DURATION = re.compile(r'^(\d+)([smhdw])$')
+_UNIT_SECONDS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86_400, 'w': 604_800}
 _CENTS_PER_DOLLAR = 100
 _TOKENS_PER_MTOK = 1_000_000
 _SECONDS_PER_HOUR = 3600
-# An instant read of a gauge takes the newest sample within this many of the writer's ticks: one missed tick
-# (scheduler jitter, a failed run) must not read as a total vanishing.
-_LOOKBACK_TICKS = 3
 # Operators that bind looser than `/`: an expression with one at the top level needs parentheses before `/ 100`.
 _LOOSER_THAN_DIVISION = frozenset({'+', '-', '==', '!=', '<', '<=', '>', '>=', 'and', 'or', 'unless'})
 
 
 class Kind(enum.Enum):
-    """How a metric is written, which fixes its window function."""
+    """How a metric is written, which fixes its window figure."""
 
     GAUGE = 'gauge'
     COUNTER = 'counter'
@@ -54,7 +64,6 @@ _KINDS: dict[str, Kind] = {
     claude_code_metrics.TOKEN_USAGE: Kind.COUNTER,
     claude_code_metrics.COST_USAGE: Kind.COUNTER,
 }
-_WINDOW_FUNCTION = {Kind.GAUGE: 'delta', Kind.COUNTER: 'increase'}
 
 METRICS = frozenset(_KINDS)
 """Every metric the queries read."""
@@ -70,6 +79,23 @@ def kind(name: str) -> Kind:
         return _KINDS[name]
     except KeyError as e:
         raise KeyError(f'not a spend metric: {name}') from e
+
+
+def _require_kind(name: str, expected: Kind) -> None:
+    if kind(name) is not expected:
+        raise ValueError(f'{name} is a {kind(name).value}, not a {expected.value}')
+
+
+def seconds(duration: str) -> int:
+    """A PromQL duration of one unit (`30m`, `1h`, `7d`) in seconds.
+
+    Raises:
+        ValueError: Not a duration of one unit.
+    """
+    match = _DURATION.fullmatch(duration)
+    if match is None:
+        raise ValueError(f'not a PromQL duration of one unit: {duration!r}')
+    return int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
 
 
 def selector(name: str, *matchers: str) -> str:
@@ -107,24 +133,64 @@ def not_among(label: str, values: Iterable[str]) -> str:
     return f'{label}!~{_string_literal(f"^({alternatives})$")}'
 
 
-def window(name: str, duration: str, *matchers: str) -> str:
-    """How much each selected series grew over the trailing `duration`, in the metric's own unit.
-
-    `delta` of a gauge of a running total, `increase` of a counter: the one function Monitoring's typed PromQL
-    accepts for each.
-    """
-    return f'{_WINDOW_FUNCTION[kind(name)]}({selector(name, *matchers)}[{duration}])'
+def _aggregate(operator: str, expression: str, by: Sequence[str] = ()) -> str:
+    if by:
+        return f'{operator} by ({", ".join(by)}) ({expression})'
+    return f'{operator}({expression})'
 
 
-def latest(name: str, *matchers: str, tick_minutes: int) -> str:
-    """The newest value of each selected gauge series, read within a few ticks of the writer's schedule.
+def _current(selected: str, freshness_minutes: int) -> str:
+    return f'last_over_time({selected}[{freshness_minutes}m])'
+
+
+def latest(name: str, *matchers: str, freshness_minutes: int) -> str:
+    """The newest value of each selected gauge series, the newest sample within the freshness window.
 
     Raises:
         ValueError: `name` is a counter, whose current value is a total since its process started, not a figure.
     """
-    if kind(name) is not Kind.GAUGE:
-        raise ValueError(f'{name} is a counter; only a gauge has a current value')
-    return f'last_over_time({selector(name, *matchers)}[{_LOOKBACK_TICKS * tick_minutes}m])'
+    _require_kind(name, Kind.GAUGE)
+    return _current(selector(name, *matchers), freshness_minutes)
+
+
+def current_total(name: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
+    """The summed newest value of a gauge, one series per `by` combination."""
+    return _aggregate('sum', latest(name, *matchers, freshness_minutes=freshness_minutes), by)
+
+
+def rise(name: str, duration: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
+    """The summed exact rise of a running total over the trailing `duration`, one series per `by` combination.
+
+    Per series, the newest sample less the newest sample a window earlier, each the newest within the freshness
+    window (both sides carry the series' labels, so they match one to one); for a series with no sample a window
+    earlier, its rise since its first sample in the window. Parenthesized so `or` joins the two forms and the
+    aggregation wraps the whole.
+
+    Raises:
+        ValueError: `name` is a counter, or `duration` does not exceed the freshness window, so the two ends could
+            read one sample.
+    """
+    _require_kind(name, Kind.GAUGE)
+    if seconds(duration) <= freshness_minutes * 60:
+        raise ValueError(
+            f'a {duration} window does not exceed the {freshness_minutes}-minute freshness window; a rise over it '
+            f'could read one sample at both ends'
+        )
+    selected = selector(name, *matchers)
+    current = _current(selected, freshness_minutes)
+    a_window_earlier = f'last_over_time({selected}[{freshness_minutes}m] offset {duration})'
+    first_in_window = f'min_over_time({selected}[{duration}])'
+    return _aggregate('sum', f'(({current} - {a_window_earlier}) or ({current} - {first_in_window}))', by)
+
+
+def increase(name: str, duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
+    """The summed increase of a counter over the trailing `duration`, one series per `by` combination.
+
+    Raises:
+        ValueError: `name` is a gauge; a running total's window figure is `rise`.
+    """
+    _require_kind(name, Kind.COUNTER)
+    return _aggregate('sum', f'increase({selector(name, *matchers)}[{duration}])', by)
 
 
 def silence(name: str, duration: str) -> str:
@@ -132,49 +198,35 @@ def silence(name: str, duration: str) -> str:
     return f'absent_over_time({selector(name)}[{duration}])'
 
 
-def _aggregate(operator: str, expression: str, by: Sequence[str] = ()) -> str:
-    if by:
-        return f'{operator} by ({", ".join(by)}) ({expression})'
-    return f'{operator}({expression})'
-
-
-def growth(name: str, duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
-    """The summed window figure of a metric over the trailing `duration`, one series per `by` combination."""
-    return _aggregate('sum', window(name, duration, *matchers), by)
-
-
-def current_total(name: str, *matchers: str, by: Sequence[str] = (), tick_minutes: int) -> str:
-    """The summed newest value of a gauge, one series per `by` combination."""
-    return _aggregate('sum', latest(name, *matchers, tick_minutes=tick_minutes), by)
-
-
-def session_cents(duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
+def session_cents(duration: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
     """Managed Agents list cost over `duration`, in cents: the provider's own cumulative figure, differenced."""
-    return growth(cost_metrics.SESSION_LIST_COST_CENTS, duration, *matchers, by=by)
+    return rise(cost_metrics.SESSION_LIST_COST_CENTS, duration, *matchers, by=by, freshness_minutes=freshness_minutes)
 
 
-def session_runtime_cents(duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
+def session_runtime_cents(duration: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
     """The runtime share of session list cost over `duration`: active seconds at the flat hourly rate."""
-    seconds = growth(cost_metrics.SESSION_ACTIVE_SECONDS, duration, *matchers, by=by)
-    return f'{seconds} / {_SECONDS_PER_HOUR} * {cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR}'
+    active = rise(cost_metrics.SESSION_ACTIVE_SECONDS, duration, *matchers, by=by, freshness_minutes=freshness_minutes)
+    return f'{active} / {_SECONDS_PER_HOUR} * {cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR}'
 
 
-def session_search_cents(duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
+def session_search_cents(duration: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
     """The web-search share of session list cost over `duration`: requests at the flat per-request rate."""
-    requests = growth(cost_metrics.SESSION_WEB_SEARCH_REQUESTS, duration, *matchers, by=by)
+    requests = rise(
+        cost_metrics.SESSION_WEB_SEARCH_REQUESTS, duration, *matchers, by=by, freshness_minutes=freshness_minutes
+    )
     return f'{requests} * {cost_prices.WEB_SEARCH_CENTS_PER_REQUEST}'
 
 
-def session_token_cents(duration: str, *matchers: str, by: Sequence[str] = ()) -> str:
+def session_token_cents(duration: str, *matchers: str, by: Sequence[str] = (), freshness_minutes: int) -> str:
     """The token share of session list cost over `duration`: what the two flat-rate components leave of it.
 
     The four gauges are written together each run, so their windows hold the same samples and the difference
     lines up; the result is parenthesized, so a caller can scale it.
     """
     return (
-        f'({session_cents(duration, *matchers, by=by)}'
-        f' - {session_runtime_cents(duration, *matchers, by=by)}'
-        f' - {session_search_cents(duration, *matchers, by=by)})'
+        f'({session_cents(duration, *matchers, by=by, freshness_minutes=freshness_minutes)}'
+        f' - {session_runtime_cents(duration, *matchers, by=by, freshness_minutes=freshness_minutes)}'
+        f' - {session_search_cents(duration, *matchers, by=by, freshness_minutes=freshness_minutes)})'
     )
 
 
@@ -211,10 +263,10 @@ def total(terms: Sequence[str]) -> str:
 
 
 def _model_cents(model: str, duration: str) -> str:
-    """One model's convert spend over `duration`, in cents: each token type's growth at its list price, summed."""
+    """One model's convert spend over `duration`, in cents: each token type's increase at its list price, summed."""
     of_model = equals(cost_metrics.MODEL_LABEL, model)
     priced = [
-        f'{growth(cost_metrics.REQUEST_TOKENS, duration, of_model, equals(cost_metrics.TYPE_LABEL, token_type))}'
+        f'{increase(cost_metrics.REQUEST_TOKENS, duration, of_model, equals(cost_metrics.TYPE_LABEL, token_type))}'
         f' * {cents}'
         for token_type, cents in cost_prices.LIST_PRICES_CENTS_PER_MTOK[model].items()
     ]
@@ -247,12 +299,12 @@ def unpriced_request_tokens(duration: str) -> str:
     """Request tokens over `duration`, by model and type, for every model the price table has no row for."""
     outside_table = not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK)
     key = (cost_metrics.MODEL_LABEL, cost_metrics.TYPE_LABEL)
-    return growth(cost_metrics.REQUEST_TOKENS, duration, outside_table, by=key)
+    return increase(cost_metrics.REQUEST_TOKENS, duration, outside_table, by=key)
 
 
 def ci_dollars(duration: str, *, by: Sequence[str] = ()) -> str:
     """Claude Code's CI spend over `duration`, in USD: its own figure, from its own price table."""
-    return growth(claude_code_metrics.COST_USAGE, duration, by=by)
+    return increase(claude_code_metrics.COST_USAGE, duration, by=by)
 
 
 def ci_cents(duration: str) -> str:
@@ -260,13 +312,14 @@ def ci_cents(duration: str) -> str:
     return f'{ci_dollars(duration)} * {_CENTS_PER_DOLLAR}'
 
 
-def workspace_cents(duration: str) -> str:
+def workspace_cents(duration: str, *, freshness_minutes: int) -> str:
     """Every producer's spend over `duration` as one figure, in cents.
 
     The sessions and CI figures are guarded, since either can be empty; the convert figure is never empty and adds
     bare.
     """
-    return summed([guarded(session_cents(duration)), convert_cents(duration), guarded(ci_cents(duration))])
+    sessions = session_cents(duration, freshness_minutes=freshness_minutes)
+    return summed([guarded(sessions), convert_cents(duration), guarded(ci_cents(duration))])
 
 
 def _has_loose_top_level_operator(expression: str) -> bool:

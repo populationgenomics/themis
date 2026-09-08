@@ -16,11 +16,16 @@ from collections.abc import Callable
 import pytest
 
 from themis.services.cost_exporter import report_queries
-from themis_infra import cost_report
+from themis_infra import capture, cost_report
+
+
+def _rendered() -> str:
+    """The rendering as the dev stack's program emits it, its freshness tolerance from the stack's config."""
+    return cost_report.report_json(freshness_minutes=int(capture.dev_stack_config()['themis:costFreshnessMinutes']))
 
 
 def test_the_rendered_queries_round_trip() -> None:
-    text = cost_report.report_json()
+    text = _rendered()
 
     parsed = report_queries.parse(text)
 
@@ -28,7 +33,7 @@ def test_the_rendered_queries_round_trip() -> None:
 
 
 def test_the_two_sides_name_the_same_keys() -> None:
-    rendered = json.loads(cost_report.report_json())
+    rendered = json.loads(_rendered())
     assert set(rendered['day']) == set(report_queries.DAY_KEYS)
     assert set(rendered['hourly']) == set(report_queries.HOURLY_KEYS)
 

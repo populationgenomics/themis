@@ -22,6 +22,9 @@ _LEGACY_NAME = re.compile(r'\bthemis_[A-Za-z0-9_]+')
 _QUOTED_NAME = re.compile(r'\{"([^"]+)"')
 # The cents-to-dollars division, as distinct from the per-million-tokens one.
 _CENTS_TO_DOLLARS = re.compile(r'/ 100(?!\d)')
+# Every read of a running total takes the newest sample within the stack's freshness window.
+_FRESHNESS_MINUTES = int(capture.dev_stack_config()['themis:costFreshnessMinutes'])
+_CURRENT_READ = re.compile(r'last_over_time\([^\[]+\[(\w+)\]')
 
 
 def _mapping(value: object) -> dict[str, object]:
@@ -53,7 +56,7 @@ def _envs(container: dict[str, object]) -> dict[str, dict[str, object]]:
 def test_the_job_runs_the_report_entrypoint_over_the_rendered_queries(container: dict[str, object]) -> None:
     assert container['commands'] == ['python', '-m', 'themis.services.cost_exporter.report']
     envs = _envs(container)
-    assert envs['THEMIS_COST_REPORT_QUERIES']['value'] == cost_report.report_json()
+    assert envs['THEMIS_COST_REPORT_QUERIES']['value'] == cost_report.report_json(freshness_minutes=_FRESHNESS_MINUTES)
     assert envs['THEMIS_COST_REPORT_SLACK_CHANNEL_ID']['value'] == capture.dev_stack_config()['themis:slackChannelId']
 
 
@@ -82,7 +85,7 @@ def test_the_schedule_is_a_sydney_morning(program: capture.Capture) -> None:
 
 
 def test_the_rendering_is_two_flat_groups_of_cents_queries_over_their_windows() -> None:
-    rendered = json.loads(cost_report.report_json())
+    rendered = json.loads(cost_report.report_json(freshness_minutes=_FRESHNESS_MINUTES))
     assert set(rendered) == {'day', 'hourly'}
     day, hourly = rendered['day'], rendered['hourly']
     assert day
@@ -97,13 +100,17 @@ def test_the_rendering_is_two_flat_groups_of_cents_queries_over_their_windows() 
         assert isinstance(query, str)
         # Cents throughout: the report divides once at display, so no query converts.
         assert not _CENTS_TO_DOLLARS.search(query), query
+        # A running total's window figure is an exact rise, never `delta`'s extrapolation, and every read of a total
+        # tolerates exactly the freshness window, so a morning after a stale stretch reads the last known totals.
+        assert 'delta(' not in query, query
+        assert set(_CURRENT_READ.findall(query)) <= {f'{_FRESHNESS_MINUTES}m'}, query
         names = set(_LEGACY_NAME.findall(query)) | set(_QUOTED_NAME.findall(query))
         assert names, query
         assert names <= cost_promql.METRICS, (query, names - cost_promql.METRICS)
 
 
 def test_the_sessions_split_reads_the_same_window_as_its_total() -> None:
-    day = json.loads(cost_report.report_json())['day']
+    day = json.loads(cost_report.report_json(freshness_minutes=_FRESHNESS_MINUTES))['day']
     assert day['sessions_tokens'] == f'({day["sessions"]} - {day["sessions_runtime"]} - {day["sessions_search"]})'
 
 

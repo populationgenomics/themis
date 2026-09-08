@@ -143,6 +143,7 @@ def test_every_promql_condition_evaluates_at_the_tick_with_no_metric_validation(
         assert _seconds(str(condition['duration'])) % interval == 0, name
         assert condition['disableMetricValidation'] is True, name
         assert 'rate(' not in str(condition['query']), name
+        assert 'delta(' not in str(condition['query']), name
 
 
 def test_the_spike_is_the_workspace_total_over_the_configured_window(
@@ -151,10 +152,12 @@ def test_the_spike_is_the_workspace_total_over_the_configured_window(
     spike = policies['themis-cost-spike']
     query = str(_promql_condition(spike)['query'])
     window = f'{config["themis:costSpikeWindowMinutes"]}m'
-    # The dashboard's own workspace figure over the configured window, against the configured threshold; every
-    # window in it is that one.
-    assert query == f'{cost_promql.workspace_cents(window)} > {config["themis:costSpikeAlertCents"]}'
-    assert set(re.findall(r'\[(\w+)\]', query)) == {window}
+    freshness_minutes = int(config['themis:costFreshnessMinutes'])
+    # The dashboard's own workspace figure over the configured window, against the configured threshold; every range
+    # in it is that window or the freshness tolerance every gauge read shares with the freshness alert.
+    expected = cost_promql.workspace_cents(window, freshness_minutes=freshness_minutes)
+    assert query == f'{expected} > {config["themis:costSpikeAlertCents"]}'
+    assert set(re.findall(r'\[(\w+)\]', query)) == {window, f'{freshness_minutes}m'}
     assert _promql_condition(spike)['duration'] == '0s'
     assert _sequence(_mapping(spike['alertStrategy'])['notificationPrompts']) == ['OPENED']
 
@@ -200,6 +203,9 @@ def test_the_unpriced_condition_is_usage_on_a_model_outside_the_table(policies: 
     [
         (2 * cost.TICK_MINUTES - 1, 10 * cost.TICK_MINUTES, 'two samples'),
         (10 * cost.TICK_MINUTES, 2 * cost.TICK_MINUTES, 'two missed ticks'),
+        # A window at or under the tolerance: a rise's two ends could read one sample.
+        (6 * cost.TICK_MINUTES, 6 * cost.TICK_MINUTES, 'does not exceed'),
+        (5 * cost.TICK_MINUTES, 6 * cost.TICK_MINUTES, 'does not exceed'),
     ],
 )
 def test_tuning_the_conditions_cannot_evaluate_is_refused(window: int, freshness: int, match: str) -> None:

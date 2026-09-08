@@ -50,15 +50,16 @@ config:
   themis:anthropicCostExporterServiceAccountId: svac_01Wh612pvuxbauiTokVBBNV7
   # The spend monitor's Slack channel (docs/design/cost-monitoring.md), by name for the alerts and by id for the
   # morning report's file uploads, and the alert tuning: a spike is this many cents of workspace spend, every
-  # producer summed, within the window; freshness is how long the exporter's gauge may go unwritten. The bot token
-  # of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
+  # producer summed, within the window; freshness is how long the exporter's heartbeat may go unwritten before it
+  # pages, and so how long every read of its gauges takes the last sample as current — the spike window must exceed
+  # it. The bot token of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
   themis:slackChannel: "#themis-dev-cost"
   themis:slackChannelId: C0BVCG38L14
   themis:slackBotToken:
     secure: v1:92S9qybuELcCA6Iw:qXhCmv75AtauZWSvwaX1j4BGF1dypezI+QM6qn5iaXOQ1oKZKeZ3ZjxHIBMhi2S3TJSAo19vwPWR4rTeGORSzKokH13b5zxq7og=
   themis:costSpikeAlertCents: 10000
   themis:costSpikeWindowMinutes: 30
-  themis:costFreshnessMinutes: 30
+  themis:costFreshnessMinutes: 25
   # The IAP backend service's numeric id (= the web_backend_service_id output) — the web app
   # verifies the IAP-JWT audience against it.
   themis:iapBackendServiceId: "7475211739280005859"

@@ -12,6 +12,11 @@ import pytest
 from themis_infra import capture, claude_code_metrics, cost_metrics, cost_prices, cost_promql
 
 _DASHBOARD_CHAIN = ['themis:infra:CostDashboard', 'gcp:monitoring/dashboard:Dashboard']
+# Every read of a running total takes the newest sample within the stack's freshness window; a query's other range
+# is its window.
+_FRESHNESS_MINUTES = int(capture.dev_stack_config()['themis:costFreshnessMinutes'])
+_TOLERANCE = f'{_FRESHNESS_MINUTES}m'
+_GAUGE_READ = re.compile(r'(?:last|min)_over_time\([^\[]+\[(\w+)\](?: offset (\w+))?\)')
 # A metric name as it can appear in a query: a bare identifier that is not a call, or quoted inside the braces.
 _IDENTIFIER = re.compile(r'(?<![A-Za-z0-9_:])[A-Za-z_:][A-Za-z0-9_:]*')
 _QUOTED_NAME = re.compile(r'\{"([^"]+)"')
@@ -140,9 +145,25 @@ def test_every_query_reads_only_the_spend_metrics(dashboard: dict[str, object]) 
     for query in queries:
         # The builders select by name, never by an `__name__` matcher the name tokenizer would not see.
         assert '__name__' not in query.promql, query
+        # A running total's window figure is an exact rise, never `delta`'s extrapolation.
+        assert 'delta(' not in query.promql, query
         names = _metric_names(query.promql)
         assert names, query
         assert names <= cost_promql.METRICS, (query.title, names - cost_promql.METRICS)
+
+
+def test_every_gauge_read_tolerates_exactly_the_freshness_window(dashboard: dict[str, object]) -> None:
+    # The reads' tolerance and the freshness alert's window are one stack value: within it a stale exporter shows
+    # its last known totals, beyond it nothing — never a zero. A `min_over_time` reads a whole window instead.
+    reads = [(q, m) for q in _queries(dashboard) for m in _GAUGE_READ.finditer(q.promql)]
+    assert reads
+    for query, read in reads:
+        lookback, offset = read.groups()
+        if read.group().startswith('last_over_time'):
+            assert lookback == _TOLERANCE, (query.title, read.group())
+        else:
+            assert lookback != _TOLERANCE, (query.title, read.group())
+        assert offset is None or offset != _TOLERANCE, (query.title, read.group())
 
 
 def test_a_dotted_name_appears_only_in_its_quoted_form(dashboard: dict[str, object]) -> None:
@@ -202,7 +223,7 @@ def test_the_workspace_totals_only_other_multiplier_is_cents_per_dollar(dashboar
     totals = [q for q in _queries(dashboard) if _metric_names(q.promql) > {cost_metrics.REQUEST_TOKENS}]
     assert totals
     for query in totals:
-        [window] = set(re.findall(r'\[(\w+)\]', query.promql))
+        [window] = set(re.findall(r'\[(\w+)\]', query.promql)) - {_TOLERANCE}
         # The CI term is USD scaled to cents; every other multiplier prices tokens.
         ci_in_cents = f'{cost_promql.ci_cents(window)} or vector(0))'
         assert ci_in_cents in query.promql, query
@@ -224,9 +245,10 @@ def test_the_scorecards_are_the_workspace_figure_over_distinct_windows(dashboard
     assert scorecards
     windows = []
     for query in scorecards:
-        [window] = set(re.findall(r'\[(\w+)\]', query.promql))
+        [window] = set(re.findall(r'\[(\w+)\]', query.promql)) - {_TOLERANCE}
         windows.append(window)
-        assert query.promql == cost_promql.dollars(cost_promql.workspace_cents(window)), query
+        expected = cost_promql.workspace_cents(window, freshness_minutes=_FRESHNESS_MINUTES)
+        assert query.promql == cost_promql.dollars(expected), query
     assert len(set(windows)) == len(windows)
 
 

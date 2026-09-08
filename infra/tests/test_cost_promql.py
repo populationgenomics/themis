@@ -1,4 +1,4 @@
-"""The PromQL builders: the selector's form follows the name, the window function the kind, and dollars divide once."""
+"""The PromQL builders: the selector's form follows the name, the window figure the kind, and dollars divide once."""
 
 from __future__ import annotations
 
@@ -9,9 +9,12 @@ import pytest
 
 from themis_infra import claude_code_metrics, cost_metrics, cost_prices, cost_promql
 
-_TICK = 5
+# The freshness window every read of a running total tolerates as staleness; the tests' windows exceed it.
+_FRESHNESS = 30
 _NOT_IN_TABLE = 'claude-3-opus-20240229'
 _AWKWARD_VALUES = ('claude-3.5', 'back\\slash', 'quo"te', 'a|b')
+_GAUGES = sorted(name for name in cost_promql.METRICS if cost_promql.kind(name) is cost_promql.Kind.GAUGE)
+_COUNTERS = sorted(name for name in cost_promql.METRICS if cost_promql.kind(name) is cost_promql.Kind.COUNTER)
 
 
 def _decode_string_literal(literal: str) -> str:
@@ -39,27 +42,69 @@ def test_a_name_no_producer_writes_is_refused() -> None:
         cost_promql.selector('themis_anthropic_session_list_cost')
 
 
-@pytest.mark.parametrize('name', sorted(cost_promql.METRICS))
-def test_the_window_function_follows_the_kind(name: str) -> None:
-    # Monitoring refuses `rate`/`increase` on a gauge and `delta` is the wrong figure for a counter.
-    figure = cost_promql.window(name, '1h')
-    expected = 'delta(' if cost_promql.kind(name) is cost_promql.Kind.GAUGE else 'increase('
-    assert figure.startswith(expected)
-    assert figure.endswith('[1h])')
-    assert 'rate(' not in figure
+@pytest.mark.parametrize(('duration', 'expected'), [('30s', 30), ('30m', 1800), ('1h', 3600), ('7d', 604_800)])
+def test_a_duration_of_one_unit_is_read_in_seconds(duration: str, expected: int) -> None:
+    assert cost_promql.seconds(duration) == expected
 
 
-def test_only_a_gauge_has_a_current_value_and_it_survives_a_missed_tick() -> None:
-    latest = cost_promql.latest(cost_metrics.SESSION_LIST_COST_CENTS, 'agent="a"', tick_minutes=_TICK)
+@pytest.mark.parametrize('duration', ['1h30m', '90', 'h', '1y'])
+def test_a_duration_of_another_form_is_refused(duration: str) -> None:
+    with pytest.raises(ValueError, match='duration'):
+        cost_promql.seconds(duration)
+
+
+@pytest.mark.parametrize('name', _GAUGES)
+def test_a_gauges_window_figure_is_the_exact_rise_read_within_the_freshness_window(name: str) -> None:
+    # Never extrapolated: the newest sample less the newest a window earlier, each within the tolerance; or the
+    # rise since the first sample for a series younger than the window.
+    figure = cost_promql.rise(name, '1h', 'agent="a"', freshness_minutes=_FRESHNESS)
+    selected = re.escape(cost_promql.selector(name, 'agent="a"'))
+    assert 'delta(' not in figure
     match = re.fullmatch(
-        rf'last_over_time\({re.escape(cost_metrics.SESSION_LIST_COST_CENTS)}\{{agent="a"\}}\[(\d+)m\]\)', latest
+        rf'sum\(\(\(last_over_time\({selected}\[(\d+)m\]\) - last_over_time\({selected}\[(\d+)m\] offset 1h\)\)'
+        rf' or \(last_over_time\({selected}\[(\d+)m\]\) - min_over_time\({selected}\[1h\]\)\)\)\)',
+        figure,
     )
-    assert match, latest
-    lookback = int(match.group(1))
-    assert lookback % _TICK == 0
-    assert lookback >= 2 * _TICK
-    with pytest.raises(ValueError, match='counter'):
-        cost_promql.latest(cost_metrics.REQUEST_TOKENS, tick_minutes=_TICK)
+    assert match, figure
+    assert {int(g) for g in match.groups()} == {_FRESHNESS}
+    with pytest.raises(ValueError, match='not a counter'):
+        cost_promql.increase(name, '1h')
+
+
+@pytest.mark.parametrize('name', _COUNTERS)
+def test_a_counters_window_figure_is_its_increase(name: str) -> None:
+    assert cost_promql.increase(name, '1h', by=['x']) == f'sum by (x) (increase({cost_promql.selector(name)}[1h]))'
+    with pytest.raises(ValueError, match='not a gauge'):
+        cost_promql.rise(name, '1h', freshness_minutes=_FRESHNESS)
+
+
+@pytest.mark.parametrize('duration', [f'{_FRESHNESS}m', f'{_FRESHNESS - 5}m', f'{_FRESHNESS * 60}s'])
+def test_a_rise_over_a_window_within_the_tolerance_is_refused(duration: str) -> None:
+    # Both ends could read the same sample.
+    with pytest.raises(ValueError, match='does not exceed'):
+        cost_promql.rise(cost_metrics.SESSION_LIST_COST_CENTS, duration, freshness_minutes=_FRESHNESS)
+
+
+def test_every_session_figure_is_one_exact_rise_per_gauge_with_its_fallback() -> None:
+    figures = {
+        cost_promql.session_cents('1h', freshness_minutes=_FRESHNESS): 1,
+        cost_promql.session_runtime_cents('1h', freshness_minutes=_FRESHNESS): 1,
+        cost_promql.session_search_cents('1h', freshness_minutes=_FRESHNESS): 1,
+        cost_promql.session_token_cents('1h', freshness_minutes=_FRESHNESS): 3,
+    }
+    for figure, gauges in figures.items():
+        assert 'delta(' not in figure
+        assert figure.count(' offset 1h)') == gauges, figure
+        assert figure.count(' or (last_over_time(') == gauges, figure
+        assert figure.count('min_over_time(') == gauges, figure
+        assert set(re.findall(r'\[(\w+)\]', figure)) == {'1h', f'{_FRESHNESS}m'}, figure
+
+
+def test_only_a_gauge_has_a_current_value_read_within_the_freshness_window() -> None:
+    latest = cost_promql.latest(cost_metrics.SESSION_LIST_COST_CENTS, 'agent="a"', freshness_minutes=_FRESHNESS)
+    assert latest == f'last_over_time({cost_metrics.SESSION_LIST_COST_CENTS}{{agent="a"}}[{_FRESHNESS}m])'
+    with pytest.raises(ValueError, match='not a gauge'):
+        cost_promql.latest(cost_metrics.REQUEST_TOKENS, freshness_minutes=_FRESHNESS)
 
 
 def test_silence_is_absence_over_the_whole_metric() -> None:
@@ -97,14 +142,15 @@ def test_a_total_guards_every_term_only_when_there_is_more_than_one() -> None:
 def test_the_workspace_total_guards_the_producers_that_can_be_empty(
     top_level_terms: Callable[[str], list[str]],
 ) -> None:
-    total = cost_promql.workspace_cents('30m')
+    total = cost_promql.workspace_cents('1h', freshness_minutes=_FRESHNESS)
     sessions, convert, ci = top_level_terms(total)
     # Sessions and CI read one series set each and can be empty; the convert figure is a sum of guarded terms.
-    assert sessions == cost_promql.guarded(cost_promql.session_cents('30m'))
-    assert ci == cost_promql.guarded(cost_promql.ci_cents('30m'))
-    assert convert == cost_promql.convert_cents('30m')
+    assert sessions == cost_promql.guarded(cost_promql.session_cents('1h', freshness_minutes=_FRESHNESS))
+    assert ci == cost_promql.guarded(cost_promql.ci_cents('1h'))
+    assert convert == cost_promql.convert_cents('1h')
     assert not convert.endswith(' or vector(0))')
-    assert set(re.findall(r'\[(\w+)\]', total)) == {'30m'}
+    # The window, and the tolerance each end of a rise reads within; nothing else.
+    assert set(re.findall(r'\[(\w+)\]', total)) == {'1h', f'{_FRESHNESS}m'}
 
 
 def test_convert_cents_prices_each_models_four_types_at_the_table(
@@ -149,11 +195,13 @@ def test_unpriced_usage_is_every_model_outside_the_table() -> None:
 
 
 def test_the_session_components_price_at_the_flat_rates_and_tokens_are_the_remainder() -> None:
-    runtime = cost_promql.session_runtime_cents('1h')
-    search = cost_promql.session_search_cents('1h')
+    runtime = cost_promql.session_runtime_cents('1h', freshness_minutes=_FRESHNESS)
+    search = cost_promql.session_search_cents('1h', freshness_minutes=_FRESHNESS)
     assert runtime.endswith(f'/ 3600 * {cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR}')
     assert search.endswith(f'* {cost_prices.WEB_SEARCH_CENTS_PER_REQUEST}')
-    assert cost_promql.session_token_cents('1h') == f'({cost_promql.session_cents("1h")} - {runtime} - {search})'
+    tokens = cost_promql.session_token_cents('1h', freshness_minutes=_FRESHNESS)
+    sessions = cost_promql.session_cents('1h', freshness_minutes=_FRESHNESS)
+    assert tokens == f'({sessions} - {runtime} - {search})'
 
 
 @pytest.mark.parametrize(

@@ -95,12 +95,12 @@ def _chart(title: str, series: Sequence[_Series], *, unit: str, stacked: bool) -
     }
 
 
-def _workspace() -> _Section:
+def _workspace(freshness_minutes: int) -> _Section:
     def spend(duration: str) -> str:
-        return cost_promql.dollars(cost_promql.workspace_cents(duration))
+        return cost_promql.dollars(cost_promql.workspace_cents(duration, freshness_minutes=freshness_minutes))
 
     by_producer = [
-        _Series(cost_promql.dollars(cost_promql.session_cents(_HOUR)), 'sessions'),
+        _Series(cost_promql.dollars(cost_promql.session_cents(_HOUR, freshness_minutes=freshness_minutes)), 'sessions'),
         _Series(cost_promql.dollars(cost_promql.convert_cents(_HOUR)), 'convert worker'),
         _Series(cost_promql.ci_dollars(_HOUR), 'CI'),
     ]
@@ -111,8 +111,8 @@ def _workspace() -> _Section:
             'Anthropic spend in USD at list price, from three producers: Managed Agents sessions (the cumulative '
             '`list_cost` the sessions API reports, authoritative), the convert worker (its direct Messages API tokens, '
             "priced by the program's list-price table) and Claude Code in CI (the USD figure Claude Code computes "
-            'itself). Window figures are query-time deltas of running totals and increases of counters; a total guards '
-            'each producer to zero, so one with no data does not blank the sum.'
+            'itself). Window figures are exact query-time rises of running totals between two samples and increases '
+            'of counters; a total guards each producer to zero, so one with no data does not blank the sum.'
         ),
         rows=[
             _Row(
@@ -131,21 +131,29 @@ def _workspace() -> _Section:
     )
 
 
-def _sessions(tick_minutes: int) -> _Section:
+def _sessions(tick_minutes: int, freshness_minutes: int) -> _Section:
     agent = cost_metrics.AGENT_LABEL
     by_agent = [agent]
+    fresh = freshness_minutes
 
     def by_agent_window(duration: str) -> list[_Series]:
-        return [_Series(cost_promql.dollars(cost_promql.session_cents(duration, _AGENT, by=by_agent)), _label(agent))]
+        cents = cost_promql.session_cents(duration, _AGENT, by=by_agent, freshness_minutes=fresh)
+        return [_Series(cost_promql.dollars(cents), _label(agent))]
 
     components = [
-        _Series(cost_promql.dollars(cost_promql.session_token_cents(_HOUR, _AGENT)), 'tokens'),
-        _Series(cost_promql.dollars(cost_promql.session_runtime_cents(_HOUR, _AGENT)), 'runtime'),
-        _Series(cost_promql.dollars(cost_promql.session_search_cents(_HOUR, _AGENT)), 'web search'),
+        _Series(cost_promql.dollars(cost_promql.session_token_cents(_HOUR, _AGENT, freshness_minutes=fresh)), 'tokens'),
+        _Series(
+            cost_promql.dollars(cost_promql.session_runtime_cents(_HOUR, _AGENT, freshness_minutes=fresh)), 'runtime'
+        ),
+        _Series(
+            cost_promql.dollars(cost_promql.session_search_cents(_HOUR, _AGENT, freshness_minutes=fresh)), 'web search'
+        ),
     ]
     tokens = [
         _Series(
-            cost_promql.growth(cost_metrics.SESSION_TOKENS, _HOUR, _AGENT, by=[cost_metrics.TYPE_LABEL]),
+            cost_promql.rise(
+                cost_metrics.SESSION_TOKENS, _HOUR, _AGENT, by=[cost_metrics.TYPE_LABEL], freshness_minutes=fresh
+            ),
             _label(cost_metrics.TYPE_LABEL),
         )
     ]
@@ -153,7 +161,7 @@ def _sessions(tick_minutes: int) -> _Section:
         _Series(
             cost_promql.dollars(
                 cost_promql.current_total(
-                    cost_metrics.SESSION_LIST_COST_CENTS, _AGENT, by=by_agent, tick_minutes=tick_minutes
+                    cost_metrics.SESSION_LIST_COST_CENTS, _AGENT, by=by_agent, freshness_minutes=fresh
                 )
             ),
             _label(agent),
@@ -164,8 +172,12 @@ def _sessions(tick_minutes: int) -> _Section:
         subtitle="The exporter's gauges; the agent picker narrows this section",
         about=(
             f"The exporter's gauges, written every {tick_minutes} minutes: each agent's cumulative `list_cost`, "
-            'tokens, active seconds and web searches over every session in the workspace. Window figures are deltas '
-            "of those running totals, so a deleted session shows as a negative step in its agent's series. The "
+            'tokens, active seconds and web searches over every session in the workspace. Window figures are exact '
+            'rises of those running totals between the newest sample and the one a window earlier (a series younger '
+            "than the window: since its first sample), so a deleted session shows as a negative step in its agent's "
+            f'series once the series is older than the window. A read takes the newest sample within '
+            f'{freshness_minutes} minutes (the freshness window), so a stale exporter shows its last known totals '
+            'until the freshness alert names the fault, and no figure beyond it. The '
             f'components price runtime at {cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR} ¢ per active hour and a web '
             f'search at {cost_prices.WEB_SEARCH_CENTS_PER_REQUEST} ¢ (the flat list rates); tokens are what '
             '`list_cost` leaves after those two. Which session is behind a step is a live query against the sessions '
@@ -211,7 +223,7 @@ def _sessions(tick_minutes: int) -> _Section:
 
 def _convert_worker() -> _Section:
     def tokens_by(label: str) -> list[_Series]:
-        return [_Series(cost_promql.growth(cost_metrics.REQUEST_TOKENS, _HOUR, by=[label]), _label(label))]
+        return [_Series(cost_promql.increase(cost_metrics.REQUEST_TOKENS, _HOUR, by=[label]), _label(label))]
 
     dollars_by_model = [
         _Series(cost_promql.dollars(cost_promql.convert_cents_by_model(_HOUR)), _label(cost_metrics.MODEL_LABEL))
@@ -269,7 +281,7 @@ def _ci() -> _Section:
     workflow = claude_code_metrics.NAMESPACE_LABEL
     tokens = [
         _Series(
-            cost_promql.growth(claude_code_metrics.TOKEN_USAGE, _HOUR, by=[workflow, cost_metrics.TYPE_LABEL]),
+            cost_promql.increase(claude_code_metrics.TOKEN_USAGE, _HOUR, by=[workflow, cost_metrics.TYPE_LABEL]),
             f'{_label(workflow)}: {_label(cost_metrics.TYPE_LABEL)}',
         )
     ]
@@ -332,14 +344,15 @@ def _tiles(sections: Sequence[_Section]) -> list[dict[str, object]]:
     return tiles
 
 
-def dashboard_json(*, tick_minutes: int) -> str:
+def dashboard_json(*, tick_minutes: int, freshness_minutes: int) -> str:
     """The dashboard, as the JSON the Monitoring API takes.
 
     Args:
-        tick_minutes: The exporter's schedule (`cost.TICK_MINUTES`); an instant read of its gauges looks back a few
-            of these.
+        tick_minutes: The exporter's schedule (`cost.TICK_MINUTES`), as the sessions section states it.
+        freshness_minutes: The freshness window the alerts page the exporter on; every read of its gauges takes the
+            newest sample within it.
     """
-    sections = [_workspace(), _sessions(tick_minutes), _convert_worker(), _ci()]
+    sections = [_workspace(freshness_minutes), _sessions(tick_minutes, freshness_minutes), _convert_worker(), _ci()]
     dashboard = {
         'displayName': 'Themis: Anthropic spend',
         # No default value: an omitted default is the wildcard, which resolves to a no-op matcher in every query.
@@ -362,12 +375,14 @@ class CostDashboard(pulumi.ComponentResource):
         console_url: Where the dashboard renders in the Cloud console.
     """
 
-    def __init__(self, *, project: str, tick_minutes: int, opts: pulumi.ResourceOptions | None = None) -> None:
+    def __init__(
+        self, *, project: str, tick_minutes: int, freshness_minutes: int, opts: pulumi.ResourceOptions | None = None
+    ) -> None:
         super().__init__('themis:infra:CostDashboard', 'themis', None, opts)
         dashboard = gcp.monitoring.Dashboard(
             'themis-cost-dashboard',
             project=project,
-            dashboard_json=dashboard_json(tick_minutes=tick_minutes),
+            dashboard_json=dashboard_json(tick_minutes=tick_minutes, freshness_minutes=freshness_minutes),
             opts=pulumi.ResourceOptions(parent=self),
         )
         # The resource id is `projects/<project>/dashboards/<id>`; the console addresses the dashboard by the id alone.

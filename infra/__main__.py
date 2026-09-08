@@ -639,6 +639,7 @@ ci_telemetry_account = ci_telemetry.CiTelemetryAccount(
 spend_dashboard = cost_dashboard.CostDashboard(
     project=project,
     tick_minutes=cost.TICK_MINUTES,
+    freshness_minutes=cost_freshness_minutes,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 spend_alerts = cost_alerts.CostAlerts(
@@ -662,6 +663,7 @@ cost_report.CostReport(
     slack_bot_token=slack_bot_token,
     slack_notification_channel=spend_alerts.notification_channel_name,
     dashboard_url=spend_dashboard.console_url,
+    freshness_minutes=cost_freshness_minutes,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 

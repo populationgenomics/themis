@@ -27,9 +27,9 @@ that could read the invoice.
 - **One write path.** Every producer writes through OpenTelemetry over OTLP to Google's Telemetry API, and everything
   downstream reads Cloud Monitoring with PromQL. Dashboard, alert policies, notification channel and the report Job are
   Pulumi resources.
-- **Two series kinds, two query shapes.** A polled running total is a gauge whose window figure is a delta and whose
-  silence means the poller is dead; a counted event is a counter whose window figure is an increase and whose silence
-  means an idle lane. The freshness alert therefore watches the exporter alone.
+- **Two series kinds, two query shapes.** A polled running total is a gauge whose window figure is the exact rise
+  between two samples and whose silence means the poller is dead; a counted event is a counter whose window figure is an
+  increase and whose silence means an idle lane. The freshness alert therefore watches the exporter alone.
 - **No store of record, no admin-capable identity.** Anthropic retains sessions until we delete them, so the API is the
   raw store and drill-down is a live query; each producer's identity can write metrics and nothing more.
 
@@ -170,7 +170,7 @@ instruments, dotted, and quoted where read.
 Every series is a `prometheus_target` in Cloud Monitoring, so it also carries the labels the Telemetry API derives from
 the producer's resource: `location` (the region), `job`, `instance` and `namespace`. The exporter writes as
 `job=themis-cost-exporter` with one fixed `instance` per environment — the Anthropic workspace id — so every execution
-extends one series and a delta over it means something. The worker writes as `job=themis-convert-worker` with one
+extends one series and a rise over it means something. The worker writes as `job=themis-convert-worker` with one
 `instance` per Cloud Run instance: separate counter series, summed at query time. CI writes as `namespace=<workflow>`,
 `job=<workflow>/claude-code`, one `instance` per run. The series Themis writes also carry `scope_name=themis`.
 
@@ -210,19 +210,25 @@ the standard tier, and an unset label is a series dimension with one value.
 The two ways spend reaches the monitor differ in kind, and the difference decides how each is queried and alerted.
 
 **A polled total is a gauge of a running total.** The exporter writes each agent's cumulative figures unconditionally on
-every run, whether or not anything changed; deltas, rates and windows are computed at query time. The window figure over
-such a series is its **delta**. This carries most of the exporter's design:
+every run, whether or not anything changed; differences, rates and windows are computed at query time. The window figure
+over such a series is its **rise**: the newest sample less the newest sample a window earlier, read exactly rather than
+extrapolated — `delta` extrapolates to the window's edges, which on dev over-read a young series by up to a third and
+drew a sawtooth as the extrapolated stretch grew between samples. A series younger than the window reads its rise since
+its first sample in the window. Each end reads the newest sample within the freshness window the exporter is paged on,
+so a stale exporter yields its last known total until that alert names the fault, and no figure beyond it — never a
+zero. This carries most of the exporter's design:
 
 - **Nothing ever needs rewriting.** A cumulative total observed at time T is a fact about T; a resumed session makes
   later points larger, never past points wrong, so Monitoring's immutability stops being a constraint.
-- **The exporter is stateless.** A delta needs the previous value; a total needs nothing — no state store, no
+- **The exporter is stateless.** Writing increments needs the previous value; a total needs nothing — no state store, no
   read-modify-write, no recovery logic.
 - **Missed runs need no repair.** A skipped tick leaves a sparser series; the next point carries the full total and any
-  window delta over it stays correct. Duplicate or racing runs write near-identical points harmlessly — the failures a
-  delta scheme double-counts or drops.
-- **Session deletion shows honestly.** Deleting a session steps its agent's total down, which a window delta shows as
-  negative spend — odd-looking but truthful. This is why the series is a gauge and not a counter, whose reset semantics
-  would read the dip as a restart and fabricate a spend spike.
+  window rise over it stays correct. Duplicate or racing runs write near-identical points harmlessly — the failures a
+  increment scheme double-counts or drops.
+- **Session deletion shows honestly.** Deleting a session steps its agent's total down, which a window rise shows as
+  negative spend — odd-looking but truthful, except during a series' first window, where the fallback reads the rise
+  since the lowest point instead. This is why the series is a gauge and not a counter, whose reset semantics would read
+  the dip as a restart and fabricate a spend spike.
 - **Silence means the poller is dead.** Because the gauge is written every run, a silent exporter — crash, timeout,
   revoked credential — is indistinguishable from and detected as missing data. The **freshness alert** is the absence of
   the exporter's heartbeat — the time of its last successful run, written whether or not the workspace has sessions, so
@@ -279,7 +285,7 @@ with the derived dollars beside them; CI — tokens by workflow and model, and C
 **Three alert policies over the metrics, and a fourth over the report Job's executions**, all notifying Slack through
 Monitoring's incident lifecycle:
 
-- **A spend spike** on the one workspace dollar total — sessions' list-cost delta, plus the worker's token increase at
+- **A spend spike** on the one workspace dollar total — sessions' list-cost rise, plus the worker's token increase at
   list price, plus Claude Code's cost increase — over a rolling window against a threshold in stack configuration. One
   total rather than one alert per producer, because the question a spike answers is "is the workspace spending faster
   than we expect", and which producer is the dashboard's to show.

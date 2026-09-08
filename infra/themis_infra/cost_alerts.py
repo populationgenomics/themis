@@ -38,8 +38,10 @@ def check_tuning(*, spike_window_minutes: int, freshness_minutes: int, tick_minu
     """Refuse tuning the conditions cannot evaluate against gauges written every `tick_minutes`.
 
     Raises:
-        ValueError: The spike window holds fewer than two samples (`delta` needs two), or the freshness window is
-            under two missed ticks (one is scheduler jitter).
+        ValueError: The spike window holds fewer than two samples (a rise needs one at each end), the freshness
+            window is under two missed ticks (one is scheduler jitter), or the spike window does not exceed the
+            freshness window, which every read of a gauge tolerates as staleness — a rise's two ends could then
+            read one sample.
     """
     if spike_window_minutes < 2 * tick_minutes:
         raise ValueError(
@@ -48,6 +50,11 @@ def check_tuning(*, spike_window_minutes: int, freshness_minutes: int, tick_minu
     if freshness_minutes <= 2 * tick_minutes:
         raise ValueError(
             f'a {freshness_minutes}-minute freshness window is under two missed ticks at a {tick_minutes}-minute tick'
+        )
+    if spike_window_minutes <= freshness_minutes:
+        raise ValueError(
+            f'a {spike_window_minutes}-minute spike window does not exceed the {freshness_minutes}-minute freshness '
+            f'window; a rise over it could read one sample at both ends'
         )
 
 
@@ -81,10 +88,10 @@ class CostAlerts(pulumi.ComponentResource):
             slack_channel: The Slack channel notifications post to (`#name`).
             slack_bot_token: The bot token of the Slack app that posts there; a secret.
             spike_cents: Workspace spend rising by this many cents within the window is a spike; the sessions share
-                is `delta`'s figure, extrapolated to the window's edges, so up to a sample interval's slope above
-                two points'.
+                is the exact rise between the newest sample and the newest one a window earlier.
             spike_window_minutes: The spike's rolling window.
-            freshness_minutes: How long the exporter's heartbeat may go unwritten before the exporter counts as dead.
+            freshness_minutes: How long the exporter's heartbeat may go unwritten before the exporter counts as dead,
+                and so how long every read of its gauges takes the last sample as current.
             tick_minutes: The exporter's schedule (`cost.TICK_MINUTES`); the conditions evaluate at its cadence.
             exporter_job_name: The exporter's Cloud Run Job, named in the freshness message.
             dashboard_url: The spend dashboard's console URL, linked from every notification.
@@ -127,6 +134,7 @@ class CostAlerts(pulumi.ComponentResource):
             )
 
         spike_dollars = f'${spike_cents / 100:.2f}'
+        workspace_cents = cost_promql.workspace_cents(f'{spike_window_minutes}m', freshness_minutes=freshness_minutes)
         gcp.monitoring.AlertPolicy(
             'themis-cost-spike',
             project=project,
@@ -136,10 +144,7 @@ class CostAlerts(pulumi.ComponentResource):
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
                     display_name=f'Workspace spend up more than {spike_cents} cents in {spike_window_minutes} min',
-                    condition_prometheus_query_language=promql(
-                        f'{cost_promql.workspace_cents(f"{spike_window_minutes}m")} > {spike_cents}',
-                        duration='0s',
-                    ),
+                    condition_prometheus_query_language=promql(f'{workspace_cents} > {spike_cents}', duration='0s'),
                 )
             ],
             notification_channels=[channel.name],
