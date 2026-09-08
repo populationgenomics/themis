@@ -1,15 +1,16 @@
 """The workspace-spend monitor (`docs/design/cost-monitoring.md`): the exporter of Anthropic session cost.
 
 The exporter is a Cloud Run Job on a five-minute schedule. Each execution lists every session in the Anthropic
-workspace, totals cumulative list cost by agent, and writes one gauge point per agent to Cloud Monitoring, the
-series everything downstream reads. It reaches the Anthropic API by Workload Identity Federation, so its
-GCP identity — no stored key — is what the Anthropic side authorizes. The federation rule that authorizes it can
-only be registered against an identity that already exists (it pins the account's numeric unique id), and
-registering it is an organization-admin action outside this program: the identity therefore stands on its own,
-minted by a deploy, and the exporter runs as it.
+workspace, totals cumulative usage by agent, and writes each agent's four running-total gauges (list cost, tokens
+by type, active seconds, web searches) and one heartbeat — the series the freshness alert watches — through the
+Telemetry API to Cloud Monitoring (`cost_metrics.py` names them). It reaches the Anthropic API by Workload Identity
+Federation, so its GCP identity — no stored key — is what the Anthropic side authorizes.
+The federation rule that authorizes it can only be registered against an identity that already exists (it pins
+the account's numeric unique id), and registering it is an organization-admin action outside this program: the
+identity therefore stands on its own, minted by a deploy, and the exporter runs as it.
 
-- `CostExporter` — the exporter Job, its schedule and the identity that fires it, its runtime SA (the GCP half of
-  that federation), and the gauge's metric descriptor.
+- `CostExporter` — the exporter Job, its schedule and the identity that fires it, and its runtime SA (the GCP half
+  of that federation, and the telemetry writer).
 """
 
 from __future__ import annotations
@@ -18,11 +19,6 @@ import pulumi
 import pulumi_gcp as gcp
 
 from themis_infra import grants
-
-# The gauge the exporter writes. `themis/services/cost_exporter/gauge.py` names the same metric and label from the
-# writing side; a test holds the two together.
-_METRIC_TYPE = 'custom.googleapis.com/themis/anthropic/session_list_cost_cents'
-_AGENT_LABEL = 'agent'
 
 # Every five minutes: spend appears with at most one tick of latency, and a full scan of the workspace is a
 # handful of pages against the sessions API's per-minute ceiling.
@@ -38,7 +34,7 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTempl
 
 
 class CostExporter(pulumi.ComponentResource):
-    """The workspace-spend exporter: its Job and schedule, the identity it federates into Anthropic as, its gauge.
+    """The workspace-spend exporter: its Job and schedule, and the identity it federates into Anthropic as.
 
     Attributes:
         service_account_email: The runtime SA's email — the `email` claim the exporter's Anthropic
@@ -76,34 +72,8 @@ class CostExporter(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         self.service_account_unique_id = service_account.unique_id
 
-        # The one GCP grant the exporter holds: writing points. Reading the Anthropic side is the federation's.
-        grants.MetricWriter('themis-cost-exporter', member=service_account.member, project=project, opts=child)
-
-        # Declared rather than minted by the first write: a write fixes only the type and its points' value type,
-        # so the unit, the description and the label's meaning have nowhere else to live. Type, kind, value type and
-        # labels are immutable — a change plans a replacement — and a deleted descriptor takes its history with it,
-        # which Monitoring cannot backfill: protect, and leave the resource standing if the declaration goes.
-        gcp.monitoring.MetricDescriptor(
-            'themis-cost-exporter-list-cost',
-            project=project,
-            type=_METRIC_TYPE,
-            metric_kind='GAUGE',
-            value_type='INT64',
-            unit='{cent}',
-            display_name='Anthropic session list cost (cumulative)',
-            description=(
-                'Cumulative Anthropic list cost of every Managed Agents session in the workspace, in USD cents, by '
-                'agent name; a running total observed each run, so deltas are a query over it.'
-            ),
-            labels=[
-                gcp.monitoring.MetricDescriptorLabelArgs(
-                    key=_AGENT_LABEL,
-                    value_type='STRING',
-                    description='The name of the agent the sessions ran.',
-                )
-            ],
-            opts=pulumi.ResourceOptions.merge(child, pulumi.ResourceOptions(protect=True, retain_on_delete=True)),
-        )
+        # The exporter's GCP reach: writing its gauges' points. Reading the Anthropic side is the federation's.
+        grants.TelemetryWriter('themis-cost-exporter', member=service_account.member, project=project, opts=child)
 
         job = gcp.cloudrunv2.Job(
             'themis-cost-exporter',
@@ -128,12 +98,12 @@ class CostExporter(pulumi.ComponentResource):
                                 _env('ANTHROPIC_ORGANIZATION_ID', anthropic_organization_id),
                                 _env('ANTHROPIC_SERVICE_ACCOUNT_ID', anthropic_service_account_id),
                                 _env('ANTHROPIC_WORKSPACE_ID', anthropic_workspace_id),
-                                # Where the gauge is written, and the `generic_task` location its series carry.
+                                # Where the gauges are written, and the `location` label their series carry.
                                 _env('THEMIS_COST_EXPORTER_PROJECT', project),
                                 _env('THEMIS_COST_EXPORTER_LOCATION', region),
                                 _env('THEMIS_COST_EXPORTER_DEADLINE_SECONDS', str(_RUN_DEADLINE_SECONDS)),
                             ],
-                            # A few pages of session JSON and one Monitoring write; nothing is held beyond the totals.
+                            # A few pages of session JSON and one export; nothing is held beyond the totals.
                             resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
                                 limits={'cpu': '1', 'memory': '512Mi'}
                             ),

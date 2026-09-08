@@ -13,10 +13,13 @@ import asyncio
 import base64
 import contextlib
 import dataclasses
+import functools
 import io
 import json
 import logging
 import pathlib
+import subprocess
+import sys
 import typing
 from collections.abc import Iterator
 
@@ -24,8 +27,12 @@ import anthropic
 import pypdfium2
 import pytest
 from anthropic.lib import credentials as anthropic_credentials
+from opentelemetry.sdk import metrics as sdk_metrics
+from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.litcache import anthropic_ocr, claude_images, ocr, pdf
+from themis.telemetry import names, request_tokens
+from themis.testing import in_memory_metrics
 
 # A real paper, whose pages carry figures and dense two-column type: a blank page encodes to almost
 # nothing, so only this says anything about what a request actually weighs.
@@ -113,6 +120,18 @@ class _FakeClient:
         return False
 
 
+def _counter() -> tuple[request_tokens.RequestTokens, metrics_export.InMemoryMetricReader]:
+    """A request-token counter and the reader its series are read back off."""
+    reader = metrics_export.InMemoryMetricReader()
+    provider = sdk_metrics.MeterProvider(metric_readers=[reader], shutdown_on_exit=False)
+    return request_tokens.RequestTokens(provider.get_meter('test')), reader
+
+
+def _tokens() -> request_tokens.RequestTokens:
+    """A counter for a call whose tokens the test does not read back."""
+    return _counter()[0]
+
+
 def _install(monkeypatch: pytest.MonkeyPatch, message: _Message) -> dict[str, object]:
     """Fake the client; the returned dict collects both its constructor and its stream kwargs."""
     captured: dict[str, object] = {}
@@ -166,7 +185,7 @@ def test_a_call_past_the_elapsed_bound_is_terminal_not_retried(monkeypatch: pyte
     monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.01)
 
     with pytest.raises(ocr.OcrError, match='exceeded'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(1)))
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
 
 
 def _sent_blocks(captured: dict[str, object]) -> list[dict[str, typing.Any]]:
@@ -337,8 +356,8 @@ def test_the_supplied_credential_is_the_one_the_client_authenticates_with(monkey
 
     captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), credentials=credentials))
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), credentials=credentials))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens(), credentials=credentials))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens(), credentials=credentials))
 
     assert captured['credentials'] is token
     assert len(built) == 2  # built per call, not shared
@@ -349,7 +368,7 @@ def test_no_factory_leaves_the_client_without_an_explicit_credential(monkeypatch
     # the call to a provider the caller never chose.
     captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1)))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
 
     assert captured['credentials'] is None
 
@@ -363,7 +382,7 @@ def test_convert_pdf_joins_text_blocks_and_reads_back_the_response_model(monkeyp
     )
     captured = _install(monkeypatch, message)
 
-    result = asyncio.run(anthropic_ocr.convert_pdf(_pdf()))
+    result = asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
 
     assert result.markdown == '# Title\nBody.'
     assert result.model == 'claude-sonnet-5-20260101'
@@ -379,7 +398,7 @@ def test_convert_pdf_joins_text_blocks_and_reads_back_the_response_model(monkeyp
 def test_the_pages_go_up_as_labelled_images(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(3)))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(3), tokens=_tokens()))
 
     blocks = _sent_blocks(captured)
     images = [block for block in blocks if block['type'] == 'image']
@@ -394,7 +413,7 @@ def test_no_pdf_is_uploaded(monkeypatch: pytest.MonkeyPatch) -> None:
     # The text layer a `document` block carries is the channel this converter exists to avoid.
     captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf()))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
 
     assert all(block['type'] != 'document' for block in _sent_blocks(captured))
 
@@ -403,16 +422,27 @@ def test_no_pdf_is_uploaded(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    # Nothing else records the tokens, so an unlogged turn cannot be priced after the fact.
-    message = _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m', usage=_Usage())
+    # The counter is where the spend is priced from; the log line is the per-document audit trail.
+    usage = _Usage(cache_read_input_tokens=7, cache_creation_input_tokens=9)
+    message = _Message(
+        stop_reason='end_turn', content=[_Block('text', '#')], model='claude-sonnet-5-20260101', usage=usage
+    )
     _install(monkeypatch, message)
+    tokens, reader = _counter()
 
     with caplog.at_level(logging.INFO, logger='themis.litcache.anthropic_ocr'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf()))
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
 
+    series = functools.partial(in_memory_metrics.labels, model='claude-sonnet-5-20260101', stop_reason='end_turn')
+    assert in_memory_metrics.collected(reader)[names.REQUEST_TOKENS] == {
+        series(type='input'): usage.input_tokens,
+        series(type='output'): usage.output_tokens,
+        series(type='cacheRead'): 7,
+        series(type='cacheCreation'): 9,
+    }
     (record,) = caplog.records
-    assert message.usage.input_tokens in record.args  # type: ignore[operator]
-    assert message.usage.output_tokens in record.args  # type: ignore[operator]
+    assert usage.input_tokens in record.args  # type: ignore[operator]
+    assert usage.output_tokens in record.args  # type: ignore[operator]
 
 
 @pytest.mark.parametrize(('stop_reason', 'match'), [('max_tokens', 'truncated'), ('refusal', 'refused')])
@@ -423,12 +453,47 @@ def test_a_terminal_stop_raises_ocr_error(
     # it — and a turn that raises is still a turn that was paid for.
     message = _Message(stop_reason=stop_reason, content=[_Block('text', 'partial')], model='claude-sonnet-5')
     _install(monkeypatch, message)
+    tokens, reader = _counter()
 
     with (
         caplog.at_level(logging.INFO, logger='themis.litcache.anthropic_ocr'),
         pytest.raises(ocr.OcrError, match=match),
     ):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf()))
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
 
     (record,) = caplog.records
     assert message.usage.input_tokens in record.args  # type: ignore[operator]
+    counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
+    assert counted[in_memory_metrics.labels(model='claude-sonnet-5', type='input', stop_reason=stop_reason)] == 4321
+
+
+def test_a_final_message_without_a_stop_reason_is_a_precondition_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The API sets one on every complete turn; without it neither the counter's label nor the terminal
+    # checks have anything to read, so the turn is refused rather than committed as a success.
+    _install(monkeypatch, _Message(stop_reason=None, content=[_Block('text', '#')], model='m'))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match='stop_reason'):
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+
+
+# --- what the converter depends on ---
+
+
+def test_the_converter_does_not_import_the_metrics_pipeline() -> None:
+    # litcache ships in images that carry neither `themis/telemetry` nor the OpenTelemetry packages; the
+    # counter reaches it as a `TokenCounter` the worker binds, never as an import.
+    probe = (
+        'import sys, themis.litcache.anthropic_ocr; '
+        "print(sorted(name for name in sys.modules if name.startswith('themis.telemetry')))"
+    )
+    completed = subprocess.run(  # noqa: S603 — the interpreter running this suite, a fixed argv
+        [sys.executable, '-c', probe], check=True, capture_output=True, text=True
+    )
+    assert completed.stdout.strip() == '[]'
+
+
+def test_the_metrics_counter_is_a_token_counter() -> None:
+    # Structural, checked by pyright: `RequestTokens.add` accepts what the converter hands it.
+    tokens, _ = _counter()
+    counter: ocr.TokenCounter = tokens
+    assert counter is tokens

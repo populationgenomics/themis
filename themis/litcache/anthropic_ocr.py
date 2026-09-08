@@ -191,12 +191,16 @@ def _page_blocks(
     return blocks
 
 
-async def convert_pdf(pdf_bytes: bytes, *, credentials: CredentialsFactory | None = None) -> ocr.OcrRendering:
+async def convert_pdf(
+    pdf_bytes: bytes, *, tokens: ocr.TokenCounter, credentials: CredentialsFactory | None = None
+) -> ocr.OcrRendering:
     """Transcribe a research-paper PDF to markdown via an Anthropic vision model.
 
     Args:
         pdf_bytes: Raw PDF bytes. Rasterized here, so what bounds a paper is the image-block and
             size limits on one request rather than the document limits (`render`).
+        tokens: The counter the turn's token usage is added to, whatever its stop reason: a direct
+            call's spend is observable nowhere but here.
         credentials: Builds the access-token provider for this call. `None` leaves the SDK to
             resolve credentials from the environment its own way.
 
@@ -216,6 +220,8 @@ async def convert_pdf(pdf_bytes: bytes, *, credentials: CredentialsFactory | Non
         anthropic.lib.credentials.WorkloadIdentityError: `credentials` could not be exchanged for an
             access token. Not an `OcrError`, so it propagates and the paper is retried rather than
             written off over our own credential.
+        ValueError: The final message carries no stop reason, which the API sets on every complete
+            turn.
     """
     pages = render(pdf_bytes)
     # An explicit provider is total: given one, the client reads no credential env var at all. Given
@@ -242,7 +248,10 @@ async def convert_pdf(pdf_bytes: bytes, *, credentials: CredentialsFactory | Non
         raise ocr.OcrError(f'PDF transcription exceeded {_TIMEOUT_SECONDS:.0f}s') from e
 
     usage = message.usage
-    # Logged before the stop reason is judged: a truncated turn is billed like any other.
+    if message.stop_reason is None:
+        raise ValueError('precondition failed: the final message carries no stop_reason')
+    # Recorded before the stop reason is judged: a truncated turn is billed like any other.
+    tokens.add(usage, model=message.model, stop_reason=message.stop_reason)
     _LOG.info(
         'transcription turn on %s over %d pages: %s input (%s cache read, %s cache write), %s output tokens',
         message.model,

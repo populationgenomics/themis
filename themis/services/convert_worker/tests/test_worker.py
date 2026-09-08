@@ -13,10 +13,12 @@ federation credential touches no network, so binding it needs no fake.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import functools
 import json
 import uuid
+from typing import override
 
 import aiohttp.test_utils
 import aiohttp.web
@@ -25,6 +27,8 @@ from anthropic.lib import credentials as anthropic_credentials
 from google.api_core import exceptions as api_exceptions
 from google.auth import credentials
 from google.cloud import storage
+from opentelemetry.sdk import metrics as sdk_metrics
+from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
 from themis.litcache import anthropic_ocr, ocr, writer
@@ -33,9 +37,21 @@ from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
+from themis.telemetry import names, request_tokens
+from themis.testing import in_memory_metrics
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Usage:
+    input_tokens: int
+    output_tokens: int
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+
+
 _PDF_BYTES = b'%PDF-1.7 seed'
 
 # The worker's Anthropic federation identity: plaintext ids, not credentials, so the deployed values
@@ -51,6 +67,27 @@ _FEDERATION_ENV = {
 def _set_federation_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name, value in _FEDERATION_ENV.items():
         monkeypatch.setenv(name, value)
+
+
+class _Provider(sdk_metrics.MeterProvider):
+    """An in-memory pipeline standing in for the Telemetry API one, counting the shutdowns it is asked for."""
+
+    def __init__(self) -> None:
+        self.reader = metrics_export.InMemoryMetricReader()
+        super().__init__(metric_readers=[self.reader], shutdown_on_exit=False)
+        self.shutdowns = 0
+
+    @override
+    def shutdown(self, timeout_millis: float = 30_000) -> None:
+        self.shutdowns += 1
+        super().shutdown(timeout_millis=timeout_millis)
+
+
+def _stub_meter_provider(monkeypatch: pytest.MonkeyPatch) -> _Provider:
+    """Stand the in-memory pipeline in for the Telemetry API one, which needs the metadata server and ADC."""
+    provider = _Provider()
+    monkeypatch.setattr(main_mod, '_meter_provider', lambda: provider)
+    return provider
 
 
 def _lazy_bucket() -> storage.Bucket:
@@ -207,6 +244,7 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     # then 500s every task, because /healthz answers without touching it.
     _set_federation_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', lambda: gcs_bucket)
+    _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
 
     async def drive() -> tuple[int, int, int]:
@@ -286,6 +324,7 @@ def _bound_converter(monkeypatch: pytest.MonkeyPatch) -> functools.partial[objec
     """The converter `_on_startup` binds, with the bucket read stubbed out."""
     _set_federation_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
     asyncio.run(main_mod._on_startup(app))
     converter = app[main_mod._CONVERT_PDF]
@@ -302,6 +341,35 @@ def test_startup_binds_the_claude_converter_on_a_federation_credential(monkeypat
     with converter.keywords['credentials']() as first, converter.keywords['credentials']() as second:
         assert isinstance(first, anthropic_credentials.WorkloadIdentityCredentials)
         assert first is not second
+
+
+def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The counter has to be on the app's own provider, or what a transcription records is never exported.
+    _set_federation_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    provider = _stub_meter_provider(monkeypatch)
+    app = main_mod.build_app()
+    asyncio.run(main_mod._on_startup(app))
+    converter = app[main_mod._CONVERT_PDF]
+    assert isinstance(converter, functools.partial)
+
+    tokens = converter.keywords['tokens']
+    assert isinstance(tokens, request_tokens.RequestTokens)
+    tokens.add(_Usage(input_tokens=3, output_tokens=4), model='m', stop_reason='end_turn')
+    assert set(in_memory_metrics.collected(provider.reader)) == {names.REQUEST_TOKENS}
+
+
+def test_cleanup_shuts_the_meter_provider_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The last export rides shutdown; a provider left running loses whatever it recorded since its tick.
+    _set_federation_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    provider = _stub_meter_provider(monkeypatch)
+    app = main_mod.build_app()
+    asyncio.run(main_mod._on_startup(app))
+
+    asyncio.run(main_mod._on_cleanup(app))
+
+    assert provider.shutdowns == 1
 
 
 def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -323,6 +391,7 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
     # converter as produce_full_text's `convert_pdf`, not fall back to a default.
     _set_federation_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
     seen: list[ocr.PdfConverter] = []
 

@@ -611,7 +611,7 @@ cost_exporter = cost.CostExporter(
     anthropic_organization_id=anthropic_organization_id,
     anthropic_service_account_id=anthropic_cost_exporter_service_account_id,
     anthropic_workspace_id=anthropic_workspace_id,
-    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 
 # Developer-workflow storage, unattached to the data plane: the review screenshots a

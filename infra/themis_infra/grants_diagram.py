@@ -79,7 +79,7 @@ VIEWS = (
                 'DatabaseConnector',
                 'SecretReader',
                 'SessionBearerDeriver',
-                'MetricWriter',
+                'TelemetryWriter',
             }
         ),
         direction='LR',
@@ -101,7 +101,7 @@ _SERVICE_ACCOUNT_RESOURCE = re.compile(r'^projects/[^/]+/serviceAccounts/(.+)$')
 _FIXED_TARGET_LABEL = {
     'SessionBearerDeriver': 'KMS session-token key',
     'DatabaseConnector': 'Cloud SQL, project-wide',
-    'MetricWriter': 'Cloud Monitoring, project-wide',
+    'TelemetryWriter': 'Cloud Monitoring, project-wide',
     'DeployAccountBuilder': 'project',
     'DataflowWorker': 'project',
 }

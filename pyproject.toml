@@ -119,9 +119,10 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "lxml", "d
 # XML, anthropic transcribes a PDF, and the storage/protobuf pair reads and commits the manifest.
 # pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
 # renders into a Pillow image). google-auth mints the Google identity token the Anthropic SDK
-# exchanges for a federation token, and requests is its transport. Deliberately not the `litcache`
-# group: docling-core and the cloudsql connector belong to paths this worker never takes, and carry
-# pandas and numpy behind them.
+# exchanges for a federation token, and requests is its transport. The telemetry group carries each
+# transcription's token counts to Cloud Monitoring. Deliberately not the `litcache` group: docling-core
+# and the cloudsql connector belong to paths this worker never takes, and carry pandas and numpy behind
+# them.
 convert_worker = [
     "aiohttp",
     "google-auth",
@@ -134,12 +135,19 @@ convert_worker = [
     "anthropic",
     "pypdfium2",
     "pillow",
+    { include-group = "telemetry" },
 ]
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the
-# workspace's Managed Agents sessions, whose cumulative list cost is the signal; google-auth mints the Google identity
-# token the SDK exchanges for a federation token, and requests is its transport; google-cloud-monitoring writes the
-# per-agent gauge the dashboard and alerts read.
-cost_exporter = ["anthropic", "google-auth", "requests", "google-cloud-monitoring"]
+# workspace's Managed Agents sessions, whose cumulative usage is the signal; google-auth mints the Google identity
+# token the SDK exchanges for a federation token, and requests is its transport; the telemetry group carries the
+# per-agent gauges to Cloud Monitoring.
+cost_exporter = ["anthropic", "google-auth", "requests", { include-group = "telemetry" }]
+# metrics pipeline (themis/telemetry), shared by every workload that emits a metric: the OpenTelemetry API the
+# instruments are typed against, the SDK's meter provider, its OTLP/gRPC exporter to Google Cloud's Telemetry API,
+# the GCP resource detector that places a Cloud Run service's series, google-auth for the Application Default
+# Credentials the channel carries, and requests as the transport those credentials refresh over (grpc comes with the
+# exporter). Each is Apache-2.0.
+telemetry = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-resourcedetector-gcp", "google-auth", "requests"]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
 # is the SDK the work queue is driven through; google-cloud-kms derives the per-session token
@@ -198,7 +206,7 @@ lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lx
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
+testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/telemetry/tests", "themis/document_linter/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
 markers = [
   "sandbox: needs a real bubblewrap launch (Linux only)",
   "sandbox_root: needs a real bubblewrap launch from a root worker (the host uid drop); implies sandbox",

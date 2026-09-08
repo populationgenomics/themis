@@ -33,7 +33,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',
     'roles/logging.configWriter',  # retention on the _Default log bucket (baseline.py) is a buckets.create/update
-    'roles/monitoring.editor',  # the workspace-spend monitor's Monitoring resources (cost.py)
+    'roles/monitoring.editor',  # the workspace-spend monitor's dashboard and alert policies
     'roles/run.admin',
     'roles/secretmanager.admin',
     'roles/serviceusage.serviceUsageAdmin',
@@ -48,6 +48,13 @@ _CLOUD_SQL_CONNECT_ROLES: tuple[tuple[str, str], ...] = (
 # Exactly `storage.objects.get`. `roles/storage.objectViewer` would also carry `storage.objects.list`, which
 # makes a bucket publicly enumerable.
 _PUBLIC_OBJECT_READ_ROLE = 'roles/storage.legacyObjectReader'
+
+# `metricsWriter` is `monitoring.timeSeries.create`; `serviceUsageConsumer` is the quota use the API requires of
+# every caller, and carries `monitoring.timeSeries.list` besides.
+_TELEMETRY_WRITE_ROLES: tuple[tuple[str, str], ...] = (
+    ('telemetry-metrics-writer', 'roles/telemetry.metricsWriter'),
+    ('service-usage-consumer', 'roles/serviceusage.serviceUsageConsumer'),
+)
 
 ObjectReadWriteRole = Literal['roles/storage.objectAdmin', 'roles/storage.objectUser']
 
@@ -596,12 +603,16 @@ class DatabaseConnector(_Capability):
         self.register_outputs({})
 
 
-class MetricWriter(_Capability):
-    """May write time-series points to every custom metric in the project, and declare new ones.
+class TelemetryWriter(_Capability):
+    """May write points to any metric in the project through the Telemetry API, list its time series, and use its quota.
 
-    Project-wide, since the role has no per-metric scope: the holder writes points to any custom metric in
-    the project, not only the ones it declared, and a point it writes is what every dashboard and alert over
-    that metric reads. It reads no points back; the role lists and reads descriptors only.
+    Project-wide, since `metricsWriter` has no per-metric scope: the holder writes points to any metric in
+    the project, and a point under a name the project has not seen creates that metric, so the holder
+    declares metrics by writing them. A point it writes is what every dashboard and alert over that metric
+    reads. The API admits a caller only with `serviceUsageConsumer` on the project it bills the call's quota
+    to, and that role also carries `monitoring.timeSeries.list`, so the holder may list every series in the
+    project — not read their points. A custom role holding only `serviceusage.services.use` was rejected:
+    the deploy identity cannot create roles, and a deleted custom role blocks its id for weeks.
     """
 
     def __init__(
@@ -613,15 +624,25 @@ class MetricWriter(_Capability):
         prior: Prior | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        name = f'{holder}-writes-metrics'
-        super().__init__(name, opts)
-        gcp.projects.IAMMember(
-            name,
-            project=project,
-            role='roles/monitoring.metricWriter',
-            member=member,
-            opts=self._binding(prior),
-        )
+        """Grant `member` the two Telemetry API roles on the project.
+
+        Args:
+            holder: A slug for the holder, for resource names.
+            member: The holder's IAM member string.
+            project: The GCP project the points are written to.
+            prior: Where the bindings lived before they joined this capability, if they did: `name` is the
+                prefix of both — `<name>-telemetry-metrics-writer`, `<name>-service-usage-consumer`.
+            opts: Resource options (dependency wiring).
+        """
+        super().__init__(f'{holder}-writes-telemetry', opts)
+        for slug, role in _TELEMETRY_WRITE_ROLES:
+            gcp.projects.IAMMember(
+                f'{holder}-{slug}',
+                project=project,
+                role=role,
+                member=member,
+                opts=self._binding(None if prior is None else Prior(f'{prior.name}-{slug}', prior.parent)),
+            )
         self.register_outputs({})
 
 

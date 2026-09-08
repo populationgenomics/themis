@@ -27,11 +27,13 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # vendored buf/validate stubs litcache_pb2 imports — not the read service's lean models-only subset.
 # themis/common is litcache's only cross-package themis import (writer/oa/crossref: storage + constants);
 # anthropic_wif is the federation credential the PDF branch authenticates to the Claude API with — the
-# rest of themis/clients is gRPC-side and has no consumer here.
+# rest of themis/clients is gRPC-side and has no consumer here. themis/telemetry carries the
+# transcription's token counts to Cloud Monitoring.
 COPY buf ./buf
 COPY themis/clients/anthropic_wif.py ./themis/clients/anthropic_wif.py
 COPY themis/common ./themis/common
 COPY themis/litcache ./themis/litcache
+COPY themis/telemetry ./themis/telemetry
 COPY themis/services/convert_worker ./themis/services/convert_worker
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # deployed revision crash-loops, since nothing else imports the image's own tree.

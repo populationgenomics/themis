@@ -1,1 +1,1 @@
-"""The workspace-spend monitor's exporter: Anthropic session list cost, by agent, as a Cloud Monitoring gauge."""
+"""The workspace-spend monitor's exporter: Anthropic session usage, by agent, as gauges through the Telemetry API."""

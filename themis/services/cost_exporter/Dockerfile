@@ -4,7 +4,7 @@
 # the repo ROOT (deploy: `docker build -f themis/services/cost_exporter/Dockerfile .`). Dependencies come
 # from the committed uv.lock via `uv sync --locked --group cost_exporter`. One execution is one run:
 # __main__ reads its settings from the environment the Job injects, scans the workspace's sessions,
-# writes the gauge, and exits.
+# sets and flushes the gauges, and exits.
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
@@ -25,8 +25,9 @@ COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 # The federation credential the exporter authenticates to the Claude API with; the rest of themis/clients
-# is gRPC-side and has no consumer in this image.
+# is gRPC-side and has no consumer in this image. themis/telemetry is the meter pipeline the gauges ride.
 COPY themis/clients/anthropic_wif.py ./themis/clients/anthropic_wif.py
+COPY themis/telemetry ./themis/telemetry
 COPY themis/services/cost_exporter ./themis/services/cost_exporter
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # scheduled execution fails, since nothing else imports the image's own tree.

@@ -36,6 +36,7 @@ _REQUIRED_SERVICES = (
     'cloudscheduler.googleapis.com',
     'logging.googleapis.com',
     'monitoring.googleapis.com',
+    'telemetry.googleapis.com',
 )
 
 # What `_Required` holds admin-activity audit logs for; no reason to keep the rest for less.

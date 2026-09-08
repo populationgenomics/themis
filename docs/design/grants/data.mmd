@@ -31,7 +31,8 @@ flowchart LR
     n3 -->|DatabaseConnector| n15
     n3 -->|SessionBearerDeriver| n16
     n4 -->|BucketObjectReadWriter| n17
-    n5 -->|MetricWriter| n14
+    n4 -->|TelemetryWriter| n14
+    n5 -->|TelemetryWriter| n14
     n6 -->|DatabaseConnector| n15
     n7 -->|SecretReader| n22
     n7 -->|SecretReader| n23

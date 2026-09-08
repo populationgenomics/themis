@@ -13,7 +13,8 @@ with its renderings in it, so a paper it ingested is READY the moment it exists.
   dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper
   rather than re-OCR it forever.
 - `ConvertWorker` — the worker Cloud Run service (IAM-gated, require-auth) and its runtime SA
-  (object read/write on the litcache bucket; the Claude API by workload identity federation).
+  (object read/write on the litcache bucket; the Claude API by workload identity federation; each
+  transcription's token counts to Cloud Monitoring through the Telemetry API).
 - `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
   and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
 """
@@ -124,6 +125,8 @@ class ConvertWorker(pulumi.ComponentResource):
             prior=grants.Prior('themis-convert-worker-fulltext', parent=self),
             opts=child,
         )
+        # The request-token counter each transcription feeds (`themis/telemetry`).
+        grants.TelemetryWriter('themis-convert-worker', member=service_account.member, project=project, opts=child)
 
         service = gcp.cloudrunv2.Service(
             'themis-convert-worker',

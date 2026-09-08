@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Awaitable, Callable
+from typing import Protocol
+
+import anthropic.types
 
 PROMPT_VERSION = '1'
 
@@ -80,6 +83,17 @@ class OcrRendering:
 def converter_version(harness_version: str) -> str:
     """Compose the recorded `Rendering.converter_version` from a provider's own harness version."""
     return f'{PROMPT_VERSION}.{harness_version}'
+
+
+class TokenCounter(Protocol):
+    """Where a transcription's token usage goes, whatever the turn's stop reason.
+
+    A provider records every paid turn here before it judges the response, so a truncated or refused
+    turn is counted like any other. The convert worker binds the metrics counter in
+    `themis.telemetry.request_tokens`; nothing in this package depends on it.
+    """
+
+    def add(self, usage: anthropic.types.Usage, *, model: str, stop_reason: str) -> None: ...
 
 
 PdfConverter = Callable[[bytes], Awaitable[OcrRendering]]
