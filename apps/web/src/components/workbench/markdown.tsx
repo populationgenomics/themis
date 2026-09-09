@@ -155,8 +155,13 @@ interface MdastNode {
   data?: { hName?: string; hProperties?: Record<string, string> };
 }
 
+// mdast keeps a node's own characters in `value` on these types and in `children` on every other.
+// `image` and `footnoteReference` are childless and carry none, so a missing `children` does not
+// imply an empty label.
+const VALUE_TYPES = new Set(["text", "inlineCode", "html", "code"]);
+
 function labelText(node: MdastNode): string {
-  if (node.type === "text") return node.value ?? "";
+  if (VALUE_TYPES.has(node.type)) return node.value ?? "";
   return (node.children ?? []).map(labelText).join("");
 }
 
@@ -166,17 +171,18 @@ const DIRECTIVE_TYPES = new Set([
   "containerDirective",
 ]);
 
-// remark plugin: turn `:paper` / `:quote` directives into `cite-paper` / `cite-quote` hast elements
-// carrying the parsed doc_id (and quote), which the components below render. `:quote[id, text]`
+// remark plugin: turn `:paper[id]` / `:quote[id, text]` directives into `cite-paper` / `cite-quote`
+// hast elements carrying the parsed doc_id (and quote), which the components below render. `:quote`
 // splits on the first comma — the doc_id is a UUID (comma-free), so the remainder is the quote.
 //
 // `remark-directive` tokenizes `:name` only when a letter follows the colon (micromark requires the
 // name to start with an ASCII alpha), so a colon-then-digit like `chr1:12345`, `3:1`, or `10:30` is
 // never a directive and never at risk. A colon-then-letter is: `BRCA1:c.68delAG` tokenizes as name
-// `c`, `note:foo` as name `foo` — ordinary prose the parser mistook for a directive. Only paper/quote
-// are ours; any other is round-tripped back to literal text. Leaving it as an unhandled directive is
-// not benign: `remark-rehype` drops the node *and the token after it*, silently corrupting the agent's
-// narration and the working document.
+// `c`, `note:foo` as name `foo`, and the bare word in `the :quote directive` as name `quote` —
+// ordinary prose the parser mistook for a directive. So the citation trigger is a paper/quote name
+// carrying a `[…]` label; the bare word is prose, and every other directive is round-tripped back to
+// literal text. Leaving one as an unhandled directive is not benign: `remark-rehype` drops the node
+// *and the token after it*, silently corrupting the agent's narration and the working document.
 function remarkCitations() {
   return (tree: Root): void => {
     walkDirectives(tree as unknown as MdastNode);
@@ -186,26 +192,41 @@ function remarkCitations() {
 function walkDirectives(node: MdastNode): void {
   for (const child of node.children ?? []) {
     if (DIRECTIVE_TYPES.has(child.type) && child.name) {
-      const label = labelText(child).trim();
-      if (child.name === "paper") {
-        child.data = { hName: "cite-paper", hProperties: { docId: label } };
-      } else if (child.name === "quote") {
-        const comma = label.indexOf(",");
-        const docId = (comma === -1 ? label : label.slice(0, comma)).trim();
-        const quote = comma === -1 ? "" : label.slice(comma + 1).trim();
-        child.data = { hName: "cite-quote", hProperties: { docId, quote } };
-      } else {
-        literalizeDirective(child);
-      }
+      const data = labelled(child)
+        ? citationData(child.name, labelText(child).trim())
+        : null;
+      if (data) child.data = data;
+      else literalizeDirective(child);
     }
     walkDirectives(child);
   }
 }
 
-// Convert an unrecognized directive node back to the source text the parser consumed, in place: the
+// For a text or leaf directive the children are exactly the label, and `:paper` and `:paper[]` both
+// tokenize to none — so a label's presence is structural, not a count of the characters in it. A
+// container's children are its block content, which this reads as a label.
+function labelled(node: MdastNode): boolean {
+  return (node.children ?? []).length > 0;
+}
+
+function citationData(name: string, label: string): MdastNode["data"] | null {
+  if (name === "paper") {
+    return { hName: "cite-paper", hProperties: { docId: label } };
+  }
+  if (name === "quote") {
+    const comma = label.indexOf(",");
+    const docId = (comma === -1 ? label : label.slice(0, comma)).trim();
+    const quote = comma === -1 ? "" : label.slice(comma + 1).trim();
+    return { hName: "cite-quote", hProperties: { docId, quote } };
+  }
+  return null;
+}
+
+// Convert a non-citation directive node back to the source text the parser consumed, in place: the
 // marker (`:`/`::`/`:::`), the name, and any `[label]`. So `chr1:12345` survives as itself instead of
-// `chr1` + a dropped `12345`. (Rare `{attrs}` are not reconstructed — a `:name{…}` in prose is far-
-// fetched, and a real one would be paper/quote and never reach here.)
+// `chr1` + a dropped `12345`. The text is synthesised from the node rather than sliced out of the
+// source the node points at, so `{attrs}`, an empty `[]`, markup or escapes inside the label, and a
+// directive nested inside the label do not come back.
 function literalizeDirective(node: MdastNode): void {
   const marker =
     node.type === "containerDirective"

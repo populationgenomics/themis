@@ -8,6 +8,8 @@ function render(text: string): string {
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
+const UNRESOLVED = "Unresolved citation";
+
 /** Render with the corpus figure resolver wired (a bare figure name → the files route). */
 function renderWithFigures(text: string): string {
   return renderToStaticMarkup(
@@ -116,11 +118,77 @@ describe("citation directives", () => {
     const html = renderWithCitations(`:quote[${UUID}]`);
     expect(html).toContain("<button");
   });
+
+  test.each([":paper", ":quote"])(
+    "a bare %s carries no id, so it is prose and not a citation",
+    (directive) => {
+      const html = renderWithCitations(`the ${directive} directive`);
+      expect(html).toContain(`the ${directive} directive`);
+      expect(html).not.toContain("<button");
+      expect(html).not.toContain(UNRESOLVED);
+    },
+  );
+
+  // An empty label is no label. What has to hold is that the name and the token after it both
+  // survive — an unhandled directive takes the following token down with it — not whatever text the
+  // reconstruction happens to produce for the brackets.
+  test.each([":paper[]", ":quote[]"])(
+    "%s is not a citation, and the prose around it survives",
+    (directive) => {
+      const html = renderWithCitations(`the ${directive} directive`);
+      expect(html).toContain(directive.replace("[]", ""));
+      expect(html).toContain("directive");
+      expect(html).not.toContain("<button");
+      expect(html).not.toContain(UNRESOLVED);
+    },
+  );
+
+  // Brackets holding only whitespace, or only the comma separator, are a label the author wrote and
+  // left without an id — a malformed citation, which is the broken marker's job, not prose.
+  test.each(["a :quote[ ] here", "a :quote[,] here", "a :paper[ ] here"])(
+    "%s is a citation with a missing id",
+    (prose) => {
+      const html = renderWithCitations(prose);
+      expect(html).toContain(UNRESOLVED);
+      expect(html).not.toContain("<button");
+    },
+  );
+
+  test("an id wrapped in inline code is still a label, so it still cites", () => {
+    const html = renderWithCitations(`see :paper[\`${UUID}\`]`);
+    expect(html).toContain("<button");
+    expect(html).not.toContain(":paper");
+  });
+
+  test("an unparseable id under an inline node stays a visible broken citation", () => {
+    const html = renderWithCitations("use :paper[`some-id`] to cite");
+    expect(html).toContain(UNRESOLVED);
+    expect(html).toContain("some-id");
+    expect(html).not.toContain("<button");
+  });
+
+  // Some inline nodes carry no characters of their own, so a label built only from them reads as
+  // empty. It is still a label, and the citation it introduces is still broken — taking it for prose
+  // would erase the `[…]` leaving no sign a citation was ever there.
+  test("a label holding only an image is a broken citation, not prose", () => {
+    const html = renderWithCitations("see :paper[![alt](fig.png)] here");
+    expect(html).toContain(UNRESOLVED);
+    expect(html).not.toContain(":paper");
+  });
+
+  // Worse than losing the label: the reference is the only thing keeping its definition in the
+  // document, so literalizing it would take prose from outside the directive too.
+  test("a label holding only a footnote reference keeps the footnote in the document", () => {
+    const html = renderWithCitations("see :paper[[^1]] here\n\n[^1]: a note");
+    expect(html).toContain(UNRESOLVED);
+    expect(html).toContain("a note");
+  });
 });
 
-// `remark-directive` tokenizes every `:name`, but only paper/quote are ours. An unhandled one used to
-// be dropped by remark-rehype along with the token after it, silently corrupting prose. These `word:word`
-// forms are pervasive in genomics narration and the working document, so they must survive verbatim.
+// `remark-directive` tokenizes every `:name`, but a citation is a paper/quote name carrying an id in
+// `[…]`. Anything else is prose, and remark-rehype drops an unhandled directive along with the token
+// after it — so these forms, pervasive in genomics narration and the working document (and in prose
+// about the citation syntax itself), must come back verbatim with no citation in sight.
 describe("citation parsing leaves ordinary colon prose intact", () => {
   test.each([
     "the ratio was 3:1 in the treatment arm",
@@ -128,11 +196,14 @@ describe("citation parsing leaves ordinary colon prose intact", () => {
     "the meeting is at 10:30 today",
     "reported as BRCA1:c.68delAG",
     "under the note:foo heading",
+    "custom :quote / :paper directive",
   ])("%s renders verbatim, with no dropped token or stray div", (prose) => {
     const html = renderWithCitations(prose);
     // The text survives intact, and no block <div> was injected inside the <p>.
     expect(html).toContain(prose);
     expect(html).not.toContain("<div></div>");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain(UNRESOLVED);
   });
 
   test("a real citation still renders amid colon prose", () => {
