@@ -17,6 +17,11 @@ const splineSansMono = Spline_Sans_Mono({
   variable: "--font-mono",
 });
 
+// Every page renders under a per-request nonce, which Next can only stamp during a request
+// (src/lib/csp.ts). Declared on the root layout so a page added later inherits it: a prerendered
+// page would carry no request's nonce, and the policy would admit none of its script.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Themis",
   description: "Themis variant curation workbench",
