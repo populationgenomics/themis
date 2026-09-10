@@ -170,21 +170,28 @@ re-drive, on every tick, work it had already asked for. Resolving an external id
 (`MaybeIngestPapers`, [`literature-evidence-layer.md`](literature-evidence-layer.md)) is the one rpc that may ever start
 production, and even then only by enqueueing — never by waiting. The sweep re-drives the same production without a
 session, being first-party and scheduled rather than asked for, so the session gate prices what a caller asks for and
-not the operator's recovery. The ingestion writer stays out of it for a different reason: enqueueing there would pair
-the task with a commit it cannot be atomic with, since the manifest write is a single create-only put, so a task placed
+not the sweep's recovery. The ingestion writer stays out of it for a different reason: enqueueing there would pair the
+task with a commit it cannot be atomic with, since the manifest write is a single create-only put, so a task placed
 ahead of it can name a paper a crashed run never wrote.
 
-Resolution is also the only step in this lane that resolves a session. Every read serves a store shared across analyses
-and so needs none; a conversion spends model budget, and that is not a cost a caller who cannot name a session may
-incur. The gate therefore sits on the enqueue rather than on the call around it: a batch that resolves its ids and finds
-nothing to produce is answered without a session, and one with something to produce is refused whole — answering
-readiness while quietly skipping the enqueue would strand the paper exactly as a lost task does. What a caller may spend
-is bounded rather than attributed: a paper converts once however often it is asked for within the task-name reuse
-window, so what a hostile agent can commit in that window is the corpus's unconverted papers, not a function of how
-often it calls; the servicer caps a batch, and the conversion queue paces dispatch fleet-wide. The bound does not hold
-across windows for a paper whose attempts exhaust: it is deleted without a marker, reads PENDING again, and a later
-re-ask re-enqueues it, so for the papers that time out — the expensive ones — spend is bounded by the pace alone. The
-residual is that spend, by nothing per session, and availability, since other sessions' conversions wait behind them.
+Resolution is the one step in this lane that spends, and `MaybeIngestPapers` authorizes it over the facts the call
+arrives with rather than on a session alone ([`rpc-authorization.md`](rpc-authorization.md)): it admits a call scoped to
+an Analysis and, equally, a first-party caller the contract names — `CALLER_CLU`, the maintainer's automation account —
+authorized by its verified identity, and charges the conversion to what the call was made for. A conversion spends model
+budget, and that is not a cost an unadmitted caller may incur — so the whole rpc authorizes up front, and a caller its
+rule does not admit is refused before any work, readiness included. It is also the rpc a person's entitlement travels
+on, being the one that acquires a paper rather than reading one.
+
+Attribution and limit are separate questions, and neither is finished here. *Who* incurred a conversion becomes
+recordable, because the context the gate resolved reaches the enqueue; where that record is written is the spend-record
+question [`rpc-authorization.md`](rpc-authorization.md) leaves open. *How much* any one caller may incur is still
+bounded globally rather than budgeted per caller: a paper converts once however often it is asked for within the
+task-name reuse window, so what a hostile agent can commit in that window is the corpus's unconverted papers, not a
+function of how often it calls; the servicer caps a batch, and the conversion queue paces dispatch fleet-wide. The bound
+does not hold across windows for a paper whose attempts exhaust: it is deleted without a marker, reads PENDING again,
+and a later re-ask re-enqueues it, so for the papers that time out — the expensive ones — spend is bounded by the pace
+alone. The residual is that spend, now attributable in principle but still uncapped per caller, and availability, since
+other sessions' conversions wait behind them.
 
 ### Write-back is a generation-matched compare-and-swap
 
@@ -294,12 +301,6 @@ killed.
   not, and a task whose retries were exhausted, are not. The reconcile sweep is what finds either — its predicate covers
   them, since it looks for papers with no rendering and no marker rather than for anything task-specific — but how often
   it runs is unchosen, and that cadence is the only bound on how long such a paper stays stranded.
-- **The enqueue gate has one arm, and wants two.** A session token names an agent session, and the sandbox injects one
-  on every call it forwards, so exposing resolution to the agent would cost the agent nothing. A user-initiated ingest
-  arrives through the BFF holding a logged-in user's identity and no agent session — two callers, two principals — so
-  admitting it means adding an arm to the gate, not swapping out the one that is there. Reads stay ungated under either.
-  What neither arm settles is attribution: the resolved binding is discarded, so nothing records which Analysis asked
-  for a conversion, the use [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) names for the session here.
 - **A conversion that cannot fit a pushed request.** A pathological PDF exceeds the dispatch ceiling and would need a
   job rather than a request. Whether to build for that now or wait until one appears is undecided.
 - **The submit-side upload door** — the user-facing path for handing the system a document it could not otherwise reach,

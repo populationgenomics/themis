@@ -164,6 +164,13 @@ hosts at all. Only what cannot be mirrored is queried live, against the admitted
   assertion at the data seam; `healthz` is the sole allowlisted exemption, reached directly by the Cloud Run probe
   rather than through the load balancer. The data-seam check is an interceptor on the RPC router, so it covers every
   method by construction. Owned by [`frontend-framework.md`](frontend-framework.md) §Auth.
+- **Data-plane rpc auth** — on the literature interface, an interceptor builds one authorization context per call (the
+  verified calling service, the Analysis the call is scoped to where there is one, and the person who approved it where
+  there is one) and denies unless the rpc's contract admits it — the `agent_exposed` proto option and its siblings
+  `admits_session` and `admits_caller`, read off the descriptor, so an rpc declaring none is denied at run time and who
+  may call is stated once. The interceptor is server-wide, with the health check its only exemption; the other evidence
+  interfaces' rpcs are all `agent_exposed`, so it gates them too, and their in-body session checks are redundant until
+  deleted. Owned by [`rpc-authorization.md`](rpc-authorization.md).
 - **Sandbox egress** — the guest process has no network at all; its one exit is the hatch, whose method allowlist is
   generated from the proto rather than authored. Owned by [`sandbox-worker.md`](sandbox-worker.md), with the exposure
   condition an rpc must meet in [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security — the place the
