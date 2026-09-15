@@ -1,0 +1,156 @@
+# The upstream reference data Themis mirrors, pinned.
+#
+# Each object is mirrored byte-for-byte into the `reference/` dataset of the resources bucket at
+# `<source>/<version>/<role>.<suffix>`. The destination is composed from those fields rather than
+# written out, so every source lands in the same shape and a consumer reaches for `genome.fa.gz`
+# whoever published it. Versioning the directory makes a bump additive: two releases coexist and
+# nothing is renamed to make room for the newer one.
+#
+# An assembly owns its annotation and its index rather than each standing alone, because a tool
+# reads them together and disagreement between them is silent. `bcftools csq` against a genome
+# that names sequences `chr1` and an annotation that names them `1` annotates nothing and exits
+# zero; htslib given an index whose name does not extend its genome's reports the index as absent.
+# Nesting removes both: `seqid` is declared once for the assembly, so an annotation has none of its
+# own to contradict, and an index declares only the extension it adds, so its name is the genome's
+# by construction. Nothing has to check what cannot be written.
+#
+# Nothing here is transformed. A derived artifact — a bgzip recompression, an index we build, a
+# subset — is a later pass writing its own prefix and citing the id it came from. Renaming a
+# sequence to make two sources agree would break equivalence with the publisher permanently, so a
+# consumer that needs another naming convention takes the assembly that has it. Where something
+# genuinely must cross conventions, the NCBI assembly report is mirrored as the lookup: it maps
+# Ensembl name to GenBank and RefSeq accession to UCSC-style name, with lengths to check them.
+#
+# `md5` is the publisher's own, where the publisher publishes one. NCBI does, in
+# `md5checksums.txt`. Ensembl publishes `sum` output — a System V checksum, not MD5 — so its
+# objects carry none, and the mirror records the digest it computed on first fetch instead. A
+# `gs://` upstream carries none either: GCS supplies the checksum for a server-side copy.
+
+dataset = "reference"
+
+# --- NCBI RefSeq ---------------------------------------------------------------------------------
+# Papers write RefSeq accessions — `NM_`, `NP_` — and essentially never Ensembl's, so the
+# literature resolver needs this annotation specifically. GRCh37 is here because papers state
+# build-37 coordinates, not because anything in the annotation pipeline wants it.
+
+[[assembly]]
+id = "ncbi-grch38"
+source = "ncbi"
+version = "GCF_000001405.40_GRCh38.p14"
+seqid = "refseq-accession"
+licence = "public-domain"
+consumer = "variants.resolve"
+genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.fna.gz", suffix = "fa.gz", md5 = "c30471567037b2b2389d43c908c653e1" }
+annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.gff.gz", suffix = "gff3.gz", md5 = "24b731562b9d4cae9e37b23404b5be16" }
+report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt", suffix = "tsv", md5 = "21f3ac4aa8245a99eb874082051b9dde" }
+
+[[assembly]]
+id = "ncbi-grch37"
+source = "ncbi"
+version = "GCF_000001405.25_GRCh37.p13"
+seqid = "refseq-accession"
+licence = "public-domain"
+consumer = "variants.resolve"
+genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_genomic.fna.gz", suffix = "fa.gz", md5 = "faf040d8b57cc04f1a4d5b23cccbb5ce" }
+annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_genomic.gff.gz", suffix = "gff3.gz", md5 = "44939e96b2023ec7c28a67323a8f9d22" }
+report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_report.txt", suffix = "tsv", md5 = "5ded666a3acfcf7262370b7b4328badd" }
+
+# --- Ensembl -------------------------------------------------------------------------------------
+# What `bcftools csq` is designed against. Pinned to a release rather than `pub/grch37/current/`,
+# a label the publisher moves: the mirror skips on an unchanged URL, so a moving upstream is one it
+# would never notice.
+
+[[assembly]]
+id = "ensembl-grch38"
+source = "ensembl"
+version = "115_GRCh38"
+seqid = "ensembl-name"
+licence = "apache-2.0"
+consumer = "annotation-pipeline"
+genome = { url = "https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz", suffix = "fa.gz" }
+annotation = { url = "https://ftp.ensembl.org/pub/release-115/gff3/homo_sapiens/Homo_sapiens.GRCh38.115.chr.gff3.gz", suffix = "gff3.gz" }
+
+[[assembly]]
+id = "ensembl-grch37"
+source = "ensembl"
+version = "87_GRCh37"
+seqid = "ensembl-name"
+licence = "apache-2.0"
+consumer = "annotation-pipeline"
+genome = { url = "https://ftp.ensembl.org/pub/grch37/release-87/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz", suffix = "fa.gz" }
+annotation = { url = "https://ftp.ensembl.org/pub/grch37/release-87/gff3/homo_sapiens/Homo_sapiens.GRCh37.87.chr.gff3.gz", suffix = "gff3.gz" }
+
+# --- Alignment references ------------------------------------------------------------------------
+# CRAM is reference-compressed: decoding reads needs the exact assembly they were aligned against,
+# byte-identical, so these are pinned by identity rather than chosen for their naming.
+
+# The benchmark's CRAMs are called against DRAGEN's `hg38_alt_masked_graph_v6` default, so this is
+# the assembly its reads decode against and the one the annotated VCF's coordinates are in. Illumina
+# ships it as a gzipped tar of a single `hg38.fa` (3.26 GB uncompressed, `>chr1 AC:CM000663.2 …`),
+# alongside an `info.json` naming the package build and an `md5sum` carrying the FASTA's own digest
+# — so the derived pass that extracts `genome.fa` has the publisher's checksum to verify against,
+# inside the archive, even though the archive itself is published without one.
+#
+# The hash-table tarball that accompanies it is deliberately not here: it is needed to *run* the
+# aligner on FPGA, not to decode what the aligner produced.
+
+[[assembly]]
+id = "dragen-hg38"
+source = "dragen"
+version = "hg38-fasta-0-1"
+seqid = "ucsc-name"
+licence = "illumina-dragen-resource"
+consumer = "reads"
+genome = { url = "https://webdata.illumina.com/downloads/software/dragen/resource-files/fasta-files/hg38-fasta-0-1.tar.gz", suffix = "tar.gz" }
+
+# Broad's, kept because the literature lane and anything reading public GRCh38 coordinates use it,
+# and because hg19 has no DRAGEN equivalent here. Both ship uncompressed with an index, so no
+# derived one is needed. Already in GCS, so they copy server-side.
+
+[[assembly]]
+id = "broad-hg38"
+source = "broad"
+version = "hg38_v0"
+seqid = "ucsc-name"
+licence = "public-domain"
+consumer = "reads"
+genome = { url = "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta", suffix = "fa" }
+index = { url = "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai", extension = "fai" }
+
+[[assembly]]
+id = "broad-hg19"
+source = "broad"
+version = "hg19_v0"
+seqid = "grc-name"
+licence = "public-domain"
+consumer = "reads"
+genome = { url = "gs://gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta", suffix = "fa" }
+index = { url = "gs://gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta.fai", extension = "fai" }
+
+# --- Crosswalk tables ----------------------------------------------------------------------------
+# Not tied to one assembly, so they stand alone.
+
+[[table]]
+id = "mane-summary"
+source = "mane"
+version = "1.5_GRCh38"
+role = "summary"
+suffix = "tsv.gz"
+url = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.5/MANE.GRCh38.v1.5.summary.txt.gz"
+licence = "public-domain"
+# A label over the complete annotations, not a transcript set: which RefSeq transcript a gene's
+# MANE Select is, the Ensembl transcript identical to it, and the HGNC id for both.
+consumer = "crosswalk"
+
+[[table]]
+id = "hgnc-complete-set"
+source = "hgnc"
+version = "2026-07-07"
+role = "complete-set"
+suffix = "tsv"
+url = "gs://public-download-files/hgnc/archive/archive/quarterly/tsv/hgnc_complete_set_2026-07-07.tsv"
+licence = "cc0-1.0"
+# The dated quarterly archive, not the rolling current file, so the version in the path means
+# something. Symbol history and aliases: papers write withdrawn symbols (ASA for ARSA, SEPT9 for
+# SEPTIN9), which is measurably why some variants resolve against no gene at all.
+consumer = "crosswalk"

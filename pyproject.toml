@@ -185,12 +185,16 @@ guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0"]
 # protobuf + pubmed_proto + cloudsql: the supplied-papers check reads litcache manifests and the
 # crosswalk (themis/classifier_eval/literature.py).
 classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests", "pyyaml", "protobuf", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
+# Reference mirror (tools/resources/mirror.py): the GCS client writes the resources bucket and
+# does the server-side copy for a gs:// upstream; requests streams an https:// one to disk while
+# hashing it. Operator tooling run against the caller's own ADC, not a deployed service.
+resources = ["google-cloud-storage", "requests"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "protoc" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }]
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
@@ -203,7 +207,7 @@ infra = ["pulumi", "pulumi-gcp", "pyyaml"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
 # dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
