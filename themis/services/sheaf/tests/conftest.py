@@ -42,6 +42,11 @@ OTHER_METADATA = fixture_session.session_metadata(OTHER_TOKEN)
 
 # Generous enough that every test not about a ceiling clears them.
 LIMITS = servicer_mod.Limits(max_publish_bytes=1 << 22, max_refs=64, max_document_bytes=1 << 16)
+# Enough that the client is still writing when the server decides the call's outcome, which is the
+# condition a refusal has to be delivered under. Derived from the ceiling because it also has to
+# stay inside the drain's budget: above that the server stops reading and cuts the client off, and
+# the delivery this is here to exercise never happens.
+PACK_THE_CLIENT_IS_STILL_SENDING = bytes(LIMITS.max_publish_bytes // 2)
 
 Moves = Mapping[str, tuple[str | None, str | None]]
 
@@ -57,9 +62,12 @@ def resolver() -> session_mod.SessionResolver:
 
 @contextlib.asynccontextmanager
 async def serving(
-    backend: backend_mod.Backend, limits: servicer_mod.Limits = LIMITS
+    backend: backend_mod.Backend,
+    limits: servicer_mod.Limits = LIMITS,
+    session_resolver: session_mod.SessionResolver | None = None,
 ) -> AsyncIterator[sheaf_pb2_grpc.SheafAsyncStub]:
-    servicer = servicer_mod.Servicer(resolver(), backend, limits)
+    """Serve `backend`; `session_resolver` unstated is the two-token fixture map."""
+    servicer = servicer_mod.Servicer(resolver() if session_resolver is None else session_resolver, backend, limits)
     async with in_process_grpc.serving(
         lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
     ) as channel:
@@ -148,11 +156,12 @@ def run[T](
     scenario: Callable[[sheaf_pb2_grpc.SheafAsyncStub], Awaitable[T]],
     backend: backend_mod.Backend,
     limits: servicer_mod.Limits = LIMITS,
+    session_resolver: session_mod.SessionResolver | None = None,
 ) -> T:
     """Serve `backend` in-process and run `scenario` against a stub to it."""
 
     async def run() -> T:
-        async with serving(backend, limits) as stub:
+        async with serving(backend, limits, session_resolver) as stub:
             return await scenario(stub)
 
     return asyncio.run(run())
@@ -245,6 +254,25 @@ def backend(tmp_path: pathlib.Path) -> sheaf.LocalBackend:
     return sheaf.LocalBackend(tmp_path / 'store')
 
 
+class Sender:
+    """A publish's client side, recording whether it got to write its whole stream and half-close.
+
+    A status sent while the client is still writing tears the write side down partway through, so
+    `half_closed` is false; a status sent after the drain leaves the client having written every
+    message. The stream has to be long enough for the server to decide mid-write, which is what
+    `PACK_THE_CLIENT_IS_STILL_SENDING` supplies.
+    """
+
+    def __init__(self, messages: Sequence[sheaf_pb2.PublishRequest]) -> None:
+        self._messages = messages
+        self.half_closed = False
+
+    async def stream(self) -> AsyncIterator[sheaf_pb2.PublishRequest]:
+        for message in self._messages:
+            yield message
+        self.half_closed = True
+
+
 @dataclasses.dataclass(frozen=True)
 class Outcome:
     """What a publish attempt left behind, read straight from the store."""
@@ -253,15 +281,22 @@ class Outcome:
     details: str
     generation: int | None
     packs: set[str]
+    half_closed: bool
 
 
 def attempt(
-    backend: backend_mod.Backend, messages: Sequence[sheaf_pb2.PublishRequest], limits: servicer_mod.Limits = LIMITS
+    backend: backend_mod.Backend,
+    messages: Sequence[sheaf_pb2.PublishRequest],
+    limits: servicer_mod.Limits = LIMITS,
+    *,
+    metadata: tuple[tuple[str, str], ...] = fixture_session.GOOD_METADATA,
+    session_resolver: session_mod.SessionResolver | None = None,
 ) -> Outcome:
     """Run one publish and report its status alongside the store's state afterwards."""
+    sender = Sender(messages)
     code, details = None, ''
     try:
-        run(lambda stub: publish(stub, messages), backend, limits)
+        run(lambda stub: stub.Publish(sender.stream(), metadata=metadata), backend, limits, session_resolver)
     except grpc.aio.AioRpcError as exc:
         code, details = exc.code(), exc.details() or ''
-    return Outcome(code, details, store_for(backend).read().generation, stored_packs(backend))
+    return Outcome(code, details, store_for(backend).read().generation, stored_packs(backend), sender.half_closed)

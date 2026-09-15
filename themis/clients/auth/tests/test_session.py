@@ -1,7 +1,7 @@
 """Behaviour tests for the session resolver + servicer guard.
 
-The resolver and the ``require_session`` guard are exercised over real in-process ``grpc.aio``
-servers (a real ``ServicerContext``, real metadata, real status codes) — the credential-bearing
+The resolver and both guards — ``require_session`` and ``resolve_session`` — are exercised over real
+in-process ``grpc.aio`` servers (a real ``ServicerContext``, real metadata, real status codes); the credential-bearing
 ``session_resolver``/``id_token`` construction only works on GCE and is validated at deploy.
 """
 
@@ -52,6 +52,26 @@ class _GuardServicer(auth_pb2_grpc.AuthServicer):
         self, request: auth_pb2.ResolveTokenRequest, context: grpc.aio.ServicerContext
     ) -> auth_pb2.SessionContext:
         return await session.require_session(context, self._session_resolver)
+
+
+class _ReportingServicer(auth_pb2_grpc.AuthServicer):
+    """Hosts ``resolve_session`` and answers with the refusal it caught, rather than the binding.
+
+    A refusal already sent would end the rpc with that status; a response carrying it is the evidence
+    that the context is still the handler's to finish.
+    """
+
+    def __init__(self, session_resolver: session.SessionResolver) -> None:
+        self._session_resolver = session_resolver
+
+    @override
+    async def ResolveSession(
+        self, request: auth_pb2.ResolveTokenRequest, context: grpc.aio.ServicerContext
+    ) -> auth_pb2.SessionContext:
+        try:
+            return await session.resolve_session(context, self._session_resolver)
+        except session.SessionRefusedError as refused:
+            return auth_pb2.SessionContext(project_id=refused.code.name, analysis_id=refused.details)
 
 
 @contextlib.asynccontextmanager
@@ -125,6 +145,28 @@ def test_require_session_unresolvable_token_is_permission_denied() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc_info:
         asyncio.run(run())
     assert exc_info.value.code() is grpc.StatusCode.PERMISSION_DENIED
+
+
+@pytest.mark.parametrize(
+    ('metadata', 'expected', 'details'),
+    [
+        (None, grpc.StatusCode.UNAUTHENTICATED, 'missing session token'),
+        (
+            fixture_session.session_metadata('bad'),
+            grpc.StatusCode.PERMISSION_DENIED,
+            'session token could not be resolved',
+        ),
+    ],
+)
+def test_resolve_session_raises_the_refusal_instead_of_sending_it(
+    metadata: tuple[tuple[str, str], ...] | None, expected: grpc.StatusCode, details: str
+) -> None:
+    async def run() -> auth_pb2.SessionContext:
+        async with _serving(_ReportingServicer(fixture_session.resolve_fixture_session)) as stub:
+            return await stub.ResolveSession(auth_pb2.ResolveTokenRequest(), metadata=metadata)
+
+    reported = asyncio.run(run())
+    assert (reported.project_id, reported.analysis_id) == (expected.name, details)
 
 
 @pytest.mark.parametrize(

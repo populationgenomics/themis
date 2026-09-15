@@ -186,9 +186,15 @@ async def _drain(requests: AsyncIterator[sheaf_pb2.PublishRequest], budget: int)
     half-closes delivers it, at the cost of the bytes a refused publish had left to send. `budget`
     bounds a client that will not stop: each message costs its encoded size, chunk or not, at least
     one byte, and the half-close after a stream summing to exactly the budget is still read.
+
+    Nothing in the call may have sent its status yet: grpc.aio raises the abort back out of every
+    subsequent read, so a drain that follows one consumes nothing at all.
     """
     while True:
-        request = await anext(requests, None)
+        try:
+            request = await anext(requests, None)
+        except Exception:  # noqa: BLE001 — a status was already decided; the read's error must not replace it
+            return
         if request is None:
             return
         budget -= max(request.ByteSize(), 1)
@@ -286,13 +292,22 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
         self._limits = limits
 
     async def _store(self, context: grpc.aio.ServicerContext) -> store_mod.Store:
-        session = await session_mod.require_session(context, self._session_resolver)
+        """Open the store on the Analysis the call's session token names.
+
+        Raises:
+            _RefusalError: UNAUTHENTICATED for a missing session token, PERMISSION_DENIED for one the
+                auth service does not resolve.
+        """
+        try:
+            session = await session_mod.resolve_session(context, self._session_resolver)
+        except session_mod.SessionRefusedError as refused:
+            raise _RefusalError(refused.code, refused.details) from refused
         return store_mod.Store(self._backend, repo=session.analysis_id)
 
     @override
     async def ReadRefDoc(self, request: empty_pb2.Empty, context: grpc.aio.ServicerContext) -> sheaf_pb2.RefDocSnapshot:
-        store = await self._store(context)
         try:
+            store = await self._store(context)
             snapshot = await _read(store)
         except _RefusalError as refusal:
             await context.abort(refusal.code, refusal.details)
@@ -305,9 +320,11 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
     async def FetchPack(
         self, request: sheaf_pb2.FetchPackRequest, context: grpc.aio.ServicerContext
     ) -> AsyncIterator[sheaf_pb2.PackChunk]:
-        store = await self._store(context)
         try:
+            store = await self._store(context)
             refdoc.validate_pack_id(request.pack_id)
+        except _RefusalError as refusal:
+            await context.abort(refusal.code, refusal.details)
         except errors.InvalidPackId as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         try:
@@ -321,7 +338,9 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
     async def Publish(
         self, request_iterator: AsyncIterator[sheaf_pb2.PublishRequest], context: grpc.aio.ServicerContext
     ) -> sheaf_pb2.PublishResponse:
-        # Twice the ceiling: a publish refused for exceeding it is drained whole up to that much.
+        # Twice the ceiling, which bounds the declared packs while the drain charges the encoded
+        # stream: the intent and each chunk's framing sit on top of the payload, so one ceiling cuts
+        # off a publish that declared exactly the ceiling and conformed.
         budget = 2 * self._limits.max_publish_bytes
         try:
             store = await self._store(context)
@@ -329,7 +348,9 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
         except _RefusalError as refusal:
             await _drain(request_iterator, budget)
             await context.abort(refusal.code, refusal.details)
-        except grpc.aio.AbortError:
+        except Exception:
+            # grpc derives the call's status from the escaping exception, so it races the client's
+            # writes exactly as a refusal does.
             await _drain(request_iterator, budget)
             raise
         await _drain(request_iterator, budget)
