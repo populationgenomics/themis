@@ -6,6 +6,7 @@ import {
   isResourceNotFoundError,
   isSessionBusyError,
   isUnauthenticatedError,
+  isUnmanagedSessionError,
 } from "@/server/errors";
 import { setUserContext } from "./context";
 
@@ -56,6 +57,9 @@ function toConnectError(error: unknown): ConnectError {
       "the agent is still working on its current step",
       Code.FailedPrecondition,
     );
+  }
+  if (isUnmanagedSessionError(error)) {
+    return new ConnectError(error.message, Code.FailedPrecondition);
   }
   if (isClientInputError(error)) {
     // The caller's own malformed request. Its message names the offending field and is theirs to

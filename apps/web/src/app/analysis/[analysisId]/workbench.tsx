@@ -47,6 +47,19 @@ export interface AnalysisIdentity {
   created: { iso: string; pinnedLabel: string; pinnedTitle: string };
   projectId: string;
   projectName: string;
+  /** Whether the platform holds this run's session, and so whether it has a conversation. */
+  managed: boolean;
+}
+
+/** What the conversation region says when it has no stream to render. */
+function ConversationNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center p-8">
+      <p className="max-w-sm text-balance text-center text-muted-foreground text-sm">
+        {children}
+      </p>
+    </div>
+  );
 }
 
 export function Workbench({
@@ -215,11 +228,27 @@ export function Workbench({
           }}
         >
           {(() => {
-            const conversation = (
+            // Four states the region must not collapse into one: a run with no conversation here,
+            // a run whose conversation has never been read, a run whose conversation has stopped
+            // advancing, and a run that has yet to speak. Only the last is empty.
+            const conversation = !analysis.managed ? (
+              <ConversationNotice>
+                This run is driven outside the workbench, so it has no
+                conversation here and cannot be steered from this page. Its
+                working document updates as it commits.
+              </ConversationNotice>
+            ) : poll.isLoadingError ? (
+              <ConversationNotice>
+                This run&rsquo;s conversation could not be read. The workbench
+                keeps retrying; what the agent has done is unaffected, and its
+                working document is unchanged by this.
+              </ConversationNotice>
+            ) : (
               <ConversationPane
                 analysisId={analysisId}
                 events={events}
                 pending={steering.pending}
+                stale={poll.isRefetchError}
                 onCitation={(citation) =>
                   reveal({ kind: "conversation" }, citation)
                 }

@@ -35,7 +35,13 @@ export interface CreateAnalysisInput {
 
 /** Raw analysis persistence + retrieval, with NO authorization. Only the
  *  composition root and `AuthorizedBackend` hold one; a handler never does. The live
- *  adapter composes SQL / Anthropic / KMS / GCS behind these methods. */
+ *  adapter composes SQL / Anthropic / KMS / GCS behind these methods.
+ *
+ *  A run whose session the platform does not hold (`lib/harness.ts`) is served differently by the
+ *  four session-touching methods, and an implementation owes the same shape: `pollEvents` answers
+ *  with no events and whatever document version the store has, since the version signal rides on
+ *  that response and the pane has no other source; `getThread`, `steerAnalysis` and
+ *  `interruptAnalysis` raise `UnmanagedSessionError`. Everything else is the same for either. */
 export interface AnalysisDataPlane {
   /** Create the analysis and kick off its agent session: mint the id + session,
    *  seed the run, return the new row. */

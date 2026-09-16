@@ -1,5 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { timestampDate, timestampFromDate } from "@bufbuild/protobuf/wkt";
+import { isManagedSession, UNMANAGED_SESSION_PREFIX } from "@/lib/harness";
 import {
   type Analysis,
   type AnalysisInputs,
@@ -12,7 +13,11 @@ import {
   type ThreadResponse,
   ThreadResponseSchema,
 } from "@/models/workbench";
-import { ResourceNotFoundError, SessionBusyError } from "../../errors";
+import {
+  ResourceNotFoundError,
+  SessionBusyError,
+  UnmanagedSessionError,
+} from "../../errors";
 import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
 import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
 import {
@@ -55,6 +60,9 @@ const SEEDS: ReadonlyArray<{
   agedHours: number;
   reveal: SeedReveal;
   inputs: AnalysisInputs;
+  /** Seeded with a session the platform does not hold, so the offline navigator can see what a run
+   *  driven by another harness looks like: a working document, and no conversation. */
+  unmanaged?: boolean;
 }> = [
   {
     projectId: FIXTURE_PROJECT,
@@ -132,6 +140,17 @@ const SEEDS: ReadonlyArray<{
       "Summarise gnomAD v4 constraint for SCN2A and flag which missense regions are depleted.",
     ),
   },
+  {
+    projectId: FIXTURE_PROJECT,
+    agedHours: 0.5,
+    reveal: "finished",
+    unmanaged: true,
+    inputs: variantClassification(
+      "NM_004333.6",
+      "c.1799T>A",
+      "Driven by another harness rather than the workbench, so the run produces a working document and its conversation lives wherever it was driven from.",
+    ),
+  },
 ];
 
 function variantClassification(
@@ -158,6 +177,11 @@ const HOUR_MS = 60 * 60 * 1000;
 /** In-memory, deterministic data plane — the offline/demo path. Holds the created
  *  analyses and advances each run's reveal one stage per poll. Authorization is
  *  `AuthorizedBackend`'s job; this layer trusts the ids it is handed. */
+function refuseUnmanaged(analysis: Analysis, message: string): void {
+  if (!isManagedSession(analysis.sessionId))
+    throw new UnmanagedSessionError(message);
+}
+
 export class FixtureDataPlane implements AnalysisDataPlane {
   private readonly entries = new Map<string, Entry>();
   private counter = 0;
@@ -169,6 +193,7 @@ export class FixtureDataPlane implements AnalysisDataPlane {
         seed.projectId,
         seed.inputs,
         new Date(startup - seed.agedHours * HOUR_MS),
+        seed.unmanaged,
       );
       if (seed.reveal === "finished") {
         entry.run = { ...entry.run, revealed: SCRIPTED_STAGES };
@@ -185,11 +210,14 @@ export class FixtureDataPlane implements AnalysisDataPlane {
     projectId: string,
     inputs: AnalysisInputs,
     createdAt: Date,
+    unmanaged = false,
   ): Entry {
     this.counter += 1;
     const analysis = create(AnalysisSchema, {
       id: `an_${this.counter}`,
-      sessionId: `sess_${this.counter}`,
+      sessionId: unmanaged
+        ? `${UNMANAGED_SESSION_PREFIX}${this.counter}`
+        : `sess_${this.counter}`,
       projectId,
       inputs,
       createdAt: timestampFromDate(createdAt),
@@ -229,6 +257,14 @@ export class FixtureDataPlane implements AnalysisDataPlane {
 
   async pollEvents(analysis: Analysis): Promise<PollResponse> {
     const entry = this.require(analysis.id);
+    if (!isManagedSession(analysis.sessionId)) {
+      // No session here to read, and the document keeps advancing — the live adapter's answer.
+      entry.revealedDocVersion = FINAL_DOC_VERSION;
+      return create(PollResponseSchema, {
+        events: [],
+        workingDocumentVersion: entry.revealedDocVersion,
+      });
+    }
     entry.run = afterPoll(entry.run);
     const tick = timelineAt(entry.analysis, entry.run);
     if (tick.documentVersion > entry.revealedDocVersion) {
@@ -249,6 +285,10 @@ export class FixtureDataPlane implements AnalysisDataPlane {
     threadId: string,
   ): Promise<ThreadResponse> {
     const entry = this.require(analysis.id);
+    refuseUnmanaged(
+      analysis,
+      "this run is driven outside the workbench and has no threads here",
+    );
     const events = threadTimeline(entry.analysis, entry.run, threadId);
     if (events === null) {
       throw new ResourceNotFoundError(`thread not found: ${threadId}`);
@@ -258,6 +298,10 @@ export class FixtureDataPlane implements AnalysisDataPlane {
 
   async steerAnalysis(analysis: Analysis, text: string): Promise<void> {
     const entry = this.require(analysis.id);
+    refuseUnmanaged(
+      analysis,
+      "this run is driven outside the workbench and takes no turns from here",
+    );
     if (text.trim() === "") {
       throw new Error("refusing a blank curator turn");
     }
@@ -269,6 +313,10 @@ export class FixtureDataPlane implements AnalysisDataPlane {
 
   async interruptAnalysis(analysis: Analysis): Promise<void> {
     const entry = this.require(analysis.id);
+    refuseUnmanaged(
+      analysis,
+      "this run is driven outside the workbench and cannot be interrupted from here",
+    );
     // A settled run no-ops inside `interrupted`, as the live API treats an idle
     // session; racing a completing step is safe on either backend.
     entry.run = interrupted(entry.run);

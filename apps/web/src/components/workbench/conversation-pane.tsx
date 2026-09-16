@@ -1,5 +1,6 @@
 "use client";
 
+import { TriangleAlert } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Citation } from "@/components/workbench/markdown";
 import type { ConversationEvent } from "@/models/workbench";
@@ -14,12 +15,15 @@ export function ConversationPane({
   analysisId,
   events,
   pending,
+  stale,
   onCitation,
   composer,
 }: {
   analysisId: string;
   events: ConversationEvent[];
   pending: readonly PendingTurn[];
+  /** The stream shown is the last one read; a re-read has failed and is being retried. */
+  stale: boolean;
   onCitation: (citation: Citation) => void;
   composer: React.ReactNode;
 }) {
@@ -38,6 +42,7 @@ export function ConversationPane({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
+      {stale && <StaleNotice />}
       <div
         ref={scroller}
         className="tscroll flex min-h-0 flex-1 flex-col gap-[22px] overflow-auto px-[26px] pt-[22px] pb-[26px]"
@@ -75,6 +80,20 @@ export function ConversationPane({
 
 /** The stream cut into runs of adjacent sub-agent cards; every other event is a run of
  *  its own. */
+// Sits above the scroller so it does not move with the stream; the stream itself stays
+// rendered, since the client still holds the last transcript it read.
+function StaleNotice(): React.ReactElement {
+  return (
+    <output className="flex shrink-0 items-start gap-[8px] border-b border-amber-quote-border bg-amber-quote-bg px-[20px] py-[9px] text-[12.5px] text-amber-quote-text">
+      <TriangleAlert className="mt-[1px] size-[14px] shrink-0" aria-hidden />
+      <span>
+        This run&rsquo;s conversation could not be re-read, so it may be behind.
+        The workbench keeps retrying.
+      </span>
+    </output>
+  );
+}
+
 function fanOuts(events: readonly ConversationEvent[]): ConversationEvent[][] {
   const runs: ConversationEvent[][] = [];
   for (const event of events) {

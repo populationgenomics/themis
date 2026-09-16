@@ -38,6 +38,16 @@ export class SessionBusyError extends Error {
   }
 }
 
+/** Thrown when a call needs a platform session for a run the platform does not hold — one driven by
+ *  another harness. Maps to Connect `FailedPrecondition`; the message reaches the curator, so it
+ *  names the runtime rather than any internal state. */
+export class UnmanagedSessionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnmanagedSessionError";
+  }
+}
+
 /** Thrown when the caller's own request is malformed — a blank required field, an unspecified enum.
  *  Maps to Connect `InvalidArgument`, and unlike the masked internal errors its message (a field-level
  *  description, never internal state) reaches the caller, since the fault is theirs to fix. */
@@ -88,6 +98,12 @@ export function isSessionBusyError(error: unknown): error is SessionBusyError {
 
 export function isClientInputError(error: unknown): error is ClientInputError {
   return named(error, "ClientInputError");
+}
+
+export function isUnmanagedSessionError(
+  error: unknown,
+): error is UnmanagedSessionError {
+  return named(error, "UnmanagedSessionError");
 }
 
 export function isUndecodableAnalysisError(

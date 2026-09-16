@@ -39,7 +39,11 @@ function card(threadId: string, prompt: string): ConversationEvent {
   });
 }
 
-function render(events: ConversationEvent[], pending: PendingTurn[]): string {
+function render(
+  events: ConversationEvent[],
+  pending: PendingTurn[],
+  { stale = false }: { stale?: boolean } = {},
+): string {
   // A card reads its body through a query, and the pane is where one is mounted; it is
   // never fetched here, since no card starts expanded.
   return renderToStaticMarkup(
@@ -48,6 +52,7 @@ function render(events: ConversationEvent[], pending: PendingTurn[]): string {
         analysisId="an_1"
         events={events}
         pending={pending}
+        stale={stale}
         onCitation={() => {}}
         composer={<div data-testid="composer" />}
       />
@@ -69,6 +74,18 @@ function spacing(markup: string): { stream: number; siblings: number | null } {
 }
 
 describe("the conversation pane", () => {
+  test("a stream whose re-read failed stays on screen behind a notice", () => {
+    const markup = render([settled("ev1", "the kickoff")], [], { stale: true });
+    expect(markup).toContain("the kickoff");
+    expect(markup).toContain("<output");
+    expect(markup).toContain("could not be re-read");
+  });
+
+  test("a stream that reads cleanly carries no notice", () => {
+    const markup = render([settled("ev1", "the kickoff")], []);
+    expect(markup).not.toContain("<output");
+  });
+
   test("a turn the run has not carried yet renders after every settled event", () => {
     const markup = render(
       [settled("ev1", "the kickoff")],
