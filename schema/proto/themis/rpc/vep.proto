@@ -94,6 +94,6 @@ service Vep {
   // Ensembl VEP: routing consequence + the policy's predictor score (MIS_PRD) + SpliceAI (SPL_PRD)
   // deltas + a ClinVar/gnomAD snapshot (context only). See AnnotateResponse.
   rpc Annotate(AnnotateRequest) returns (AnnotateResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

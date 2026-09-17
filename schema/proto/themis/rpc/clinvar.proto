@@ -461,13 +461,13 @@ service ClinVar {
   // construction, so the benign and VUS arms of the *_INF rules are SearchCodingSpan's, not this
   // rpc's. See DescribeVariantResponse.
   rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // VariantValidator (the exon table) -> NCBI ClinVar. Every germline record ClinVar holds at
   // one c. span of one transcript, of every classification, with its review stars and c. coordinates
   // -> the *_INF candidate set at a codon or an exon, benign and VUS arms included. See
   // SearchCodingSpanResponse.
   rpc SearchCodingSpan(SearchCodingSpanRequest) returns (SearchCodingSpanResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

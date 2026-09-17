@@ -1,6 +1,7 @@
+from themis.rpc import sandbox_options_pb2 as _sandbox_options_pb2
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Optional as _Optional
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -17,3 +18,11 @@ class SessionContext(_message.Message):
     project_id: str
     analysis_id: str
     def __init__(self, project_id: _Optional[str] = ..., analysis_id: _Optional[str] = ...) -> None: ...
+
+class CallerClaim(_message.Message):
+    __slots__ = ("calling_as", "session_token")
+    CALLING_AS_FIELD_NUMBER: _ClassVar[int]
+    SESSION_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    calling_as: _sandbox_options_pb2.CallingAs
+    session_token: str
+    def __init__(self, calling_as: _Optional[_Union[_sandbox_options_pb2.CallingAs, str]] = ..., session_token: _Optional[str] = ...) -> None: ...

@@ -96,8 +96,8 @@ class LiteratureServicer:
 
     def DescribePaper(self, request, context):
         """What representations and files a paper offers; the pane's default-representation choice. The
-        web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
-        An unknown doc_id is a NOT_FOUND the server adds.
+        web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate,
+        presenting its own identity and no session. An unknown doc_id is a NOT_FOUND the server adds.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -155,10 +155,10 @@ class LiteratureServicer:
         Resolving ids against upstream sources litcache has never seen is the shape the name still grows
         into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
 
-        Auth departs from the read rpcs because this one spends money: a call with a paper to produce
-        resolves a session first — the token arrives as x-themis-session-token metadata and resolves via
-        themis.clients.auth, never as a message field. UNAUTHENTICATED with no token, PERMISSION_DENIED
-        on one that does not resolve. A call whose ids are all settled produces nothing and needs none.
+        This one spends money, so it is the rpc whose implementation reads the caller it was admitted as
+        (docs/design/rpc-authorization.md): the conversion is charged to the Analysis a session names, or to
+        the caller's own account. Admission is the interceptor's, before the body runs;
+        a caller the contract does not admit is PERMISSION_DENIED whether or not the batch would spend.
 
         A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
         outage affects the batch, and a caller reading it per-id would write papers off permanently.

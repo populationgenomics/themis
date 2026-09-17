@@ -43,6 +43,10 @@ breaking:
     - FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED
   except:
     - FIELD_NO_DELETE
+    # A custom option is an extension of descriptor.proto, and an extension cannot be `reserved`. No
+    # option of ours appears in at-rest data, so deleting one breaks no reader; the rule would only
+    # force a dead option to be carried forever.
+    - EXTENSION_NO_DELETE
   ignore_only:
     RPC_SAME_IDEMPOTENCY_LEVEL:
       - schema/proto/themis/workbench/rpc/workbench.proto

@@ -25,11 +25,23 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import descriptor_pb2 as google_dot_protobuf_dot_descriptor__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n themis/rpc/sandbox_options.proto\x12\nthemis.rpc\x1a google/protobuf/descriptor.proto:7\n\ragent_exposed\x12\x1e.google.protobuf.MethodOptions\x18\xd2\x86\x03 \x01(\x08\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n themis/rpc/sandbox_options.proto\x12\nthemis.rpc\x1a google/protobuf/descriptor.proto*y\n\tCallingAs\x12\x1a\n\x16\x43\x41LLING_AS_UNSPECIFIED\x10\x00\x12\x13\n\x0f\x43\x41LLING_AS_SELF\x10\x01\x12\x1c\n\x18\x43\x41LLING_AS_AGENT_SESSION\x10\x02\x12\x1d\n\x19\x43\x41LLING_AS_WORKER_SESSION\x10\x03*\xcd\x01\n\x06\x43\x61ller\x12\x16\n\x12\x43\x41LLER_UNSPECIFIED\x10\x00\x12\"\n\nCALLER_WEB\x10\x01\x1a\x12\xd2\xb5\x18\nthemis-web\xd8\xb5\x18\x01\x12\"\n\nCALLER_CLU\x10\x02\x1a\x12\xd2\xb5\x18\nthemis-clu\xd8\xb5\x18\x01\x12,\n\x0c\x43\x41LLER_AGENT\x10\x03\x1a\x1a\xd2\xb5\x18\x12themis-sandbox-job\xd8\xb5\x18\x02\x12\x35\n\x15\x43\x41LLER_SANDBOX_WORKER\x10\x04\x1a\x1a\xd2\xb5\x18\x12themis-sandbox-job\xd8\xb5\x18\x03:7\n\naccount_id\x12!.google.protobuf.EnumValueOptions\x18\xda\x86\x03 \x01(\t:N\n\ncalling_as\x12!.google.protobuf.EnumValueOptions\x18\xdb\x86\x03 \x01(\x0e\x32\x15.themis.rpc.CallingAs:K\n\radmits_caller\x12\x1e.google.protobuf.MethodOptions\x18\xd4\x86\x03 \x03(\x0e\x32\x12.themis.rpc.Callerb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.sandbox_options_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_CALLER'].values_by_name["CALLER_WEB"]._loaded_options = None
+  _globals['_CALLER'].values_by_name["CALLER_WEB"]._serialized_options = b'\322\265\030\nthemis-web\330\265\030\001'
+  _globals['_CALLER'].values_by_name["CALLER_CLU"]._loaded_options = None
+  _globals['_CALLER'].values_by_name["CALLER_CLU"]._serialized_options = b'\322\265\030\nthemis-clu\330\265\030\001'
+  _globals['_CALLER'].values_by_name["CALLER_AGENT"]._loaded_options = None
+  _globals['_CALLER'].values_by_name["CALLER_AGENT"]._serialized_options = b'\322\265\030\022themis-sandbox-job\330\265\030\002'
+  _globals['_CALLER'].values_by_name["CALLER_SANDBOX_WORKER"]._loaded_options = None
+  _globals['_CALLER'].values_by_name["CALLER_SANDBOX_WORKER"]._serialized_options = b'\322\265\030\022themis-sandbox-job\330\265\030\003'
+  _globals['_CALLINGAS']._serialized_start=82
+  _globals['_CALLINGAS']._serialized_end=203
+  _globals['_CALLER']._serialized_start=206
+  _globals['_CALLER']._serialized_end=411
 # @@protoc_insertion_point(module_scope)

@@ -10,13 +10,15 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { CallingAs } from "./sandbox_options_pb";
+import { file_themis_rpc_sandbox_options } from "./sandbox_options_pb";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/rpc/auth.proto.
  */
 export const file_themis_rpc_auth: GenFile = /*@__PURE__*/
-  fileDesc("ChV0aGVtaXMvcnBjL2F1dGgucHJvdG8SD3RoZW1pcy5ycGMuYXV0aCIsChNSZXNvbHZlVG9rZW5SZXF1ZXN0EhUKDXNlc3Npb25fdG9rZW4YASABKAkiOQoOU2Vzc2lvbkNvbnRleHQSEgoKcHJvamVjdF9pZBgBIAEoCRITCgthbmFseXNpc19pZBgCIAEoCTJfCgRBdXRoElcKDlJlc29sdmVTZXNzaW9uEiQudGhlbWlzLnJwYy5hdXRoLlJlc29sdmVUb2tlblJlcXVlc3QaHy50aGVtaXMucnBjLmF1dGguU2Vzc2lvbkNvbnRleHRiBnByb3RvMw");
+  fileDesc("ChV0aGVtaXMvcnBjL2F1dGgucHJvdG8SD3RoZW1pcy5ycGMuYXV0aCIsChNSZXNvbHZlVG9rZW5SZXF1ZXN0EhUKDXNlc3Npb25fdG9rZW4YASABKAkiOQoOU2Vzc2lvbkNvbnRleHQSEgoKcHJvamVjdF9pZBgBIAEoCRITCgthbmFseXNpc19pZBgCIAEoCSJPCgtDYWxsZXJDbGFpbRIpCgpjYWxsaW5nX2FzGAEgASgOMhUudGhlbWlzLnJwYy5DYWxsaW5nQXMSFQoNc2Vzc2lvbl90b2tlbhgCIAEoCTJfCgRBdXRoElcKDlJlc29sdmVTZXNzaW9uEiQudGhlbWlzLnJwYy5hdXRoLlJlc29sdmVUb2tlblJlcXVlc3QaHy50aGVtaXMucnBjLmF1dGguU2Vzc2lvbkNvbnRleHRiBnByb3RvMw", [file_themis_rpc_sandbox_options]);
 
 /**
  * The token forwarded to be resolved: a high-entropy per-session secret the auth service hashes
@@ -65,6 +67,39 @@ export const SessionContextSchema: GenMessage<SessionContext> = /*@__PURE__*/
   messageDesc(file_themis_rpc_auth, 1);
 
 /**
+ * What a call's caller claims to be calling as, carried as the `x-themis-claim-bin` metadata on every
+ * data-plane call (docs/design/rpc-authorization.md). The callee verifies the calling service account
+ * from its ID token and trusts this claim because that account is trusted to make it; the claim is
+ * what the call's authorization context is hydrated from, and it is honoured only if the account has a
+ * `Caller` member calling as the same thing. A call carrying no claim calls as itself. A claim the
+ * callee cannot honour — a session-bearing `calling_as` with no token, or a field nothing resolves yet —
+ * is a fault on the caller's side, not a denial.
+ *
+ * @generated from message themis.rpc.auth.CallerClaim
+ */
+export type CallerClaim = Message<"themis.rpc.auth.CallerClaim"> & {
+  /**
+   * @generated from field: themis.rpc.CallingAs calling_as = 1;
+   */
+  callingAs: CallingAs;
+
+  /**
+   * The session token, when `calling_as` names a session. Resolved to the Project + Analysis the call is
+   * scoped to; one that does not resolve is no binding, and the member is not satisfied.
+   *
+   * @generated from field: string session_token = 2;
+   */
+  sessionToken: string;
+};
+
+/**
+ * Describes the message themis.rpc.auth.CallerClaim.
+ * Use `create(CallerClaimSchema)` to create a new message.
+ */
+export const CallerClaimSchema: GenMessage<CallerClaim> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_auth, 2);
+
+/**
  * The auth service: resolve a session token to the Project + Analysis binding it grants.
  *
  * @generated from service themis.rpc.auth.Auth
@@ -72,7 +107,11 @@ export const SessionContextSchema: GenMessage<SessionContext> = /*@__PURE__*/
 export const Auth: GenService<{
   /**
    * Resolve a session token to its binding. An invalid, revoked, or expired token is a
-   * PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body this slice.
+   * PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body.
+   *
+   * No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
+   * cannot itself be gated on one. Its callers are the data-plane service accounts, which no
+   * `Caller` member names; what may reach it is internal ingress and `run.invoker`.
    *
    * @generated from rpc themis.rpc.auth.Auth.ResolveSession
    */

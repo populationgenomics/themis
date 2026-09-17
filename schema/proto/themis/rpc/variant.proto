@@ -125,6 +125,6 @@ service Variant {
   // Canonicalise the variant, project transcripts, set the routing consequence — the join
   // key every other interface's facts hang on. ClinGen Allele Registry + VariantValidator + VEP.
   rpc Normalize(NormalizeRequest) returns (NormalizeResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

@@ -1,19 +1,68 @@
-// The `agent_exposed` method option: the single authoring point that marks an rpc callable from the
-// sandbox agent through the hatch. `regen` reads it from the descriptor set to generate the hatch
-// allowlist, the guest's accessors, and the guest's contract tree — each exposed proto cut to the
-// marked rpcs and the types they reach, with the stubs the guest imports generated from those cut
-// sources — so none of them can drift from the contract. See docs/design/sandbox-rpc-exposure.md.
+// Who may call an rpc, stated once, on the rpc (docs/design/rpc-authorization.md): `admits_caller`
+// names each principal admitted, and a data-plane server's interceptor derives admission from it off
+// the compiled descriptor. Nothing about who may call is declared a second time in code. Naming
+// `CALLER_AGENT` is also what exposes an rpc to the sandbox agent: `regen` reads it to generate the
+// hatch allowlist, the guest's accessors, and the guest's contract tree
+// (docs/design/sandbox-rpc-exposure.md).
+//
+// A principal is two things: a service account, verified from the ID token Cloud Run forwards and
+// forgeable by nobody, and what that account says it is calling as, honoured because the account is
+// trusted to say it. Two members may share an account and differ in the second.
 syntax = "proto3";
 
 package themis.rpc;
 
 import "google/protobuf/descriptor.proto";
 
+// What a call says its caller is calling as. The claim rides as metadata the caller sets; the callee
+// verifies only the account and trusts the account's claim.
+enum CallingAs {
+  CALLING_AS_UNSPECIFIED = 0;
+  // The account calls as itself: no session, no person. A session presented anyway is resolved for
+  // attribution and admits nothing.
+  CALLING_AS_SELF = 1;
+  // The sandbox worker forwarding a call from the guest: the session token the hatch injects, and an
+  // actor mark naming the agent. Admitted only when the session resolves.
+  CALLING_AS_AGENT_SESSION = 2;
+  // The sandbox worker calling on its own behalf within a session — its checkpoints, its mirror — with
+  // the session token and an actor mark naming the worker. Admitted only when the session resolves.
+  CALLING_AS_WORKER_SESSION = 3;
+}
+
+extend google.protobuf.EnumValueOptions {
+  // The service account a `Caller` member names: its account id, the part before `@`. The id is the
+  // same in every environment — only the GCP project differs — so a verifier completes it with the
+  // project it runs in. 50010 is in descriptor.proto's 50000–99999 organization-internal range.
+  string account_id = 50010;
+  // What a call from that account must say it is calling as, to be this member.
+  CallingAs calling_as = 50011;
+}
+
+// The principals a contract may admit. Closed: a caller not listed here cannot be spelled in an
+// `admits_caller`, and a misspelling is a compile error rather than an rpc that silently admits nobody.
+enum Caller {
+  CALLER_UNSPECIFIED = 0;
+  // The web tier's runtime account: the BFF, calling on the browser's behalf with no session.
+  CALLER_WEB = 1 [(themis.rpc.account_id) = "themis-web", (themis.rpc.calling_as) = CALLING_AS_SELF];
+  // The developer's identity: the account a maintainer impersonates to exercise a deployed system by
+  // hand. Admitted on every rpc the contract declares, so no rpc names it; whether anyone may become it,
+  // and where it may reach, is IAM's — permanent in dev, granted just-in-time in prod.
+  CALLER_CLU = 2 [(themis.rpc.account_id) = "themis-clu", (themis.rpc.calling_as) = CALLING_AS_SELF];
+  // The sandbox agent: the worker's runtime account forwarding a call from the guest, for the agent in
+  // its session. Naming it asserts the rpc is written to survive a hostile caller — nothing it does on
+  // the caller's behalf is unbounded in cost, and every outbound request carrying the caller's text is
+  // destination-fixed and query-only — since untrusted model code invokes it.
+  CALLER_AGENT = 3 [(themis.rpc.account_id) = "themis-sandbox-job", (themis.rpc.calling_as) = CALLING_AS_AGENT_SESSION];
+  // The sandbox worker calling as itself within its session — the same account as the agent, telling
+  // the callee it is not forwarding. An rpc naming this and not `CALLER_AGENT` is host-only: the worker
+  // reaches it and the guest never does.
+  CALLER_SANDBOX_WORKER = 4 [(themis.rpc.account_id) = "themis-sandbox-job", (themis.rpc.calling_as) = CALLING_AS_WORKER_SESSION];
+}
+
 extend google.protobuf.MethodOptions {
-  // When true, this rpc is agent-callable through the hatch; absent means false, so the default is
-  // fail-closed. Marking an rpc asserts it is written to survive a hostile caller — nothing it does
-  // on the caller's behalf is unbounded in cost, and every outbound request carrying the caller's
-  // text is destination-fixed and query-only — since untrusted model code invokes it. 50002 is in
+  // Each named principal is admitted: its account verified, its claim present and — where the claim
+  // names a session — resolving. Naming none admits only `CALLER_CLU`, which every declared rpc
+  // admits; a path no contract declares is refused before any rule is read. 50004 is in
   // descriptor.proto's 50000–99999 range reserved for organization-internal extensions.
-  bool agent_exposed = 50002;
+  repeated Caller admits_caller = 50004;
 }

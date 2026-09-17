@@ -393,6 +393,6 @@ service Cspec {
   // the panel's own, and a threshold enters SM3's ordering at the rung ITS derivation earns rather
   // than at method 1 because a VCEP published it. See ListSpecificationsResponse.
   rpc ListSpecifications(ListSpecificationsRequest) returns (ListSpecificationsResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

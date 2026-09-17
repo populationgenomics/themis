@@ -424,12 +424,12 @@ service Transcript {
   // where a supplied position sits in it (exon or intron, and its distance to each boundary).
   // See GetStructureResponse.
   rpc GetStructure(GetStructureRequest) returns (GetStructureResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // GTEx + gnomAD pext/constraint + ClinVar density + VariantValidator (the exon table, and the
   // gene's transcript inventory against the assessed exon) -> the exon axis of the mechanism x
   // exon-relevance matrix; the All/Most/Few call is the model's. See AssessExonRelevanceResponse.
   rpc AssessExonRelevance(AssessExonRelevanceRequest) returns (AssessExonRelevanceResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

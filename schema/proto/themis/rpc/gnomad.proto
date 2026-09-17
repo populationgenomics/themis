@@ -80,6 +80,6 @@ service Gnomad {
   // Transcript.AssessExonRelevance, STR.
   // See DescribeVariantResponse.
   rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

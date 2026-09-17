@@ -7,6 +7,8 @@ syntax = "proto3";
 
 package themis.rpc.auth;
 
+import "themis/rpc/sandbox_options.proto";
+
 // The token forwarded to be resolved: a high-entropy per-session secret the auth service hashes
 // before lookup.
 message ResolveTokenRequest {
@@ -21,9 +23,27 @@ message SessionContext {
   string analysis_id = 2;
 }
 
+// What a call's caller claims to be calling as, carried as the `x-themis-claim-bin` metadata on every
+// data-plane call (docs/design/rpc-authorization.md). The callee verifies the calling service account
+// from its ID token and trusts this claim because that account is trusted to make it; the claim is
+// what the call's authorization context is hydrated from, and it is honoured only if the account has a
+// `Caller` member calling as the same thing. A call carrying no claim calls as itself. A claim the
+// callee cannot honour — a session-bearing `calling_as` with no token, or a field nothing resolves yet —
+// is a fault on the caller's side, not a denial.
+message CallerClaim {
+  themis.rpc.CallingAs calling_as = 1;
+  // The session token, when `calling_as` names a session. Resolved to the Project + Analysis the call is
+  // scoped to; one that does not resolve is no binding, and the member is not satisfied.
+  string session_token = 2;
+}
+
 // The auth service: resolve a session token to the Project + Analysis binding it grants.
 service Auth {
   // Resolve a session token to its binding. An invalid, revoked, or expired token is a
-  // PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body this slice.
+  // PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body.
+  //
+  // No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
+  // cannot itself be gated on one. Its callers are the data-plane service accounts, which no
+  // `Caller` member names; what may reach it is internal ingress and `run.invoker`.
   rpc ResolveSession(ResolveTokenRequest) returns (SessionContext);
 }

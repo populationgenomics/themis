@@ -75,6 +75,6 @@ service MaveDb {
   // depositor's OddsPath calibration for the assayed row's score (when one was deposited) -> *_FXN.
   // See DescribeVariantResponse.
   rpc DescribeVariant(DescribeVariantRequest) returns (DescribeVariantResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

@@ -20,12 +20,17 @@ from tools.schema import agent_exposed
 _needs_buf = pytest.mark.skipif(shutil.which('buf') is None, reason='buf not on PATH')
 
 
+# The callers an rpc admits: the agent alone, another caller alone, or none.
+_AGENT = (sandbox_options_pb2.CALLER_AGENT,)
+_WEB = (sandbox_options_pb2.CALLER_WEB,)
+
+
 def _file(
-    name: str, package: str, *, services: dict[str, dict[str, bool | None]]
+    name: str, package: str, *, services: dict[str, dict[str, tuple[int, ...] | None]]
 ) -> descriptor_pb2.FileDescriptorProto:
     """A file descriptor declaring `Request`/`Response` messages and services whose rpcs take and return them.
 
-    Each rpc maps to its `agent_exposed` value: None leaves the option absent, else sets it explicitly.
+    Each rpc maps to the callers its `admits_caller` names: None leaves the option absent.
     """
     file = descriptor_pb2.FileDescriptorProto(name=name, package=package, syntax='proto3')
     file.message_type.add(name='Request')
@@ -33,13 +38,13 @@ def _file(
     prefix = f'.{package}.' if package else '.'
     for service_name, methods in services.items():
         service = file.service.add(name=service_name)
-        for method_name, exposed in methods.items():
+        for method_name, callers in methods.items():
             method = service.method.add(
                 name=method_name, input_type=f'{prefix}Request', output_type=f'{prefix}Response'
             )
-            if exposed is not None:
+            if callers is not None:
                 # grpcio-tools types the extension as a bare FieldDescriptor, not the handle Extensions[] expects.
-                method.options.Extensions[sandbox_options_pb2.agent_exposed] = exposed  # pyright: ignore[reportArgumentType]
+                method.options.Extensions[sandbox_options_pb2.admits_caller].extend(callers)  # pyright: ignore[reportArgumentType]
     return file
 
 
@@ -53,7 +58,7 @@ def _methods(image: bytes) -> list[str]:
 
 def test_collects_only_marked_rpcs() -> None:
     image = _image(
-        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': True, 'Locate': None}}),
+        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': _AGENT, 'Locate': None}}),
         _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None, 'Put': None}}),
     )
     assert _methods(image) == ['/themis.rpc.papers.Papers/Read']
@@ -61,27 +66,34 @@ def test_collects_only_marked_rpcs() -> None:
 
 def test_absent_option_is_fail_closed() -> None:
     image = _image(
-        _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': True}}),
+        _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),
         _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}),
     )
     assert _methods(image) == ['/themis.rpc.hello.Hello/Say']
 
 
-def test_explicit_false_is_fail_closed() -> None:
+def test_another_caller_alone_does_not_expose() -> None:
     image = _image(
-        _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': True}}),
-        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': False}}),
+        _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),
+        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': _WEB}}),
     )
     assert _methods(image) == ['/themis.rpc.hello.Hello/Say']
 
 
+def test_the_agent_beside_other_callers_exposes() -> None:
+    image = _image(
+        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Ingest': (*_WEB, *_AGENT)}}),
+    )
+    assert _methods(image) == ['/themis.rpc.papers.Papers/Ingest']
+
+
 def test_marked_rpcs_across_services_sorted() -> None:
     image = _image(
-        _file('themis/rpc/zeta.proto', 'themis.rpc.zeta', services={'Zeta': {'Do': True}}),
+        _file('themis/rpc/zeta.proto', 'themis.rpc.zeta', services={'Zeta': {'Do': _AGENT}}),
         _file(
             'themis/rpc/alpha.proto',
             'themis.rpc.alpha',
-            services={'Alpha': {'Run': True, 'Cancel': True, 'Skip': None}},
+            services={'Alpha': {'Run': _AGENT, 'Cancel': _AGENT, 'Skip': None}},
         ),
     )
     assert _methods(image) == [
@@ -93,22 +105,22 @@ def test_marked_rpcs_across_services_sorted() -> None:
 
 def test_a_marked_service_keeps_its_rpcs_in_declaration_order() -> None:
     image = _image(
-        _file('themis/rpc/alpha.proto', 'themis.rpc.alpha', services={'Alpha': {'Run': True, 'Cancel': True}})
+        _file('themis/rpc/alpha.proto', 'themis.rpc.alpha', services={'Alpha': {'Run': _AGENT, 'Cancel': _AGENT}})
     )
     (service,) = agent_exposed.marked_services(image)
     assert service.methods == ('Run', 'Cancel')
 
 
 def test_marked_rpc_without_a_package_fails_loud() -> None:
-    image = _image(_file('bad.proto', '', services={'Bad': {'Do': True}}))
+    image = _image(_file('bad.proto', '', services={'Bad': {'Do': _AGENT}}))
     with pytest.raises(ValueError, match='no package'):
         agent_exposed.marked_services(image)
 
 
 def test_two_services_sharing_an_accessor_name_fail_loud() -> None:
     image = _image(
-        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': True}}),
-        _file('other/papers.proto', 'other.papers', services={'Corpus': {'Read': True}}),
+        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': _AGENT}}),
+        _file('other/papers.proto', 'other.papers', services={'Corpus': {'Read': _AGENT}}),
     )
     with pytest.raises(ValueError, match='collide'):
         agent_exposed.marked_services(image)
@@ -116,8 +128,8 @@ def test_two_services_sharing_an_accessor_name_fail_loud() -> None:
 
 def test_two_files_of_one_name_in_different_packages_fail_loud() -> None:
     image = _image(
-        _file('themis/rpc/search.proto', 'themis.rpc.papers', services={'Papers': {'Run': True}}),
-        _file('other/search.proto', 'other.genes', services={'Genes': {'Run': True}}),
+        _file('themis/rpc/search.proto', 'themis.rpc.papers', services={'Papers': {'Run': _AGENT}}),
+        _file('other/search.proto', 'other.genes', services={'Genes': {'Run': _AGENT}}),
     )
     with pytest.raises(ValueError, match='one name from different packages'):
         agent_exposed.marked_services(image)
@@ -125,14 +137,14 @@ def test_two_files_of_one_name_in_different_packages_fail_loud() -> None:
 
 def test_an_image_with_no_marked_rpc_fails_loud() -> None:
     image = _image(_file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}))
-    with pytest.raises(ValueError, match='no rpc carries agent_exposed'):
+    with pytest.raises(ValueError, match='no rpc names CALLER_AGENT'):
         agent_exposed.marked_services(image)
 
 
 def test_an_accessor_hands_back_the_stub_over_the_hatch_channel() -> None:
     """One accessor per marked service, named for its package, returning the stub protoc names for the service."""
     image = _image(
-        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': True, 'Locate': None}}),
+        _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': _AGENT, 'Locate': None}}),
         _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}),
     )
     rendered = agent_exposed.render_guest_services(agent_exposed.marked_services(image))

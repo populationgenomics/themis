@@ -167,13 +167,15 @@ enum Mode {
 
 // The service.
 service Papers {
-  // Read: marked, and carrying a second option.
+  // Read: exposed to the agent, admitting two more callers, and carrying an unrelated option.
   rpc Read(ReadRequest) returns (ReadResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+    option (themis.rpc.admits_caller) = CALLER_CLU;
     option deprecated = true;
   }
   // Peek: the mark shares the rpc's line.
-  rpc Peek(ReadRequest) returns (ReadResponse) { option (themis.rpc.agent_exposed) = true; }
+  rpc Peek(ReadRequest) returns (ReadResponse) { option (themis.rpc.admits_caller) = CALLER_AGENT; }
   // Locate: the browser's, not the agent's.
   rpc Locate(LocateRequest) returns (LocateResponse);
 }
@@ -231,7 +233,9 @@ def test_the_cut_keeps_exactly_the_marked_rpcs_and_what_they_reach(tmp_path: pat
     assert not papers.enum_type, 'the doomed enum survived'
     assert list(papers.dependency) == ['google/protobuf/timestamp.proto'], 'an import nothing kept names survived'
     assert 'agent_exposed' not in text
-    assert 'option deprecated = true;' in text, 'a second option on a marked rpc was cut with the mark'
+    assert 'admits_caller' not in text, "an admission option survived; who may call is the server's, not the guest's"
+    assert 'CALLER_' not in text
+    assert 'option deprecated = true;' in text, 'an unrelated option on a marked rpc was cut with the marks'
     assert 'rpc Peek(ReadRequest) returns (ReadResponse);' in text, 'the inline mark did not collapse to `;`'
     for gone in ('Locate', 'Mode', 'Admin', 'Reset', 'its trailing comment with it', 'shared'):
         assert gone not in text, f'{gone!r} survived the cut'
@@ -364,7 +368,8 @@ def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tre
 def test_no_mark_and_no_option_import_survives(tree: SimpleNamespace) -> None:
     for path in (tree.root / guest_contract.PROTO).rglob('*.proto'):
         text = path.read_text('utf-8')
-        assert 'agent_exposed' not in text, f'{path.name} still carries a mark'
+        assert 'admits_' not in text, f'{path.name} still carries an admission option'
+        assert 'CALLER_' not in text, f'{path.name} still names a caller'
         assert 'sandbox_options' not in text, f'{path.name} still imports the options proto'
 
 

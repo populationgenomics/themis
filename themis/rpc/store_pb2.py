@@ -23,25 +23,34 @@ _sym_db = _symbol_database.Default()
 
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/store.proto\x12\x10themis.rpc.store\x1a\x1bgoogle/protobuf/empty.proto\"-\n\x19PutWorkingDocumentRequest\x12\x10\n\x08markdown\x18\x01 \x01(\t\"-\n\x1aPutWorkingDocumentResponse\x12\x0f\n\x07version\x18\x01 \x01(\x05\"<\n\x17WorkingDocumentSnapshot\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x10\n\x08markdown\x18\x02 \x01(\t\"!\n\x0eWorkspaceChunk\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\"\x16\n\x14PutWorkspaceResponse2\xf9\x02\n\x05Store\x12o\n\x12PutWorkingDocument\x12+.themis.rpc.store.PutWorkingDocumentRequest\x1a,.themis.rpc.store.PutWorkingDocumentResponse\x12W\n\x12GetWorkingDocument\x12\x16.google.protobuf.Empty\x1a).themis.rpc.store.WorkingDocumentSnapshot\x12Z\n\x0cPutWorkspace\x12 .themis.rpc.store.WorkspaceChunk\x1a&.themis.rpc.store.PutWorkspaceResponse(\x01\x12J\n\x0cGetWorkspace\x12\x16.google.protobuf.Empty\x1a .themis.rpc.store.WorkspaceChunk0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/store.proto\x12\x10themis.rpc.store\x1a\x1bgoogle/protobuf/empty.proto\x1a themis/rpc/sandbox_options.proto\"-\n\x19PutWorkingDocumentRequest\x12\x10\n\x08markdown\x18\x01 \x01(\t\"-\n\x1aPutWorkingDocumentResponse\x12\x0f\n\x07version\x18\x01 \x01(\x05\"<\n\x17WorkingDocumentSnapshot\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x10\n\x08markdown\x18\x02 \x01(\t\"!\n\x0eWorkspaceChunk\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\"\x16\n\x14PutWorkspaceResponse2\x95\x03\n\x05Store\x12v\n\x12PutWorkingDocument\x12+.themis.rpc.store.PutWorkingDocumentRequest\x1a,.themis.rpc.store.PutWorkingDocumentResponse\"\x05\xa2\xb5\x18\x01\x04\x12^\n\x12GetWorkingDocument\x12\x16.google.protobuf.Empty\x1a).themis.rpc.store.WorkingDocumentSnapshot\"\x05\xa2\xb5\x18\x01\x04\x12\x61\n\x0cPutWorkspace\x12 .themis.rpc.store.WorkspaceChunk\x1a&.themis.rpc.store.PutWorkspaceResponse\"\x05\xa2\xb5\x18\x01\x04(\x01\x12Q\n\x0cGetWorkspace\x12\x16.google.protobuf.Empty\x1a .themis.rpc.store.WorkspaceChunk\"\x05\xa2\xb5\x18\x01\x04\x30\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.store_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_PUTWORKINGDOCUMENTREQUEST']._serialized_start=73
-  _globals['_PUTWORKINGDOCUMENTREQUEST']._serialized_end=118
-  _globals['_PUTWORKINGDOCUMENTRESPONSE']._serialized_start=120
-  _globals['_PUTWORKINGDOCUMENTRESPONSE']._serialized_end=165
-  _globals['_WORKINGDOCUMENTSNAPSHOT']._serialized_start=167
-  _globals['_WORKINGDOCUMENTSNAPSHOT']._serialized_end=227
-  _globals['_WORKSPACECHUNK']._serialized_start=229
-  _globals['_WORKSPACECHUNK']._serialized_end=262
-  _globals['_PUTWORKSPACERESPONSE']._serialized_start=264
-  _globals['_PUTWORKSPACERESPONSE']._serialized_end=286
-  _globals['_STORE']._serialized_start=289
-  _globals['_STORE']._serialized_end=666
+  _globals['_STORE'].methods_by_name['PutWorkingDocument']._loaded_options = None
+  _globals['_STORE'].methods_by_name['PutWorkingDocument']._serialized_options = b'\242\265\030\001\004'
+  _globals['_STORE'].methods_by_name['GetWorkingDocument']._loaded_options = None
+  _globals['_STORE'].methods_by_name['GetWorkingDocument']._serialized_options = b'\242\265\030\001\004'
+  _globals['_STORE'].methods_by_name['PutWorkspace']._loaded_options = None
+  _globals['_STORE'].methods_by_name['PutWorkspace']._serialized_options = b'\242\265\030\001\004'
+  _globals['_STORE'].methods_by_name['GetWorkspace']._loaded_options = None
+  _globals['_STORE'].methods_by_name['GetWorkspace']._serialized_options = b'\242\265\030\001\004'
+  _globals['_PUTWORKINGDOCUMENTREQUEST']._serialized_start=107
+  _globals['_PUTWORKINGDOCUMENTREQUEST']._serialized_end=152
+  _globals['_PUTWORKINGDOCUMENTRESPONSE']._serialized_start=154
+  _globals['_PUTWORKINGDOCUMENTRESPONSE']._serialized_end=199
+  _globals['_WORKINGDOCUMENTSNAPSHOT']._serialized_start=201
+  _globals['_WORKINGDOCUMENTSNAPSHOT']._serialized_end=261
+  _globals['_WORKSPACECHUNK']._serialized_start=263
+  _globals['_WORKSPACECHUNK']._serialized_end=296
+  _globals['_PUTWORKSPACERESPONSE']._serialized_start=298
+  _globals['_PUTWORKSPACERESPONSE']._serialized_end=320
+  _globals['_STORE']._serialized_start=323
+  _globals['_STORE']._serialized_end=728
 # @@protoc_insertion_point(module_scope)

@@ -28,6 +28,7 @@ package themis.rpc.sheaf;
 
 import "google/protobuf/empty.proto";
 import "themis/sheaf/models/refdoc.proto";
+import "themis/rpc/sandbox_options.proto";
 
 // The repository's whole mutable state, and the version token a publish against it is conditional on.
 message RefDocSnapshot {
@@ -139,11 +140,15 @@ service Sheaf {
   // The current ref document and its generation; an unset document is a repository that does not
   // exist yet, not an error. DATA_LOSS if the stored document does not parse as one this code
   // wrote: that is damage, and a caller must not retry it as a fault.
-  rpc ReadRefDoc(google.protobuf.Empty) returns (RefDocSnapshot);
+  rpc ReadRefDoc(google.protobuf.Empty) returns (RefDocSnapshot) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
   // One packfile the document names, streamed. INVALID_ARGUMENT if `pack_id` is not sixty-four hex
   // digits; NOT_FOUND if no such pack: nothing in a sheaf store is ever deleted, so that is a fact
   // about the caller's request, never about timing.
-  rpc FetchPack(FetchPackRequest) returns (stream PackChunk);
+  rpc FetchPack(FetchPackRequest) returns (stream PackChunk) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
   // Upload packs and replace the ref document in one operation, conditional on the base
   // generation. Packs land before the document names them, so a refusal leaves at most inert
   // litter and never a ref nothing can fetch. A moved document is classified as `base_generation`
@@ -163,5 +168,7 @@ service Sheaf {
   // grows, since nothing is deleted, so it is bounded for the same reason the bytes are. Faults, not
   // refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage fault a caller
   // retries.
-  rpc Publish(stream PublishRequest) returns (PublishResponse);
+  rpc Publish(stream PublishRequest) returns (PublishResponse) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
 }

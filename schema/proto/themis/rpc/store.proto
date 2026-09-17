@@ -12,6 +12,7 @@ syntax = "proto3";
 package themis.rpc.store;
 
 import "google/protobuf/empty.proto";
+import "themis/rpc/sandbox_options.proto";
 
 // The working document (GLOSSARY): the Analysis's evolving artifact, a single markdown file this
 // slice. Each put appends an immutable version (server-assigned); get returns the latest.
@@ -43,14 +44,22 @@ message PutWorkspaceResponse {}
 service Store {
   // Append a new immutable version of the working document. Each call mints a new server-assigned
   // version, so the append is not idempotent and must not be auto-retried by a caller.
-  rpc PutWorkingDocument(PutWorkingDocumentRequest) returns (PutWorkingDocumentResponse);
+  rpc PutWorkingDocument(PutWorkingDocumentRequest) returns (PutWorkingDocumentResponse) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
   // The latest working-document version; a NOT_FOUND on the genuine first spawn is the server's,
   // not modelled this slice.
-  rpc GetWorkingDocument(google.protobuf.Empty) returns (WorkingDocumentSnapshot);
+  rpc GetWorkingDocument(google.protobuf.Empty) returns (WorkingDocumentSnapshot) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
   // Checkpoint the ephemeral /workspace remainder — an opaque tar archive, streamed in and
   // overwrite-on-put.
-  rpc PutWorkspace(stream WorkspaceChunk) returns (PutWorkspaceResponse);
+  rpc PutWorkspace(stream WorkspaceChunk) returns (PutWorkspaceResponse) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
   // Restore the ephemeral /workspace archive, streamed out; a NOT_FOUND when none yet is the
   // server's.
-  rpc GetWorkspace(google.protobuf.Empty) returns (stream WorkspaceChunk);
+  rpc GetWorkspace(google.protobuf.Empty) returns (stream WorkspaceChunk) {
+    option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+  }
 }

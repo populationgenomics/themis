@@ -195,6 +195,6 @@ service GeneDisease {
   // haploinsufficiency score, the gain-of-function veto and PanelApp's mode of inheritance are per
   // gene. See DescribeGeneResponse.
   rpc DescribeGene(DescribeGeneRequest) returns (DescribeGeneResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

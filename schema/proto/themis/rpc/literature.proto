@@ -507,12 +507,16 @@ message ListLitVarEntitiesResponse {
 
 service Literature {
   // What representations and files a paper offers; the pane's default-representation choice. The
-  // web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate.
-  // An unknown doc_id is a NOT_FOUND the server adds.
-  rpc DescribePaper(DescribePaperRequest) returns (PaperInfo);
+  // web tier's backend calls this for the browser's paper display, as it does ResolveContent and Locate,
+  // presenting its own identity and no session. An unknown doc_id is a NOT_FOUND the server adds.
+  rpc DescribePaper(DescribePaperRequest) returns (PaperInfo) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
   // Name the GCS object for a rendering, the PDF, or an associated file. NOT_FOUND for an unknown
   // doc_id or a selected object the paper lacks.
-  rpc ResolveContent(ResolveContentRequest) returns (ContentLocation);
+  rpc ResolveContent(ResolveContentRequest) returns (ContentLocation) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
   // Locate a quote within a representation. NOT_FOUND for an unknown doc_id; FAILED_PRECONDITION
   // when the paper lacks the requested representation; INTERNAL when the rendering it must read is
   // listed but unreadable; a `not_located` result when the quote is absent (not an error). No
@@ -520,13 +524,15 @@ service Literature {
   // request UNIMPLEMENTED rather than the `not_located` that would read as the quote being absent
   // from the paper. The fixture resolves its seeded PDF quotes, in the provisional coordinate
   // space `Rect` states, so the pane's highlight path can be built offline.
-  rpc Locate(LocateRequest) returns (LocateResponse);
+  rpc Locate(LocateRequest) returns (LocateResponse) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
   // Whether a quote locates in any representation — the agent's authoring-time check. An unknown
   // doc_id and an absent quote are both `ok=false` with a reason, not errors; INTERNAL when the
   // rendering it must read is listed but unreadable, since a store fault reported `ok=false` would
   // read as the quote failing to validate.
   rpc Validate(ValidateRequest) returns (ValidateResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // Report each paper's full-text readiness (batch), derived from the litcache layout, with no side
   // effect — it produces nothing and enqueues nothing. A rendering present is READY; a terminal
@@ -536,7 +542,7 @@ service Literature {
   // sleep (a sandbox, a browser) waits there for one round trip, where a held request would occupy a
   // serving slot for the whole wait.
   rpc PollFullTexts(PollFullTextsRequest) returns (PollFullTextsResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // Resolve external ids to papers, report each one's full-text readiness, and start production for
   // the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
@@ -545,29 +551,29 @@ service Literature {
   // Resolving ids against upstream sources litcache has never seen is the shape the name still grows
   // into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
   //
-  // Auth departs from the read rpcs because this one spends money: a call with a paper to produce
-  // resolves a session first — the token arrives as x-themis-session-token metadata and resolves via
-  // themis.clients.auth, never as a message field. UNAUTHENTICATED with no token, PERMISSION_DENIED
-  // on one that does not resolve. A call whose ids are all settled produces nothing and needs none.
+  // This one spends money, so it is the rpc whose implementation reads the caller it was admitted as
+  // (docs/design/rpc-authorization.md): the conversion is charged to the Analysis a session names, or to
+  // the caller's own account. Admission is the interceptor's, before the body runs;
+  // a caller the contract does not admit is PERMISSION_DENIED whether or not the batch would spend.
   //
   // A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
   // outage affects the batch, and a caller reading it per-id would write papers off permanently.
   rpc MaybeIngestPapers(MaybeIngestPapersRequest) returns (MaybeIngestPapersResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
   // doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
   // produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
   // result for a known paper with no rendering at all (a fact about the store, not an error).
   rpc GetMarkdown(GetMarkdownRequest) returns (GetMarkdownResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // Search the live Europe PMC index by keyword and return matching bibliographic records. The
   // records are the index's, not the store's: a hit here says a paper exists, never that its text
   // is readable — `MaybeIngestPapers` is what says that. `total_matched` says how much of the
   // index's match the returned records cover; see `SearchEuropePmcResponse`.
   rpc SearchEuropePmc(SearchEuropePmcRequest) returns (SearchEuropePmcResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // Fetch the PubMed record — abstract included — for each of a batch of PMIDs. The route from an
   // identifier to something readable where the store holds no full text: an abstract is often enough
@@ -578,7 +584,7 @@ service Literature {
   // `MaybeIngestPapers` is the one door into the full-text store. INVALID_ARGUMENT for a malformed,
   // empty or oversized batch.
   rpc FetchPubmedArticles(FetchPubmedArticlesRequest) returns (FetchPubmedArticlesResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // Resolve a variant through LitVar2 and return every entity it reached, unmerged and labelled.
   // The index splits one variant across entities that share no record, so the answer is a candidate
@@ -589,13 +595,13 @@ service Literature {
   // above `entities.size()` says the fan-out ceiling left candidates unexamined. See
   // `SearchLitVarResponse`.
   rpc SearchLitVar(SearchLitVarRequest) returns (SearchLitVarResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
   // List the variant entities LitVar2 holds for a gene, most-published first, narrowed by `contains`
   // on the entity id. The route to an entity indexed under a name no current identifier constructs —
   // a superseded numbering, say — whose id then goes back through `SearchLitVar.entity_id` to list
   // its PMIDs. See `ListLitVarEntitiesResponse`.
   rpc ListLitVarEntities(ListLitVarEntitiesRequest) returns (ListLitVarEntitiesResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

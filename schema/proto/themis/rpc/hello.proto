@@ -23,6 +23,6 @@ message SayHelloResponse {
 service Hello {
   // Resolve the request's session token and echo the note against the bound Analysis.
   rpc SayHello(SayHelloRequest) returns (SayHelloResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
 }

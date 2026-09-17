@@ -24,9 +24,10 @@ _sym_db = _symbol_database.Default()
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 from themis.sheaf.models import refdoc_pb2 as themis_dot_sheaf_dot_models_dot_refdoc__pb2
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/sheaf.proto\x12\x10themis.rpc.sheaf\x1a\x1bgoogle/protobuf/empty.proto\x1a themis/sheaf/models/refdoc.proto\"Z\n\x0eRefDocSnapshot\x12\x34\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\".themis.sheaf.models.refdoc.RefDoc\x12\x12\n\ngeneration\x18\x02 \x01(\x03\"#\n\x10\x46\x65tchPackRequest\x12\x0f\n\x07pack_id\x18\x01 \x01(\t\"\x1c\n\tPackChunk\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\"?\n\tRefUpdate\x12\x10\n\x03old\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x10\n\x03new\x18\x02 \x01(\tH\x01\x88\x01\x01\x42\x06\n\x04_oldB\x06\n\x04_new\"\xa4\x02\n\rPublishIntent\x12\x17\n\x0f\x62\x61se_generation\x18\x01 \x01(\x03\x12\x44\n\x0bref_updates\x18\x02 \x03(\x0b\x32/.themis.rpc.sheaf.PublishIntent.RefUpdatesEntry\x12\x33\n\x04head\x18\x03 \x01(\x0b\x32%.themis.sheaf.models.refdoc.RefTarget\x12/\n\x05packs\x18\x04 \x03(\x0b\x32 .themis.rpc.sheaf.PackDescriptor\x1aN\n\x0fRefUpdatesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12*\n\x05value\x18\x02 \x01(\x0b\x32\x1b.themis.rpc.sheaf.RefUpdate:\x02\x38\x01\"/\n\x0ePackDescriptor\x12\x0c\n\x04size\x18\x01 \x01(\x04\x12\x0f\n\x07pack_id\x18\x02 \x01(\t\"\x7f\n\x0ePublishRequest\x12\x31\n\x06intent\x18\x01 \x01(\x0b\x32\x1f.themis.rpc.sheaf.PublishIntentH\x00\x12/\n\x05\x63hunk\x18\x02 \x01(\x0b\x32\x1e.themis.rpc.sheaf.PublishChunkH\x00\x42\t\n\x07message\"-\n\x0cPublishChunk\x12\x0c\n\x04pack\x18\x01 \x01(\r\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"%\n\x0fPublishResponse\x12\x12\n\ngeneration\x18\x01 \x01(\x03\x32\xf1\x01\n\x05Sheaf\x12\x46\n\nReadRefDoc\x12\x16.google.protobuf.Empty\x1a .themis.rpc.sheaf.RefDocSnapshot\x12N\n\tFetchPack\x12\".themis.rpc.sheaf.FetchPackRequest\x1a\x1b.themis.rpc.sheaf.PackChunk0\x01\x12P\n\x07Publish\x12 .themis.rpc.sheaf.PublishRequest\x1a!.themis.rpc.sheaf.PublishResponse(\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16themis/rpc/sheaf.proto\x12\x10themis.rpc.sheaf\x1a\x1bgoogle/protobuf/empty.proto\x1a themis/sheaf/models/refdoc.proto\x1a themis/rpc/sandbox_options.proto\"Z\n\x0eRefDocSnapshot\x12\x34\n\x08\x64ocument\x18\x01 \x01(\x0b\x32\".themis.sheaf.models.refdoc.RefDoc\x12\x12\n\ngeneration\x18\x02 \x01(\x03\"#\n\x10\x46\x65tchPackRequest\x12\x0f\n\x07pack_id\x18\x01 \x01(\t\"\x1c\n\tPackChunk\x12\x0f\n\x07\x63ontent\x18\x01 \x01(\x0c\"?\n\tRefUpdate\x12\x10\n\x03old\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x10\n\x03new\x18\x02 \x01(\tH\x01\x88\x01\x01\x42\x06\n\x04_oldB\x06\n\x04_new\"\xa4\x02\n\rPublishIntent\x12\x17\n\x0f\x62\x61se_generation\x18\x01 \x01(\x03\x12\x44\n\x0bref_updates\x18\x02 \x03(\x0b\x32/.themis.rpc.sheaf.PublishIntent.RefUpdatesEntry\x12\x33\n\x04head\x18\x03 \x01(\x0b\x32%.themis.sheaf.models.refdoc.RefTarget\x12/\n\x05packs\x18\x04 \x03(\x0b\x32 .themis.rpc.sheaf.PackDescriptor\x1aN\n\x0fRefUpdatesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12*\n\x05value\x18\x02 \x01(\x0b\x32\x1b.themis.rpc.sheaf.RefUpdate:\x02\x38\x01\"/\n\x0ePackDescriptor\x12\x0c\n\x04size\x18\x01 \x01(\x04\x12\x0f\n\x07pack_id\x18\x02 \x01(\t\"\x7f\n\x0ePublishRequest\x12\x31\n\x06intent\x18\x01 \x01(\x0b\x32\x1f.themis.rpc.sheaf.PublishIntentH\x00\x12/\n\x05\x63hunk\x18\x02 \x01(\x0b\x32\x1e.themis.rpc.sheaf.PublishChunkH\x00\x42\t\n\x07message\"-\n\x0cPublishChunk\x12\x0c\n\x04pack\x18\x01 \x01(\r\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"%\n\x0fPublishResponse\x12\x12\n\ngeneration\x18\x01 \x01(\x03\x32\x86\x02\n\x05Sheaf\x12M\n\nReadRefDoc\x12\x16.google.protobuf.Empty\x1a .themis.rpc.sheaf.RefDocSnapshot\"\x05\xa2\xb5\x18\x01\x04\x12U\n\tFetchPack\x12\".themis.rpc.sheaf.FetchPackRequest\x1a\x1b.themis.rpc.sheaf.PackChunk\"\x05\xa2\xb5\x18\x01\x04\x30\x01\x12W\n\x07Publish\x12 .themis.rpc.sheaf.PublishRequest\x1a!.themis.rpc.sheaf.PublishResponse\"\x05\xa2\xb5\x18\x01\x04(\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,26 +36,32 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_PUBLISHINTENT_REFUPDATESENTRY']._loaded_options = None
   _globals['_PUBLISHINTENT_REFUPDATESENTRY']._serialized_options = b'8\001'
-  _globals['_REFDOCSNAPSHOT']._serialized_start=107
-  _globals['_REFDOCSNAPSHOT']._serialized_end=197
-  _globals['_FETCHPACKREQUEST']._serialized_start=199
-  _globals['_FETCHPACKREQUEST']._serialized_end=234
-  _globals['_PACKCHUNK']._serialized_start=236
-  _globals['_PACKCHUNK']._serialized_end=264
-  _globals['_REFUPDATE']._serialized_start=266
-  _globals['_REFUPDATE']._serialized_end=329
-  _globals['_PUBLISHINTENT']._serialized_start=332
-  _globals['_PUBLISHINTENT']._serialized_end=624
-  _globals['_PUBLISHINTENT_REFUPDATESENTRY']._serialized_start=546
-  _globals['_PUBLISHINTENT_REFUPDATESENTRY']._serialized_end=624
-  _globals['_PACKDESCRIPTOR']._serialized_start=626
-  _globals['_PACKDESCRIPTOR']._serialized_end=673
-  _globals['_PUBLISHREQUEST']._serialized_start=675
-  _globals['_PUBLISHREQUEST']._serialized_end=802
-  _globals['_PUBLISHCHUNK']._serialized_start=804
-  _globals['_PUBLISHCHUNK']._serialized_end=849
-  _globals['_PUBLISHRESPONSE']._serialized_start=851
-  _globals['_PUBLISHRESPONSE']._serialized_end=888
-  _globals['_SHEAF']._serialized_start=891
-  _globals['_SHEAF']._serialized_end=1132
+  _globals['_SHEAF'].methods_by_name['ReadRefDoc']._loaded_options = None
+  _globals['_SHEAF'].methods_by_name['ReadRefDoc']._serialized_options = b'\242\265\030\001\004'
+  _globals['_SHEAF'].methods_by_name['FetchPack']._loaded_options = None
+  _globals['_SHEAF'].methods_by_name['FetchPack']._serialized_options = b'\242\265\030\001\004'
+  _globals['_SHEAF'].methods_by_name['Publish']._loaded_options = None
+  _globals['_SHEAF'].methods_by_name['Publish']._serialized_options = b'\242\265\030\001\004'
+  _globals['_REFDOCSNAPSHOT']._serialized_start=141
+  _globals['_REFDOCSNAPSHOT']._serialized_end=231
+  _globals['_FETCHPACKREQUEST']._serialized_start=233
+  _globals['_FETCHPACKREQUEST']._serialized_end=268
+  _globals['_PACKCHUNK']._serialized_start=270
+  _globals['_PACKCHUNK']._serialized_end=298
+  _globals['_REFUPDATE']._serialized_start=300
+  _globals['_REFUPDATE']._serialized_end=363
+  _globals['_PUBLISHINTENT']._serialized_start=366
+  _globals['_PUBLISHINTENT']._serialized_end=658
+  _globals['_PUBLISHINTENT_REFUPDATESENTRY']._serialized_start=580
+  _globals['_PUBLISHINTENT_REFUPDATESENTRY']._serialized_end=658
+  _globals['_PACKDESCRIPTOR']._serialized_start=660
+  _globals['_PACKDESCRIPTOR']._serialized_end=707
+  _globals['_PUBLISHREQUEST']._serialized_start=709
+  _globals['_PUBLISHREQUEST']._serialized_end=836
+  _globals['_PUBLISHCHUNK']._serialized_start=838
+  _globals['_PUBLISHCHUNK']._serialized_end=883
+  _globals['_PUBLISHRESPONSE']._serialized_start=885
+  _globals['_PUBLISHRESPONSE']._serialized_end=922
+  _globals['_SHEAF']._serialized_start=925
+  _globals['_SHEAF']._serialized_end=1187
 # @@protoc_insertion_point(module_scope)

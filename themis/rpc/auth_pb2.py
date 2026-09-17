@@ -22,19 +22,22 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15themis/rpc/auth.proto\x12\x0fthemis.rpc.auth\",\n\x13ResolveTokenRequest\x12\x15\n\rsession_token\x18\x01 \x01(\t\"9\n\x0eSessionContext\x12\x12\n\nproject_id\x18\x01 \x01(\t\x12\x13\n\x0b\x61nalysis_id\x18\x02 \x01(\t2_\n\x04\x41uth\x12W\n\x0eResolveSession\x12$.themis.rpc.auth.ResolveTokenRequest\x1a\x1f.themis.rpc.auth.SessionContextb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15themis/rpc/auth.proto\x12\x0fthemis.rpc.auth\x1a themis/rpc/sandbox_options.proto\",\n\x13ResolveTokenRequest\x12\x15\n\rsession_token\x18\x01 \x01(\t\"9\n\x0eSessionContext\x12\x12\n\nproject_id\x18\x01 \x01(\t\x12\x13\n\x0b\x61nalysis_id\x18\x02 \x01(\t\"O\n\x0b\x43\x61llerClaim\x12)\n\ncalling_as\x18\x01 \x01(\x0e\x32\x15.themis.rpc.CallingAs\x12\x15\n\rsession_token\x18\x02 \x01(\t2_\n\x04\x41uth\x12W\n\x0eResolveSession\x12$.themis.rpc.auth.ResolveTokenRequest\x1a\x1f.themis.rpc.auth.SessionContextb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.auth_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_RESOLVETOKENREQUEST']._serialized_start=42
-  _globals['_RESOLVETOKENREQUEST']._serialized_end=86
-  _globals['_SESSIONCONTEXT']._serialized_start=88
-  _globals['_SESSIONCONTEXT']._serialized_end=145
-  _globals['_AUTH']._serialized_start=147
-  _globals['_AUTH']._serialized_end=242
+  _globals['_RESOLVETOKENREQUEST']._serialized_start=76
+  _globals['_RESOLVETOKENREQUEST']._serialized_end=120
+  _globals['_SESSIONCONTEXT']._serialized_start=122
+  _globals['_SESSIONCONTEXT']._serialized_end=179
+  _globals['_CALLERCLAIM']._serialized_start=181
+  _globals['_CALLERCLAIM']._serialized_end=260
+  _globals['_AUTH']._serialized_start=262
+  _globals['_AUTH']._serialized_end=357
 # @@protoc_insertion_point(module_scope)

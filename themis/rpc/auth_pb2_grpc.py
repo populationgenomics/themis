@@ -48,7 +48,11 @@ class AuthServicer:
 
     def ResolveSession(self, request, context):
         """Resolve a session token to its binding. An invalid, revoked, or expired token is a
-        PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body this slice.
+        PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body.
+
+        No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
+        cannot itself be gated on one. Its callers are the data-plane service accounts, which no
+        `Caller` member names; what may reach it is internal ingress and `run.invoker`.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
