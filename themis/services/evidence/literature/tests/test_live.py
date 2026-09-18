@@ -20,6 +20,7 @@ from themis.services.evidence.literature import discovery as discovery_mod
 from themis.services.evidence.literature import litcache as litcache_store
 from themis.services.evidence.literature import live as live_mod
 from themis.services.evidence.literature import variants
+from themis.services.evidence.tests import authz
 from themis.services.evidence.upstreams import europe_pmc, pubmed
 
 # One distinguishable answer per method: the forward has to return this object, not merely something
@@ -156,8 +157,11 @@ _FORWARDS: list[tuple[str, _Forward, object, tuple[object, ...]]] = [
         ('full_text_readiness', ['doc-1', 'doc-2']),
     ),
     (
-        'request_conversions',
-        lambda b: b.request_conversions(['doc-6', 'doc-7']),
+        # Conversions are requested through a view; the abstract half an adapter implements is
+        # `place_conversions`, which routes to the store. The coverage check below is keyed on the
+        # abstract method, so this drives the view and names the method it reaches.
+        'place_conversions',
+        lambda b: b.view_for(authz.AUTH).request_conversions(['doc-6', 'doc-7']),
         None,
         ('request_conversions', ['doc-6', 'doc-7']),
     ),

@@ -13,11 +13,12 @@ import httpx2
 import pytest
 from google.protobuf import json_format
 
-from themis.rpc import auth_pb2, clinvar_pb2
+from themis.rpc import clinvar_pb2
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence import errors
 from themis.services.evidence.clinvar import backend as clinvar_backend
 from themis.services.evidence.clinvar import config
+from themis.services.evidence.tests import authz
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
 _VCV = 'VCV001731988'
@@ -45,15 +46,11 @@ _SEED = json.dumps(
 )
 
 
-async def _unreachable_session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('building a backend resolves no session')
-
-
 def _from_env() -> clinvar_backend.ClinVarBackend:
     """Select the backend as the entrypoint would; no test here reaches an upstream."""
     return config.backend_from_env(
         deps_mod.Deps(
-            session_resolver=_unreachable_session_resolver,
+            authorizer=authz.authorizer(),
             http_client=httpx2.AsyncClient(),
             stack=contextlib.AsyncExitStack(),
         )

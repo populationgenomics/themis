@@ -13,7 +13,8 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.rpc import store_pb2, store_pb2_grpc
+from themis.clients.auth import claim as claim_mod
+from themis.rpc import sandbox_options_pb2, store_pb2, store_pb2_grpc
 from themis.services.sandbox_worker import store_client
 
 
@@ -41,7 +42,7 @@ def _grpc_store(stub: _Stub) -> store_client.GrpcStore:
     # Bypass __init__ so no real channel is dialled; inject the fake stub in place of the real one.
     store = store_client.GrpcStore.__new__(store_client.GrpcStore)
     store._stub = cast('store_pb2_grpc.StoreAsyncStub', stub)
-    store._metadata = ((store_client._SESSION_TOKEN_METADATA, 'TOK'),)
+    store._metadata = claim_mod.metadata_for(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, 'TOK')
     return store
 
 

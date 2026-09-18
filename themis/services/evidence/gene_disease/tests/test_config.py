@@ -10,17 +10,14 @@ import pathlib
 import httpx2
 import pytest
 
-from themis.rpc import auth_pb2, gene_disease_pb2
+from themis.rpc import gene_disease_pb2
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
 from themis.services.evidence.gene_disease import config
+from themis.services.evidence.tests import authz
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
-
-
-async def _unreachable_session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('building a backend resolves no session')
 
 
 def _from_env() -> gene_disease_backend.GeneDiseaseBackend:
@@ -28,7 +25,7 @@ def _from_env() -> gene_disease_backend.GeneDiseaseBackend:
     return asyncio.run(
         config.backend_from_env(
             deps_mod.Deps(
-                session_resolver=_unreachable_session_resolver,
+                authorizer=authz.authorizer(),
                 http_client=httpx2.AsyncClient(),
                 stack=contextlib.AsyncExitStack(),
             )

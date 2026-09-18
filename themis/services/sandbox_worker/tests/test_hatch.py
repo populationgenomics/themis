@@ -14,6 +14,7 @@ import grpc
 import pytest
 from google.protobuf import descriptor as protobuf_descriptor
 
+from themis.clients.auth import claim as claim_mod
 from themis.rpc import (
     clinvar_pb2,
     cspec_pb2,
@@ -23,6 +24,7 @@ from themis.rpc import (
     hello_pb2,
     literature_pb2,
     mavedb_pb2,
+    sandbox_options_pb2,
     splice_pb2,
     transcript_pb2,
     variant_pb2,
@@ -180,7 +182,7 @@ def test_forwarder_injects_the_session_token_on_every_rpc(forwarder_class: _Forw
     getattr(forwarder, method_name)(request, _context())
     call = channel.calls[method_name]
     assert call.request is request
-    assert call.metadata == (('x-themis-session-token', _TOKEN),)
+    assert call.metadata == claim_mod.metadata_for(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, _TOKEN)
 
 
 class _SettledFailure(grpc.RpcError):

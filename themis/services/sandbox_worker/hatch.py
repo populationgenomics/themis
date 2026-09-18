@@ -16,6 +16,7 @@ import grpc
 from google.protobuf import message
 from postern import grpc as postern_grpc
 
+from themis.clients.auth import claim as claim_mod
 from themis.rpc import (
     clinvar_pb2,
     clinvar_pb2_grpc,
@@ -31,6 +32,7 @@ from themis.rpc import (
     literature_pb2_grpc,
     mavedb_pb2,
     mavedb_pb2_grpc,
+    sandbox_options_pb2,
     splice_pb2,
     splice_pb2_grpc,
     transcript_pb2,
@@ -41,8 +43,6 @@ from themis.rpc import (
     vep_pb2_grpc,
 )
 from themis.services.sandbox_worker import _generated
-
-_SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
 
 # `time_remaining()` reports an absent caller deadline as the remainder of an int64-nanosecond one rather than as
 # an absence, so the bound has to be a cap and not a fallback. Held under `worker._TOOL_TIMEOUT_S`
@@ -72,7 +72,7 @@ GUEST_METHODS = _generated.GUEST_METHODS
 def _forward[Request: message.Message, Response: message.Message](
     stub_method: grpc.UnaryUnaryMultiCallable[Request, Response],
     request: Request,
-    metadata: tuple[tuple[str, str], ...],
+    metadata: claim_mod.Metadata,
     context: grpc.ServicerContext,
 ) -> Response:
     """Forward one call under the caller's own budget, capped, restating a settled failure under its own code.
@@ -97,17 +97,18 @@ def _forward[Request: message.Message, Response: message.Message](
 
 
 class _Forwarder[Stub]:
-    """The half of a forwarder that is not its rpcs: one upstream stub, and the identity every call carries.
+    """The half of a forwarder that is not its rpcs: one upstream stub, and the claim every call carries.
 
-    Subclasses pass their generated stub class through, so the metadata line that decides what identity a
-    forwarded call presents is authored once rather than once per service.
+    Subclasses pass their generated stub class through, so the metadata line that decides what a forwarded
+    call claims to be calling as — the agent, in this session (rpc-authorization.md) — is authored once rather
+    than once per service.
     """
 
     def __init__(
         self, stub_class: Callable[[grpc.Channel], Stub], channel: grpc.Channel, *, session_token: str
     ) -> None:
         self._stub = stub_class(channel)
-        self._metadata = ((_SESSION_TOKEN_METADATA, session_token),)
+        self._metadata = claim_mod.metadata_for(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, session_token)
 
 
 class HelloForwarder(_Forwarder[hello_pb2_grpc.HelloStub], hello_pb2_grpc.HelloServicer):

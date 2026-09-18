@@ -22,12 +22,7 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
             SQL connector for as long as the server runs — nothing runs a service's SIGTERM to
             ground, so in practice it unwinds only when a later interface fails to build (see
             `__main__`) — and `deps.http_client` is what it calls the upstream indexes on.
-            `deps.session_resolver` gates one step of one rpc: the reads here authenticate no
-            caller at all, which is why this file stays outside the agent hatch — exposure requires
-            the gate at every door (`sandbox-rpc-exposure.md`) — but the conversion
-            `MaybeIngestPapers` enqueues spends Anthropic tokens, and that is not a cost an
-            unauthorized caller may incur.
+            Admission is not this interface's: the server `deps.authorizer` gates carries the auth
+            interceptor, and each rpc's contract says who it admits (rpc-authorization.md).
     """
-    literature_pb2_grpc.add_LiteratureServicer_to_server(
-        servicer.Servicer(config.backend_from_env(deps), deps.session_resolver), server
-    )
+    literature_pb2_grpc.add_LiteratureServicer_to_server(servicer.Servicer(config.backend_from_env(deps)), server)

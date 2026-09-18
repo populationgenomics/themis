@@ -16,9 +16,8 @@ import grpc
 import grpc.aio
 from google.protobuf import empty_pb2
 
-from themis.rpc import store_pb2, store_pb2_grpc
-
-_SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
+from themis.clients.auth import claim as claim_mod
+from themis.rpc import sandbox_options_pb2, store_pb2, store_pb2_grpc
 
 
 class Store(abc.ABC):
@@ -32,11 +31,11 @@ class Store(abc.ABC):
 
 
 class GrpcStore(Store):
-    """The store over its gRPC contract (session-token metadata; the channel carries the SA ID token)."""
+    """The store over its gRPC contract; each call claims the worker calling as itself within the session."""
 
     def __init__(self, channel: grpc.aio.Channel, *, session_token: str) -> None:
         self._stub = store_pb2_grpc.StoreStub(channel)
-        self._metadata = ((_SESSION_TOKEN_METADATA, session_token),)
+        self._metadata = claim_mod.metadata_for(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, session_token)
 
     @override
     async def get_working_document(self) -> str | None:

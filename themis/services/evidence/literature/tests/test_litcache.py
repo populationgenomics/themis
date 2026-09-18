@@ -25,12 +25,13 @@ from google.protobuf import timestamp_pb2
 from themis.litcache import enqueue
 from themis.litcache import outcome as litcache_outcome
 from themis.litcache.models import litcache_pb2
-from themis.rpc import auth_pb2, literature_pb2, literature_pb2_grpc
+from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import discovery as discovery_mod
 from themis.services.evidence.literature import litcache as litcache_store
 from themis.services.evidence.literature import live as live_mod
 from themis.services.evidence.literature import servicer as servicer_mod
+from themis.services.evidence.tests import authz
 from themis.testing import in_process_grpc
 
 _DOC = '000006fa-e679-4f46-a052-8fb0e69f280c'
@@ -373,10 +374,6 @@ def test_select_rendering_breaks_a_converter_tie_toward_the_newer() -> None:
     assert selected[0] == 'newer-hash'
 
 
-async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('a literature read resolves no session; only the conversion enqueue does')
-
-
 def _no_upstream(request: httpx2.Request) -> httpx2.Response:
     """The index half's transport here: these are store tests, and a dial out is the failure."""
     raise AssertionError(f'a store test reached an upstream: {request.url}')
@@ -390,9 +387,11 @@ def _run_over_grpc[T](
     async def run() -> T:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
             backend = live_mod.LiveBackend(litcache_store.Store(bucket), discovery_mod.Indexes(http_client))
-            servicer = servicer_mod.Servicer(backend, _unreachable_resolver)
+            servicer = servicer_mod.Servicer(backend)
             async with in_process_grpc.serving(
-                lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
+                lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
+                interceptors=(authz.InjectMetadata(authz.ADMITTED),),
+                server_interceptors=authz.server_interceptors(),
             ) as channel:
                 return await call(literature_pb2_grpc.LiteratureStub(channel))
 

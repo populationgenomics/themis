@@ -1,13 +1,15 @@
 """What every evidence servicer of the evidence image does around its backend call.
 
-Each rpc authorizes first, then bounds its upstream work and maps a raised `errors` type onto the
-status code the proto states for it. Both are identical across interfaces, so they live here and each
-servicer subclasses `EvidenceServicer` alongside its generated base.
+Admission is the auth interceptor's, before any handler here runs (rpc-authorization.md): the server is
+built by `interceptor.gated_server`, and each rpc's contract says who it admits. What the servicers share
+is what comes after — bounding the upstream work under the rpc deadline and mapping a raised `errors`
+type onto the status code the proto states for it — so that lives here, and each of the nine
+database-backed servicers subclasses `EvidenceServicer` alongside its generated base. Their
+`_require_session` resolves the session in the body as well, a check the interceptor has made redundant.
 
-`literature` mixes in the gate and not the error mapping: its corpus is not session-scoped
-(entitlement is a deferred non-goal), so its reads resolve no session and only the conversion its
-producer rpc enqueues does. Its own failures map per rpc, and the deadline is the image's rather than
-the mixin's, so it takes that from `within_deadline` directly.
+`literature` does not subclass this: it maps its own failures per rpc and holds its own deadline
+through `within_deadline` directly, and its producer reads the call's context (`context.current()`) to
+charge the spend it starts.
 """
 
 from __future__ import annotations

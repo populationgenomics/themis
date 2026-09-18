@@ -61,7 +61,7 @@ class LiveBackend(literature_backend.LiteratureBackend):
         return await self._store.full_text_readiness(doc_ids)
 
     @override
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
         await self._store.request_conversions(doc_ids)
 
     @override

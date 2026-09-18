@@ -9,22 +9,19 @@ import json
 import httpx2
 import pytest
 
-from themis.rpc import auth_pb2, mavedb_pb2
+from themis.rpc import mavedb_pb2
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence import errors
 from themis.services.evidence.mavedb import backend as mavedb_backend
 from themis.services.evidence.mavedb import config
-
-
-async def _unreachable_session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('building a backend resolves no session')
+from themis.services.evidence.tests import authz
 
 
 def _from_env() -> mavedb_backend.MaveDbBackend:
     """Select the backend as the entrypoint would; no test here reaches an upstream."""
     return config.backend_from_env(
         deps_mod.Deps(
-            session_resolver=_unreachable_session_resolver,
+            authorizer=authz.authorizer(),
             http_client=httpx2.AsyncClient(),
             stack=contextlib.AsyncExitStack(),
         )

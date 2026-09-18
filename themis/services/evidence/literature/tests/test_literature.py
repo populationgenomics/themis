@@ -12,18 +12,15 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, literature_pb2, literature_pb2_grpc
+from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import fixture as fixture_mod
 from themis.services.evidence.literature import servicer as servicer_mod
 from themis.services.evidence.literature import variants
+from themis.services.evidence.tests import authz
 from themis.services.evidence.upstreams import europe_pmc, litvar, pubmed
 from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
 
 DOC_XML = 'doc-xml'  # a source-XML-derived markdown rendering + a PDF
 DOC_OCR = 'doc-ocr'  # a PDF whose only rendering is a lossy OCR (no markdown)
@@ -88,12 +85,6 @@ SEED: Mapping[str, fixture_mod.SeededPaper] = {
 }
 
 
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
-
-
 RECORDS = (
     europe_pmc.Record(
         pmid=INDEXED_PMID,
@@ -146,14 +137,33 @@ def _run_over[T](
 ) -> T:
     """Drive one call against a real in-process server + stub over `backend`.
 
-    The stub attaches no session token unless `stub_call` asks for one, so a call driven through here
-    reaches the servicer unauthorized by default — which is what a read here is entitled to be.
+    An admitting credential (the web tier's bearer and a resolvable session) is injected into every
+    call, so a gated read reaches the servicer admitted without each `stub_call` threading it. A test of
+    the gate itself drives `_run_unauthorized`, which injects nothing.
     """
+    return _run_with(backend, stub_call, interceptors=(authz.InjectMetadata(authz.ADMITTED),))
 
+
+def _run_unauthorized[T](
+    backend: literature_backend.LiteratureBackend,
+    stub_call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[T]],
+) -> T:
+    """Drive one call with no credential injected: the call carries only what `stub_call` attaches."""
+    return _run_with(backend, stub_call, interceptors=())
+
+
+def _run_with[T](
+    backend: literature_backend.LiteratureBackend,
+    stub_call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[T]],
+    *,
+    interceptors: tuple[grpc.aio.ClientInterceptor, ...],
+) -> T:
     async def run() -> T:
-        servicer = servicer_mod.Servicer(backend, _session_resolver)
+        servicer = servicer_mod.Servicer(backend)
         async with in_process_grpc.serving(
-            lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
+            lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
+            interceptors=interceptors,
+            server_interceptors=authz.server_interceptors(),
         ) as channel:
             return await stub_call(literature_pb2_grpc.LiteratureStub(channel))
 
@@ -387,9 +397,7 @@ def test_maybe_ingest_papers_resolves_ids_to_papers_and_readiness() -> None:
     # A token, because the batch holds a PENDING paper: seeing PENDING in the response means the
     # conversion for it was asked for, and that step is gated.
     response = _run(
-        lambda s: s.MaybeIngestPapers(
-            literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR]), metadata=_GOOD_TOKEN
-        )
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR]))
     )
     assert _paper_readiness(response) == {
         DOI_XML: (DOC_XML, literature_pb2.FULL_TEXT_STATE_READY),
@@ -520,7 +528,7 @@ class _ConversionRecordingBackend(fixture_mod.FixtureBackend):
         self.requested: list[list[str]] = []
 
     @override
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
         self.requested.append(list(doc_ids))
 
 
@@ -538,7 +546,7 @@ class _FailingConversionBackend(fixture_mod.FixtureBackend):
         self._error = error
 
     @override
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
         del doc_ids
         raise self._error
 
@@ -550,7 +558,6 @@ def test_maybe_ingest_papers_asks_for_a_conversion_of_the_pending_papers_only() 
     _run(
         lambda s: s.MaybeIngestPapers(
             literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR, 'doi:10.1/never-seen']),
-            metadata=_GOOD_TOKEN,
         ),
         backend=backend,
     )
@@ -573,16 +580,17 @@ def test_a_repeated_request_asks_again_and_lets_the_task_name_dedup() -> None:
     # many and scales to zero, so the only durable dedup is the task name. A servicer that remembered
     # would drop the second request of a caller whose first task has since been deleted.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
-    servicer = servicer_mod.Servicer(backend, _session_resolver)
+    servicer = servicer_mod.Servicer(backend)
     request = literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])
 
     async def run() -> None:
         async with in_process_grpc.serving(
-            lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server)
+            lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
+            server_interceptors=authz.server_interceptors(),
         ) as channel:
             stub = literature_pb2_grpc.LiteratureStub(channel)
-            await stub.MaybeIngestPapers(request, metadata=_GOOD_TOKEN)
-            await stub.MaybeIngestPapers(request, metadata=_GOOD_TOKEN)
+            await stub.MaybeIngestPapers(request, metadata=authz.AGENT)
+            await stub.MaybeIngestPapers(request, metadata=authz.AGENT)
 
     asyncio.run(run())
     assert backend.requested == [[DOC_OCR], [DOC_OCR]]
@@ -603,9 +611,7 @@ def test_an_enqueue_failure_maps_to_the_status_that_matches_its_remedy(
     # spend the caller's whole budget on a deployment it cannot repair.
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(
-            lambda s: s.MaybeIngestPapers(
-                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=_GOOD_TOKEN
-            ),
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
             backend=_FailingConversionBackend(SEED, RECORDS, ENTITIES, error),
         )
     assert exc.value.code() is expected
@@ -616,66 +622,107 @@ def test_an_enqueue_failure_fails_the_call_rather_than_reporting_readiness() -> 
     # failed enqueue would have no reason to ask again and the paper would never be converted.
     with pytest.raises(grpc.aio.AioRpcError):
         _run(
-            lambda s: s.MaybeIngestPapers(
-                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR]), metadata=_GOOD_TOKEN
-            ),
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR])),
             backend=_FailingConversionBackend(
                 SEED, RECORDS, ENTITIES, literature_backend.ConversionUnavailableError('down')
             ),
         )
 
 
-def test_a_conversion_needs_a_session_token() -> None:
-    # A conversion spends Anthropic tokens, so a caller that cannot name a session must not be able to
-    # start one — and the refusal has to reach the caller rather than answering PENDING with no task
-    # placed, which is the dead end a failed enqueue would leave.
+def test_a_caller_the_contract_does_not_name_cannot_ingest() -> None:
+    # A conversion spends model budget. The web tier is verified but is not a caller MaybeIngestPapers
+    # names, so the interceptor refuses it before any work: PERMISSION_DENIED.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
     with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run(
-            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
-            backend=backend,
-        )
-    assert exc.value.code() is grpc.StatusCode.UNAUTHENTICATED
-    assert backend.requested == []
-
-
-def test_a_conversion_needs_a_token_the_authorizer_resolves() -> None:
-    # A token the authorizer rejects is PERMISSION_DENIED, not UNAUTHENTICATED: the caller presented
-    # one, so re-presenting the same one is not the remedy.
-    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
-    with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run(
+        _run_unauthorized(
+            backend,
             lambda s: s.MaybeIngestPapers(
-                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=_BAD_TOKEN
+                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=authz.WEB
             ),
-            backend=backend,
         )
     assert exc.value.code() is grpc.StatusCode.PERMISSION_DENIED
     assert backend.requested == []
 
 
-def test_a_mixed_batch_with_no_session_is_refused_whole() -> None:
-    # The refusal is not per-paper: a settled paper alongside a PENDING one does not buy a readiness
-    # answer with the enqueue quietly skipped, which is the dead end a failed enqueue would leave.
+def test_an_unverified_caller_is_refused_before_admission_is_considered() -> None:
+    # No ID token this service can verify: not a denial but UNAUTHENTICATED, since Cloud Run admits no
+    # call without one.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
     with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run(
-            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR])),
-            backend=backend,
+        _run_unauthorized(
+            backend,
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
         )
     assert exc.value.code() is grpc.StatusCode.UNAUTHENTICATED
     assert backend.requested == []
 
 
-def test_a_resolved_session_may_start_a_conversion() -> None:
-    # The other half of the gate: it refuses the caller who cannot name a session without also refusing
-    # the one who can.
+def test_an_unresolvable_session_is_no_binding() -> None:
+    # A session token the resolver rejects is no binding, so the agent's member is not satisfied — the
+    # caller presented a token, so re-presenting the same one is not the remedy.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
-    _run(
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_unauthorized(
+            backend,
+            lambda s: s.MaybeIngestPapers(
+                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=authz.AGENT_BAD_SESSION
+            ),
+        )
+    assert exc.value.code() is grpc.StatusCode.PERMISSION_DENIED
+    assert backend.requested == []
+
+
+def test_the_sandbox_job_account_with_no_claim_is_a_fault() -> None:
+    # The hatch and the worker's own clients always claim what they are calling as, so a call from that account
+    # with no claim is a worker defect or a compromise, surfaced as INTERNAL rather than a denial.
+    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_unauthorized(
+            backend,
+            lambda s: s.MaybeIngestPapers(
+                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=authz.SANDBOX_JOB
+            ),
+        )
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
+    assert backend.requested == []
+
+
+def test_the_worker_acting_for_itself_cannot_ingest() -> None:
+    # Same account as the agent, a different claim: the producer names the agent's member, not the worker's.
+    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_unauthorized(
+            backend,
+            lambda s: s.MaybeIngestPapers(
+                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]),
+                metadata=authz.WORKER,
+            ),
+        )
+    assert exc.value.code() is grpc.StatusCode.PERMISSION_DENIED
+    assert backend.requested == []
+
+
+def test_a_session_scoped_call_may_start_a_conversion() -> None:
+    # The agent as the hatch presents it: the job's account claiming the agent's session, which resolves.
+    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
+    _run_unauthorized(
+        backend,
         lambda s: s.MaybeIngestPapers(
-            literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=_GOOD_TOKEN
+            literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=authz.AGENT
         ),
-        backend=backend,
+    )
+    assert backend.requested == [[DOC_OCR]]
+
+
+def test_a_named_caller_with_no_session_may_start_a_conversion() -> None:
+    # CALLER_CLU is named on the contract, so the maintainer's account may convert on its identity alone —
+    # the capability the contract adds over the session-only gate it replaced.
+    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
+    _run_unauthorized(
+        backend,
+        lambda s: s.MaybeIngestPapers(
+            literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR]), metadata=authz.CLU
+        ),
     )
     assert backend.requested == [[DOC_OCR]]
 
@@ -698,9 +745,22 @@ def test_a_pmid_value_that_is_not_one_is_refused() -> None:
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
 
 
-def test_resolving_an_id_needs_no_session_when_there_is_nothing_to_produce() -> None:
-    # The corpus is shared, so reading it is ungated — including the crosswalk read that turns a DOI
-    # into a doc_id. Only the enqueue is gated, so a batch with nothing PENDING answers without a token.
+def test_ingest_is_gated_even_with_nothing_to_produce() -> None:
+    # The gate is on the rpc, not on the enqueue: a batch that resolves to nothing PENDING still needs
+    # an admitted caller, so a verified caller the contract does not name cannot even read readiness
+    # back through this door.
+    backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_unauthorized(
+            backend,
+            lambda s: s.MaybeIngestPapers(
+                literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML]), metadata=authz.WEB
+            ),
+        )
+    assert exc.value.code() is grpc.StatusCode.PERMISSION_DENIED
+
+
+def test_an_admitted_caller_reads_readiness_for_a_settled_paper() -> None:
     response = _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML])))
     assert _paper_readiness(response) == {DOI_XML: (DOC_XML, literature_pb2.FULL_TEXT_STATE_READY)}
 
@@ -721,7 +781,7 @@ def test_the_fixture_backend_converts_nothing_and_says_so(caplog: pytest.LogCapt
     # be able to see that nothing was ever going to convert it.
     backend = fixture_mod.FixtureBackend(SEED, RECORDS, ENTITIES)
     with caplog.at_level('INFO', logger=fixture_mod.__name__):
-        asyncio.run(backend.request_conversions([DOC_OCR]))
+        asyncio.run(backend.view_for(authz.AUTH).request_conversions([DOC_OCR]))
     assert DOC_OCR in caplog.text
 
 
@@ -976,7 +1036,7 @@ class _IndexOnlyBackend(literature_backend.LiteratureBackend):
         raise AssertionError('no store call is exercised here')
 
     @override
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
         raise AssertionError('no store call is exercised here')
 
 

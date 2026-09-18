@@ -36,6 +36,8 @@ def test_the_shared_evidence_client_is_the_admitting_one(monkeypatch: pytest.Mon
     """Every live upstream call rides this client; built plainly, nothing would hold the register."""
     monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
     monkeypatch.setenv('THEMIS_EVIDENCE_FIXTURE_CONTEXTS', '{}')
+    monkeypatch.setenv('THEMIS_EVIDENCE_FIXTURE_CALLERS', '{}')
+    monkeypatch.setenv('THEMIS_GCP_PROJECT', 'x')
 
     async def run() -> None:
         async with contextlib.AsyncExitStack() as stack:

@@ -50,7 +50,7 @@ class EvidenceService(pulumi.ComponentResource):
         db_user: The runtime SA's Cloud SQL IAM DB-user login — the crosswalk `SELECT` grant's
             subject, fed to the migrate runner as `EVIDENCE_DB_USER`.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
-        url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for.
+        url: The service's ``run.app`` URL — what a caller dials, and the audience its ID token names.
     """
 
     def __init__(
@@ -74,7 +74,6 @@ class EvidenceService(pulumi.ComponentResource):
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
-
         service_account = gcp.serviceaccount.Account(
             'themis-evidence-runtime',
             project=project,
@@ -157,10 +156,12 @@ class EvidenceService(pulumi.ComponentResource):
                             cpu_idle=True,
                         ),
                         envs=[
-                            # Image-wide: one session resolver over one auth service, for every
-                            # interface that authorizes (literature does not).
+                            # Image-wide: the auth interceptor gating every rpc resolves sessions over
+                            # one auth service and completes a Caller's account id in this project
+                            # (rpc-authorization.md).
                             _env('THEMIS_AUTHORIZER_BACKEND', 'http'),
                             _env('THEMIS_AUTH_URL', auth_url),
+                            _env('THEMIS_GCP_PROJECT', project),
                             _env('THEMIS_LITERATURE_BACKEND', 'live'),
                             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
                             # The crosswalk trio, all-or-nothing: the interface fails startup on a

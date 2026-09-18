@@ -17,4 +17,6 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
         deps: The image's session resolver and shared HTTP client.
     """
     backend = config.backend_from_env(deps)
-    transcript_pb2_grpc.add_TranscriptServicer_to_server(servicer.Servicer(backend, deps.session_resolver), server)
+    transcript_pb2_grpc.add_TranscriptServicer_to_server(
+        servicer.Servicer(backend, deps.authorizer.session_resolver), server
+    )

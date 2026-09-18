@@ -303,7 +303,7 @@ class FixtureBackend(literature_backend.LiteratureBackend):
         return result
 
     @override
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
         # The seed has no queue and no worker, so a PENDING paper stays PENDING however often it is
         # asked for. Logged rather than passed over in silence: an offline caller watching a paper
         # never advance has to be able to see that nothing was ever going to convert it.

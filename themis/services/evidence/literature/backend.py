@@ -22,6 +22,7 @@ import abc
 import dataclasses
 from collections.abc import Sequence
 
+from themis.clients.auth import context as auth_context
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import variants
 from themis.services.evidence.upstreams import europe_pmc, pubmed
@@ -140,6 +141,58 @@ class FileContent:
 ContentSelector = MarkdownContent | PdfContent | FileContent
 
 
+@dataclasses.dataclass(frozen=True)
+class LiteratureView:
+    """The corpus as one call may see it — the route every corpus read takes, and the masking seam.
+
+    The servicer resolves a view from the call's context (``LiteratureBackend.view_for``) and reads the
+    corpus through it; the adapters never see a context. Today the view is the whole corpus for every
+    call, so each read delegates to the backend unchanged. A masking layer narrows what a call sees
+    here — by the Analysis the call is scoped to, never by the person driving it
+    (rpc-authorization.md) — without the servicer or an adapter changing.
+    """
+
+    _backend: LiteratureBackend
+
+    async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
+        return await self._backend.describe_paper(doc_id)
+
+    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
+        return await self._backend.get_markdown(doc_id, max_chars)
+
+    async def resolve_content(self, doc_id: str, selector: ContentSelector) -> literature_pb2.ContentLocation:
+        return await self._backend.resolve_content(doc_id, selector)
+
+    async def locate(
+        self, doc_id: str, quote: str, representation: literature_pb2.Representation
+    ) -> literature_pb2.LocateResponse:
+        return await self._backend.locate(doc_id, quote, representation)
+
+    async def validate(self, doc_id: str, quote: str) -> literature_pb2.ValidateResponse:
+        return await self._backend.validate(doc_id, quote)
+
+    async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
+        return await self._backend.resolve_external_ids(external_ids)
+
+    async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
+        return await self._backend.full_text_readiness(doc_ids)
+
+    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
+        """Ask for a full text for each of these papers this view admits a conversion for.
+
+        Idempotent: the request is keyed on the ``doc_id``, so repeating it for a paper already in
+        flight adds nothing. Callers pass the PENDING ids only — a paper with no manifest has nothing
+        for a producer to read, and a settled one needs nothing.
+
+        Raises:
+            ConversionNotConfiguredError: this deployment wires no conversion lane (permanent).
+            ConversionUnavailableError: the request could not be placed, and repeating it might
+                succeed (transient).
+            ConversionEnqueueFailedError: the request was refused on its own terms (permanent).
+        """
+        await self._backend.place_conversions(list(doc_ids))
+
+
 class LiteratureBackend(abc.ABC):
     @abc.abstractmethod
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
@@ -224,22 +277,24 @@ class LiteratureBackend(abc.ABC):
         """
         ...
 
+    def view_for(self, auth: auth_context.AuthContext) -> LiteratureView:
+        """The corpus as the call ``auth`` describes may see it — the whole corpus, until masking exists.
+
+        The masking seam (rpc-authorization.md): the call's context reaches the port here and nowhere
+        else, so a later narrowing by Analysis happens in one place. Concrete on the port so every
+        adapter shares one definition; an adapter with a genuinely different view overrides it.
+        """
+        del auth
+        return LiteratureView(self)
+
     @abc.abstractmethod
-    async def request_conversions(self, doc_ids: Sequence[str]) -> None:
-        """Ask for a full text for each of these papers, at most one conversion in flight per paper.
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
+        """Place the conversion requests for these papers: the adapter's enqueue, reached through a view.
 
-        Idempotent: the request is keyed on the ``doc_id``, so repeating it for a paper already in
-        flight adds nothing. Callers pass the PENDING ids only — a paper with no manifest has nothing
-        for a producer to read, and a settled one needs nothing.
-
-        Whole-batch failures, never per-id: a caller cannot act on "three of these ten were placed",
-        and repeating the whole call costs nothing for the ones that were.
-
-        Raises:
-            ConversionNotConfiguredError: this deployment wires no conversion lane (permanent).
-            ConversionUnavailableError: the request could not be placed, and repeating it might
-                succeed (transient).
-            ConversionEnqueueFailedError: the request was refused on its own terms (permanent).
+        Called through a view, which has already admitted these doc_ids; at most one conversion in
+        flight per paper. Whole-batch failures, never per-id: a caller cannot act on "three of these ten
+        were placed", and repeating the whole call costs nothing for the ones that were. Raises the
+        ``Conversion*`` failures ``LiteratureView.request_conversions`` documents.
         """
         ...
 

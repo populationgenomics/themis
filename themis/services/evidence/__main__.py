@@ -2,8 +2,10 @@
 
 `INTERFACES` is the image's composition; each entry builds its own backend and installs its servicer,
 so `PORT` (the Cloud Run convention) is the only env var read here. `Deps` is what the image builds
-once and hands to each of them — the session resolver and the shared HTTP client, which are the
-image's concern rather than any one interface's (see `deps`). The `grpc.health.v1` service reports
+once and hands to each of them — the authorizer, the session resolver and the shared HTTP client, which
+are the image's concern rather than any one interface's (see `deps`). The server is built by
+`interceptor.gated_server`, so the auth interceptor gates every rpc of every interface before its
+handler runs (rpc-authorization.md); the `grpc.health.v1` service is its one exemption, and reports
 SERVING for the server as a whole, with no per-interface entry: an interface that cannot build its
 backend exits the process, so the server never serves a partial set.
 """
@@ -19,6 +21,7 @@ from collections.abc import Awaitable, Callable
 import grpc.aio
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
+from themis.clients.auth import interceptor as interceptor_mod
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.clinvar import interface as clinvar_interface
 from themis.services.evidence.cspec import interface as cspec_interface
@@ -53,9 +56,9 @@ INTERFACES: tuple[Register, ...] = (
 
 
 async def _serve() -> None:
-    server = grpc.aio.server()
     async with contextlib.AsyncExitStack() as stack:
         deps = await deps_mod.deps_from_env(stack)
+        server = interceptor_mod.gated_server(deps.authorizer)
         for register in INTERFACES:
             await register(server, deps)
         # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.

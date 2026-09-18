@@ -13,11 +13,12 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud.sql import connector as sql_connector
 
 from themis.litcache import enqueue
-from themis.rpc import auth_pb2, literature_pb2
+from themis.rpc import literature_pb2
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import config
 from themis.services.evidence.literature import live as live_mod
+from themis.services.evidence.tests import authz
 
 _BUCKET = 'a-bucket'
 _CROSSWALK_VARS = (
@@ -46,13 +47,9 @@ _CONVERT_ENV = dict(
 _EMPTY_SEED = json.dumps({'store': {}, 'discovery': {'records': [], 'entities': [], 'book_articles': []}})
 
 
-async def _unreachable_resolver(session_token: str) -> auth_pb2.SessionContext:
-    raise AssertionError('literature resolves no session')
-
-
 def _deps(stack: contextlib.AsyncExitStack | None = None) -> deps_mod.Deps:
     return deps_mod.Deps(
-        session_resolver=_unreachable_resolver,
+        authorizer=authz.authorizer(),
         http_client=httpx2.AsyncClient(),
         stack=stack if stack is not None else contextlib.AsyncExitStack(),
     )
@@ -302,7 +299,7 @@ def test_live_selector_without_the_convert_trio_leaves_conversion_off(monkeypatc
     _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
     backend = _from_env()
     with pytest.raises(literature_backend.ConversionNotConfiguredError):
-        asyncio.run(backend.request_conversions(['doc-1']))
+        asyncio.run(backend.view_for(authz.AUTH).request_conversions(['doc-1']))
 
 
 @pytest.mark.parametrize('omitted', _CONVERT_VARS)

@@ -17,8 +17,15 @@ an entity set the index holds nothing for.
 
 ``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: the papers it resolves
 to PENDING get a conversion requested through the backend, so its failures split three ways — retry
-(UNAVAILABLE), fix the deployment (FAILED_PRECONDITION), or page someone (INTERNAL). It is also the
-only rpc here that authorizes, and only over its enqueue step — see ``_request_conversions``.
+(UNAVAILABLE), fix the deployment (FAILED_PRECONDITION), or page someone (INTERNAL). It is also the one
+rpc whose implementation does more with the call's context than hand it to the port: the spend it
+starts is charged to what the call was made for (rpc-authorization.md).
+
+No rpc here carries admission code. Who may call each one is in the proto — its ``admits_caller`` — and
+the auth interceptor the server is built with denies a call the contract does not admit before any method
+runs. What every corpus read does do is resolve the
+call's view of the corpus (``LiteratureBackend.view_for``) and read through it; the view is the whole
+corpus today, and the seam a masking layer would fill.
 
 The discovery rpcs also own the ceilings: a request's ``max_results`` is clamped here, and each
 response carries the source's own total, so a truncated answer is legible as one. Every rpc answers within
@@ -35,7 +42,7 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
+from themis.clients.auth import context as auth_context
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.literature import backend as literature_backend
@@ -85,18 +92,19 @@ _MAX_DOC_IDS = 100
 _MAX_EXTERNAL_IDS = 100
 
 
-class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer):
+class Servicer(literature_pb2_grpc.LiteratureServicer):
     """One bound per rpc: the public method holds the deadline, the work it bounds sits behind it.
 
     The split is what keeps the bound whole — a handler's validation, its backend calls and the
     response it builds all run inside the budget, so nothing an rpc awaits sits outside it.
     """
 
-    def __init__(
-        self, backend: literature_backend.LiteratureBackend, session_resolver: session_mod.SessionResolver
-    ) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: literature_backend.LiteratureBackend) -> None:
         self._backend = backend
+
+    def _view(self) -> literature_backend.LiteratureView:
+        """The corpus as the call being served may see it."""
+        return self._backend.view_for(auth_context.current())
 
     @override
     async def DescribePaper(
@@ -108,7 +116,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         self, request: literature_pb2.DescribePaperRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.PaperInfo:
         try:
-            return await self._backend.describe_paper(request.doc_id)
+            return await self._view().describe_paper(request.doc_id)
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, errors.clipped(f'unknown doc_id {request.doc_id!r}'))
         except literature_backend.CorruptMetadataError as e:
@@ -124,7 +132,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         self, request: literature_pb2.GetMarkdownRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.GetMarkdownResponse:
         try:
-            return await self._backend.get_markdown(request.doc_id, _clamp_max_chars(request.max_chars))
+            return await self._view().get_markdown(request.doc_id, _clamp_max_chars(request.max_chars))
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, errors.clipped(f'unknown doc_id {request.doc_id!r}'))
         except literature_backend.MissingRenderingBlobError as e:
@@ -143,7 +151,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         if selector is None:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, 'ResolveContent requires a selector')
         try:
-            return await self._backend.resolve_content(request.doc_id, selector)
+            return await self._view().resolve_content(request.doc_id, selector)
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, errors.clipped(f'unknown doc_id {request.doc_id!r}'))
         except literature_backend.MissingContentError as e:
@@ -161,7 +169,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         if request.representation not in (literature_pb2.REPRESENTATION_MARKDOWN, literature_pb2.REPRESENTATION_PDF):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, 'Locate requires a known representation')
         try:
-            return await self._backend.locate(request.doc_id, request.quote, request.representation)
+            return await self._view().locate(request.doc_id, request.quote, request.representation)
         except literature_backend.UnknownPaperError:
             await context.abort(grpc.StatusCode.NOT_FOUND, errors.clipped(f'unknown doc_id {request.doc_id!r}'))
         except literature_backend.RepresentationUnavailableError as e:
@@ -181,7 +189,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         self, request: literature_pb2.ValidateRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.ValidateResponse:
         try:
-            return await self._backend.validate(request.doc_id, request.quote)
+            return await self._view().validate(request.doc_id, request.quote)
         except literature_backend.MissingRenderingBlobError as e:
             await context.abort(grpc.StatusCode.INTERNAL, str(e))
 
@@ -197,7 +205,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         # An oversized batch aborts; an unknown doc_id does not — it is a per-id UNKNOWN_PAPER state.
         if len(request.doc_ids) > _MAX_DOC_IDS:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f'at most {_MAX_DOC_IDS} doc_ids per request')
-        states = await self._backend.full_text_readiness(list(request.doc_ids))
+        states = await self._view().full_text_readiness(list(request.doc_ids))
         return literature_pb2.PollFullTextsResponse(
             readiness=[literature_pb2.FullTextReadiness(doc_id=doc_id, state=state) for doc_id, state in states.items()]
         )
@@ -211,6 +219,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
     async def _maybe_ingest_papers(
         self, request: literature_pb2.MaybeIngestPapersRequest, context: grpc.aio.ServicerContext
     ) -> literature_pb2.MaybeIngestPapersResponse:
+        view = self._view()
         # Bounded on what the request carries, not on what survives dedup: the bound is on the
         # repeated field, and a caller sending 10k ids that collapse to two spent the message budget
         # and this walk regardless.
@@ -232,7 +241,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
             # Clipped: the message echoes a caller field, and an over-limit trailer is dropped whole.
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, errors.clipped(str(e)))
         try:
-            doc_ids = await self._backend.resolve_external_ids(list(dict.fromkeys(lookup_keys.values())))
+            doc_ids = await view.resolve_external_ids(list(dict.fromkeys(lookup_keys.values())))
         except literature_backend.CrosswalkNotConfiguredError as e:
             # Permanent for this deployment, so not UNAVAILABLE — gRPC retries that by default, and no
             # number of retries wires a crosswalk.
@@ -246,8 +255,8 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
             await context.abort(grpc.StatusCode.UNAVAILABLE, 'crosswalk unavailable')
         # Two external ids can name one paper (a DOI and its PMID), so collapse after resolution —
         # where the reads are — and report both ids against the doc_id they share.
-        states = await self._backend.full_text_readiness(list(dict.fromkeys(doc_ids.values())))
-        await self._request_conversions(states, context)
+        states = await view.full_text_readiness(list(dict.fromkeys(doc_ids.values())))
+        await self._request_conversions(view, states, context)
         return literature_pb2.MaybeIngestPapersResponse(
             readiness=[
                 literature_pb2.PaperReadiness(
@@ -262,13 +271,16 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         )
 
     async def _request_conversions(
-        self, states: Mapping[str, literature_pb2.FullTextState], context: grpc.aio.ServicerContext
+        self,
+        view: literature_backend.LiteratureView,
+        states: Mapping[str, literature_pb2.FullTextState],
+        context: grpc.aio.ServicerContext,
     ) -> None:
         """Start a conversion for every PENDING paper, aborting the call if one could not be asked for.
 
-        Resolving a session is this step's, not the rpc's: the enqueue is what costs money, the reads
-        around it are not. So a batch with nothing to produce is answered without a token, and one with
-        something to produce is refused whole (``evidence-fulltext.md``).
+        The conversions go through ``view`` — the call's view of the corpus, resolved from what the
+        interceptor admitted it as — so the spend is charged to what the call was made for, and a
+        masking layer would narrow what may be converted here (rpc-authorization.md).
 
         The whole call fails rather than answering readiness anyway: an enqueue that did not happen
         leaves the paper PENDING, which is indistinguishable from one whose conversion is under way, so
@@ -280,9 +292,8 @@ class Servicer(literature_pb2_grpc.LiteratureServicer, serving.EvidenceServicer)
         pending = [doc_id for doc_id, state in states.items() if state == literature_pb2.FULL_TEXT_STATE_PENDING]
         if not pending:
             return
-        await self._require_session(context)
         try:
-            await self._backend.request_conversions(pending)
+            await view.request_conversions(pending)
         except literature_backend.ConversionNotConfiguredError as e:
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, f'conversion is not configured: {e}')
         except literature_backend.ConversionUnavailableError:

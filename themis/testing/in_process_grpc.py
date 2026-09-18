@@ -14,7 +14,7 @@ import contextlib
 import inspect
 import queue
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 
 import grpc.aio
 
@@ -22,25 +22,35 @@ Register = Callable[[grpc.aio.Server], None] | Callable[[grpc.aio.Server], Await
 
 
 @contextlib.asynccontextmanager
-async def serving(register: Register) -> AsyncIterator[grpc.aio.Channel]:
+async def serving(
+    register: Register,
+    *,
+    interceptors: Sequence[grpc.aio.ClientInterceptor] | None = None,
+    server_interceptors: Sequence[grpc.aio.ServerInterceptor] = (),
+) -> AsyncIterator[grpc.aio.Channel]:
     """Serve whatever ``register`` installs on a loopback port; yield a channel to it.
 
     Args:
         register: Installs the servicer or handlers under test on the server it is given. An async
             ``register`` — one that builds a backend needing ``await`` — is awaited before the server
             starts.
+        interceptors: Client interceptors to wrap the channel — e.g. one that injects the credential
+            metadata a gated servicer expects, so a test drives the happy path without threading it
+            through every call.
+        server_interceptors: Server interceptors to install ahead of every handler — the auth
+            interceptor, for a test of a servicer as it is served.
 
     Yields:
         A channel to the running server; it and the server are torn down on exit.
     """
-    server = grpc.aio.server()
+    server = grpc.aio.server(interceptors=list(server_interceptors))
     registration = register(server)
     if inspect.isawaitable(registration):
         await registration
     port = server.add_insecure_port('127.0.0.1:0')
     await server.start()
     try:
-        async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
+        async with grpc.aio.insecure_channel(f'127.0.0.1:{port}', interceptors=interceptors) as channel:
             yield channel
     finally:
         await server.stop(None)
