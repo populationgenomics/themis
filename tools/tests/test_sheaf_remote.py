@@ -10,6 +10,7 @@ import time
 import pytest
 
 from themis.clients.sheaf import store as remote_mod
+from themis.rpc import sandbox_options_pb2
 from tools import clu, sheaf_remote
 
 
@@ -43,6 +44,11 @@ def minted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return tokens
 
 
+def _credentials(bearer: str | None) -> remote_mod.Credentials:
+    """The developer's token file: their own session, called as themself."""
+    return remote_mod.Credentials(session_token='s', bearer=bearer, calling_as=sandbox_options_pb2.CALLING_AS_SELF)
+
+
 def _keeper(token_file: pathlib.Path) -> sheaf_remote.BearerKeeper:
     return sheaf_remote.BearerKeeper(
         token_file, service_account='clu@example.iam.gserviceaccount.com', audience='https://sheaf.example'
@@ -51,20 +57,20 @@ def _keeper(token_file: pathlib.Path) -> sheaf_remote.BearerKeeper:
 
 def test_a_bearer_is_minted_when_absent_and_kept_while_fresh(tmp_path: pathlib.Path, minted: list[str]) -> None:
     token_file = tmp_path / 'token.json'
-    remote_mod.write_credentials(token_file, remote_mod.Credentials(session_token='s', bearer=None))
+    remote_mod.write_credentials(token_file, _credentials(bearer=None))
     keeper = _keeper(token_file)
 
     keeper.refresh()
     keeper.refresh()
 
     assert len(minted) == 1
-    assert remote_mod.read_credentials(token_file) == remote_mod.Credentials(session_token='s', bearer=minted[0])
+    assert remote_mod.read_credentials(token_file) == _credentials(bearer=minted[0])
 
 
 def test_a_bearer_near_expiry_is_replaced(tmp_path: pathlib.Path, minted: list[str]) -> None:
     token_file = tmp_path / 'token.json'
     stale = _jwt(time.time() + 60)
-    remote_mod.write_credentials(token_file, remote_mod.Credentials(session_token='s', bearer=stale))
+    remote_mod.write_credentials(token_file, _credentials(bearer=stale))
 
     _keeper(token_file).refresh()
 
@@ -74,14 +80,14 @@ def test_a_bearer_near_expiry_is_replaced(tmp_path: pathlib.Path, minted: list[s
 
 def test_forgetting_leaves_the_session_token_and_nothing_else(tmp_path: pathlib.Path, minted: list[str]) -> None:
     token_file = tmp_path / 'token.json'
-    remote_mod.write_credentials(token_file, remote_mod.Credentials(session_token='s', bearer=None))
+    remote_mod.write_credentials(token_file, _credentials(bearer=None))
     keeper = _keeper(token_file)
     keeper.refresh()
 
     keeper.forget()
 
     assert minted
-    assert remote_mod.read_credentials(token_file) == remote_mod.Credentials(session_token='s', bearer=None)
+    assert remote_mod.read_credentials(token_file) == _credentials(bearer=None)
 
 
 def test_the_refreshing_store_describes_itself_as_the_plain_remote_store(
@@ -89,7 +95,7 @@ def test_the_refreshing_store_describes_itself_as_the_plain_remote_store(
 ) -> None:
     """The hook rebuilds a plain `RemoteStore` from the descriptor and reads the file the keeper refreshed."""
     token_file = tmp_path / 'token.json'
-    remote_mod.write_credentials(token_file, remote_mod.Credentials(session_token='s', bearer=_jwt(time.time() + 3600)))
+    remote_mod.write_credentials(token_file, _credentials(bearer=_jwt(time.time() + 3600)))
     with remote_mod.RemoteStore('https://sheaf.example', token_file, repo='ana') as remote:
         store = sheaf_remote.RefreshingStore(remote, _keeper(token_file))
         assert store.descriptor() == remote.descriptor()

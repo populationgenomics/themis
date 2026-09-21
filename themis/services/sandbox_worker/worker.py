@@ -59,6 +59,7 @@ from themis import sheaf
 from themis.clients import id_token
 from themis.clients.sheaf import store as remote_mod
 from themis.clients.work_queue import client as work_queue_mod
+from themis.rpc import sandbox_options_pb2
 from themis.services.sandbox_worker import git_hatches, guest_git, store_client
 from themis.services.sandbox_worker import hatch as hatch_mod
 from themis.services.sandbox_worker import sync as sync_mod
@@ -184,7 +185,12 @@ def _mirror(sheaf_url: str, session_token: str) -> Iterator[bare.BareRepo]:
     root = pathlib.Path(tempfile.mkdtemp(prefix='themis-mirror-'))
     token_file = root / _TOKEN_FILE
     try:
-        remote_mod.write_credentials(token_file, remote_mod.Credentials(session_token=session_token, bearer=None))
+        remote_mod.write_credentials(
+            token_file,
+            remote_mod.Credentials(
+                session_token=session_token, bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_WORKER_SESSION
+            ),
+        )
         with remote_mod.RemoteStore(sheaf_url, token_file, repo=_REPOSITORY) as remote:
             yield bare.BareRepo(remote, root / 'mirror.git')
     finally:

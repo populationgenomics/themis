@@ -22,8 +22,8 @@ from themis_infra import grants
 _MAX_PUBLISH_BYTES = 256 * 1024 * 1024
 _MAX_REFS = 10_000
 _MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
-# A ceiling-sized publish over a 5 Mbit/s uplink is ~7 minutes of upload, and a refused one is drained to
-# twice that before its status is sent; Cloud Run's 300 s default cuts both off.
+# About four times what a ceiling-sized publish takes over a 5 Mbit/s uplink (~7 minutes); Cloud Run's
+# 300 s default would cut that upload off.
 _REQUEST_TIMEOUT = '1800s'
 _MAX_INSTANCES = 10
 
@@ -117,6 +117,8 @@ class SheafService(pulumi.ComponentResource):
                         envs=[
                             _env('THEMIS_AUTHORIZER_BACKEND', 'http'),
                             _env('THEMIS_AUTH_URL', auth_url),
+                            # completes a Caller's account id into the email the verifier yields
+                            _env('THEMIS_GCP_PROJECT', project),
                             _env('THEMIS_SHEAF_BACKEND', 'gcs'),
                             _env('THEMIS_WORKSPACE_BUCKET', workspace_bucket),
                             _env('THEMIS_SHEAF_MAX_PUBLISH_BYTES', str(_MAX_PUBLISH_BYTES)),

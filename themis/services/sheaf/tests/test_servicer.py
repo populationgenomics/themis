@@ -1,4 +1,4 @@
-"""Behaviour tests for the Sheaf servicer over an in-process grpc.aio server.
+"""Behaviour tests for the Sheaf servicer over an in-process server, driven by the synchronous client.
 
 The store is `LocalBackend` over a temporary directory; the session resolver is a fixture map with
 two tokens, so two Analyses' repositories can be told apart. A second writer, where a test needs
@@ -11,16 +11,14 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 
 import grpc
-import grpc.aio
 import pytest
 from google.protobuf import empty_pb2
 
 from themis import sheaf
-from themis.clients.auth.tests import fixture_session
-from themis.rpc import auth_pb2, sheaf_pb2, sheaf_pb2_grpc
+from themis.rpc import sandbox_options_pb2, sheaf_pb2, sheaf_pb2_grpc
 from themis.services.sheaf import servicer as servicer_mod
 from themis.services.sheaf.tests import conftest
 from themis.sheaf import refdoc
@@ -34,51 +32,75 @@ SHA_C = conftest.SHA_C
 PACK_1 = conftest.PACK_1
 PACK_2 = conftest.PACK_2
 OTHER_ANALYSIS_ID = conftest.OTHER_ANALYSIS_ID
-OTHER_METADATA = conftest.OTHER_METADATA
+OTHER = conftest.OTHER
 LIMITS = conftest.LIMITS
 
 
-def test_missing_session_token_is_unauthenticated(backend: sheaf.LocalBackend) -> None:
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.UNAUTHENTICATED)):
+def test_a_call_with_no_verifiable_caller_is_unauthenticated(backend: sheaf.LocalBackend) -> None:
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.UNAUTHENTICATED)):
         conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty()), backend)
 
 
-def test_unresolvable_token_is_permission_denied(backend: sheaf.LocalBackend) -> None:
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
-        conftest.run(
-            lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.session_metadata('bad')), backend
-        )
+def test_a_worker_whose_session_does_not_resolve_is_permission_denied(backend: sheaf.LocalBackend) -> None:
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.BAD_SESSION), backend)
 
 
-def test_a_fetch_with_an_unresolvable_token_is_permission_denied(backend: sheaf.LocalBackend) -> None:
+def test_the_agent_s_claim_does_not_reach_the_worker_s_rpcs(backend: sheaf.LocalBackend) -> None:
+    # One account, two principals: the sheaf contract names the worker, and the guest's forwarded call
+    # claims the agent, so the repository is the worker's to publish and never the guest's directly.
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.AGENT), backend)
+
+
+def test_the_developer_reaches_the_repository_of_the_session_it_names(backend: sheaf.LocalBackend) -> None:
+    conftest.seed(backend, {REF: (None, SHA_A)})
+    response = conftest.run(
+        lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.CLU_WITH_SESSION), backend
+    )
+    assert refdoc.RefDoc.from_bytes(response.document.SerializeToString()).refs[REF] == SHA_A
+
+
+def test_the_developer_naming_a_session_that_does_not_resolve_is_permission_denied(backend: sheaf.LocalBackend) -> None:
+    """A stale token file: admitted as the developer, but the repository it asks for cannot be named."""
+    stale = (*conftest.CLU, *conftest.auth_fixture.claim(sandbox_options_pb2.CALLING_AS_SELF, 'bad'))
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=stale), backend)
+
+
+def test_the_developer_naming_no_session_is_refused_as_an_invalid_call(backend: sheaf.LocalBackend) -> None:
+    """Admitted everywhere, but no request names a repository: without a session there is nothing to serve."""
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.INVALID_ARGUMENT)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.CLU), backend)
+
+
+def test_a_fetch_by_a_worker_whose_session_does_not_resolve_is_permission_denied(backend: sheaf.LocalBackend) -> None:
     conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
 
-    async def scenario(stub: sheaf_pb2_grpc.SheafAsyncStub) -> bytes:
+    def scenario(stub: sheaf_pb2_grpc.SheafStub) -> bytes:
         request = sheaf_pb2.FetchPackRequest(pack_id=sheaf.pack_id(PACK_1))
-        metadata = fixture_session.session_metadata('bad')
-        return b''.join([chunk.content async for chunk in stub.FetchPack(request, metadata=metadata)])
+        metadata = conftest.BAD_SESSION
+        return b''.join([chunk.content for chunk in stub.FetchPack(request, metadata=metadata)])
 
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
         conftest.run(scenario, backend)
 
 
 def test_a_repository_that_does_not_exist_reads_as_generation_zero_and_no_document(
     backend: sheaf.LocalBackend,
 ) -> None:
-    snapshot = conftest.run(
-        lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA), backend
-    )
+    snapshot = conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER), backend)
     assert snapshot.generation == 0
     assert not snapshot.HasField('document')
 
 
 def test_each_analysis_reaches_only_its_own_repository(backend: sheaf.LocalBackend) -> None:
-    async def scenario(
-        stub: sheaf_pb2_grpc.SheafAsyncStub,
+    def scenario(
+        stub: sheaf_pb2_grpc.SheafStub,
     ) -> tuple[sheaf_pb2.RefDocSnapshot, sheaf_pb2.RefDocSnapshot]:
-        await conftest.publish(stub, conftest.stream(conftest.intent(0, {REF: (None, SHA_A)})))
-        mine = await stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
-        theirs = await stub.ReadRefDoc(empty_pb2.Empty(), metadata=OTHER_METADATA)
+        conftest.publish(stub, conftest.stream(conftest.intent(0, {REF: (None, SHA_A)})))
+        mine = stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER)
+        theirs = stub.ReadRefDoc(empty_pb2.Empty(), metadata=OTHER)
         return mine, theirs
 
     mine, theirs = conftest.run(scenario, backend)
@@ -91,17 +113,17 @@ def test_each_analysis_reaches_only_its_own_repository(backend: sheaf.LocalBacke
 def test_a_pack_another_analysis_stored_is_not_found(backend: sheaf.LocalBackend) -> None:
     conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
 
-    async def scenario(stub: sheaf_pb2_grpc.SheafAsyncStub) -> bytes:
+    def scenario(stub: sheaf_pb2_grpc.SheafStub) -> bytes:
         request = sheaf_pb2.FetchPackRequest(pack_id=sheaf.pack_id(PACK_1))
-        return b''.join([chunk.content async for chunk in stub.FetchPack(request, metadata=OTHER_METADATA)])
+        return b''.join([chunk.content for chunk in stub.FetchPack(request, metadata=OTHER)])
 
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
         conftest.run(scenario, backend)
 
 
 def test_a_publish_lands_under_the_analysis_its_session_names(backend: sheaf.LocalBackend) -> None:
     messages = conftest.stream(conftest.intent(0, {REF: (None, SHA_B)}, packs=[PACK_2]), [PACK_2])
-    conftest.run(lambda stub: conftest.publish(stub, messages, metadata=OTHER_METADATA), backend)
+    conftest.run(lambda stub: conftest.publish(stub, messages, metadata=OTHER), backend)
     assert conftest.store_for(backend, OTHER_ANALYSIS_ID).read().tip(REF) == SHA_B
     assert conftest.store_for(backend).read().generation is None
     assert conftest.store_for(backend, OTHER_ANALYSIS_ID).fetch_pack(sheaf.pack_id(PACK_2)) == PACK_2
@@ -111,13 +133,13 @@ def test_a_publish_lands_under_the_analysis_its_session_names(backend: sheaf.Loc
 
 
 def test_a_first_publish_lands_and_reads_back(backend: sheaf.LocalBackend) -> None:
-    async def scenario(
-        stub: sheaf_pb2_grpc.SheafAsyncStub,
+    def scenario(
+        stub: sheaf_pb2_grpc.SheafStub,
     ) -> tuple[sheaf_pb2.PublishResponse, sheaf_pb2.RefDocSnapshot]:
-        response = await conftest.publish(
+        response = conftest.publish(
             stub, conftest.stream(conftest.intent(0, {REF: (None, SHA_A)}, packs=[PACK_1]), [PACK_1])
         )
-        return response, await stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
+        return response, stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER)
 
     response, snapshot = conftest.run(scenario, backend)
     assert response.generation != 0
@@ -144,15 +166,15 @@ def test_an_intent_alone_is_a_complete_publish_when_it_declares_no_packs(backend
 
 
 def test_a_set_head_is_recorded_and_an_unset_one_carries_over(backend: sheaf.LocalBackend) -> None:
-    async def scenario(stub: sheaf_pb2_grpc.SheafAsyncStub) -> None:
+    def scenario(stub: sheaf_pb2_grpc.SheafStub) -> None:
         first = conftest.intent(0, {REF: (None, SHA_A)}, head=refdoc_pb2.RefTarget(oid=SHA_A))
-        response = await conftest.publish(stub, conftest.stream(first))
+        response = conftest.publish(stub, conftest.stream(first))
         second = conftest.intent(
             response.generation,
             {REF: (SHA_A, SHA_B)},
             reflog_previous=conftest.reflog_entry(None, {REF: (None, SHA_A)}),
         )
-        await conftest.publish(stub, conftest.stream(second))
+        conftest.publish(stub, conftest.stream(second))
 
     conftest.run(scenario, backend)
     assert conftest.store_for(backend).read().doc.head == sheaf.DirectTarget(SHA_A)
@@ -165,9 +187,7 @@ def test_a_field_this_build_does_not_model_is_read_back_intact(backend: sheaf.Lo
     store = conftest.store_for(backend)
     backend.cas_mutable(store.ref_key, published.doc.to_bytes() + from_the_future, published.generation)
 
-    snapshot = conftest.run(
-        lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA), backend
-    )
+    snapshot = conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER), backend)
 
     assert snapshot.document.SerializeToString().endswith(from_the_future)
 
@@ -182,7 +202,7 @@ def test_fetch_pack_streams_the_bytes_the_document_names(backend: sheaf.LocalBac
 
 
 def test_fetch_pack_of_an_unknown_id_is_not_found(backend: sheaf.LocalBackend) -> None:
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
         conftest.run(lambda stub: conftest.fetch(stub, 'f' * 64), backend)
 
 
@@ -190,7 +210,7 @@ def test_fetch_pack_of_an_unknown_id_is_not_found(backend: sheaf.LocalBackend) -
 def test_fetch_pack_of_a_malformed_id_is_invalid_before_the_store_is_consulted(
     backend: sheaf.LocalBackend, pack_id: str
 ) -> None:
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.INVALID_ARGUMENT)):
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.INVALID_ARGUMENT)):
         conftest.run(lambda stub: conftest.fetch(stub, pack_id), backend)
 
 
@@ -423,11 +443,11 @@ def test_a_publish_that_already_landed_succeeds_again_without_storing_anything(b
     counting = conftest.CountingPuts(backend)
     intent = conftest.intent(0, {REF: (None, SHA_A)}, packs=[PACK_1])
 
-    async def scenario(
-        stub: sheaf_pb2_grpc.SheafAsyncStub,
+    def scenario(
+        stub: sheaf_pb2_grpc.SheafStub,
     ) -> tuple[sheaf_pb2.PublishResponse, sheaf_pb2.PublishResponse]:
-        first = await conftest.publish(stub, conftest.stream(intent, [PACK_1]))
-        second = await conftest.publish(stub, conftest.stream(intent, [PACK_1]))
+        first = conftest.publish(stub, conftest.stream(intent, [PACK_1]))
+        second = conftest.publish(stub, conftest.stream(intent, [PACK_1]))
         return first, second
 
     first, second = conftest.run(scenario, counting)
@@ -478,78 +498,6 @@ def test_a_base_generation_for_a_repository_that_does_not_exist_is_aborted(backe
     assert outcome.generation is None
 
 
-def test_a_refusal_reaches_a_client_still_sending_packs(backend: sheaf.LocalBackend) -> None:
-    """The status is sent after the client half-closes, not into its in-flight writes."""
-    big = conftest.PACK_THE_CLIENT_IS_STILL_SENDING
-    intent = conftest.intent(0, {'refs/heads/bad name': (None, SHA_A)}, packs=[big])
-    messages = conftest.stream(intent, [big])
-    outcomes = [conftest.attempt(backend, messages) for _ in range(5)]
-    assert [outcome.code for outcome in outcomes] == [grpc.StatusCode.INVALID_ARGUMENT] * 5, outcomes
-    assert all(outcome.half_closed for outcome in outcomes), outcomes
-    assert conftest.stored_packs(backend) == set()
-
-
-def test_a_session_refusal_reaches_a_client_still_sending_packs(backend: sheaf.LocalBackend) -> None:
-    """A session refused before a byte is read waits for the half-close too, not only a refused intent."""
-    big = conftest.PACK_THE_CLIENT_IS_STILL_SENDING
-    messages = conftest.stream(conftest.intent(0, {REF: (None, SHA_A)}, packs=[big]), [big])
-    bad = fixture_session.session_metadata('bad')
-    outcomes = [conftest.attempt(backend, messages, metadata=bad) for _ in range(5)]
-    assert [outcome.code for outcome in outcomes] == [grpc.StatusCode.PERMISSION_DENIED] * 5, outcomes
-    assert all(outcome.half_closed for outcome in outcomes), outcomes
-    assert conftest.stored_packs(backend) == set()
-
-
-def test_an_auth_failure_under_a_publish_waits_for_the_half_close_too(backend: sheaf.LocalBackend) -> None:
-    """An auth outage is not a refusal, and the client has the same claim to hearing about it."""
-
-    async def unreachable(_: str) -> auth_pb2.SessionContext:
-        raise RuntimeError('the auth service is unreachable')
-
-    big = conftest.PACK_THE_CLIENT_IS_STILL_SENDING
-    messages = conftest.stream(conftest.intent(0, {REF: (None, SHA_A)}, packs=[big]), [big])
-    outcome = conftest.attempt(backend, messages, session_resolver=unreachable)
-    # Not a refusal code: an outage the caller cannot fix by re-authenticating must not arrive
-    # looking like one, which is the confusion draining the client exists to stop hiding.
-    assert outcome.code is grpc.StatusCode.UNKNOWN, outcome
-    assert outcome.half_closed, outcome
-    assert conftest.stored_packs(backend) == set()
-
-
-def test_a_refusal_reaches_a_client_publishing_right_up_to_the_ceiling(backend: sheaf.LocalBackend) -> None:
-    """The ceiling bounds the declared packs; the drain charges the encoded stream, which is larger."""
-    at_the_ceiling = bytes(LIMITS.max_publish_bytes)
-    messages = conftest.stream(conftest.intent(0, {REF: (None, SHA_A)}, packs=[at_the_ceiling]), [at_the_ceiling])
-    assert sum(message.ByteSize() for message in messages) > LIMITS.max_publish_bytes
-
-    outcome = conftest.attempt(backend, messages, metadata=fixture_session.session_metadata('bad'))
-
-    assert outcome.code is grpc.StatusCode.PERMISSION_DENIED, outcome
-    assert outcome.half_closed, outcome
-
-
-def test_the_drain_charges_a_client_for_every_byte_it_keeps_sending(backend: sheaf.LocalBackend) -> None:
-    """A client that never half-closes is cut off once its messages, chunks or not, sum to the budget."""
-    bulk = conftest.intent(0, {f'refs/heads/b{i:05d}': (None, SHA_A) for i in range(20_000)})
-    assert bulk.ByteSize() > 1 << 20
-    # The client runs ahead of the server by its send window, so the bound is loose; the cap on what
-    # the client sends is what makes a drain that undercharges fail rather than hang.
-    bound = 2 * (2 * LIMITS.max_publish_bytes // bulk.ByteSize() + 1)
-    sent = 0
-
-    async def persistent() -> AsyncIterator[sheaf_pb2.PublishRequest]:
-        nonlocal sent
-        yield sheaf_pb2.PublishRequest(intent=conftest.intent(0, {'refs/heads/bad name': (None, SHA_A)}))
-        while sent < 2 * bound:
-            sent += 1
-            yield sheaf_pb2.PublishRequest(intent=bulk)
-
-    with pytest.raises(grpc.aio.AioRpcError):
-        conftest.run(lambda stub: stub.Publish(persistent(), metadata=fixture_session.GOOD_METADATA), backend)
-    assert sent <= bound, sent
-    assert conftest.stored_packs(backend) == set()
-
-
 def test_a_race_lost_at_the_swap_is_classified_from_a_fresh_read(backend: sheaf.LocalBackend) -> None:
     """The window between the servicer's read and its compare-and-swap, closed by the swap itself."""
     intent = conftest.intent(0, {REF: (None, SHA_A)}, packs=[PACK_1])
@@ -585,9 +533,9 @@ def test_a_document_this_code_did_not_write_is_data_loss(backend: sheaf.LocalBac
     published = conftest.seed(backend, {REF: (None, SHA_A)})
     backend.cas_mutable(conftest.store_for(backend).ref_key, b'not a ref document', published.generation)
 
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)):
-        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA), backend)
-    with pytest.raises(grpc.aio.AioRpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)):
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER), backend)
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)):
         conftest.run(
             lambda stub: conftest.publish(stub, conftest.stream(conftest.intent(0, {SIDE: (None, SHA_B)}))), backend
         )

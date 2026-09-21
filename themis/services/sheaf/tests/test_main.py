@@ -1,4 +1,4 @@
-"""Tests for the sheaf entrypoint's env-selected authorizer, backend and limits."""
+"""Tests for the sheaf entrypoint's env-selected backend and limits, and the gate it serves behind."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ import pytest
 
 from themis import sheaf
 from themis.rpc import auth_pb2
+from themis.services import sheaf as sheaf_service
 from themis.services.sheaf import __main__ as main_mod
 from themis.services.sheaf import servicer as servicer_mod
 from themis.sheaf.backends import gcs
+from themis.testing import gate
 
 _LIMIT_ENV = {
     'THEMIS_SHEAF_MAX_PUBLISH_BYTES': '1048576',
@@ -20,36 +22,30 @@ _LIMIT_ENV = {
 }
 
 
-def test_build_session_resolver_requires_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv('THEMIS_AUTHORIZER_BACKEND', raising=False)
-    with pytest.raises(SystemExit):
-        main_mod.build_session_resolver()
-
-
-def test_build_session_resolver_rejects_unknown_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'nope')
-    with pytest.raises(SystemExit):
-        main_mod.build_session_resolver()
-
-
-def test_fixture_authorizer_requires_contexts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_authorizer_is_seeded_from_the_sheaf_image_s_own_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
-    monkeypatch.delenv('THEMIS_SHEAF_FIXTURE_CONTEXTS', raising=False)
-    with pytest.raises(SystemExit):
-        main_mod.build_session_resolver()
-
-
-def test_fixture_authorizer_resolves_a_seeded_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
+    monkeypatch.setenv('THEMIS_GCP_PROJECT', 'x')
     monkeypatch.setenv('THEMIS_SHEAF_FIXTURE_CONTEXTS', '{"tok": {"project_id": "p", "analysis_id": "a"}}')
-    session_resolver = main_mod.build_session_resolver()
+    monkeypatch.setenv('THEMIS_SHEAF_FIXTURE_CALLERS', '{}')
+    authorizer = main_mod.build_authorizer()
 
-    async def run() -> auth_pb2.SessionContext:
-        return await session_resolver('tok')
+    async def resolve() -> auth_pb2.SessionContext:
+        return await authorizer.session_resolver('tok')
 
-    context = asyncio.run(run())
-    assert context.project_id == 'p'
-    assert context.analysis_id == 'a'
+    context = asyncio.run(resolve())
+    assert (context.project_id, context.analysis_id) == ('p', 'a')
+
+
+def test_the_sheaf_server_is_built_only_through_the_gated_factory() -> None:
+    gate.assert_built_only_through_the_gated_factory(main_mod)
+
+
+def test_no_sheaf_module_constructs_a_server() -> None:
+    gate.assert_no_module_constructs_a_server(sheaf_service)
+
+
+def test_the_sheaf_servicer_reads_no_call_metadata() -> None:
+    gate.assert_servicer_reads_no_call_metadata(servicer_mod)
 
 
 def test_build_backend_requires_a_selector(monkeypatch: pytest.MonkeyPatch) -> None:

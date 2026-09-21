@@ -65,6 +65,21 @@ async def session_resolver(session_token: str) -> auth_pb2.SessionContext:
     raise session_mod.UnresolvedSessionError
 
 
+def caller_presumed(email: str) -> caller_mod.CallerVerifier:
+    """A verifier reporting every call as ``email``'s, whatever the call carries.
+
+    For a harness whose client cannot present an ID token — a synchronous client over a loopback
+    channel, which sends a bearer over TLS only. Stands in for Cloud Run having admitted the caller
+    as ``email``; it verifies nothing, so it belongs to no test of the gate itself.
+    """
+
+    async def verify_caller(context: grpc.aio.ServicerContext) -> str:
+        del context
+        return email
+
+    return verify_caller
+
+
 def authorizer() -> interceptor_mod.Authorizer:
     """An ``Authorizer`` over the fixture resolvers and project ``x``."""
     return interceptor_mod.Authorizer(

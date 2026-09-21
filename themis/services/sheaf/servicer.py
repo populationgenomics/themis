@@ -1,11 +1,13 @@
-"""The Sheaf servicer: sheaf's storage protocol, served for the repository the session names.
+"""The Sheaf servicer: sheaf's storage protocol, served for the repository the call's session names.
 
-Subclasses the generated `themis.rpc.sheaf_pb2_grpc.SheafServicer`. Every rpc resolves its session
-token to an Analysis and opens `themis.sheaf.Store` on that Analysis's prefix, so a caller reaches
-its own repository and no other. The protocol — what an intent may contain, how a moved document
-is classified, what a pack must hash to — is `themis.sheaf`'s; this module decodes the wire
-messages, runs the store's blocking calls off the event loop, and maps each refusal to its status
-code. Contract: `schema/proto/themis/rpc/sheaf.proto`; design: `docs/design/sheaf-service.md`.
+Subclasses the generated `themis.rpc.sheaf_pb2_grpc.SheafServicer`. Every rpc opens
+`themis.sheaf.Store` on the prefix of the Analysis the call's `AuthContext` carries — the session
+the auth interceptor resolved from the caller's claim — so a caller reaches its own repository and no
+other. The protocol — what an intent may contain, how a moved document is classified, what a pack
+must hash to — is `themis.sheaf`'s; this module decodes the wire messages, runs the store's blocking
+calls off the event loop, and raises each refusal as the `StatusError` the gate ends the call with, so
+the servicer never touches a context's status itself. Contract: `schema/proto/themis/rpc/sheaf.proto`;
+design: `docs/design/sheaf-service.md`.
 """
 
 from __future__ import annotations
@@ -20,7 +22,8 @@ import grpc
 import grpc.aio
 from google.protobuf import empty_pb2
 
-from themis.clients.auth import session as session_mod
+from themis.clients.auth import context as context_mod
+from themis.clients.auth import interceptor as interceptor_mod
 from themis.rpc import sheaf_pb2, sheaf_pb2_grpc
 from themis.sheaf import backend as backend_mod
 from themis.sheaf import errors, refdoc
@@ -60,15 +63,6 @@ class Limits:
                 raise ValueError(f'{field.name} must be a positive integer, got {value!r}')
 
 
-class _RefusalError(Exception):
-    """A status to end the rpc with. Raised by the synchronous decoding steps; the rpc aborts with it."""
-
-    def __init__(self, code: grpc.StatusCode, details: str) -> None:
-        super().__init__(details)
-        self.code = code
-        self.details = details
-
-
 def _generation(snapshot: store_mod.Snapshot) -> int:
     return _NO_DOCUMENT if snapshot.generation is None else snapshot.generation
 
@@ -86,7 +80,7 @@ def _head(message: sheaf_pb2.PublishIntent) -> refdoc.Target | None:
     try:
         return refdoc.read_target(message.head)
     except ValueError as exc:
-        raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, f'HEAD: {exc}') from exc
+        raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, f'HEAD: {exc}') from exc
 
 
 def _decode_intent(message: sheaf_pb2.PublishIntent, limits: Limits) -> store_mod.Intent:
@@ -99,7 +93,7 @@ def _decode_intent(message: sheaf_pb2.PublishIntent, limits: Limits) -> store_mo
     names it.
 
     Raises:
-        _RefusalError: INVALID_ARGUMENT for a malformed intent; RESOURCE_EXHAUSTED over the byte ceiling.
+        interceptor_mod.StatusError: INVALID_ARGUMENT for a malformed intent; RESOURCE_EXHAUSTED over the byte ceiling.
     """
     intent = store_mod.Intent(
         ref_updates={ref: _ref_update(update) for ref, update in message.ref_updates.items()},
@@ -110,17 +104,19 @@ def _decode_intent(message: sheaf_pb2.PublishIntent, limits: Limits) -> store_mo
         store_mod.validate_intent(intent)
         store_mod.require_moved_refs(intent.ref_updates)
     except _INVALID_INTENT as exc:
-        raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
+        raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
     seen: set[str] = set()
     for index, descriptor in enumerate(message.packs):
         if descriptor.size == 0:
-            raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, f'pack {index} declares no bytes; a pack has bytes')
+            raise interceptor_mod.StatusError(
+                grpc.StatusCode.INVALID_ARGUMENT, f'pack {index} declares no bytes; a pack has bytes'
+            )
         if descriptor.pack_id in seen:
-            raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, f'pack {index} is declared twice')
+            raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, f'pack {index} is declared twice')
         seen.add(descriptor.pack_id)
     declared = sum(descriptor.size for descriptor in message.packs)
     if declared > limits.max_publish_bytes:
-        raise _RefusalError(
+        raise interceptor_mod.StatusError(
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             f'the declared packs total {declared} bytes; the ceiling is {limits.max_publish_bytes} per publish',
         )
@@ -134,22 +130,22 @@ def _plan(base: store_mod.Snapshot, intent: store_mod.Intent, limits: Limits) ->
     its intent disagrees with the document it was built from — and not a race.
 
     Raises:
-        _RefusalError: INVALID_ARGUMENT for a ref set git cannot store or an `old` the document does not
+        interceptor_mod.StatusError: INVALID_ARGUMENT for a ref set git cannot store or an `old` the document does not
             hold; RESOURCE_EXHAUSTED when the document the publish would leave is over a ceiling.
     """
     try:
         planned = store_mod.plan(base, intent)
     except (*_INVALID_INTENT, errors.RefConflict) as exc:
-        raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
+        raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
     refs = len(planned.refs)
     if refs > limits.max_refs:
-        raise _RefusalError(
+        raise interceptor_mod.StatusError(
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             f'the publish would leave {refs} refs; this deployment holds {limits.max_refs} per repository',
         )
     size = len(planned.to_bytes())
     if size > limits.max_document_bytes:
-        raise _RefusalError(
+        raise interceptor_mod.StatusError(
             grpc.StatusCode.RESOURCE_EXHAUSTED,
             f'the publish would leave a {size}-byte ref document; this deployment holds {limits.max_document_bytes}',
         )
@@ -162,7 +158,7 @@ def _settle(live: store_mod.Snapshot, intent: store_mod.Intent) -> sheaf_pb2.Pub
         The response when the publish already landed: the current generation, so a retry completes.
 
     Raises:
-        _RefusalError: ABORTED when an unrelated publish won; FAILED_PRECONDITION when a ref the intent
+        interceptor_mod.StatusError: ABORTED when an unrelated publish won; FAILED_PRECONDITION when a ref the intent
             moves has moved under the caller.
     """
     classification = store_mod.classify(live.refs, intent.ref_updates)
@@ -170,43 +166,20 @@ def _settle(live: store_mod.Snapshot, intent: store_mod.Intent) -> sheaf_pb2.Pub
     if classification.verdict is store_mod.Verdict.LANDED:
         return sheaf_pb2.PublishResponse(generation=_generation(live))
     if classification.verdict is store_mod.Verdict.LOST_RACE:
-        raise _RefusalError(
+        raise interceptor_mod.StatusError(
             grpc.StatusCode.ABORTED,
             f'the document is at generation {_generation(live)}, not the base; {refs} unchanged: rebuild against it',
         )
-    raise _RefusalError(grpc.StatusCode.FAILED_PRECONDITION, f'{refs} moved under this publish: not a fast-forward')
-
-
-async def _drain(requests: AsyncIterator[sheaf_pb2.PublishRequest], budget: int) -> None:
-    """Consume what the client has left to send, so the call's status reaches it.
-
-    An outcome decided before the stream is consumed — a refused intent, a publish that already
-    landed — is sent while the client may still be writing, and a status sent into a client's
-    in-flight write reaches it as a transport error, not the status. Draining until the client
-    half-closes delivers it, at the cost of the bytes a refused publish had left to send. `budget`
-    bounds a client that will not stop: each message costs its encoded size, chunk or not, at least
-    one byte, and the half-close after a stream summing to exactly the budget is still read.
-
-    Nothing in the call may have sent its status yet: grpc.aio raises the abort back out of every
-    subsequent read, so a drain that follows one consumes nothing at all.
-    """
-    while True:
-        try:
-            request = await anext(requests, None)
-        except Exception:  # noqa: BLE001 — a status was already decided; the read's error must not replace it
-            return
-        if request is None:
-            return
-        budget -= max(request.ByteSize(), 1)
-        if budget < 0:
-            return
+    raise interceptor_mod.StatusError(
+        grpc.StatusCode.FAILED_PRECONDITION, f'{refs} moved under this publish: not a fast-forward'
+    )
 
 
 async def _read(store: store_mod.Store) -> store_mod.Snapshot:
     try:
         return await asyncio.to_thread(store.read)
     except errors.CorruptRepository as exc:
-        raise _RefusalError(grpc.StatusCode.DATA_LOSS, str(exc)) from exc
+        raise interceptor_mod.StatusError(grpc.StatusCode.DATA_LOSS, str(exc)) from exc
 
 
 async def _receive_pack(
@@ -215,7 +188,7 @@ async def _receive_pack(
     """Read exactly the bytes declared for pack `index`, refusing a stream that delivers anything else.
 
     Raises:
-        _RefusalError: INVALID_ARGUMENT for a chunk of another pack, a second intent, a chunk with no
+        interceptor_mod.StatusError: INVALID_ARGUMENT for a chunk of another pack, a second intent, a chunk with no
             bytes, more bytes than declared, a stream that ends short, or bytes that hash to
             something other than the declared id.
     """
@@ -225,23 +198,25 @@ async def _receive_pack(
     while received < descriptor.size:
         request = await anext(requests, None)
         if request is None:
-            raise _RefusalError(
+            raise interceptor_mod.StatusError(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 f'the stream ended with {received} of the {descriptor.size} bytes declared for pack {index}',
             )
         if request.WhichOneof('message') != 'chunk':
-            raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, 'a publish carries one intent, first, then chunks')
+            raise interceptor_mod.StatusError(
+                grpc.StatusCode.INVALID_ARGUMENT, 'a publish carries one intent, first, then chunks'
+            )
         chunk = request.chunk
         if chunk.pack != index:
-            raise _RefusalError(
+            raise interceptor_mod.StatusError(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 f'a chunk of pack {chunk.pack} arrived while pack {index} was incomplete',
             )
         if not chunk.content:
-            raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, f'an empty chunk of pack {index}')
+            raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, f'an empty chunk of pack {index}')
         received += len(chunk.content)
         if received > descriptor.size:
-            raise _RefusalError(
+            raise interceptor_mod.StatusError(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 f'pack {index} delivered more than its declared {descriptor.size} bytes',
             )
@@ -249,7 +224,7 @@ async def _receive_pack(
         buffers.append(chunk.content)
     digest = hasher.hexdigest()
     if digest != descriptor.pack_id:
-        raise _RefusalError(
+        raise interceptor_mod.StatusError(
             grpc.StatusCode.INVALID_ARGUMENT, f'pack {index} hashes to {digest}, not the declared {descriptor.pack_id}'
         )
     return b''.join(buffers)
@@ -265,52 +240,48 @@ async def _store_packs(
     One pack is held at a time: it is hashed, checked and stored before the next begins.
 
     Raises:
-        _RefusalError: INVALID_ARGUMENT as `_receive_pack`, or for a message after the last declared pack.
+        interceptor_mod.StatusError: INVALID_ARGUMENT as `_receive_pack`, or for a message after the last
+            declared pack.
     """
     for index, descriptor in enumerate(declared):
         data = await _receive_pack(requests, index, descriptor)
         await asyncio.to_thread(store.put_pack, data)
     if await anext(requests, None) is not None:
-        raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, f'a message after the {len(declared)} declared packs')
+        raise interceptor_mod.StatusError(
+            grpc.StatusCode.INVALID_ARGUMENT, f'a message after the {len(declared)} declared packs'
+        )
 
 
 class Servicer(sheaf_pb2_grpc.SheafServicer):
-    """Serves one repository per call: the Analysis the session token resolves to.
+    """Serves one repository per call: the Analysis the call's bound `AuthContext` names.
 
     Holds the backend and the deployment's limits, and no per-repository state; every call opens
     the store afresh on the Analysis's prefix.
     """
 
-    def __init__(
-        self,
-        session_resolver: session_mod.SessionResolver,
-        backend: backend_mod.Backend,
-        limits: Limits,
-    ) -> None:
-        self._session_resolver = session_resolver
+    def __init__(self, backend: backend_mod.Backend, limits: Limits) -> None:
         self._backend = backend
         self._limits = limits
 
-    async def _store(self, context: grpc.aio.ServicerContext) -> store_mod.Store:
-        """Open the store on the Analysis the call's session token names.
+    def _store(self) -> store_mod.Store:
+        """Open the store on the Analysis the call's session names.
 
         Raises:
-            _RefusalError: UNAUTHENTICATED for a missing session token, PERMISSION_DENIED for one the
-                auth service does not resolve.
+            interceptor_mod.StatusError: INVALID_ARGUMENT when the admitted call named no session — a
+                developer calling as themself without one — since no request names a repository.
         """
-        try:
-            session = await session_mod.resolve_session(context, self._session_resolver)
-        except session_mod.SessionRefusedError as refused:
-            raise _RefusalError(refused.code, refused.details) from refused
+        session = context_mod.current().session
+        if session is None:
+            raise interceptor_mod.StatusError(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                'every sheaf rpc serves the repository of the session its claim names, and this call named none',
+            )
         return store_mod.Store(self._backend, repo=session.analysis_id)
 
     @override
     async def ReadRefDoc(self, request: empty_pb2.Empty, context: grpc.aio.ServicerContext) -> sheaf_pb2.RefDocSnapshot:
-        try:
-            store = await self._store(context)
-            snapshot = await _read(store)
-        except _RefusalError as refusal:
-            await context.abort(refusal.code, refusal.details)
+        del context
+        snapshot = await _read(self._store())
         response = sheaf_pb2.RefDocSnapshot(generation=_generation(snapshot))
         if snapshot.generation is not None:
             response.document.CopyFrom(snapshot.doc.to_message())
@@ -320,17 +291,16 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
     async def FetchPack(
         self, request: sheaf_pb2.FetchPackRequest, context: grpc.aio.ServicerContext
     ) -> AsyncIterator[sheaf_pb2.PackChunk]:
+        del context
+        store = self._store()
         try:
-            store = await self._store(context)
             refdoc.validate_pack_id(request.pack_id)
-        except _RefusalError as refusal:
-            await context.abort(refusal.code, refusal.details)
         except errors.InvalidPackId as exc:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
         try:
             data = await asyncio.to_thread(store.fetch_pack, request.pack_id)
-        except errors.NotFound:
-            await context.abort(grpc.StatusCode.NOT_FOUND, f'no pack {request.pack_id}')
+        except errors.NotFound as exc:
+            raise interceptor_mod.StatusError(grpc.StatusCode.NOT_FOUND, f'no pack {request.pack_id}') from exc
         for start in range(0, len(data), _CHUNK_SIZE):
             yield sheaf_pb2.PackChunk(content=data[start : start + _CHUNK_SIZE])
 
@@ -338,30 +308,17 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
     async def Publish(
         self, request_iterator: AsyncIterator[sheaf_pb2.PublishRequest], context: grpc.aio.ServicerContext
     ) -> sheaf_pb2.PublishResponse:
-        # Twice the ceiling, which bounds the declared packs while the drain charges the encoded
-        # stream: the intent and each chunk's framing sit on top of the payload, so one ceiling cuts
-        # off a publish that declared exactly the ceiling and conformed.
-        budget = 2 * self._limits.max_publish_bytes
-        try:
-            store = await self._store(context)
-            response = await self._publish(store, request_iterator)
-        except _RefusalError as refusal:
-            await _drain(request_iterator, budget)
-            await context.abort(refusal.code, refusal.details)
-        except Exception:
-            # grpc derives the call's status from the escaping exception, so it races the client's
-            # writes exactly as a refusal does.
-            await _drain(request_iterator, budget)
-            raise
-        await _drain(request_iterator, budget)
-        return response
+        del context
+        return await self._publish(self._store(), request_iterator)
 
     async def _publish(
         self, store: store_mod.Store, requests: AsyncIterator[sheaf_pb2.PublishRequest]
     ) -> sheaf_pb2.PublishResponse:
         first = await anext(requests, None)
         if first is None or first.WhichOneof('message') != 'intent':
-            raise _RefusalError(grpc.StatusCode.INVALID_ARGUMENT, 'the first message of a publish is its intent')
+            raise interceptor_mod.StatusError(
+                grpc.StatusCode.INVALID_ARGUMENT, 'the first message of a publish is its intent'
+            )
         intent = _decode_intent(first.intent, self._limits)
         base = await _read(store)
         if _generation(base) != first.intent.base_generation:

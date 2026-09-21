@@ -25,12 +25,12 @@ def test_publish_read_and_fetch_over_gcs(gcs_bucket: storage.Bucket) -> None:
     backend = gcs.GcsBackend(gcs_bucket)
     intent = conftest.intent(0, {conftest.REF: (None, conftest.SHA_A)}, packs=[conftest.PACK_1])
 
-    async def scenario(
-        stub: sheaf_pb2_grpc.SheafAsyncStub,
+    def scenario(
+        stub: sheaf_pb2_grpc.SheafStub,
     ) -> tuple[sheaf_pb2.PublishResponse, sheaf_pb2.RefDocSnapshot, bytes]:
-        response = await conftest.publish(stub, conftest.stream(intent, [conftest.PACK_1]))
-        snapshot = await stub.ReadRefDoc(empty_pb2.Empty(), metadata=fixture_session.GOOD_METADATA)
-        return response, snapshot, await conftest.fetch(stub, sheaf.pack_id(conftest.PACK_1))
+        response = conftest.publish(stub, conftest.stream(intent, [conftest.PACK_1]))
+        snapshot = stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WORKER)
+        return response, snapshot, conftest.fetch(stub, sheaf.pack_id(conftest.PACK_1))
 
     response, snapshot, fetched = conftest.run(scenario, backend)
 

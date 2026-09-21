@@ -1,34 +1,37 @@
 """The harness the sheaf servicer tests share.
 
-An in-process server over any `themis.sheaf.Backend`, a fixture session resolver with two tokens so
-two Analyses' repositories can be told apart, builders for the wire messages a publish is made of,
-a second writer that publishes through `themis.sheaf.Store` directly over the same backend, and
-backend wrappers that count uploads or land a competing publish inside `cas_mutable`. Imported by
-the test modules as a module, as `themis/sheaf/tests/conftest.py` is.
+An in-process server over any `themis.sheaf.Backend`, gated by the auth interceptor as the deployed
+one is, with the shared authorization fixture's callers and a session resolver holding two tokens so
+two Analyses' repositories can be told apart; the credentials each caller presents; builders for the
+wire messages a publish is made of; a second writer that publishes through `themis.sheaf.Store`
+directly over the same backend; and backend wrappers that count uploads or land a competing publish
+inside `cas_mutable`. The server runs on its own thread and the tests drive it with the synchronous
+stub, the client every production caller of a stream-in rpc is (rpc-authorization.md). Imported by the
+test modules as a module, as `themis/sheaf/tests/conftest.py` is.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import dataclasses
 import hashlib
 import pathlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import override
 
 import grpc
-import grpc.aio
 import pytest
 
 from themis import sheaf
+from themis.clients.auth import interceptor as interceptor_mod
 from themis.clients.auth import session as session_mod
 from themis.clients.auth.tests import fixture_session
-from themis.rpc import sheaf_pb2, sheaf_pb2_grpc
+from themis.rpc import sandbox_options_pb2, sheaf_pb2, sheaf_pb2_grpc
 from themis.services.sheaf import servicer as servicer_mod
 from themis.sheaf import backend as backend_mod
 from themis.sheaf import refdoc
 from themis.sheaf.models import refdoc_pb2
+from themis.testing import auth as auth_fixture
 from themis.testing import in_process_grpc
 
 REF = 'refs/heads/main'
@@ -38,16 +41,28 @@ PACK_1, PACK_2 = b'PACK-1 ' * 100, b'PACK-2 ' * 100
 
 OTHER_TOKEN = 'other'
 OTHER_ANALYSIS_ID = 'ana-other'
-OTHER_METADATA = fixture_session.session_metadata(OTHER_TOKEN)
+
+Metadata = auth_fixture.Metadata
+
+# The callers a sheaf rpc meets, as the gate sees them. The worker, claiming its session, is the
+# principal every sheaf rpc names; the developer identity reaches every rpc and names the session
+# whose repository it wants in a self claim.
+WORKER: Metadata = auth_fixture.WORKER
+OTHER: Metadata = (
+    *auth_fixture.SANDBOX_JOB,
+    *auth_fixture.claim(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, OTHER_TOKEN),
+)
+BAD_SESSION: Metadata = (
+    *auth_fixture.SANDBOX_JOB,
+    *auth_fixture.claim(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, 'bad'),
+)
+AGENT: Metadata = auth_fixture.AGENT
+CLU: Metadata = auth_fixture.CLU
+CLU_WITH_SESSION: Metadata = auth_fixture.CLU_WITH_SESSION
+NOBODY: Metadata = ()
 
 # Generous enough that every test not about a ceiling clears them.
 LIMITS = servicer_mod.Limits(max_publish_bytes=1 << 22, max_refs=64, max_document_bytes=1 << 16)
-# Enough that the client is still writing when the server decides the call's outcome, which is the
-# condition a refusal has to be delivered under. Derived from the ceiling because it also has to
-# stay inside the drain's budget: above that the server stops reading and cuts the client off, and
-# the delivery this is here to exercise never happens.
-PACK_THE_CLIENT_IS_STILL_SENDING = bytes(LIMITS.max_publish_bytes // 2)
-
 Moves = Mapping[str, tuple[str | None, str | None]]
 
 
@@ -60,17 +75,33 @@ def resolver() -> session_mod.SessionResolver:
     return session_mod.fixture_session_resolver_from_json(seeds, var_name='test')
 
 
-@contextlib.asynccontextmanager
-async def serving(
+def authorizer(session_resolver: session_mod.SessionResolver | None = None) -> interceptor_mod.Authorizer:
+    """The shared fixture's callers over the two-token session map, or over `session_resolver`."""
+    return dataclasses.replace(
+        auth_fixture.authorizer(), session_resolver=resolver() if session_resolver is None else session_resolver
+    )
+
+
+def gate(session_resolver: session_mod.SessionResolver | None = None) -> interceptor_mod.AuthInterceptor:
+    """The auth interceptor a sheaf server is gated by."""
+    return interceptor_mod.AuthInterceptor(authorizer(session_resolver))
+
+
+@contextlib.contextmanager
+def serving(
     backend: backend_mod.Backend,
     limits: servicer_mod.Limits = LIMITS,
     session_resolver: session_mod.SessionResolver | None = None,
-) -> AsyncIterator[sheaf_pb2_grpc.SheafAsyncStub]:
-    """Serve `backend`; `session_resolver` unstated is the two-token fixture map."""
-    servicer = servicer_mod.Servicer(resolver() if session_resolver is None else session_resolver, backend, limits)
-    async with in_process_grpc.serving(
-        lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
-    ) as channel:
+) -> Iterator[sheaf_pb2_grpc.SheafStub]:
+    """Serve `backend` behind the gate on its own thread; `session_resolver` unstated is the two-token fixture map."""
+    servicer = servicer_mod.Servicer(backend, limits)
+    with (
+        in_process_grpc.serving_in_thread(
+            lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server),
+            server_interceptors=(gate(session_resolver),),
+        ) as target,
+        grpc.insecure_channel(target) as channel,
+    ):
         yield sheaf_pb2_grpc.SheafStub(channel)
 
 
@@ -134,41 +165,32 @@ def stream(intent: sheaf_pb2.PublishIntent, packs: Sequence[bytes] = ()) -> list
     return [sheaf_pb2.PublishRequest(intent=intent), *chunks(packs)]
 
 
-async def requests(messages: Sequence[sheaf_pb2.PublishRequest]) -> AsyncIterator[sheaf_pb2.PublishRequest]:
-    for message in messages:
-        yield message
-
-
-async def publish(
-    stub: sheaf_pb2_grpc.SheafAsyncStub,
+def publish(
+    stub: sheaf_pb2_grpc.SheafStub,
     messages: Sequence[sheaf_pb2.PublishRequest],
-    metadata: tuple[tuple[str, str], ...] = fixture_session.GOOD_METADATA,
+    metadata: Metadata = WORKER,
 ) -> sheaf_pb2.PublishResponse:
-    return await stub.Publish(requests(messages), metadata=metadata)
+    return stub.Publish(iter(messages), metadata=metadata)
 
 
-async def fetch(stub: sheaf_pb2_grpc.SheafAsyncStub, pack_id: str) -> bytes:
+def fetch(stub: sheaf_pb2_grpc.SheafStub, pack_id: str, metadata: Metadata = WORKER) -> bytes:
     request = sheaf_pb2.FetchPackRequest(pack_id=pack_id)
-    return b''.join([chunk.content async for chunk in stub.FetchPack(request, metadata=fixture_session.GOOD_METADATA)])
+    return b''.join(chunk.content for chunk in stub.FetchPack(request, metadata=metadata))
 
 
 def run[T](
-    scenario: Callable[[sheaf_pb2_grpc.SheafAsyncStub], Awaitable[T]],
+    scenario: Callable[[sheaf_pb2_grpc.SheafStub], T],
     backend: backend_mod.Backend,
     limits: servicer_mod.Limits = LIMITS,
     session_resolver: session_mod.SessionResolver | None = None,
 ) -> T:
     """Serve `backend` in-process and run `scenario` against a stub to it."""
-
-    async def run() -> T:
-        async with serving(backend, limits, session_resolver) as stub:
-            return await scenario(stub)
-
-    return asyncio.run(run())
+    with serving(backend, limits, session_resolver) as stub:
+        return scenario(stub)
 
 
-def refused(code: grpc.StatusCode) -> Callable[[grpc.aio.AioRpcError], bool]:
-    return lambda exc: exc.code() is code
+def refused(code: grpc.StatusCode) -> Callable[[grpc.RpcError], bool]:
+    return lambda exc: exc.code() is code  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def store_for(backend: backend_mod.Backend, analysis_id: str = fixture_session.ANALYSIS_ID) -> sheaf.Store:
@@ -254,25 +276,6 @@ def backend(tmp_path: pathlib.Path) -> sheaf.LocalBackend:
     return sheaf.LocalBackend(tmp_path / 'store')
 
 
-class Sender:
-    """A publish's client side, recording whether it got to write its whole stream and half-close.
-
-    A status sent while the client is still writing tears the write side down partway through, so
-    `half_closed` is false; a status sent after the drain leaves the client having written every
-    message. The stream has to be long enough for the server to decide mid-write, which is what
-    `PACK_THE_CLIENT_IS_STILL_SENDING` supplies.
-    """
-
-    def __init__(self, messages: Sequence[sheaf_pb2.PublishRequest]) -> None:
-        self._messages = messages
-        self.half_closed = False
-
-    async def stream(self) -> AsyncIterator[sheaf_pb2.PublishRequest]:
-        for message in self._messages:
-            yield message
-        self.half_closed = True
-
-
 @dataclasses.dataclass(frozen=True)
 class Outcome:
     """What a publish attempt left behind, read straight from the store."""
@@ -281,7 +284,6 @@ class Outcome:
     details: str
     generation: int | None
     packs: set[str]
-    half_closed: bool
 
 
 def attempt(
@@ -289,14 +291,13 @@ def attempt(
     messages: Sequence[sheaf_pb2.PublishRequest],
     limits: servicer_mod.Limits = LIMITS,
     *,
-    metadata: tuple[tuple[str, str], ...] = fixture_session.GOOD_METADATA,
+    metadata: Metadata = WORKER,
     session_resolver: session_mod.SessionResolver | None = None,
 ) -> Outcome:
     """Run one publish and report its status alongside the store's state afterwards."""
-    sender = Sender(messages)
     code, details = None, ''
     try:
-        run(lambda stub: stub.Publish(sender.stream(), metadata=metadata), backend, limits, session_resolver)
-    except grpc.aio.AioRpcError as exc:
-        code, details = exc.code(), exc.details() or ''
-    return Outcome(code, details, store_for(backend).read().generation, stored_packs(backend), sender.half_closed)
+        run(lambda stub: stub.Publish(iter(messages), metadata=metadata), backend, limits, session_resolver)
+    except grpc.RpcError as exc:
+        code, details = exc.code(), exc.details() or ''  # pyright: ignore[reportAttributeAccessIssue]
+    return Outcome(code, details, store_for(backend).read().generation, stored_packs(backend))

@@ -31,12 +31,13 @@ every internal call carries at least the first:
   Present only when the call exercises something only they may.
 
 An interceptor assembles those three into one `AuthContext` for every call and checks it against what the **contract**
-admits. The proto already marks an rpc the agent may reach (`agent_exposed`); it gains two sibling options, one
-admitting any call scoped to an Analysis and one naming the first-party **callers** — drawn from a closed enum of our
-service accounts, `CALLER_WEB` say — that may call without a session. The interceptor derives the admission rule from
-those options, so who may call an rpc is stated once, in the contract, and read from there by the hatch allowlist and
-the interceptor alike. A call the contract does not admit is denied, as is a call to an rpc whose contract admits
-nobody; denial is the default rather than a fallback.
+admits. The proto already marks an rpc the agent may reach (`agent_exposed`); it gains one sibling option,
+`admits_caller`, naming the **principals** the rpc admits — drawn from a closed enum of our service accounts, each
+member also saying what a call from that account must **claim** to be calling as: itself (`CALLER_WEB`), or the agent or
+the worker within a session (`CALLER_AGENT`, `CALLER_SANDBOX_WORKER`, one account, two principals). The interceptor
+derives the admission rule from that option, so who may call an rpc is stated once, in the contract, and read from there
+by the hatch allowlist and the interceptor alike. A call the contract does not admit is denied, as is a call to an rpc
+whose contract admits nobody; denial is the default rather than a fallback.
 
 The line that keeps this from growing into an access-control system of its own: **what a call sees is never selected by
 the person driving it.** It may be selected by the Analysis the call is scoped to; a person's entitlement can widen what
@@ -45,8 +46,9 @@ acquired on one institution's subscription lands in a corpus every Project reads
 and held off by a check that fails loudly if anything presents one.
 
 The one identity the agent can present — the sandbox-job service account, one of ours like the rest — has no member in
-that enum, so no contract can admit it: an agent that dropped its session token satisfies no caller arm, and the
-exclusion is a property of the type rather than of any configuration.
+that enum that calls as itself: both of its members claim a session, and are satisfied only by one that resolves, so an
+agent that dropped its session token satisfies no principal, and the exclusion is a property of the type rather than of
+any configuration.
 
 ## Background
 
@@ -116,17 +118,24 @@ that assembles the one and enforces the other. It lives alongside the session cl
 
 ### One context, built for every call
 
-A server interceptor builds one `AuthContext` for every call from the three facts the Overview names, then derives the
-admission rule of the method being called and evaluates it. The binding is a proto because it is what a resolution rpc
-returns; the person will be, for the same reason, once the approval flow defines it. The context around them is a frozen
-dataclass, so an absent binding can be absent — the reason is under Alternatives.
+A server interceptor builds one `AuthContext` for every call, then derives the admission rule of the method being called
+and evaluates it. The caller is verified from the ID token. The binding is resolved from a session token — but which
+session, and on whose behalf the account is calling, the account itself states, in one **claim** it sends as metadata:
+what it is *calling as*, and the session token when that names a session. The claim is trusted rather than verified,
+because the account is trusted to make it; what is checked is only that the account has a member for what it claims. A
+call carrying no claim calls as itself. The sandbox job's account is why the claim exists: one account forwards the
+guest's calls, claiming the agent's session, and makes the worker's own calls — its checkpoints, its mirror — claiming
+the worker's; the same verified caller, two principals, told apart by what it says it is doing. The binding is a proto
+because it is what a resolution rpc returns; the person will join as a fourth fact, for the same reason, once the
+approval flow defines it. The context is a frozen dataclass, so an absent binding can be absent — the reason is under
+Alternatives.
 
 ```python
 @dataclasses.dataclass(frozen=True)
 class AuthContext:
-    caller: str
-    session: auth_pb2.SessionContext | None
-    on_behalf_of: UserContext | None       # the approval flow's message; nothing resolves one yet
+    caller: str                                # the verified service-account email
+    calling_as: sandbox_options_pb2.CallingAs  # the claim: SELF, AGENT_SESSION or WORKER_SESSION
+    session: auth_pb2.SessionContext | None    # resolved from the claim's token, when it named one
 ```
 
 ### What the context guarantees at construction
@@ -135,18 +144,20 @@ Some combinations of the three facts are bugs rather than policy questions, and 
 being handed to a rule that would quietly deny. Each surfaces as an internal error, not as `PERMISSION_DENIED`, and each
 is relaxable later by an explicit edit rather than by omission:
 
-- **The agent's account without a binding.** The hatch always injects a session token, so its absence is a worker defect
-  or a compromise. This is the one check that reads the caller's identity for a reason other than admission: it compares
-  two facts the call arrived with for consistency, and decides nothing about who may call.
+- **A claim the callee cannot honour.** None at all from an account with no self-acting member — the sandbox job's,
+  whose hatch and worker always claim, so a bare call from it is a worker defect or a compromise; one naming a session
+  and carrying no token; one that does not decode. This is the one check that reads the caller's identity for a reason
+  other than admission: it compares two facts the call arrived with for consistency, and decides nothing about who may
+  call.
 - **An approval token with nothing configured to resolve it.** The person axis is held off until its two prerequisites
   land, and a deployment convention is not a property: a call carrying an approval token while no resolver is configured
   is an error, not an ignored header. Switching the axis on is the edit that configures the resolver.
 
-The exclusion the caller arm rests on — that the sandbox-job account is never admitted by identity — is not a check at
-all but a fact about the contract: the `Caller` enum has no member for it, so no rpc can name it. Two layers back that
-up. The sandbox-job account is a required deployment input, so a service given none refuses to start, and the caller arm
-refuses that identity per call whatever the contract says; and a test binds the enum's account ids to the accounts the
-infrastructure declares, so a member cannot name an account that does not exist or go stale when one is renamed.
+The exclusion the caller arm rests on — that the sandbox-job account is never admitted by identity alone — is not a
+check but a fact about the contract: both of its members name a session, and a member naming a session is satisfied only
+by one that resolves, so no rpc can admit that account for being itself. A test binds the enum's account ids to the
+accounts the infrastructure declares, so a member cannot name an account that does not exist or go stale when one is
+renamed.
 
 The interceptor is the only reader of authorization metadata. A **servicer** — the class implementing one gRPC service —
 never reads the call's metadata itself, which a test asserts over the servicer modules, so a header naming a person, or
@@ -156,38 +167,36 @@ anything else, has exactly one place it could be honoured and that place does no
 
 Which rpcs the sandbox agent may reach is already declared in the proto, by the `agent_exposed` method option the
 hatch's allowlist and the guest's stubs are generated from ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). This
-design adds two sibling options, defined with it in
-[`schema/proto/themis/rpc/sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto): `admits_session`
-admits any call scoped to an Analysis, and a repeated `admits_caller` admits each named first-party caller, no session
-required. `agent_exposed` stays what it is — the codegen marker for the guest's surface — and *implies*
-`admits_session`, since the agent only ever presents a session, so an exposed rpc cannot fail to admit one. The rule the
-interceptor derives is the alternation: a call scoped to an Analysis is admitted where the rpc is exposed or admits
-sessions, a call from a named caller where the rpc names it, and an rpc setting none of the three admits nobody. A
-reader of the proto learns who may call an rpc, and the servicer carries no admission code at all.
+design adds one sibling option, defined with it in
+[`schema/proto/themis/rpc/sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto): a repeated
+`admits_caller`, each naming a principal the rpc admits. `agent_exposed` stays what it is — the codegen marker for the
+guest's surface — and an exposed rpc names the agent, since the agent only ever presents a session and an exposed rpc
+cannot fail to admit one. The rule the interceptor derives is the disjunction over the named principals: the call's
+verified account and its claim match one, and where that principal names a session, the session resolved. A reader of
+the proto learns who may call an rpc, and the servicer carries no admission code at all.
 
-Keeping `admits_session` distinct from `agent_exposed` is what lets a session-scoped call arrive from something other
-than the agent — the web tier acting within an Analysis, say — without widening the guest's generated surface to reach
-it. The two options answer different questions, and only one of them changes what the sandbox can call.
-
-A caller is a member of a closed `Caller` enum, one per first-party service account, each member carrying the account's
-id as an option on the value:
+A principal is a member of a closed `Caller` enum: a first-party service account, and what a call from it claims to be
+calling as, both carried as options on the value:
 
 ```proto
 enum Caller {
   CALLER_UNSPECIFIED = 0;
-  CALLER_WEB = 1 [(themis.rpc.account_id) = "themis-web"];
-  CALLER_CLU = 2 [(themis.rpc.account_id) = "themis-clu"];
+  CALLER_WEB = 1 [(account_id) = "themis-web", (calling_as) = CALLING_AS_SELF];
+  CALLER_CLU = 2 [(account_id) = "themis-clu", (calling_as) = CALLING_AS_SELF];
+  CALLER_AGENT = 3 [(account_id) = "themis-sandbox-job", (calling_as) = CALLING_AS_AGENT_SESSION];
+  CALLER_SANDBOX_WORKER = 4 [(account_id) = "themis-sandbox-job", (calling_as) = CALLING_AS_WORKER_SESSION];
 }
 ```
 
 The contract cannot carry a service account's email, which differs per environment, but the account *id* is the same
 everywhere — the infrastructure names every first-party account literally, and only the GCP project varies — so the
 verifier completes it with the project the service runs in. An enum rather than a string is what makes a misspelled
-caller a compile error instead of an rpc that silently admits nobody, and it is what makes the sandbox-job account
-unadmittable rather than merely refused: it has no member. Adding a first-party caller is adding a member, which is
-additive and, like every change to an option's value, not a breaking change under `buf`. Naming callers in the contract
-is a deliberate widening of what `agent_exposed` began: the proto already stated one class of admitted caller, and it is
-the one place a reader looks for the rest.
+caller a compile error instead of an rpc that silently admits nobody. Adding a principal is adding a member, which is
+additive and, like every change to an option's value, not a breaking change under `buf`. Naming principals in the
+contract is a deliberate widening of what `agent_exposed` began: the proto already stated one class of admitted caller,
+and it is the one place a reader looks for the rest. One principal is named on no rpc and admitted on every rpc there
+is: `CALLER_CLU`, the developer's identity for exercising a deployed system by hand — whether anyone may become it, and
+where, is IAM's.
 
 Admission is an allowlist and only an allowlist: the contract names what an rpc admits, a call matching none of it is
 denied, and there is no way to name a caller that is *refused*. A denylist beside the allowlist would not change the
@@ -198,10 +207,11 @@ Fail-closed governs a single call the same way, in two stages. Verifying the cal
 exists, and a call whose ID token the service cannot verify is denied outright, on no arm: Cloud Run admits no call
 without a valid token, so one the service cannot re-verify is a deployment fault — the audience set wrong — or a broken
 guarantee, and neither yields a caller. That is why `caller` is never absent from a context. Within a built context, an
-arm that cannot decide declines: a session token that does not resolve is no binding, and a verified caller the rpc does
-not name is no admission. Admission is reached only by an arm affirmatively matching. A failure that is not a decline —
-the auth service being unreachable, say — propagates as the failure it is, because reading an outage as "no session"
-would turn an incident into a silent policy decision.
+arm that cannot decide declines: a verified caller the rpc does not name is no admission, and a claim naming a session
+that does not resolve is denied whatever the caller — the call would be attributed wrongly or not at all, and a handler
+that finds no session on its context then knows the claim named none. Admission is reached only by an arm affirmatively
+matching. A failure that is not a decline — the auth service being unreachable, say — propagates as the failure it is,
+because reading an outage as "no session" would turn an incident into a silent policy decision.
 
 ### Default-deny is enforced at the interceptor, over the whole server
 
@@ -219,6 +229,20 @@ resolve to a contract, and exempts exactly one name: the health check, which Clo
 the web tier exempts its own. Every evidence interface hosted with literature already marks its rpcs `agent_exposed`, so
 the derivation covers the whole server from the first deploy; what the in-body session checks those interfaces carry
 become is redundancy, and deleting them is an open question below rather than a precondition.
+
+The gate covers every shape an rpc takes, and is the one place a call's status is sent. A stream-out rpc's context is
+bound across the iteration, not only across the call that starts it, since the handler's body runs as the response is
+drawn. A handler behind the gate raises a `StatusError` — a gRPC status carried as an exception — and the gate aborts
+the context with it, so a servicer never touches its context's status. That holds for a stream-in rpc too: a status sent
+while the client is still writing reaches it as the status, because the server completes its response and resets the
+stream and the client keeps the trailers it received
+([RFC 9113 §8.1](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.1)). One client gets this wrong: grpc's Python
+asyncio client records a write that fails after the call has completed as `INTERNAL`, overwriting the status it already
+holds ([grpc/grpc#36066](https://github.com/grpc/grpc/issues/36066) describes the mechanism; it is filed against
+bidirectional streams, and measurements here reproduce it on stream-in; the fix is
+[grpc/grpc#43486](https://github.com/grpc/grpc/pull/43486)). So a stream-in rpc's client is the synchronous one until a
+grpcio release carries that fix — a constraint on any caller, including a worker that would checkpoint over the asyncio
+channel it already holds to the store.
 
 ### The binding names an Analysis, not a session
 
@@ -283,12 +307,19 @@ growing. The person axis is therefore designed here and held off — the constru
 token until a resolver is configured, and configuring one waits on the approval flow and on masking able to hold a
 licensed representation to the licences that reach it.
 
-### Adoption: the literature interface
+### Adoption: the literature interface, then the sheaf service
 
 Literature adopts the primitive first because it is the interface with a caller that holds no session and the interface
 with a **spend** to attribute: `MaybeIngestPapers` may start a **conversion**, the rendering of a paper's PDF to
 markdown by a model, which costs model budget. The other evidence interfaces are covered by the interceptor from the
 same deploy, as described above, and keep their in-body session checks until those are deleted.
+
+The sheaf service ([`sheaf-service.md`](sheaf-service.md)) is gated the same way, and is the server with streaming rpcs,
+`FetchPack` out and `Publish` in. Its contract names one principal, the sandbox job's account calling as the worker
+within a session, so the guest's forwarded calls — the agent's claim — never reach the repository directly; the worker's
+mirror does. Its servicer reads the Analysis from the bound context and holds no session code of its own. The developer
+identity reaches it by naming, in a self claim, the session whose repository it wants: a claim on a self-acting call
+admits nothing and is resolved for attribution, which is what scoping the repository needs.
 
 Literature's rpcs split three ways:
 
@@ -352,7 +383,9 @@ written is an open question below.
   an acquisition without an affiliation fails on its own. A read has no natural reason to touch the context, so a
   forgotten check is silent, and every such method is open to any holder of `run.invoker`. That is the state this design
   replaces.
-- **`agent_exposed` as the session admission, with no `admits_session`.** Rejected: the option drives codegen for the
+- **A separate `admits_session` option, admitting any call scoped to an Analysis.** Folded into the principals: a
+  session-scoped call is one from an account claiming a session, and naming the principal says which account as well as
+  that it holds a session. `agent_exposed` alone was rejected for the same reason: the option drives codegen for the
   guest's surface, so admitting a session-scoped call from anything other than the agent would mean generating guest
   stubs for an rpc the agent has no business calling. One bit cannot carry two independent decisions.
 - **A user-scoped credential inside the sandbox** — the agent holding something that speaks for the curator whose

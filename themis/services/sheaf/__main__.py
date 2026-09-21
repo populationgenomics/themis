@@ -1,14 +1,16 @@
-"""Server entrypoint: build the session resolver, the backend and the limits from the environment, and serve.
+"""Server entrypoint: build the authorizer, the backend and the limits from the environment, and serve.
 
-Every selector is required, with no silent default. ``THEMIS_AUTHORIZER_BACKEND`` picks the
-authorizer: ``http`` resolves each request's session through the auth service at
-``THEMIS_AUTH_URL``; ``fixture`` resolves against a map seeded from ``THEMIS_SHEAF_FIXTURE_CONTEXTS``
-(JSON bearer -> binding). ``THEMIS_SHEAF_BACKEND`` picks the store: ``gcs`` over the bucket
-``THEMIS_WORKSPACE_BUCKET`` names, every repository under its ``workspaces/`` prefix, or ``local`` over the
-directory ``THEMIS_SHEAF_LOCAL_ROOT`` names.
+Every selector is required, with no silent default. The authorizer the auth interceptor resolves each
+call through is ``interceptor.authorizer_from_env``'s, seeded in fixture mode from
+``THEMIS_SHEAF_FIXTURE_CONTEXTS`` and ``THEMIS_SHEAF_FIXTURE_CALLERS``. ``THEMIS_SHEAF_BACKEND`` picks
+the store: ``gcs`` over the bucket ``THEMIS_WORKSPACE_BUCKET`` names, every repository under its
+``workspaces/`` prefix, or ``local`` over the directory ``THEMIS_SHEAF_LOCAL_ROOT`` names.
 The three ceilings — ``THEMIS_SHEAF_MAX_PUBLISH_BYTES``, ``THEMIS_SHEAF_MAX_REFS``,
 ``THEMIS_SHEAF_MAX_DOCUMENT_BYTES`` — are positive integers. ``PORT`` is the Cloud Run convention;
 a ``grpc.health.v1`` health service reports SERVING alongside.
+
+The server is built through ``interceptor.gated_server`` and no other way, so every rpc is behind the
+auth interceptor (rpc-authorization.md).
 """
 
 from __future__ import annotations
@@ -16,15 +18,15 @@ from __future__ import annotations
 import asyncio
 import os
 
-import grpc.aio
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from themis import sheaf
-from themis.clients.auth import session as session_mod
+from themis.clients.auth import interceptor as interceptor_mod
 from themis.rpc import sheaf_pb2_grpc
 from themis.services.sheaf import servicer as servicer_mod
 
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_SHEAF_FIXTURE_CONTEXTS'
+_FIXTURE_CALLERS_VAR = 'THEMIS_SHEAF_FIXTURE_CALLERS'
 _BACKEND_VAR = 'THEMIS_SHEAF_BACKEND'
 # The bucket's key layout: repositories live apart from anything else the bucket holds, so a prefix
 # condition can scope an identity to them.
@@ -43,17 +45,10 @@ def _require(name: str) -> str:
     return value
 
 
-def build_session_resolver() -> session_mod.SessionResolver:
-    backend = os.environ.get('THEMIS_AUTHORIZER_BACKEND')
-    if backend is None:
-        raise SystemExit('THEMIS_AUTHORIZER_BACKEND is required (expected "http" or "fixture")')
-    if backend == 'http':
-        return session_mod.session_resolver_from_env()
-    if backend == 'fixture':
-        return session_mod.fixture_session_resolver_from_json(
-            os.environ.get(_FIXTURE_CONTEXTS_VAR), var_name=_FIXTURE_CONTEXTS_VAR
-        )
-    raise SystemExit(f'unsupported THEMIS_AUTHORIZER_BACKEND {backend!r} (expected "http" or "fixture")')
+def build_authorizer() -> interceptor_mod.Authorizer:
+    return interceptor_mod.authorizer_from_env(
+        fixture_contexts_var=_FIXTURE_CONTEXTS_VAR, fixture_callers_var=_FIXTURE_CALLERS_VAR
+    )
 
 
 def build_backend() -> sheaf.Backend:
@@ -92,9 +87,8 @@ def build_limits() -> servicer_mod.Limits:
 
 
 async def _serve() -> None:
-    server = grpc.aio.server()
-    servicer = servicer_mod.Servicer(build_session_resolver(), build_backend(), build_limits())
-    sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
+    server = interceptor_mod.gated_server(build_authorizer())
+    sheaf_pb2_grpc.add_SheafServicer_to_server(servicer_mod.Servicer(build_backend(), build_limits()), server)
     # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
     health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
     await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)

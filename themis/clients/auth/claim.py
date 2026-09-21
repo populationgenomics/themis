@@ -39,15 +39,20 @@ class MalformedClaimError(ValueError):
 def metadata_for(calling_as: sandbox_options_pb2.CallingAs, session_token: str) -> Metadata:
     """The call metadata a caller calling as ``calling_as`` within a session sends.
 
+    A session-scoped member must name a session; a caller calling as itself names one where the
+    rpc serves the session's repository — resolved for attribution and scope, admitting nothing.
+
     Args:
-        calling_as: One of the session-naming ``CallingAs`` members.
-        session_token: The session the call is scoped to.
+        calling_as: The ``CallingAs`` member; not ``CALLING_AS_UNSPECIFIED``.
+        session_token: The session the call is scoped to; non-empty.
 
     Raises:
-        ValueError: ``calling_as`` names no session; a caller calling as itself sends no claim.
+        ValueError: ``calling_as`` is unspecified, or ``session_token`` is empty.
     """
-    if calling_as not in SESSION_SCOPED:
-        raise ValueError(f'calling_as {calling_as} names no session; a caller calling as itself sends no claim')
+    if calling_as == sandbox_options_pb2.CALLING_AS_UNSPECIFIED:
+        raise ValueError('a claim names what the caller is calling as; CALLING_AS_UNSPECIFIED names nothing')
+    if not session_token:
+        raise ValueError('a claim carrying a session names it with a non-empty token')
     claim = auth_pb2.CallerClaim(calling_as=calling_as, session_token=session_token)
     return (
         (CLAIM_METADATA, claim.SerializeToString()),

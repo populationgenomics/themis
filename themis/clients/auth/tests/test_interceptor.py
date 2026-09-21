@@ -20,12 +20,12 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from themis.clients.auth import claim as claim_mod
 from themis.clients.auth import context as auth_context
 from themis.clients.auth import interceptor as interceptor_mod
-from themis.rpc import literature_pb2, sandbox_options_pb2
+from themis.rpc import literature_pb2, sandbox_options_pb2, store_pb2
 from themis.testing import auth as fixture
 from themis.testing import in_process_grpc
 
 _LITERATURE = 'themis.rpc.literature.Literature'
-_STORE = 'themis.rpc.store.Store'
+_STORE = store_pb2.DESCRIPTOR.services_by_name['Store'].full_name  # imported here: the rule is read off the pool
 _NOWHERE = 'themis.rpc.nowhere.Nothing'
 
 Metadata = fixture.Metadata
@@ -150,6 +150,14 @@ def test_a_self_acting_caller_s_session_is_resolved_for_attribution_without_admi
     assert auth == auth_context.AuthContext(caller=fixture.CLU_EMAIL, calling_as=_SELF, session=fixture.SESSION)
 
 
+def test_a_self_acting_caller_whose_named_session_does_not_resolve_is_denied() -> None:
+    # Admitted without a session, but a claim the callee cannot honour is not one to serve under: the
+    # handler would read "named none" from a call that named one.
+    code, auth = _call(f'/{_LITERATURE}/DescribePaper', (*fixture.CLU, *fixture.claim(_SELF, 'bad')))
+    assert code is grpc.StatusCode.PERMISSION_DENIED
+    assert auth is None
+
+
 def test_the_agent_with_a_session_that_does_not_resolve_is_denied_not_faulted() -> None:
     # Expired or revoked is routine and the caller's to remedy: the member needs a session, and there is none.
     code, auth = _call(f'/{_LITERATURE}/GetMarkdown', fixture.AGENT_BAD_SESSION)
@@ -173,6 +181,18 @@ def test_an_account_that_never_calling_as_itself_must_claim() -> None:
     # The sandbox job's account has no self-acting member, so a call from it with no claim is a worker
     # defect — the hatch and the worker's own clients always claim — surfaced as INTERNAL, not a denial.
     code, _ = _call(f'/{_LITERATURE}/GetMarkdown', fixture.SANDBOX_JOB)
+    assert code is grpc.StatusCode.INTERNAL
+
+
+@pytest.mark.parametrize(
+    'claim',
+    [
+        fixture.claim(sandbox_options_pb2.CALLING_AS_UNSPECIFIED, 'good'),  # names nothing
+        fixture.claim(_SELF, 'good'),  # names a member the sandbox job's account does not have
+    ],
+)
+def test_a_claim_the_account_has_no_member_for_is_a_fault_not_a_denial(claim: Metadata) -> None:
+    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', (*fixture.SANDBOX_JOB, *claim))
     assert code is grpc.StatusCode.INTERNAL
 
 

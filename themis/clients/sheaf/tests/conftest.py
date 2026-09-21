@@ -1,15 +1,18 @@
 """The harness the remote-store tests share: the sheaf servicer served in-process, and a client over it.
 
-The servicer runs on its own thread over `LocalBackend`, with the fixture session resolver the
-servicer suite uses, so the client under test speaks to the real service code over a real socket
-— status codes, metadata and streaming included — and a second writer can publish through
-`themis.sheaf.Store` over the same backend to race it. Imported by the test modules as a module,
-as `themis/sheaf/tests/conftest.py` is.
+The servicer runs on its own thread over `LocalBackend`, behind the auth interceptor with the session
+resolver the servicer suite uses, so the client under test speaks to the real service code over a real
+socket — status codes, metadata and streaming included — and a second writer can publish through
+`themis.sheaf.Store` over the same backend to race it. The client sends its ID token over TLS only, so
+over the loopback channel the gate is told to take every call as the sandbox job's; what the client
+claims, and which session, still travels as metadata and is judged. Imported by the test modules as a
+module, as `themis/sheaf/tests/conftest.py` is.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import pathlib
 from collections.abc import AsyncIterator, Iterator
 from typing import override
@@ -20,11 +23,13 @@ import pytest
 from google.protobuf import empty_pb2
 
 from themis import sheaf
+from themis.clients.auth import interceptor as interceptor_mod
 from themis.clients.auth.tests import fixture_session
 from themis.clients.sheaf import store as remote_mod
-from themis.rpc import sheaf_pb2, sheaf_pb2_grpc
+from themis.rpc import sandbox_options_pb2, sheaf_pb2, sheaf_pb2_grpc
 from themis.services.sheaf import servicer as servicer_mod
 from themis.services.sheaf.tests import conftest as service_conftest
+from themis.testing import auth as auth_fixture
 from themis.testing import in_process_grpc
 
 # The repository the fixture session names, which is also the name the client serves it under.
@@ -42,16 +47,26 @@ def serving(
 
     `servicer_class` lets a test serve a subclass that fails a call the way a deployment would.
     """
-    servicer = servicer_class(service_conftest.resolver(), backend, limits)
+    servicer = servicer_class(backend, limits)
+    authorizer = dataclasses.replace(
+        service_conftest.authorizer(), verify_caller=auth_fixture.caller_presumed(auth_fixture.SANDBOX_JOB_EMAIL)
+    )
+    gate = interceptor_mod.AuthInterceptor(authorizer)
     with in_process_grpc.serving_in_thread(
-        lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
+        lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server), server_interceptors=(gate,)
     ) as target:
         yield target
 
 
-def write_token_file(path: pathlib.Path, session_token: str, bearer: str | None = None) -> pathlib.Path:
-    """Write the token file `RemoteStore` reads, as the laptop tool writes it."""
-    remote_mod.write_credentials(path, remote_mod.Credentials(session_token=session_token, bearer=bearer))
+def write_token_file(
+    path: pathlib.Path,
+    session_token: str,
+    bearer: str | None = None,
+    calling_as: sandbox_options_pb2.CallingAs = sandbox_options_pb2.CALLING_AS_WORKER_SESSION,
+) -> pathlib.Path:
+    """Write the token file `RemoteStore` reads, as the worker writes it: the worker's claim on `session_token`."""
+    credentials = remote_mod.Credentials(session_token=session_token, bearer=bearer, calling_as=calling_as)
+    remote_mod.write_credentials(path, credentials)
     return path
 
 

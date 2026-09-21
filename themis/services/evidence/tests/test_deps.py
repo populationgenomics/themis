@@ -4,49 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2
 from themis.services.evidence import deps as deps_mod
-
-
-def test_fixture_authorizer_resolves_seeded_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
-    monkeypatch.setenv('THEMIS_EVIDENCE_FIXTURE_CONTEXTS', json.dumps({'tok': {'project_id': 'p', 'analysis_id': 'a'}}))
-    session_resolver = deps_mod._session_resolver_from_env(deps_mod._backend_from_env())
-
-    async def resolve(token: str) -> auth_pb2.SessionContext:
-        return await session_resolver(token)
-
-    context = asyncio.run(resolve('tok'))
-    assert context.project_id == 'p'
-    assert context.analysis_id == 'a'
-    with pytest.raises(session_mod.UnresolvedSessionError):
-        asyncio.run(resolve('unknown'))
-
-
-@pytest.mark.parametrize(
-    ('env', 'unset'),
-    [
-        ({}, 'THEMIS_AUTHORIZER_BACKEND'),
-        ({'THEMIS_AUTHORIZER_BACKEND': 'ldap'}, None),
-        ({'THEMIS_AUTHORIZER_BACKEND': 'http'}, 'THEMIS_AUTH_URL'),
-        ({'THEMIS_AUTHORIZER_BACKEND': 'fixture'}, 'THEMIS_EVIDENCE_FIXTURE_CONTEXTS'),
-    ],
-)
-def test_an_unusable_authorizer_selection_exits(
-    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], unset: str | None
-) -> None:
-    monkeypatch.delenv('THEMIS_AUTHORIZER_BACKEND', raising=False)
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
-    if unset is not None:
-        monkeypatch.delenv(unset, raising=False)
-    with pytest.raises(SystemExit):
-        deps_mod._session_resolver_from_env(deps_mod._backend_from_env())
 
 
 def _seed_fixture_authorizer(monkeypatch: pytest.MonkeyPatch) -> None:

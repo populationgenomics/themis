@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 import stat
 from collections.abc import Sequence
+from typing import Self, SupportsIndex, override
 
 import pytest
 
@@ -12,6 +13,7 @@ from themis import sheaf
 from themis.clients.auth.tests import fixture_session
 from themis.clients.sheaf import store as remote_mod
 from themis.clients.sheaf.tests import conftest
+from themis.rpc import sandbox_options_pb2
 from themis.services.sheaf import servicer as servicer_mod
 from themis.services.sheaf.tests import conftest as service_conftest
 from themis.sheaf import stores
@@ -205,6 +207,71 @@ def test_a_remote_publish_cannot_name_stored_packs(remote: remote_mod.RemoteStor
         remote.publish(base, _intent(base, {REF: (None, SHA_A)}, stored_packs=[sheaf.pack_id(PACK_1)]))
 
 
+# --- a status sent while the client is still writing -------------------------------------------------------
+
+
+class _Observed(bytes):
+    """A pack that counts the chunks `RemoteStore` has sliced off it, which is how far the client got."""
+
+    def __new__(cls, size: int) -> Self:
+        return super().__new__(cls, bytes(size))
+
+    def __init__(self, size: int) -> None:
+        del size
+        self.chunks_sliced = 0
+
+    @override
+    def __getitem__(self, key: SupportsIndex | slice) -> int | bytes:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if isinstance(key, slice):
+            self.chunks_sliced += 1
+            return super().__getitem__(key)
+        return super().__getitem__(key)
+
+
+def _still_sending() -> _Observed:
+    # Many chunks past the transport's send window, so the server decides while the client is writing.
+    return _Observed(32 << 20)
+
+
+def test_a_refusal_decided_from_the_intent_reaches_a_client_still_sending_packs(
+    backend: sheaf.LocalBackend, token_file: pathlib.Path
+) -> None:
+    # The ceiling is the one refusal the client cannot decide for itself: the service refuses from the
+    # declared size before the first pack byte.
+    pack = _still_sending()
+    limits = servicer_mod.Limits(max_publish_bytes=len(pack) - 1, max_refs=64, max_document_bytes=1 << 16)
+    with (
+        conftest.serving(backend, limits) as target,
+        remote_mod.RemoteStore(target, token_file, repo=conftest.ANALYSIS_ID) as remote,
+    ):
+        base = remote.read()
+        with pytest.raises(sheaf.PublishRefused, match='ceiling'):
+            remote.publish(base, _intent(base, {REF: (None, SHA_A)}, packs=[pack]))
+    assert pack.chunks_sliced < len(pack) // remote_mod.CHUNK_SIZE, (
+        'the client had finished writing; the status was not early'
+    )
+    assert conftest.direct(backend).read().generation is None
+    assert conftest.direct(backend).read().packs == ()
+
+
+def test_a_denial_decided_before_any_byte_reaches_a_client_still_sending_packs(
+    target: str, tmp_path: pathlib.Path, backend: sheaf.LocalBackend
+) -> None:
+    token_file = conftest.write_token_file(tmp_path / 'token.json', 'revoked')
+    empty = sheaf.Snapshot(doc=sheaf.RefDoc(), generation=None)
+    pack = _still_sending()
+    with (
+        remote_mod.RemoteStore(target, token_file, repo=conftest.ANALYSIS_ID) as remote,
+        pytest.raises(sheaf.ServiceFault) as caught,
+    ):
+        remote.publish(empty, _intent(empty, {REF: (None, SHA_A)}, packs=[pack]))
+    assert caught.value.code == 'PERMISSION_DENIED'
+    assert pack.chunks_sliced < len(pack) // remote_mod.CHUNK_SIZE, (
+        'the client had finished writing; the status was not early'
+    )
+    assert conftest.direct(backend).read().generation is None
+
+
 # --- credentials ------------------------------------------------------------------------------------------
 
 
@@ -292,10 +359,13 @@ def test_the_descriptor_rebuilds_the_store_and_carries_no_token(
     ('payload', 'cause'),
     [
         ('[]', 'JSON object'),
-        ('{"session_token": ""}', 'non-empty'),
-        ('{"bearer": "x"}', 'session_token'),
-        ('{"session_token": "t", "beaerer": "x"}', 'unexpected keys'),
-        ('{"session_token": "t", "bearer": 1}', 'bearer'),
+        ('{"session_token": "", "calling_as": "CALLING_AS_SELF"}', 'non-empty'),
+        ('{"bearer": "x", "calling_as": "CALLING_AS_SELF"}', 'session_token'),
+        ('{"session_token": "t", "calling_as": "CALLING_AS_SELF", "beaerer": "x"}', 'unexpected keys'),
+        ('{"session_token": "t", "calling_as": "CALLING_AS_SELF", "bearer": 1}', 'bearer'),
+        ('{"session_token": "t"}', 'calling_as'),
+        ('{"session_token": "t", "calling_as": "CALLING_AS_UNSPECIFIED"}', 'calling_as'),
+        ('{"session_token": "t", "calling_as": "CALLING_AS_NOBODY"}', 'not a CallingAs name'),
         ('not json', 'not JSON'),
     ],
 )
@@ -318,7 +388,9 @@ def test_the_token_file_is_written_for_its_owner_alone_and_reads_back(tmp_path: 
     path = tmp_path / 'token.json'
     path.write_text('{"session_token": "stale", "bearer": "old"}', 'utf-8')
     path.chmod(0o644)
-    credentials = remote_mod.Credentials(session_token='fresh', bearer=None)
+    credentials = remote_mod.Credentials(
+        session_token='fresh', bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_WORKER_SESSION
+    )
 
     remote_mod.write_credentials(path, credentials)
 

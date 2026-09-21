@@ -57,12 +57,18 @@ async def serving(
 
 
 @contextlib.contextmanager
-def serving_in_thread(register: Register) -> Iterator[str]:
+def serving_in_thread(
+    register: Register, *, server_interceptors: Sequence[grpc.aio.ServerInterceptor] = ()
+) -> Iterator[str]:
     """Serve whatever ``register`` installs on a loopback port, on a thread of its own; yield the target.
 
     For a synchronous caller — a blocking stub, or a subprocess that dials the port — which a
     ``grpc.aio`` server cannot share a thread with. The server runs its own event loop on a
     daemon thread; exit stops it and joins the thread.
+
+    Args:
+        register: Installs the servicer or handlers under test on the server it is given.
+        server_interceptors: Server interceptors to install ahead of every handler.
 
     Yields:
         The ``host:port`` the server listens on.
@@ -74,7 +80,7 @@ def serving_in_thread(register: Register) -> Iterator[str]:
     stopping: list[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = []
 
     async def run() -> None:
-        server = grpc.aio.server()
+        server = grpc.aio.server(interceptors=list(server_interceptors))
         registration = register(server)
         if inspect.isawaitable(registration):
             await registration

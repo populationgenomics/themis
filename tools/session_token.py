@@ -5,8 +5,8 @@ Analysis's repository has to present the token the sandbox would. That token is 
 anywhere: it is `HMAC(session-token-signing-key, session_id)`, re-derived by whoever holds the KMS
 grant (`themis/clients/auth/derive.py`). This tool reads the Analysis's session id from the dev
 database and derives the token through the same KMS call, both as `themis-clu`, and writes
-`{"session_token": ...}` to a file only its owner can read — the file `tools/sheaf_remote.py` and
-`themis.clients.sheaf.store.RemoteStore` take.
+`{"session_token": ..., "calling_as": "CALLING_AS_SELF"}` to a file only its owner can read — the file
+`tools/sheaf_remote.py` and `themis.clients.sheaf.store.RemoteStore` take.
 
 Run: ``uv run --group tools_sheaf python -m tools.session_token --analysis-id <id> --session-token-file <path>``.
 The caller needs membership of the `themis-clu` group; the account needs `signerVerifier` on the
@@ -27,6 +27,7 @@ from google.cloud.sql import connector
 from themis.clients.auth import derive
 from themis.clients.sheaf import store as remote_mod
 from themis.common import sql
+from themis.rpc import sandbox_options_pb2
 from tools import clu
 
 _KEY_RING = 'themis'
@@ -126,7 +127,10 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
     args.session_token_file.parent.mkdir(parents=True, exist_ok=True)
     remote_mod.write_credentials(
-        args.session_token_file, remote_mod.Credentials(session_token=session_token, bearer=None)
+        args.session_token_file,
+        remote_mod.Credentials(
+            session_token=session_token, bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_SELF
+        ),
     )
     print(f'wrote the session token for {args.analysis_id} to {args.session_token_file}')
     print(

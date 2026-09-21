@@ -16,19 +16,14 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import os
 
 import httpx2
 
-from themis.clients.auth import caller as caller_mod
 from themis.clients.auth import interceptor as interceptor_mod
-from themis.clients.auth import session as session_mod
 from themis.services.evidence.upstreams import destinations
 
-_AUTHORIZER_VAR = 'THEMIS_AUTHORIZER_BACKEND'
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_EVIDENCE_FIXTURE_CONTEXTS'
 _FIXTURE_CALLERS_VAR = 'THEMIS_EVIDENCE_FIXTURE_CALLERS'
-_PROJECT_VAR = 'THEMIS_GCP_PROJECT'
 
 # The live upstreams' shared client: a generous default (VariantValidator self-extends per call).
 _HTTP_TIMEOUT = httpx2.Timeout(30.0, connect=10.0)
@@ -76,44 +71,7 @@ async def deps_from_env(stack: contextlib.AsyncExitStack) -> Deps:
     )
 
 
-def _backend_from_env() -> str:
-    backend = os.environ.get(_AUTHORIZER_VAR)
-    if backend is None:
-        raise SystemExit(f'{_AUTHORIZER_VAR} is required (expected "http" or "fixture")')
-    if backend not in ('http', 'fixture'):
-        raise SystemExit(f'unsupported {_AUTHORIZER_VAR} {backend!r} (expected "http" or "fixture")')
-    return backend
-
-
 def _authorizer_from_env() -> interceptor_mod.Authorizer:
-    # Every input is read and validated before the http session resolver opens its channel, so a
-    # deployment missing one fails on the missing name rather than on a connection attempt.
-    backend = _backend_from_env()
-    verify_caller = _caller_verifier_from_env(backend)
-    project = _required(_PROJECT_VAR, 'the GCP project this service runs in, completing each Caller into an email')
-    return interceptor_mod.Authorizer(
-        session_resolver=_session_resolver_from_env(backend), verify_caller=verify_caller, project=project
+    return interceptor_mod.authorizer_from_env(
+        fixture_contexts_var=_FIXTURE_CONTEXTS_VAR, fixture_callers_var=_FIXTURE_CALLERS_VAR
     )
-
-
-def _session_resolver_from_env(backend: str) -> session_mod.SessionResolver:
-    if backend == 'http':
-        return session_mod.session_resolver_from_env()
-    return session_mod.fixture_session_resolver_from_json(
-        os.environ.get(_FIXTURE_CONTEXTS_VAR), var_name=_FIXTURE_CONTEXTS_VAR
-    )
-
-
-def _caller_verifier_from_env(backend: str) -> caller_mod.CallerVerifier:
-    if backend == 'http':
-        return caller_mod.cloud_run_caller_verifier()
-    return caller_mod.fixture_caller_verifier_from_json(
-        os.environ.get(_FIXTURE_CALLERS_VAR), var_name=_FIXTURE_CALLERS_VAR
-    )
-
-
-def _required(var_name: str, what: str) -> str:
-    value = os.environ.get(var_name)
-    if not value:
-        raise SystemExit(f'{var_name} is required: {what}')
-    return value

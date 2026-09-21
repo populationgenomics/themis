@@ -6,8 +6,8 @@ Analysis that spend is attributed to — resolves the ``x-themis-session-token``
 ``session_resolver`` builds the resolver over the generated auth stub (presenting the SA ID token
 via ``themis.clients.id_token``); ``require_session`` is the servicer guard that reads the metadata,
 resolves it, and aborts the RPC on a missing or unresolvable token — it never returns ``None``, so
-such an rpc cannot proceed without a binding. ``resolve_session`` is the same guard for a handler
-that owes the call teardown before its status goes out: it raises the refusal rather than sending it.
+such an rpc cannot proceed without a binding. A server behind the auth interceptor needs no guard: the
+interceptor resolves the claim's session into the call's ``AuthContext`` before any handler runs.
 """
 
 from __future__ import annotations
@@ -30,20 +30,6 @@ SessionResolver = Callable[[str], Awaitable[auth_pb2.SessionContext]]
 
 class UnresolvedSessionError(Exception):
     """The session token did not resolve to a binding (unknown, expired, or revoked)."""
-
-
-class SessionRefusedError(Exception):
-    """The status a request with no usable session is to be refused with.
-
-    Carried rather than sent: ``grpc.aio`` fails every subsequent read on a context that has been
-    aborted, so a handler with teardown left to do — a client-streaming rpc still has the client's
-    writes to drain — has to decide the refusal before it sends it.
-    """
-
-    def __init__(self, code: grpc.StatusCode, details: str) -> None:
-        super().__init__(details)
-        self.code = code
-        self.details = details
 
 
 def session_resolver(auth_url: str) -> SessionResolver:
@@ -118,36 +104,6 @@ def _parse_binding(binding: object, *, var_name: str) -> auth_pb2.SessionContext
     return context
 
 
-async def resolve_session(
-    context: grpc.aio.ServicerContext, session_resolver: SessionResolver
-) -> auth_pb2.SessionContext:
-    """Resolve the request's session token, raising the refusal instead of sending it.
-
-    For a handler that owes the call something between deciding the refusal and ending it: a
-    client-streaming rpc has to read the client to its half-close, or the status races the client's
-    in-flight writes and reaches it as a transport error. A handler with nothing left to do wants
-    ``require_session``.
-
-    Args:
-        context: The gRPC servicer context for the current call.
-        session_resolver: Maps the session token to its binding.
-
-    Returns:
-        The resolved ``SessionContext``.
-
-    Raises:
-        SessionRefusedError: ``UNAUTHENTICATED`` on a missing token, ``PERMISSION_DENIED`` on one that
-            does not resolve.
-    """
-    token = _session_token(context)
-    if token is None:
-        raise SessionRefusedError(grpc.StatusCode.UNAUTHENTICATED, 'missing session token')
-    try:
-        return await session_resolver(token)
-    except UnresolvedSessionError as exc:
-        raise SessionRefusedError(grpc.StatusCode.PERMISSION_DENIED, 'session token could not be resolved') from exc
-
-
 async def require_session(
     context: grpc.aio.ServicerContext, session_resolver: SessionResolver
 ) -> auth_pb2.SessionContext:
@@ -157,10 +113,6 @@ async def require_session(
     Aborts ``UNAUTHENTICATED`` on a missing token, ``PERMISSION_DENIED`` on one that does not
     resolve. Never returns ``None``: a servicer cannot proceed without a binding.
 
-    Sends the refusal as it decides it, so it suits a handler with nothing left to read. A
-    client-streaming rpc has to drain the client before its status goes out, and so needs
-    ``resolve_session``, which decides the refusal without sending it.
-
     Args:
         context: The gRPC servicer context for the current call.
         session_resolver: Maps the session token to its binding.
@@ -168,10 +120,13 @@ async def require_session(
     Returns:
         The resolved ``SessionContext``.
     """
+    token = _session_token(context)
+    if token is None:
+        await context.abort(grpc.StatusCode.UNAUTHENTICATED, 'missing session token')
     try:
-        return await resolve_session(context, session_resolver)
-    except SessionRefusedError as refused:
-        await context.abort(refused.code, refused.details)
+        return await session_resolver(token)
+    except UnresolvedSessionError:
+        await context.abort(grpc.StatusCode.PERMISSION_DENIED, 'session token could not be resolved')
 
 
 def _session_resolver_over_stub(stub: auth_pb2_grpc.AuthAsyncStub) -> SessionResolver:

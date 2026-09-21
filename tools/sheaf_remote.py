@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import dataclasses
 import json
 import pathlib
 import shutil
@@ -86,18 +87,14 @@ class BearerKeeper:
             if credentials.bearer is not None and _fresh(credentials.bearer):
                 return
             bearer = clu.identity_token(self.service_account, self.audience)
-            remote_mod.write_credentials(
-                self.token_file, remote_mod.Credentials(session_token=credentials.session_token, bearer=bearer)
-            )
+            remote_mod.write_credentials(self.token_file, dataclasses.replace(credentials, bearer=bearer))
             print(f'minted an identity token as {self.service_account}', file=sys.stderr)
 
     def forget(self) -> None:
         """Remove the bearer from the file, leaving the session token."""
         with self._lock:
             credentials = remote_mod.read_credentials(self.token_file)
-            remote_mod.write_credentials(
-                self.token_file, remote_mod.Credentials(session_token=credentials.session_token, bearer=None)
-            )
+            remote_mod.write_credentials(self.token_file, dataclasses.replace(credentials, bearer=None))
 
 
 class RefreshingStore(store_mod.Repository):

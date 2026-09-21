@@ -29,7 +29,8 @@ class AuthContext:
         calling_as: What the caller claimed to be calling as — an ``CallingAs`` value; ``CALLING_AS_SELF``
             when the call carried no claim. Trusted, not verified: the account is trusted to say it.
         session: The Project and Analysis the call is scoped to, resolved from the claim's session
-            token; ``None`` when the claim named none or it did not resolve.
+            token; ``None`` when the claim named none. A token that does not resolve produces no
+            context: the call is denied before one exists.
     """
 
     caller: str

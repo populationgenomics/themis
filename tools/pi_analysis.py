@@ -35,6 +35,7 @@ from google.cloud.sql import connector
 from themis.clients.auth import derive
 from themis.clients.sheaf import store as remote_mod
 from themis.common import sql
+from themis.rpc import sandbox_options_pb2
 from themis.services.auth import backend as auth_backend
 from themis.workbench.models import workbench_pb2
 from tools import clu, session_token
@@ -189,7 +190,10 @@ def main() -> None:
     )
 
     args.session_token_file.parent.mkdir(parents=True, exist_ok=True)
-    remote_mod.write_credentials(args.session_token_file, remote_mod.Credentials(session_token=bearer, bearer=None))
+    remote_mod.write_credentials(
+        args.session_token_file,
+        remote_mod.Credentials(session_token=bearer, bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_SELF),
+    )
     print(f'created {analysis_id} (session {session_id}) in {args.project_id}')
     print(f'wrote its session token to {args.session_token_file}')
     print(

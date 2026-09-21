@@ -10,9 +10,11 @@ Contract: `schema/proto/themis/rpc/sheaf.proto`; design: `docs/design/sheaf-serv
 
 Credentials come from a JSON file, never from the process environment or the descriptor the hook
 is handed: the hook parses guest bytes, and its environment and state file are readable in places
-a token must not be. The file is `{"session_token": "..."}`, with an optional `"bearer"` — an ID
-token for the service's Cloud Run URL, for a caller that minted one itself rather than running as a
-service account that can. It is re-read on every call, so a refreshed token is picked up.
+a token must not be. The file is `{"session_token": "...", "calling_as": "..."}` — the session, and
+the `CallingAs` name the caller claims on every call (rpc-authorization.md): the worker calls as
+itself within the session, a developer as themself — with an optional `"bearer"`, an ID token for the
+service's Cloud Run URL, for a caller that minted one itself rather than running as a service account
+that can. It is re-read on every call, so a refreshed token is picked up.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import json
 import os
 import pathlib
 import stat
+import typing
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Self, override
 
@@ -30,8 +33,9 @@ from google.protobuf import empty_pb2
 
 from themis import sheaf
 from themis.clients import id_token
+from themis.clients.auth import claim as claim_mod
 from themis.clients.auth import session as session_mod
-from themis.rpc import sheaf_pb2, sheaf_pb2_grpc
+from themis.rpc import sandbox_options_pb2, sheaf_pb2, sheaf_pb2_grpc
 from themis.sheaf import errors, refdoc, stores
 from themis.sheaf import store as store_mod
 
@@ -68,17 +72,21 @@ _SERVICE_CONFIG = json.dumps(
 _CHANNEL_OPTIONS = (('grpc.service_config', _SERVICE_CONFIG), ('grpc.enable_retries', 1))
 
 
+Metadata = claim_mod.Metadata
+
+
 @dataclasses.dataclass(frozen=True)
 class Credentials:
-    """What one call presents: the session token, and the ID token when the caller minted its own."""
+    """What one call presents: the session, what the caller calls as, and the ID token when it minted its own."""
 
     # No repr: a pytest diff or a stray log line must not print a credential.
     session_token: str = dataclasses.field(repr=False)
     bearer: str | None = dataclasses.field(repr=False)
+    calling_as: sandbox_options_pb2.CallingAs
 
-    def metadata(self) -> tuple[tuple[str, str], ...]:
-        """The call metadata carrying these credentials."""
-        pairs = [(session_mod.SESSION_TOKEN_METADATA, self.session_token)]
+    def metadata(self) -> Metadata:
+        """The call metadata carrying these credentials: the claim, and the bearer when there is one."""
+        pairs = list(claim_mod.metadata_for(self.calling_as, self.session_token))
         if self.bearer is not None:
             pairs.append(('authorization', f'Bearer {self.bearer}'))
         return tuple(pairs)
@@ -89,9 +97,9 @@ def read_credentials(path: pathlib.Path) -> Credentials:
 
     Raises:
         CredentialsUnusable: If the file cannot be read, is readable by anyone but its owner, or is
-            not a JSON object of `session_token` and an optional `bearer`, each a non-empty string,
-            and nothing else — a misspelt key would otherwise send a call without the credential it
-            meant to carry.
+            not a JSON object of `session_token`, `calling_as` (a `CallingAs` name other than
+            unspecified) and an optional `bearer`, each a non-empty string, and nothing else — a
+            misspelt key would otherwise send a call without the credential it meant to carry.
     """
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
@@ -104,16 +112,29 @@ def read_credentials(path: pathlib.Path) -> Credentials:
         raise errors.CredentialsUnusable(f'{path}: not JSON: {exc}') from exc
     if not isinstance(payload, dict):
         raise errors.CredentialsUnusable(f'{path}: a token file is a JSON object')
-    unknown = set(payload) - {'session_token', 'bearer'}
+    unknown = set(payload) - {'session_token', 'calling_as', 'bearer'}
     if unknown:
         raise errors.CredentialsUnusable(f'{path}: unexpected keys {sorted(unknown)}')
     session_token = payload.get('session_token')
     if not isinstance(session_token, str) or not session_token:
         raise errors.CredentialsUnusable(f'{path}: session_token must be a non-empty string')
+    calling_as = _calling_as(path, payload.get('calling_as'))
     bearer = payload.get('bearer')
     if bearer is not None and (not isinstance(bearer, str) or not bearer):
         raise errors.CredentialsUnusable(f'{path}: bearer, when present, must be a non-empty string')
-    return Credentials(session_token=session_token, bearer=bearer)
+    return Credentials(session_token=session_token, bearer=bearer, calling_as=calling_as)
+
+
+def _calling_as(path: pathlib.Path, name: object) -> sandbox_options_pb2.CallingAs:
+    if not isinstance(name, str) or not name:
+        raise errors.CredentialsUnusable(f'{path}: calling_as must be a CallingAs name')
+    try:
+        value = typing.cast('sandbox_options_pb2.CallingAs', sandbox_options_pb2.CallingAs.Value(name))
+    except ValueError as exc:
+        raise errors.CredentialsUnusable(f'{path}: calling_as {name!r} is not a CallingAs name') from exc
+    if value == sandbox_options_pb2.CALLING_AS_UNSPECIFIED:
+        raise errors.CredentialsUnusable(f'{path}: calling_as must name what the caller calls as, not {name}')
+    return value
 
 
 def write_credentials(path: pathlib.Path, credentials: Credentials) -> None:
@@ -122,7 +143,10 @@ def write_credentials(path: pathlib.Path, credentials: Credentials) -> None:
     Written beside `path` and renamed over it, so a reader — a hook mid-push — sees the old file
     or the new one and never a partial one.
     """
-    payload: dict[str, str] = {'session_token': credentials.session_token}
+    payload: dict[str, str] = {
+        'session_token': credentials.session_token,
+        'calling_as': sandbox_options_pb2.CallingAs.Name(credentials.calling_as),
+    }
     if credentials.bearer is not None:
         payload['bearer'] = credentials.bearer
     staging = path.with_name(f'.{path.name}.{os.getpid()}')
@@ -263,7 +287,7 @@ class RemoteStore(store_mod.Repository):
             'repo': self.repo,
         }
 
-    def _metadata(self) -> tuple[tuple[str, str], ...]:
+    def _metadata(self) -> Metadata:
         """This call's credentials, read afresh.
 
         Raises:
