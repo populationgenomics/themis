@@ -59,16 +59,20 @@ report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 # What `bcftools csq` is designed against. Pinned to a release rather than `pub/grch37/current/`,
 # a label the publisher moves: the mirror skips on an unchanged URL, so a moving upstream is one it
 # would never notice.
+#
+# The GRCh38 release is not chosen on its own: MANE is chosen first, and its `README_versions.txt`
+# names the RefSeq annotation release and the Ensembl release it was built from, which are what the
+# two GRCh38 annotations pin. Against any other pair some MANE transcripts are absent or differ.
 
 [[assembly]]
 id = "ensembl-grch38"
 source = "ensembl"
-version = "115_GRCh38"
+version = "116_GRCh38"
 seqid = "ensembl-name"
 licence = "apache-2.0"
 consumer = "annotation-pipeline"
-genome = { url = "https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz", suffix = "fa.gz" }
-annotation = { url = "https://ftp.ensembl.org/pub/release-115/gff3/homo_sapiens/Homo_sapiens.GRCh38.115.chr.gff3.gz", suffix = "gff3.gz" }
+genome = { url = "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz", suffix = "fa.gz" }
+annotation = { url = "https://ftp.ensembl.org/pub/release-116/gff3/homo_sapiens/Homo_sapiens.GRCh38.116.chr.gff3.gz", suffix = "gff3.gz" }
 
 [[assembly]]
 id = "ensembl-grch37"
