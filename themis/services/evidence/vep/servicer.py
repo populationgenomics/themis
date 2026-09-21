@@ -6,7 +6,6 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import vep_pb2, vep_pb2_grpc
 from themis.services.evidence import hgvs, serving
 from themis.services.evidence.upstreams import vep
@@ -14,15 +13,13 @@ from themis.services.evidence.vep import backend as vep_backend
 
 
 class Servicer(vep_pb2_grpc.VepServicer, serving.EvidenceServicer):
-    def __init__(self, backend: vep_backend.VepBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: vep_backend.VepBackend) -> None:
         self._backend = backend
 
     @override
     async def Annotate(
         self, request: vep_pb2.AnnotateRequest, context: grpc.aio.ServicerContext
     ) -> vep_pb2.AnnotateResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'Annotate', self._annotate(request))
 
     async def _annotate(self, request: vep_pb2.AnnotateRequest) -> vep_pb2.AnnotateResponse:

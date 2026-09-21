@@ -10,22 +10,11 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
 from themis.evidence.models import evidence_pb2
-from themis.rpc import auth_pb2, vep_pb2, vep_pb2_grpc
+from themis.rpc import vep_pb2, vep_pb2_grpc
+from themis.services.evidence.tests import authz
 from themis.services.evidence.vep import backend as vep_backend
 from themis.services.evidence.vep import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
 
 
 def _backend(annotate: Mapping[str, vep_pb2.AnnotateResponse] | None = None) -> vep_backend.FixtureBackend:
@@ -35,9 +24,9 @@ def _backend(annotate: Mapping[str, vep_pb2.AnnotateResponse] | None = None) -> 
 @contextlib.asynccontextmanager
 async def _serving(backend: vep_backend.VepBackend) -> AsyncIterator[vep_pb2_grpc.VepAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        vep_pb2_grpc.add_VepServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        vep_pb2_grpc.add_VepServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield vep_pb2_grpc.VepStub(channel)
 
 
@@ -62,7 +51,7 @@ def test_vep_rejects_a_reference_that_does_not_name_an_assembly(variant: str) ->
 
     async def run() -> vep_pb2.AnnotateResponse:
         async with _serving(_backend()) as stub:
-            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant), metadata=_GOOD_TOKEN)
+            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -79,9 +68,7 @@ def test_an_unbounded_change_never_reaches_the_upstream_url() -> None:
 
     async def run() -> vep_pb2.AnnotateResponse:
         async with _serving(_backend()) as stub:
-            return await stub.Annotate(
-                vep_pb2.AnnotateRequest(variant=f'NM_001042492.3:c.{"A" * 40_000}'), metadata=_GOOD_TOKEN
-            )
+            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=f'NM_001042492.3:c.{"A" * 40_000}'))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -100,7 +87,7 @@ def test_a_rejected_field_comes_back_as_the_rejection_over_the_wire(filler: str)
 
     async def run() -> vep_pb2.AnnotateResponse:
         async with _serving(_backend()) as stub:
-            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=filler), metadata=_GOOD_TOKEN)
+            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=filler))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -132,7 +119,7 @@ def test_vep_accepts_an_hgvs_over_any_assembly_naming_reference(variant: str) ->
 
     async def run() -> vep_pb2.AnnotateResponse:
         async with _serving(tables) as stub:
-            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant), metadata=_GOOD_TOKEN)
+            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant))
 
     assert asyncio.run(run()).most_severe_consequence == evidence_pb2.CONSEQUENCE_MISSENSE
 
@@ -156,7 +143,7 @@ def test_vep_accepts_the_renderings_clinvar_returns(variant: str) -> None:
 
     async def run() -> vep_pb2.AnnotateResponse:
         async with _serving(tables) as stub:
-            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant), metadata=_GOOD_TOKEN)
+            return await stub.Annotate(vep_pb2.AnnotateRequest(variant=variant))
 
     assert asyncio.run(run()).most_severe_consequence == evidence_pb2.CONSEQUENCE_MISSENSE
 
@@ -174,7 +161,6 @@ def test_vep_rejects_a_predictor_it_has_no_wire_form_for(predictor: str) -> None
         async with _serving(tables) as stub:
             return await stub.Annotate(
                 vep_pb2.AnnotateRequest(variant='NM_001042492.3:c.3496G>C', predictors=['AlphaMissense', predictor]),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:

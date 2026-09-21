@@ -6,31 +6,25 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import transcript_pb2, transcript_pb2_grpc
 from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.transcript import backend as transcript_backend
 
 
 class Servicer(transcript_pb2_grpc.TranscriptServicer, serving.EvidenceServicer):
-    def __init__(
-        self, backend: transcript_backend.TranscriptBackend, session_resolver: session_mod.SessionResolver
-    ) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: transcript_backend.TranscriptBackend) -> None:
         self._backend = backend
 
     @override
     async def GetStructure(
         self, request: transcript_pb2.GetStructureRequest, context: grpc.aio.ServicerContext
     ) -> transcript_pb2.GetStructureResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'GetStructure', self._get_structure(request))
 
     @override
     async def AssessExonRelevance(
         self, request: transcript_pb2.AssessExonRelevanceRequest, context: grpc.aio.ServicerContext
     ) -> transcript_pb2.AssessExonRelevanceResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'AssessExonRelevance', self._assess_exon_relevance(request))
 
     async def _get_structure(self, request: transcript_pb2.GetStructureRequest) -> transcript_pb2.GetStructureResponse:

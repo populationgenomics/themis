@@ -10,7 +10,6 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import gnomad_pb2, gnomad_pb2_grpc
 from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.gnomad import backend as gnomad_backend
@@ -22,15 +21,13 @@ _DATASETS = ('gnomad_r4', 'gnomad_r2_1')
 
 
 class Servicer(gnomad_pb2_grpc.GnomadServicer, serving.EvidenceServicer):
-    def __init__(self, backend: gnomad_backend.GnomadBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: gnomad_backend.GnomadBackend) -> None:
         self._backend = backend
 
     @override
     async def DescribeVariant(
         self, request: gnomad_pb2.DescribeVariantRequest, context: grpc.aio.ServicerContext
     ) -> gnomad_pb2.DescribeVariantResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'DescribeVariant', self._describe_variant(request))
 
     async def _describe_variant(self, request: gnomad_pb2.DescribeVariantRequest) -> gnomad_pb2.DescribeVariantResponse:

@@ -14,7 +14,7 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
 
     Args:
         server: The image's server, not yet started — a gRPC server rejects a handler added after that.
-        deps: The image's session resolver and shared HTTP client.
+        deps: The image's shared HTTP client.
     """
     backend = config.backend_from_env(deps)
-    cspec_pb2_grpc.add_CspecServicer_to_server(servicer.Servicer(backend, deps.authorizer.session_resolver), server)
+    cspec_pb2_grpc.add_CspecServicer_to_server(servicer.Servicer(backend), server)

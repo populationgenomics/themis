@@ -2,8 +2,8 @@
 
 `INTERFACES` is the image's composition; each entry builds its own backend and installs its servicer,
 so `PORT` (the Cloud Run convention) is the only env var read here. `Deps` is what the image builds
-once and hands to each of them — the authorizer, the session resolver and the shared HTTP client, which
-are the image's concern rather than any one interface's (see `deps`). The server is built by
+once — the authorizer the server is gated by, and the shared HTTP client each interface is handed —
+being the image's concern rather than any one interface's (see `deps`). The server is built by
 `interceptor.gated_server`, so the auth interceptor gates every rpc of every interface before its
 handler runs (rpc-authorization.md); the `grpc.health.v1` service is its one exemption, and reports
 SERVING for the server as a whole, with no per-interface entry: an interface that cannot build its

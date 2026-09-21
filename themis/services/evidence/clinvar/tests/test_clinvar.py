@@ -18,15 +18,12 @@ import grpc.aio
 import httpx2
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, clinvar_pb2, clinvar_pb2_grpc
+from themis.rpc import clinvar_pb2, clinvar_pb2_grpc
 from themis.services.evidence.clinvar import backend as clinvar_backend
 from themis.services.evidence.clinvar import servicer as servicer_mod
+from themis.services.evidence.tests import authz
 from themis.services.evidence.upstreams import clinvar as clinvar_upstream
-from themis.testing import in_process_grpc
 
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
 _POOL_RECORDS = 500
 _VCV = 'VCV001731988'
 
@@ -62,18 +59,12 @@ def _refused(request: clinvar_pb2.DescribeVariantRequest) -> str:
 
     async def run() -> clinvar_pb2.DescribeVariantResponse:
         async with _serving(_backend()) as stub:
-            return await stub.DescribeVariant(request, metadata=_GOOD_TOKEN)
+            return await stub.DescribeVariant(request)
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
     assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     return caught.value.details() or ''
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
 
 
 def _backend(
@@ -88,9 +79,9 @@ def _backend(
 @contextlib.asynccontextmanager
 async def _serving(backend: clinvar_backend.ClinVarBackend) -> AsyncIterator[clinvar_pb2_grpc.ClinVarAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        clinvar_pb2_grpc.add_ClinVarServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        clinvar_pb2_grpc.add_ClinVarServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield clinvar_pb2_grpc.ClinVarStub(channel)
 
 
@@ -110,7 +101,7 @@ def _failed_describe(handler: Callable[[httpx2.Request], httpx2.Response]) -> gr
             httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client,
             _serving(clinvar_backend.LiveBackend(http_client)) as stub,
         ):
-            return await stub.DescribeVariant(_describe_request(), metadata=_GOOD_TOKEN)
+            return await stub.DescribeVariant(_describe_request())
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -137,7 +128,6 @@ def _failed_span(handler: Callable[[httpx2.Request], httpx2.Response]) -> grpc.a
                 clinvar_pb2.SearchCodingSpanRequest(
                     transcript=_TRANSCRIPT, cds_start=3496, cds_end=3498, max_records=50
                 ),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
@@ -188,7 +178,7 @@ def test_an_unset_accession_asks_for_the_gene_pool_alone() -> None:
 
     async def run() -> clinvar_pb2.DescribeVariantResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeVariant(_describe_request(vcv=''), metadata=_GOOD_TOKEN)
+            return await stub.DescribeVariant(_describe_request(vcv=''))
 
     assert asyncio.run(run()).total_in_gene == 7310
 
@@ -205,7 +195,7 @@ def test_the_named_variation_is_part_of_what_is_being_asked() -> None:
 
     async def run(vcv: str) -> clinvar_pb2.DescribeVariantResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeVariant(_describe_request(vcv=vcv), metadata=_GOOD_TOKEN)
+            return await stub.DescribeVariant(_describe_request(vcv=vcv))
 
     assert asyncio.run(run('VCV001731988')).this_variant.clinvar_id == 'VCV001731988'
     with pytest.raises(grpc.aio.AioRpcError) as caught:
@@ -295,7 +285,6 @@ def test_clinvar_span_is_keyed_by_the_c_range_it_was_asked_about() -> None:
                 clinvar_pb2.SearchCodingSpanRequest(
                     transcript='NM_001040142.2', cds_start=start, cds_end=end, max_records=50
                 ),
-                metadata=_GOOD_TOKEN,
             )
 
     assert [r.clinvar_id for r in asyncio.run(run(1108, 1110)).records] == ['VCV000207049']
@@ -327,7 +316,6 @@ def test_clinvar_span_refuses_a_request_that_would_search_the_wrong_thing(
                 clinvar_pb2.SearchCodingSpanRequest(
                     transcript=transcript, cds_start=start, cds_end=end, max_records=max_records
                 ),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
@@ -346,7 +334,6 @@ def test_the_clinvar_span_fixture_refuses_an_unseeded_span() -> None:
                 clinvar_pb2.SearchCodingSpanRequest(
                     transcript='NM_001040142.2', cds_start=1200, cds_end=1202, max_records=50
                 ),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:

@@ -6,7 +6,6 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import clinvar_pb2, clinvar_pb2_grpc
 from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.clinvar import backend as clinvar_backend
@@ -24,22 +23,19 @@ _MAX_SPAN_RECORDS = 500
 
 
 class Servicer(clinvar_pb2_grpc.ClinVarServicer, serving.EvidenceServicer):
-    def __init__(self, backend: clinvar_backend.ClinVarBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: clinvar_backend.ClinVarBackend) -> None:
         self._backend = backend
 
     @override
     async def DescribeVariant(
         self, request: clinvar_pb2.DescribeVariantRequest, context: grpc.aio.ServicerContext
     ) -> clinvar_pb2.DescribeVariantResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'DescribeVariant', self._describe_variant(request))
 
     @override
     async def SearchCodingSpan(
         self, request: clinvar_pb2.SearchCodingSpanRequest, context: grpc.aio.ServicerContext
     ) -> clinvar_pb2.SearchCodingSpanResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'SearchCodingSpan', self._search_coding_span(request))
 
     async def _describe_variant(

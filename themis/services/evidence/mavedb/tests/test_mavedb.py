@@ -10,21 +10,10 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, mavedb_pb2, mavedb_pb2_grpc
+from themis.rpc import mavedb_pb2, mavedb_pb2_grpc
 from themis.services.evidence.mavedb import backend as mavedb_backend
 from themis.services.evidence.mavedb import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.services.evidence.tests import authz
 
 
 def _backend(
@@ -36,15 +25,15 @@ def _backend(
 @contextlib.asynccontextmanager
 async def _serving(backend: mavedb_backend.MaveDbBackend) -> AsyncIterator[mavedb_pb2_grpc.MaveDbAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        mavedb_pb2_grpc.add_MaveDbServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        mavedb_pb2_grpc.add_MaveDbServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield mavedb_pb2_grpc.MaveDbStub(channel)
 
 
 async def _mavedb(backend: mavedb_backend.MaveDbBackend, variant: str) -> mavedb_pb2.DescribeVariantResponse:
     async with _serving(backend) as stub:
-        return await stub.DescribeVariant(mavedb_pb2.DescribeVariantRequest(variant=variant), metadata=_GOOD_TOKEN)
+        return await stub.DescribeVariant(mavedb_pb2.DescribeVariantRequest(variant=variant))
 
 
 @pytest.mark.parametrize(

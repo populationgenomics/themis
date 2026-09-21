@@ -10,22 +10,11 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
 from themis.evidence.models import evidence_pb2
-from themis.rpc import auth_pb2, gnomad_pb2, gnomad_pb2_grpc
+from themis.rpc import gnomad_pb2, gnomad_pb2_grpc
 from themis.services.evidence.gnomad import backend as gnomad_backend
 from themis.services.evidence.gnomad import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.services.evidence.tests import authz
 
 
 def _backend(
@@ -37,9 +26,9 @@ def _backend(
 @contextlib.asynccontextmanager
 async def _serving(backend: gnomad_backend.GnomadBackend) -> AsyncIterator[gnomad_pb2_grpc.GnomadAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        gnomad_pb2_grpc.add_GnomadServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        gnomad_pb2_grpc.add_GnomadServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield gnomad_pb2_grpc.GnomadStub(channel)
 
 
@@ -55,7 +44,7 @@ def test_seeded_query_returns_the_record() -> None:
     async def run() -> gnomad_pb2.DescribeVariantResponse:
         async with _serving(tables) as stub:
             return await stub.DescribeVariant(
-                gnomad_pb2.DescribeVariantRequest(gnomad_id='1-100-A-T', dataset='gnomad_r4'), metadata=_GOOD_TOKEN
+                gnomad_pb2.DescribeVariantRequest(gnomad_id='1-100-A-T', dataset='gnomad_r4')
             )
 
     resp = asyncio.run(run())
@@ -82,7 +71,7 @@ def test_gnomad_serves_only_the_two_releases_its_frequencies_are_defined_against
     async def run() -> gnomad_pb2.DescribeVariantResponse:
         async with _serving(_backend()) as stub:
             return await stub.DescribeVariant(
-                gnomad_pb2.DescribeVariantRequest(gnomad_id='17-31232881-G-C', dataset=dataset), metadata=_GOOD_TOKEN
+                gnomad_pb2.DescribeVariantRequest(gnomad_id='17-31232881-G-C', dataset=dataset)
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:

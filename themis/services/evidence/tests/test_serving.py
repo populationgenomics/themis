@@ -1,51 +1,37 @@
-"""What `serving.EvidenceServicer` gives every interface that mixes it in: the gate, then the bounds.
+"""What `serving.EvidenceServicer` gives every interface that mixes it in: the deadline and the status mapping.
 
-Driven over gnomad's servicer on a real server, and gnomad stands for all of them: the base class is
-what is under test, and every interface but `literature` takes the whole of it — `literature` mixes in
-the gate alone, and pins its own use of it beside its other rpcs.
+Driven over gnomad's servicer on a real, gated server, and gnomad stands for all of them: the base class
+is what is under test, and every database-backed interface takes the whole of it. Admission is the
+interceptor's and is pinned in `themis.clients.auth.tests`; nothing here asserts on it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import gc
 import inspect
-import warnings
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from typing import override
 
 import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, gnomad_pb2, gnomad_pb2_grpc
+from themis.rpc import gnomad_pb2, gnomad_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.gnomad import backend as gnomad_backend
 from themis.services.evidence.gnomad import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.services.evidence.tests import authz
 
 
 class _RaisingBackend(gnomad_backend.GnomadBackend):
-    """Fails its one call with `error`, and records whether the call was made at all."""
+    """Fails its one call with `error`."""
 
     def __init__(self, error: Exception) -> None:
         self._error = error
-        self.reached = False
 
     @override
     async def describe_variant(self, request: gnomad_pb2.DescribeVariantRequest) -> gnomad_pb2.DescribeVariantResponse:
-        self.reached = True
         raise self._error
 
 
@@ -69,9 +55,9 @@ class _StalledBackend(gnomad_backend.GnomadBackend):
 @contextlib.asynccontextmanager
 async def _serving(backend: gnomad_backend.GnomadBackend) -> AsyncIterator[gnomad_pb2_grpc.GnomadAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        gnomad_pb2_grpc.add_GnomadServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        gnomad_pb2_grpc.add_GnomadServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield gnomad_pb2_grpc.GnomadStub(channel)
 
 
@@ -80,45 +66,16 @@ def _request() -> gnomad_pb2.DescribeVariantRequest:
     return gnomad_pb2.DescribeVariantRequest(gnomad_id='1-100-A-T', dataset='gnomad_r4')
 
 
-def _refused(backend: gnomad_backend.GnomadBackend, *, metadata: Sequence[tuple[str, str]]) -> grpc.aio.AioRpcError:
+def _refused(backend: gnomad_backend.GnomadBackend) -> grpc.aio.AioRpcError:
     """Drive one `DescribeVariant` that is expected to fail, and hand back the status it failed with."""
 
     async def run() -> grpc.aio.AioRpcError:
         async with _serving(backend) as stub:
             with pytest.raises(grpc.aio.AioRpcError) as caught:
-                await stub.DescribeVariant(_request(), metadata=metadata)
+                await stub.DescribeVariant(_request())
             return caught.value
 
     return asyncio.run(run())
-
-
-def test_a_request_carrying_no_session_token_is_unauthenticated() -> None:
-    backend = _RaisingBackend(errors.UnknownVariantError('the backend is not reached'))
-    assert _refused(backend, metadata=()).code() == grpc.StatusCode.UNAUTHENTICATED
-    assert not backend.reached
-
-
-def test_a_token_the_authorizer_rejects_is_permission_denied() -> None:
-    backend = _RaisingBackend(errors.UnknownVariantError('the backend is not reached'))
-    assert _refused(backend, metadata=_BAD_TOKEN).code() == grpc.StatusCode.PERMISSION_DENIED
-    assert not backend.reached
-
-
-def test_a_refused_request_builds_no_backend_coroutine() -> None:
-    """The gate is awaited before the backend call is built, not after.
-
-    `_response_or_abort` is handed an already-built coroutine, so authorizing after building it leaves
-    that coroutine un-awaited on every abort path — which Python reports as a RuntimeWarning, and
-    which is work begun for a caller the service has already refused.
-    """
-    backend = _RaisingBackend(errors.UnknownVariantError('the backend is not reached'))
-    with warnings.catch_warnings(record=True) as raised:
-        warnings.simplefilter('always')
-        failure = _refused(backend, metadata=_BAD_TOKEN)
-        gc.collect()  # the warning is emitted when the orphaned coroutine is collected, not at the abort
-    assert failure.code() == grpc.StatusCode.PERMISSION_DENIED
-    assert not backend.reached
-    assert not [warning for warning in raised if 'never awaited' in str(warning.message)]
 
 
 # Each taxonomy error, with the status it has to reach a caller under. Two share
@@ -143,7 +100,7 @@ def test_a_taxonomy_error_reaches_the_caller_as_its_own_status(error: Exception,
     is "no assay exists", so answering either with UNKNOWN reads as an outage and is retried against a
     question the source has already settled.
     """
-    failure = _refused(_RaisingBackend(error), metadata=_GOOD_TOKEN)
+    failure = _refused(_RaisingBackend(error))
     assert failure.code() == code
     assert str(error) in (failure.details() or '')
 
@@ -174,7 +131,7 @@ def test_a_backend_that_never_answers_ends_as_this_rpcs_own_deadline(monkeypatch
     async def run() -> tuple[grpc.aio.AioRpcError, bool]:
         async with _serving(backend) as stub:
             with pytest.raises(grpc.aio.AioRpcError) as caught:
-                await stub.DescribeVariant(_request(), metadata=_GOOD_TOKEN)
+                await stub.DescribeVariant(_request())
             # Read while the loop still runs: `asyncio.run` cancels whatever is left at teardown, so a
             # flag read after it cannot tell a dropped backend from an abandoned one.
             return caught.value, backend.cancelled

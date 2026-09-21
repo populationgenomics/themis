@@ -10,21 +10,10 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, transcript_pb2, transcript_pb2_grpc
+from themis.rpc import transcript_pb2, transcript_pb2_grpc
+from themis.services.evidence.tests import authz
 from themis.services.evidence.transcript import backend as transcript_backend
 from themis.services.evidence.transcript import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
 
 
 def _backend(
@@ -41,9 +30,9 @@ async def _serving(
     backend: transcript_backend.TranscriptBackend,
 ) -> AsyncIterator[transcript_pb2_grpc.TranscriptAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        transcript_pb2_grpc.add_TranscriptServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        transcript_pb2_grpc.add_TranscriptServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield transcript_pb2_grpc.TranscriptStub(channel)
 
 
@@ -58,7 +47,7 @@ def test_exon_relevance_is_keyed_by_gene_transcript_exon() -> None:
 
     async def run() -> transcript_pb2.AssessExonRelevanceResponse:
         async with _serving(tables) as stub:
-            return await stub.AssessExonRelevance(_relevance_request(), metadata=_GOOD_TOKEN)
+            return await stub.AssessExonRelevance(_relevance_request())
 
     signals = asyncio.run(run())
     assert signals.in_mane_select
@@ -90,7 +79,7 @@ def _refused(request: transcript_pb2.AssessExonRelevanceRequest) -> str:
 
     async def run() -> transcript_pb2.AssessExonRelevanceResponse:
         async with _serving(_backend()) as stub:
-            return await stub.AssessExonRelevance(request, metadata=_GOOD_TOKEN)
+            return await stub.AssessExonRelevance(request)
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -114,7 +103,6 @@ def test_transcript_structure_is_keyed_by_transcript_build_and_queried_position(
                 transcript_pb2.GetStructureRequest(
                     transcript='NM_001042492.3', genome_build='GRCh38', cds_position=3496
                 ),
-                metadata=_GOOD_TOKEN,
             )
 
     resp = asyncio.run(run())

@@ -6,22 +6,19 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import mavedb_pb2, mavedb_pb2_grpc
 from themis.services.evidence import errors, hgvs, serving
 from themis.services.evidence.mavedb import backend as mavedb_backend
 
 
 class Servicer(mavedb_pb2_grpc.MaveDbServicer, serving.EvidenceServicer):
-    def __init__(self, backend: mavedb_backend.MaveDbBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: mavedb_backend.MaveDbBackend) -> None:
         self._backend = backend
 
     @override
     async def DescribeVariant(
         self, request: mavedb_pb2.DescribeVariantRequest, context: grpc.aio.ServicerContext
     ) -> mavedb_pb2.DescribeVariantResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'DescribeVariant', self._describe_variant(request))
 
     async def _describe_variant(self, request: mavedb_pb2.DescribeVariantRequest) -> mavedb_pb2.DescribeVariantResponse:

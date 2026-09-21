@@ -6,22 +6,19 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import cspec_pb2, cspec_pb2_grpc
 from themis.services.evidence import requests, serving
 from themis.services.evidence.cspec import backend as cspec_backend
 
 
 class Servicer(cspec_pb2_grpc.CspecServicer, serving.EvidenceServicer):
-    def __init__(self, backend: cspec_backend.CspecBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: cspec_backend.CspecBackend) -> None:
         self._backend = backend
 
     @override
     async def ListSpecifications(
         self, request: cspec_pb2.ListSpecificationsRequest, context: grpc.aio.ServicerContext
     ) -> cspec_pb2.ListSpecificationsResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'ListSpecifications', self._list_specifications(request))
 
     async def _list_specifications(

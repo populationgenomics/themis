@@ -6,29 +6,25 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import splice_pb2, splice_pb2_grpc
 from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.splice import backend as splice_backend
 
 
 class Servicer(splice_pb2_grpc.SpliceServicer, serving.EvidenceServicer):
-    def __init__(self, backend: splice_backend.SpliceBackend, session_resolver: session_mod.SessionResolver) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: splice_backend.SpliceBackend) -> None:
         self._backend = backend
 
     @override
     async def PredictDeltas(
         self, request: splice_pb2.PredictDeltasRequest, context: grpc.aio.ServicerContext
     ) -> splice_pb2.PredictDeltasResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'PredictDeltas', self._predict_deltas(request))
 
     @override
     async def PredictSkipOutcome(
         self, request: splice_pb2.PredictSkipOutcomeRequest, context: grpc.aio.ServicerContext
     ) -> splice_pb2.PredictSkipOutcomeResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'PredictSkipOutcome', self._predict_skip_outcome(request))
 
     async def _predict_deltas(self, request: splice_pb2.PredictDeltasRequest) -> splice_pb2.PredictDeltasResponse:

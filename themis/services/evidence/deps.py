@@ -1,12 +1,12 @@
-"""What the evidence image builds once and every interface that needs it is handed.
+"""What the evidence image builds once, for its server and for every interface it serves.
 
 Two things are the image's rather than any one interface's. Authorization is the same wherever it
 applies — one interceptor gating every rpc of every interface, resolving the same session token
-through the same auth service and every caller's ID token against the same certificates — so an image-wide
-`THEMIS_AUTHORIZER_BACKEND` selects it, not a per-interface copy of the same value: a resolver each
-would hold ten idle gRPC channels to auth in place of one. And the nine database-backed interfaces
-reach public HTTP upstreams, as does `literature`'s discovery half, so they share one
-`httpx2.AsyncClient`: a client each would be ten connection pools against overlapping hosts.
+through the same auth service and every caller's ID token against the same certificates — so an
+image-wide `THEMIS_AUTHORIZER_BACKEND` selects the authorizer the server is built with, and no
+interface reads it. And the nine database-backed interfaces reach public HTTP upstreams, as does
+`literature`'s discovery half, so they share one `httpx2.AsyncClient`: a client each would be ten
+connection pools against overlapping hosts.
 
 Everything else stays the interface's own — which adapter its port builds, and the vars that
 configure it (`services.md`, "One deployment, several interfaces").
@@ -31,14 +31,13 @@ _HTTP_TIMEOUT = httpx2.Timeout(30.0, connect=10.0)
 
 @dataclasses.dataclass(frozen=True)
 class Deps:
-    """The image-level collaborators an interface's `register` is handed.
+    """The image-level collaborators: what the server is gated by, and what each `register` is handed.
 
     Attributes:
         authorizer: What the image's auth interceptor resolves every call through
             (rpc-authorization.md): the session resolver, the caller verifier, and the one deployment
-            fact admission turns on — the project that completes a `Caller`'s account id. The nine database-backed
-            interfaces also resolve the session in the body through `authorizer.session_resolver`, a
-            check the interceptor has made redundant.
+            fact admission turns on — the project that completes a `Caller`'s account id. The
+            server's, through `interceptor.gated_server`; no interface reads it.
         http_client: The client every live upstream call is issued on, held open for the server's
             lifetime by `stack`. It reaches only the hosts `upstreams.destinations` admits.
         stack: Owns whatever an interface's own adapter holds open for the server's lifetime — the

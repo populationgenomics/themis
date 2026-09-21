@@ -6,7 +6,6 @@ from typing import override
 
 import grpc
 
-from themis.clients.auth import session as session_mod
 from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence import errors, requests, serving
@@ -14,17 +13,13 @@ from themis.services.evidence.gene_disease import backend as gene_disease_backen
 
 
 class Servicer(gene_disease_pb2_grpc.GeneDiseaseServicer, serving.EvidenceServicer):
-    def __init__(
-        self, backend: gene_disease_backend.GeneDiseaseBackend, session_resolver: session_mod.SessionResolver
-    ) -> None:
-        super().__init__(session_resolver)
+    def __init__(self, backend: gene_disease_backend.GeneDiseaseBackend) -> None:
         self._backend = backend
 
     @override
     async def DescribeGene(
         self, request: gene_disease_pb2.DescribeGeneRequest, context: grpc.aio.ServicerContext
     ) -> gene_disease_pb2.DescribeGeneResponse:
-        await self._require_session(context)
         return await self._response_or_abort(context, 'DescribeGene', self._describe_gene(request))
 
     async def _describe_gene(

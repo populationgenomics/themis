@@ -11,23 +11,12 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
 from themis.evidence.models import evidence_pb2
-from themis.rpc import auth_pb2, gene_disease_pb2, gene_disease_pb2_grpc
+from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
 from themis.services.evidence.gene_disease import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
+from themis.services.evidence.tests import authz
 
 
 def _backend(
@@ -41,11 +30,9 @@ async def _serving(
     backend: gene_disease_backend.GeneDiseaseBackend,
 ) -> AsyncIterator[gene_disease_pb2_grpc.GeneDiseaseAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        gene_disease_pb2_grpc.add_GeneDiseaseServicer_to_server(
-            servicer_mod.Servicer(backend, _session_resolver), server
-        )
+        gene_disease_pb2_grpc.add_GeneDiseaseServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield gene_disease_pb2_grpc.GeneDiseaseStub(channel)
 
 
@@ -62,9 +49,7 @@ def test_gene_disease_is_keyed_by_hgnc_id() -> None:
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeGene(
-                gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100'), metadata=_GOOD_TOKEN
-            )
+            return await stub.DescribeGene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100'))
 
     assert [entity.validity_classification for entity in asyncio.run(run()).entities] == ['Definitive']
 
@@ -75,7 +60,7 @@ def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expec
     # answering "nothing seeded under that key" — a statement about the tables, not about the request.
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
         async with _serving(_backend(describe_gene={'HGNC:1100': gene_disease_pb2.DescribeGeneResponse()})) as stub:
-            return await stub.DescribeGene(gene_disease_pb2.DescribeGeneRequest(hgnc_id=hgnc_id), metadata=_GOOD_TOKEN)
+            return await stub.DescribeGene(gene_disease_pb2.DescribeGeneRequest(hgnc_id=hgnc_id))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -116,7 +101,7 @@ def test_gene_disease_refuses_an_entity_it_cannot_key_on(
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeGene(unaccepted, metadata=_GOOD_TOKEN)
+            return await stub.DescribeGene(unaccepted)
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -144,7 +129,7 @@ def test_the_gene_disease_fixture_key_names_the_entity_asked_about() -> None:
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeGene(entity, metadata=_GOOD_TOKEN)
+            return await stub.DescribeGene(entity)
 
     assert asyncio.run(run()).resolution.requested_mondo_id == 'MONDO:0011450'
 
@@ -163,7 +148,6 @@ def test_an_unresolved_entity_is_failed_precondition_not_a_missing_record() -> N
         async with _serving(_Unresolved({})) as stub:
             return await stub.DescribeGene(
                 gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:0011450'),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:

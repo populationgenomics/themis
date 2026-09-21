@@ -10,21 +10,10 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
-from themis.rpc import auth_pb2, variant_pb2, variant_pb2_grpc
+from themis.rpc import variant_pb2, variant_pb2_grpc
+from themis.services.evidence.tests import authz
 from themis.services.evidence.variant import backend as variant_backend
 from themis.services.evidence.variant import servicer as servicer_mod
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
-_BAD_TOKEN = (('x-themis-session-token', 'bad'),)
-_POOL_RECORDS = 500
-
-
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
 
 
 def _backend(normalize: Mapping[str, variant_pb2.NormalizeResponse] | None = None) -> variant_backend.FixtureBackend:
@@ -34,9 +23,9 @@ def _backend(normalize: Mapping[str, variant_pb2.NormalizeResponse] | None = Non
 @contextlib.asynccontextmanager
 async def _serving(backend: variant_backend.VariantBackend) -> AsyncIterator[variant_pb2_grpc.VariantAsyncStub]:
     def register(server: grpc.aio.Server) -> None:
-        variant_pb2_grpc.add_VariantServicer_to_server(servicer_mod.Servicer(backend, _session_resolver), server)
+        variant_pb2_grpc.add_VariantServicer_to_server(servicer_mod.Servicer(backend), server)
 
-    async with in_process_grpc.serving(register) as channel:
+    async with authz.gated(register) as channel:
         yield variant_pb2_grpc.VariantStub(channel)
 
 
@@ -47,7 +36,6 @@ def test_resolve_is_keyed_by_variant() -> None:
         async with _serving(tables) as stub:
             return await stub.Normalize(
                 variant_pb2.NormalizeRequest(variant='NM_000546.6:c.524G>A', genome_build='GRCh38'),
-                metadata=_GOOD_TOKEN,
             )
 
     assert asyncio.run(run()).caid == 'CA123'
@@ -74,9 +62,7 @@ def test_resolve_rejects_a_variant_form_it_cannot_canonicalise(variant: str) -> 
 
     async def run() -> variant_pb2.NormalizeResponse:
         async with _serving(_backend()) as stub:
-            return await stub.Normalize(
-                variant_pb2.NormalizeRequest(variant=variant, genome_build='GRCh38'), metadata=_GOOD_TOKEN
-            )
+            return await stub.Normalize(variant_pb2.NormalizeRequest(variant=variant, genome_build='GRCh38'))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
@@ -97,9 +83,7 @@ def test_resolve_accepts_the_renderings_clinvar_returns(variant: str) -> None:
 
     async def run() -> variant_pb2.NormalizeResponse:
         async with _serving(tables) as stub:
-            return await stub.Normalize(
-                variant_pb2.NormalizeRequest(variant=variant, genome_build='GRCh38'), metadata=_GOOD_TOKEN
-            )
+            return await stub.Normalize(variant_pb2.NormalizeRequest(variant=variant, genome_build='GRCh38'))
 
     assert asyncio.run(run()).caid == 'CA123'
 
@@ -112,7 +96,6 @@ def test_resolve_rejects_a_genome_build_the_upstreams_do_not_serve(genome_build:
         async with _serving(_backend()) as stub:
             return await stub.Normalize(
                 variant_pb2.NormalizeRequest(variant='NM_000546.6:c.524G>A', genome_build=genome_build),
-                metadata=_GOOD_TOKEN,
             )
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:

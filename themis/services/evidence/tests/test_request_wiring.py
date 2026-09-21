@@ -22,9 +22,7 @@ import grpc
 import grpc.aio
 import pytest
 
-from themis.clients.auth import session as session_mod
 from themis.rpc import (
-    auth_pb2,
     clinvar_pb2,
     clinvar_pb2_grpc,
     cspec_pb2,
@@ -46,13 +44,11 @@ from themis.services.evidence.gnomad import backend as gnomad_backend
 from themis.services.evidence.gnomad import servicer as gnomad_servicer
 from themis.services.evidence.splice import backend as splice_backend
 from themis.services.evidence.splice import servicer as splice_servicer
+from themis.services.evidence.tests import authz
 from themis.services.evidence.transcript import backend as transcript_backend
 from themis.services.evidence.transcript import servicer as transcript_servicer
 from themis.services.evidence.variant import backend as variant_backend
 from themis.services.evidence.variant import servicer as variant_servicer
-from themis.testing import in_process_grpc
-
-_GOOD_TOKEN = (('x-themis-session-token', 'good'),)
 
 # The values each rpc's other fields carry, so the one under test is the only one that can fail.
 _POSITIONAL_ID = '17-31232881-G-C'
@@ -73,119 +69,99 @@ _UNALIGNED_GENOME_BUILD = 'hg38'
 _ABSENT_GENE = ' '
 
 
-async def _session_resolver(session_token: str) -> auth_pb2.SessionContext:
-    if session_token == 'good':
-        return auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
-    raise session_mod.UnresolvedSessionError
-
-
 def _register_gnomad(server: grpc.aio.Server) -> None:
-    gnomad_pb2_grpc.add_GnomadServicer_to_server(
-        gnomad_servicer.Servicer(gnomad_backend.FixtureBackend({}), _session_resolver), server
-    )
+    gnomad_pb2_grpc.add_GnomadServicer_to_server(gnomad_servicer.Servicer(gnomad_backend.FixtureBackend({})), server)
 
 
 def _register_splice(server: grpc.aio.Server) -> None:
     splice_pb2_grpc.add_SpliceServicer_to_server(
-        splice_servicer.Servicer(splice_backend.FixtureBackend({}, {}), _session_resolver), server
+        splice_servicer.Servicer(splice_backend.FixtureBackend({}, {})), server
     )
 
 
 def _register_transcript(server: grpc.aio.Server) -> None:
     transcript_pb2_grpc.add_TranscriptServicer_to_server(
-        transcript_servicer.Servicer(transcript_backend.FixtureBackend({}, {}), _session_resolver), server
+        transcript_servicer.Servicer(transcript_backend.FixtureBackend({}, {})), server
     )
 
 
 def _register_clinvar(server: grpc.aio.Server) -> None:
     clinvar_pb2_grpc.add_ClinVarServicer_to_server(
-        clinvar_servicer.Servicer(clinvar_backend.FixtureBackend({}, {}), _session_resolver), server
+        clinvar_servicer.Servicer(clinvar_backend.FixtureBackend({}, {})), server
     )
 
 
 def _register_variant(server: grpc.aio.Server) -> None:
     variant_pb2_grpc.add_VariantServicer_to_server(
-        variant_servicer.Servicer(variant_backend.FixtureBackend({}), _session_resolver), server
+        variant_servicer.Servicer(variant_backend.FixtureBackend({})), server
     )
 
 
 def _register_cspec(server: grpc.aio.Server) -> None:
-    cspec_pb2_grpc.add_CspecServicer_to_server(
-        cspec_servicer.Servicer(cspec_backend.FixtureBackend({}), _session_resolver), server
-    )
+    cspec_pb2_grpc.add_CspecServicer_to_server(cspec_servicer.Servicer(cspec_backend.FixtureBackend({})), server)
 
 
 async def _gnomad_describe_variant(*, gnomad_id: str = _POSITIONAL_ID, cooccurrence_with: str = '') -> None:
-    async with in_process_grpc.serving(_register_gnomad) as channel:
+    async with authz.gated(_register_gnomad) as channel:
         await gnomad_pb2_grpc.GnomadStub(channel).DescribeVariant(
             gnomad_pb2.DescribeVariantRequest(
                 gnomad_id=gnomad_id, dataset=_DATASET, cooccurrence_with=cooccurrence_with
             ),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _splice_predict_deltas(*, variant: str = _POSITIONAL_ID) -> None:
-    async with in_process_grpc.serving(_register_splice) as channel:
-        await splice_pb2_grpc.SpliceStub(channel).PredictDeltas(
-            splice_pb2.PredictDeltasRequest(variant=variant), metadata=_GOOD_TOKEN
-        )
+    async with authz.gated(_register_splice) as channel:
+        await splice_pb2_grpc.SpliceStub(channel).PredictDeltas(splice_pb2.PredictDeltasRequest(variant=variant))
 
 
 async def _splice_predict_skip_outcome(*, transcript: str = _TRANSCRIPT, genome_build: str = _GENOME_BUILD) -> None:
-    async with in_process_grpc.serving(_register_splice) as channel:
+    async with authz.gated(_register_splice) as channel:
         await splice_pb2_grpc.SpliceStub(channel).PredictSkipOutcome(
             splice_pb2.PredictSkipOutcomeRequest(transcript=transcript, genome_build=genome_build, exon=_EXON),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _transcript_get_structure(*, transcript: str = _TRANSCRIPT, genome_build: str = _GENOME_BUILD) -> None:
-    async with in_process_grpc.serving(_register_transcript) as channel:
+    async with authz.gated(_register_transcript) as channel:
         await transcript_pb2_grpc.TranscriptStub(channel).GetStructure(
             transcript_pb2.GetStructureRequest(transcript=transcript, genome_build=genome_build),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _transcript_assess_exon_relevance(*, transcript: str = _TRANSCRIPT, gene: str = _GENE) -> None:
-    async with in_process_grpc.serving(_register_transcript) as channel:
+    async with authz.gated(_register_transcript) as channel:
         await transcript_pb2_grpc.TranscriptStub(channel).AssessExonRelevance(
             transcript_pb2.AssessExonRelevanceRequest(gene=gene, transcript=transcript, exon=_EXON),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _clinvar_describe_variant(*, gene: str = _GENE) -> None:
-    async with in_process_grpc.serving(_register_clinvar) as channel:
+    async with authz.gated(_register_clinvar) as channel:
         await clinvar_pb2_grpc.ClinVarStub(channel).DescribeVariant(
             clinvar_pb2.DescribeVariantRequest(vcv=_VCV, gene=gene, max_pool_records=_POOL_RECORDS),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _clinvar_search_coding_span(*, transcript: str = _TRANSCRIPT) -> None:
-    async with in_process_grpc.serving(_register_clinvar) as channel:
+    async with authz.gated(_register_clinvar) as channel:
         await clinvar_pb2_grpc.ClinVarStub(channel).SearchCodingSpan(
             clinvar_pb2.SearchCodingSpanRequest(
                 transcript=transcript, cds_start=1108, cds_end=1110, max_records=_SPAN_RECORDS
             ),
-            metadata=_GOOD_TOKEN,
         )
 
 
 async def _variant_normalize(*, genome_build: str = _GENOME_BUILD) -> None:
-    async with in_process_grpc.serving(_register_variant) as channel:
+    async with authz.gated(_register_variant) as channel:
         await variant_pb2_grpc.VariantStub(channel).Normalize(
-            variant_pb2.NormalizeRequest(variant=_TRANSCRIPT_HGVS, genome_build=genome_build), metadata=_GOOD_TOKEN
+            variant_pb2.NormalizeRequest(variant=_TRANSCRIPT_HGVS, genome_build=genome_build)
         )
 
 
 async def _cspec_list_specifications(*, gene: str = _GENE) -> None:
-    async with in_process_grpc.serving(_register_cspec) as channel:
-        await cspec_pb2_grpc.CspecStub(channel).ListSpecifications(
-            cspec_pb2.ListSpecificationsRequest(gene=gene), metadata=_GOOD_TOKEN
-        )
+    async with authz.gated(_register_cspec) as channel:
+        await cspec_pb2_grpc.CspecStub(channel).ListSpecifications(cspec_pb2.ListSpecificationsRequest(gene=gene))
 
 
 def _refused(call: Callable[[], Awaitable[None]]) -> str:

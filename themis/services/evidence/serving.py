@@ -4,8 +4,8 @@ Admission is the auth interceptor's, before any handler here runs (rpc-authoriza
 built by `interceptor.gated_server`, and each rpc's contract says who it admits. What the servicers share
 is what comes after — bounding the upstream work under the rpc deadline and mapping a raised `errors`
 type onto the status code the proto states for it — so that lives here, and each of the nine
-database-backed servicers subclasses `EvidenceServicer` alongside its generated base. Their
-`_require_session` resolves the session in the body as well, a check the interceptor has made redundant.
+database-backed servicers subclasses `EvidenceServicer` alongside its generated base. The data they
+serve is public, so none reads the call's session.
 
 `literature` does not subclass this: it maps its own failures per rpc and holds its own deadline
 through `within_deadline` directly, and its producer reads the call's context (`context.current()`) to
@@ -20,7 +20,6 @@ from collections.abc import Awaitable
 import grpc
 from google.protobuf import message
 
-from themis.clients.auth import session as session_mod
 from themis.services.evidence import errors
 
 # The share of its caller's budget an evidence rpc gets before it must answer. Below the deadline the
@@ -54,27 +53,12 @@ async def within_deadline[R](context: grpc.aio.ServicerContext, rpc: str, work: 
 
 
 class EvidenceServicer:
-    """Authorization and error mapping for one evidence interface's servicer.
-
-    The data served is public, so no backend takes a session id: `_require_session` is the
-    authorization gate alone.
-    """
-
-    def __init__(self, session_resolver: session_mod.SessionResolver) -> None:
-        self._session_resolver = session_resolver
-
-    async def _require_session(self, context: grpc.aio.ServicerContext) -> None:
-        """Resolve the request's `x-themis-session-token` metadata, or abort the rpc."""
-        await session_mod.require_session(context, self._session_resolver)
+    """The deadline and error mapping for one evidence interface's servicer."""
 
     async def _response_or_abort[R: message.Message](
         self, context: grpc.aio.ServicerContext, rpc: str, response: Awaitable[R]
     ) -> R:
-        """Await one backend call under the rpc deadline, mapping its failures onto status codes.
-
-        Call it only after `_require_session` has returned: `response` is created by the caller, so
-        an authorization failure raised here would leave that coroutine un-awaited.
-        """
+        """Await one backend call under the rpc deadline, mapping its failures onto status codes."""
         try:
             return await within_deadline(context, rpc, response)
         except errors.UnknownVariantError as e:
