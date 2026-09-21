@@ -16,8 +16,13 @@ SERVICE_URL=$(gcloud run services describe themis-evidence \
 CLU=themis-clu@cpg-themis-dev.iam.gserviceaccount.com
 
 TOKEN=$(gcloud auth print-identity-token \
-  --impersonate-service-account="$CLU" --audiences="$SERVICE_URL")
+  --impersonate-service-account="$CLU" --audiences="$SERVICE_URL" --include-email)
 ```
+
+`--include-email` is not optional: the gate on every data-plane service verifies the caller from the token's `email`
+claim, and an impersonated token carries it only when asked. Without it every rpc answers `UNAUTHENTICATED` with "the
+caller presented no ID token this service can verify", while Cloud Run's own IAM check, which does not need the claim,
+still passes.
 
 The services speak gRPC, so the token goes on the call as `authorization: Bearer $TOKEN` metadata over a TLS channel to
 `<host>:443` — not as an HTTP header on a REST request. `grpcurl` needs the proto tree, since no service registers

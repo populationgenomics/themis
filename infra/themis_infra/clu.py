@@ -7,7 +7,10 @@ this one: a person at a terminal, a local script, a one-off job.
 
     gcloud auth print-identity-token \
       --impersonate-service-account=themis-clu@PROJECT.iam.gserviceaccount.com \
-      --audiences=SERVICE_URL
+      --audiences=SERVICE_URL --include-email
+
+`--include-email` matters: the data-plane gate verifies the caller from the token's email claim, which
+an impersonated token carries only when asked for (rpc-authorization.md).
 
 The group holds `serviceAccountTokenCreator` on the account and nothing else; the account holds the
 invoker bindings. That edge is the stable one: what a person can reach changes by editing this

@@ -65,7 +65,10 @@ def impersonated(service_account: str) -> credentials_mod.Credentials:
 
 
 def identity_token(service_account: str, audience: str) -> str:
-    """An ID token for `audience`, minted by `gcloud` as `service_account`.
+    """An ID token for `audience`, minted by `gcloud` as `service_account`, carrying the account's email.
+
+    The email claim is what a gated service verifies the caller from; `gcloud` omits it from an
+    impersonated token unless asked, and a token without it is `UNAUTHENTICATED` at every gate.
 
     Raises:
         GcloudError: If `gcloud` is absent or refuses, with its own message — membership of the
@@ -79,6 +82,7 @@ def identity_token(service_account: str, audience: str) -> str:
             'print-identity-token',
             f'--impersonate-service-account={service_account}',
             f'--audiences={audience}',
+            '--include-email',
         ],
         capture_output=True,
         text=True,
