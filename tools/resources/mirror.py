@@ -72,12 +72,17 @@ _ROLE_SUFFIXES: dict[str, frozenset[str]] = {
     # `genome.fa` beside it, against the digest the archive carries internally.
     'genome': frozenset({'fa', 'fa.gz', 'tar.gz'}),
     'annotation': frozenset({'gff3.gz'}),
+    'transcripts': frozenset({'fa.gz'}),
+    'ncrna': frozenset({'fa.gz'}),
+    'proteins': frozenset({'fa.gz'}),
     'report': frozenset({'tsv'}),
     'summary': frozenset({'tsv.gz'}),
     'complete-set': frozenset({'tsv'}),
 }
+# The roles an assembly may declare beside its genome, in the order the mirror walks them.
+_ASSEMBLY_ROLES = ('annotation', 'transcripts', 'ncrna', 'proteins', 'report')
 _ASSEMBLY_FIELDS = frozenset(
-    {'id', 'source', 'version', 'seqid', 'licence', 'consumer', 'genome', 'annotation', 'report', 'index'}
+    {'id', 'source', 'version', 'seqid', 'licence', 'consumer', 'genome', 'index', *_ASSEMBLY_ROLES}
 )
 _TABLE_FIELDS = frozenset({'id', 'source', 'version', 'role', 'suffix', 'url', 'md5', 'licence', 'consumer'})
 # What a spec nested inside an assembly may carry. `extension` is the index's alone — it takes its
@@ -220,7 +225,7 @@ def _spec(item: dict[str, object], key: str, *, named: str, source: str) -> dict
 
 
 def _assembly_entries(item: dict[str, object], *, source: str) -> Iterator[Entry]:
-    """The genome, annotation, report and index one assembly declares.
+    """The genome one assembly declares, and the annotation, sequence sets, report and index beside it.
 
     The index takes its genome's suffix plus the extension it adds, so the two cannot disagree:
     htslib opens `genome.fa.fai` and reports anything else as a missing index, not a misnamed one.
@@ -234,7 +239,7 @@ def _assembly_entries(item: dict[str, object], *, source: str) -> Iterator[Entry
         raise MirrorError(f'{source}: {named} declares no genome')
     genome_suffix = _declared_suffix(genome, role='genome', source=source, named=f'{named}/genome')
     yield _object(genome, role='genome', suffix=genome_suffix, parent=item, source=source, named=f'{named}/genome')
-    for role in ('annotation', 'report'):
+    for role in _ASSEMBLY_ROLES:
         spec = _spec(item, role, named=named, source=source)
         if spec is not None:
             yield _object(
