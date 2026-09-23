@@ -18,6 +18,11 @@
 # two disagree: a RefSeq mRNA may carry a polyA tail the genome lacks, or the corrected sequence
 # where the assembly is wrong, and Ensembl edits its cDNA to match. So the sequence a paper's
 # accession names is only in these files, and a digest that identifies it has to be taken from them.
+# Where record and genome differ by an indel, the placement of the difference is not unique; NCBI's
+# transcript alignments are the published placement, the one ClinVar's names follow, so they are
+# mirrored rather than recomputed. The annotation carries an alignment only for a minority of the
+# affected transcripts and never the substitutions. NCBI publishes the curated (NM_/NR_) and model
+# (XM_/XR_) alignments as separate BAMs; GRCh37 has only the curated one.
 #
 # Nothing here is transformed. A derived artifact — a bgzip recompression, an index we build, a
 # subset — is a later pass writing its own prefix and citing the id it came from. Renaming a
@@ -49,6 +54,8 @@ genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.gff.gz", suffix = "gff3.gz", md5 = "24b731562b9d4cae9e37b23404b5be16" }
 transcripts = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_rna.fna.gz", suffix = "fa.gz", md5 = "b4a2ce202c90c0f24f22850c6bc7d774" }
 proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_protein.faa.gz", suffix = "fa.gz", md5 = "25a880236608ad046d7f9b65e895eb4b" }
+alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam", suffix = "bam", md5 = "42eccd19b4ce9d0b6c1808591e9223b7", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam.bai", extension = "bai", md5 = "e933345d2cce119dbefa158f5902b7dc" } }
+model-alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam", suffix = "bam", md5 = "c12dff0b42457ee125af155fedc257a0", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam.bai", extension = "bai", md5 = "93df11dc2c94b81ccec1e6150d24c5ea" } }
 report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt", suffix = "tsv", md5 = "21f3ac4aa8245a99eb874082051b9dde" }
 
 [[assembly]]
@@ -62,6 +69,7 @@ genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_genomic.gff.gz", suffix = "gff3.gz", md5 = "44939e96b2023ec7c28a67323a8f9d22" }
 transcripts = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_rna.fna.gz", suffix = "fa.gz", md5 = "2189c58ebf11fc864939bda6f68aa928" }
 proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_protein.faa.gz", suffix = "fa.gz", md5 = "07e6227d91e6435bcad2ed6e0dec41bd" }
+alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam", suffix = "bam", md5 = "3e11d35cc36e1e9dfb595dc9be7db01a", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam.bai", extension = "bai", md5 = "306256c53a88fa9a014499c61ffa3f62" } }
 report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_report.txt", suffix = "tsv", md5 = "5ded666a3acfcf7262370b7b4328badd" }
 
 # --- Ensembl -------------------------------------------------------------------------------------

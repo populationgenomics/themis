@@ -75,19 +75,22 @@ _ROLE_SUFFIXES: dict[str, frozenset[str]] = {
     'transcripts': frozenset({'fa.gz'}),
     'ncrna': frozenset({'fa.gz'}),
     'proteins': frozenset({'fa.gz'}),
+    'alignments': frozenset({'bam'}),
+    'model-alignments': frozenset({'bam'}),
     'report': frozenset({'tsv'}),
     'summary': frozenset({'tsv.gz'}),
     'complete-set': frozenset({'tsv'}),
 }
 # The roles an assembly may declare beside its genome, in the order the mirror walks them.
-_ASSEMBLY_ROLES = ('annotation', 'transcripts', 'ncrna', 'proteins', 'report')
+_ASSEMBLY_ROLES = ('annotation', 'transcripts', 'ncrna', 'proteins', 'alignments', 'model-alignments', 'report')
 _ASSEMBLY_FIELDS = frozenset(
     {'id', 'source', 'version', 'seqid', 'licence', 'consumer', 'genome', 'index', *_ASSEMBLY_ROLES}
 )
 _TABLE_FIELDS = frozenset({'id', 'source', 'version', 'role', 'suffix', 'url', 'md5', 'licence', 'consumer'})
-# What a spec nested inside an assembly may carry. `extension` is the index's alone — it takes its
-# genome's suffix and adds to it rather than declaring one.
-_OBJECT_FIELDS = frozenset({'url', 'suffix', 'md5', 'extension'})
+# What a spec nested inside an assembly may carry. `extension` is an index's alone — it takes the
+# indexed object's suffix and adds to it rather than declaring one. `index` nests an index under the
+# object it indexes (a BAM's `.bai`, a FASTA's `.fai`).
+_OBJECT_FIELDS = frozenset({'url', 'suffix', 'md5', 'extension', 'index'})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -166,6 +169,10 @@ def _object(
     allowed = _OBJECT_FIELDS if spec is not parent else _TABLE_FIELDS
     if unknown := spec.keys() - allowed:
         raise MirrorError(f'{source}: {named} carries unknown {sorted(unknown)}')
+    if 'extension' in spec and 'suffix' in spec:
+        raise MirrorError(
+            f'{source}: {named} declares both a suffix and an extension; an index declares only the latter'
+        )
     url = spec.get('url')
     if not isinstance(url, str) or not url.startswith(('https://', 'gs://')):
         raise MirrorError(f'{source}: {named} has url {url!r}; only https:// and gs:// are fetched')
@@ -239,30 +246,41 @@ def _assembly_entries(item: dict[str, object], *, source: str) -> Iterator[Entry
         raise MirrorError(f'{source}: {named} declares no genome')
     genome_suffix = _declared_suffix(genome, role='genome', source=source, named=f'{named}/genome')
     yield _object(genome, role='genome', suffix=genome_suffix, parent=item, source=source, named=f'{named}/genome')
+    yield from _index_entries(genome, item, role='genome', suffix=genome_suffix, source=source, named=f'{named}/genome')
     for role in _ASSEMBLY_ROLES:
         spec = _spec(item, role, named=named, source=source)
         if spec is not None:
-            yield _object(
-                spec,
-                role=role,
-                suffix=_declared_suffix(spec, role=role, source=source, named=f'{named}/{role}'),
-                parent=item,
-                source=source,
-                named=f'{named}/{role}',
-            )
+            suffix = _declared_suffix(spec, role=role, source=source, named=f'{named}/{role}')
+            yield _object(spec, role=role, suffix=suffix, parent=item, source=source, named=f'{named}/{role}')
+            yield from _index_entries(spec, item, role=role, suffix=suffix, source=source, named=f'{named}/{role}')
     index = _spec(item, 'index', named=named, source=source)
     if index is not None:
-        extension = index.get('extension')
-        if not isinstance(extension, str) or not extension:
-            raise MirrorError(f'{source}: {named}/index must declare the extension it adds to the genome')
-        yield _object(
-            index,
-            role='genome',
-            suffix=f'{genome_suffix}.{extension}',
-            parent=item,
-            source=source,
-            named=f'{named}/index',
-        )
+        yield _index_entry(index, item, role='genome', suffix=genome_suffix, source=source, named=f'{named}/index')
+
+
+def _index_entry(
+    index: dict[str, object], item: dict[str, object], *, role: str, suffix: str, source: str, named: str
+) -> Entry:
+    """The index of one object, landing beside it as the object's name plus the extension it adds.
+
+    htslib opens `genome.fa.fai` or `alignments.bam.bai` and reports anything else as a missing
+    index rather than a misnamed one, so the name is composed, never declared.
+    """
+    extension = index.get('extension')
+    if not isinstance(extension, str) or not extension:
+        raise MirrorError(f'{source}: {named} must declare the extension it adds to the object it indexes')
+    if 'index' in index:
+        raise MirrorError(f'{source}: {named} nests an index under an index; nothing reads one')
+    return _object(index, role=role, suffix=f'{suffix}.{extension}', parent=item, source=source, named=named)
+
+
+def _index_entries(
+    spec: dict[str, object], item: dict[str, object], *, role: str, suffix: str, source: str, named: str
+) -> Iterator[Entry]:
+    """The index an object nests under itself, if it declares one."""
+    index = _spec(spec, 'index', named=named, source=source)
+    if index is not None:
+        yield _index_entry(index, item, role=role, suffix=suffix, source=source, named=f'{named}/index')
 
 
 def load_manifest(path: pathlib.Path = _MANIFEST) -> tuple[str, list[Entry]]:

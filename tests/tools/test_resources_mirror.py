@@ -57,3 +57,42 @@ def test_an_unknown_role_is_refused_rather_than_ignored(tmp_path: pathlib.Path) 
     extra = 'transcript = { url = "https://example.org/t", suffix = "fa.gz" }'
     with pytest.raises(mirror.MirrorError, match='unknown'):
         mirror.load_manifest(_manifest(tmp_path, extra))
+
+
+def test_a_nested_index_lands_beside_its_object_under_the_composed_name(tmp_path: pathlib.Path) -> None:
+    extra = (
+        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
+        'index = { url = "https://example.org/a.bam.bai", extension = "bai" } }'
+    )
+    _, entries = mirror.load_manifest(_manifest(tmp_path, extra))
+    alignments = [entry for entry in entries if entry.role == 'alignments']
+    assert {entry.suffix for entry in alignments} == {'bam', 'bam.bai'}
+    assert len({entry.object.rsplit('.', 2)[0] for entry in alignments}) == 1
+
+
+def test_an_index_declares_only_the_extension_it_adds(tmp_path: pathlib.Path) -> None:
+    extra = (
+        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
+        'index = { url = "https://example.org/a.bai", suffix = "bai", extension = "bai" } }'
+    )
+    with pytest.raises(mirror.MirrorError, match='both a suffix and an extension'):
+        mirror.load_manifest(_manifest(tmp_path, extra))
+
+
+def test_an_index_without_an_extension_is_refused(tmp_path: pathlib.Path) -> None:
+    extra = (
+        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
+        'index = { url = "https://example.org/a.bai" } }'
+    )
+    with pytest.raises(mirror.MirrorError, match='must declare the extension'):
+        mirror.load_manifest(_manifest(tmp_path, extra))
+
+
+def test_an_index_under_an_index_is_refused(tmp_path: pathlib.Path) -> None:
+    extra = (
+        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
+        'index = { url = "https://example.org/a.bai", extension = "bai", '
+        'index = { url = "https://example.org/a.bai.x", extension = "x" } } }'
+    )
+    with pytest.raises(mirror.MirrorError, match='index under an index'):
+        mirror.load_manifest(_manifest(tmp_path, extra))
