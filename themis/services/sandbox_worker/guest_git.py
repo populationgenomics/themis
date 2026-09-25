@@ -18,9 +18,9 @@ from typing import Protocol
 import postern
 
 from themis.services.sandbox_worker import git_hatches
+from themis.sheaf.wire import protect
 
 GITIGNORE = 'scratch/\nskills/\n'
-STRANDED_NAMESPACE = 'refs/stranded'
 _GITIGNORE_CODE = f'import pathlib\npathlib.Path(".gitignore").write_text({GITIGNORE!r})\n'
 _REF_COMPONENT = re.compile(r'^[A-Za-z0-9_-]+$')
 
@@ -107,7 +107,7 @@ class GuestGit:
         The hook refuses a push whole, so after a refused `--all` each branch with unpublished commits
         is pushed on its own first — one refused sibling must not demote a clean branch — and only a
         branch refused on its own is stranded, as is a detached HEAD with unpublished commits (as
-        `HEAD`). Creating a ref is always allowed, so a stranded tip lands whenever the store is
+        `HEAD`). Creating a stranded ref is always allowed, so a stranded tip lands whenever the store is
         reachable and its commits write no protected path. A branch that merely fell behind holds
         nothing the store lacks and leaves no ref.
 
@@ -130,7 +130,7 @@ class GuestGit:
         fetched = self._guest.run(['git', 'fetch', '-q', 'origin'], timeout=timeout)
         if not fetched.ok:
             raise GitError(f'cannot tell what the store lacks, so nothing is stranded: {fetched.stderr.strip()}')
-        stranded = f'{STRANDED_NAMESPACE}/{session_id}'
+        stranded = f'{protect.STRANDED_NAMESPACE}/{session_id}'
         lost = []
         for tip in self._unpublished_tips(timeout):
             if tip == 'HEAD':

@@ -9,6 +9,7 @@ import pytest
 from themis import sheaf
 from themis.services.sandbox_worker import guest_git
 from themis.services.sandbox_worker.tests import conftest, fakes
+from themis.sheaf.wire import protect
 
 MAIN = 'refs/heads/main'
 SESSION = 'sesn_01ABC'
@@ -131,7 +132,7 @@ def test_push_all_publishes_what_the_agent_committed_and_did_not_push(
     refs = analysis.store.read().refs
     assert refs[MAIN] == tip
     assert refs['refs/heads/side'] == side
-    assert not any(ref.startswith(guest_git.STRANDED_NAMESPACE) for ref in refs)
+    assert not any(ref.startswith(protect.STRANDED_NAMESPACE) for ref in refs)
 
 
 def test_push_all_with_nothing_unpushed_is_a_no_op(analysis: conftest.Analysis, tmp_path: pathlib.Path) -> None:
@@ -159,7 +160,7 @@ def test_a_refused_teardown_push_strands_the_tips_instead_of_losing_them(
 
     refs = analysis.store.read().refs
     assert refs[MAIN] == published  # never rewritten
-    assert refs[f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/main'] == stale
+    assert refs[f'{protect.STRANDED_NAMESPACE}/{SESSION}/main'] == stale
 
 
 def test_a_stranded_push_that_is_refused_too_raises(analysis: conftest.Analysis, tmp_path: pathlib.Path) -> None:
@@ -187,7 +188,7 @@ def test_a_branch_that_merely_fell_behind_is_not_stranded(analysis: conftest.Ana
 
     first.push_all(SESSION)  # nothing of its own to publish: refs are for ever, so no junk may be left
 
-    assert not any(ref.startswith(guest_git.STRANDED_NAMESPACE) for ref in analysis.store.read().refs)
+    assert not any(ref.startswith(protect.STRANDED_NAMESPACE) for ref in analysis.store.read().refs)
 
 
 def test_commits_on_a_detached_head_are_stranded_rather_than_lost(
@@ -200,7 +201,7 @@ def test_commits_on_a_detached_head_are_stranded_rather_than_lost(
 
     repository.push_all(SESSION)
 
-    assert analysis.store.read().refs[f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/HEAD'] == tip
+    assert analysis.store.read().refs[f'{protect.STRANDED_NAMESPACE}/{SESSION}/HEAD'] == tip
 
 
 def test_a_clean_branch_lands_even_when_another_is_refused(analysis: conftest.Analysis, tmp_path: pathlib.Path) -> None:
@@ -218,8 +219,8 @@ def test_a_clean_branch_lands_even_when_another_is_refused(analysis: conftest.An
 
     refs = analysis.store.read().refs
     assert refs['refs/heads/side'] == side
-    assert refs[f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/main'] == stale
-    assert f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/side' not in refs
+    assert refs[f'{protect.STRANDED_NAMESPACE}/{SESSION}/main'] == stale
+    assert f'{protect.STRANDED_NAMESPACE}/{SESSION}/side' not in refs
 
 
 def test_one_refused_stranded_tip_does_not_take_the_others_down(
@@ -248,8 +249,8 @@ def test_one_refused_stranded_tip_does_not_take_the_others_down(
         repository.push_all(SESSION)
 
     refs = analysis.store.read().refs
-    assert refs[f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/side'] == stale_side
-    assert f'{guest_git.STRANDED_NAMESPACE}/{SESSION}/main' not in refs
+    assert refs[f'{protect.STRANDED_NAMESPACE}/{SESSION}/side'] == stale_side
+    assert f'{protect.STRANDED_NAMESPACE}/{SESSION}/main' not in refs
 
 
 def test_a_hook_refused_sibling_does_not_demote_a_clean_branch(
@@ -272,4 +273,4 @@ def test_a_hook_refused_sibling_does_not_demote_a_clean_branch(
     refs = analysis.store.read().refs
     assert refs['refs/heads/side'] == side
     assert refs['refs/heads/main'] == before
-    assert not any(ref.startswith(guest_git.STRANDED_NAMESPACE) for ref in refs)
+    assert not any(ref.startswith(protect.STRANDED_NAMESPACE) for ref in refs)

@@ -114,4 +114,5 @@ def test_environment_carries_only_what_the_hook_reads(
     assert env[hook.SYNC_STATE_ENV] == str(repo.sync_state_path)
     assert env[hook.GIT_DIR_ENV] == str(repo.path)
     assert protect.Protection.from_env(env) == protection
-    assert set(env) == {hook.SYNC_STATE_ENV, hook.GIT_DIR_ENV, protect.PATHS_ENV, 'PATH'}
+    assert set(env) == {hook.SYNC_STATE_ENV, hook.GIT_DIR_ENV, protect.PATHS_ENV, 'PATH', *bare.MIRROR_GIT_ENV}
+    assert bare.MIRROR_GIT_ENV.items() <= env.items()

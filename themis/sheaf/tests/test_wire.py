@@ -15,7 +15,7 @@ import pytest
 from themis import sheaf
 from themis.sheaf import orphans
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import bare, reflog, server
+from themis.sheaf.wire import bare, protect, reflog, server
 
 REPO = 'projects/demo'
 REF = 'refs/heads/main'
@@ -362,6 +362,63 @@ def test_a_push_to_the_reflog_ref_is_refused(
     assert pushed.returncode != 0
     assert 'written by sheaf' in pushed.stderr
     assert store.read().generation == before.generation
+
+
+@pytest.mark.parametrize('kind', ['replace', 'notes'])
+def test_a_push_to_a_ref_outside_branches_and_tags_is_refused(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path, kind: str
+) -> None:
+    """Git's own machinery refs stay off the server: a replace ref would change what the mirror's git reads."""
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    conftest.run_git('push', 'origin', 'main', cwd=work)
+    first = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+    _commit(work, 'b.md', 'b\n', 'add b')
+    second = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+    conftest.run_git('replace', first, second, cwd=work)
+    conftest.run_git('notes', 'add', '-m', 'a note', first, cwd=work)
+    ref = {'replace': f'refs/replace/{first}', 'notes': 'refs/notes/commits'}[kind]
+    store = sheaf.Store(backend, REPO)
+    before = store.read()
+
+    pushed = conftest.run_git('push', 'origin', ref, cwd=work, check=False)
+
+    assert pushed.returncode != 0
+    assert f'{ref} is not a ref a push may write' in pushed.stderr
+    assert store.read().generation == before.generation
+
+
+@pytest.mark.parametrize('ref', ['refs/heads/side', 'refs/tags/v1', f'{protect.STRANDED_NAMESPACE}/sesn_01ABC/main'])
+def test_branches_tags_and_stranded_work_may_be_pushed(
+    git_server: server.SheafGitServer, backend: sheaf.LocalBackend, tmp_path: pathlib.Path, ref: str
+) -> None:
+    work = _clone(git_server, tmp_path, 'work')
+    _commit(work, 'a.md', 'a\n', 'add a')
+    tip = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+
+    conftest.run_git('push', 'origin', f'main:{ref}', cwd=work)
+
+    assert sheaf.Store(backend, REPO).read().refs[ref] == tip
+
+
+def test_the_mirrors_git_reads_objects_past_a_replace_ref(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> None:
+    """Either defence alone keeps a replace ref in the mirror from standing one object in for another.
+
+    `MIRROR_GIT_ENV` covers every git sheaf spawns; the mirror's config covers a git spawned without it.
+    """
+    mirror = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
+    mirror.sync()
+    real = mirror.git('hash-object', '-w', '--stdin', stdin=b'real\n').decode().strip()
+    stand_in = mirror.git('hash-object', '-w', '--stdin', stdin=b'stand-in\n').decode().strip()
+    mirror.git('update-ref', f'refs/replace/{real}', stand_in)
+    honoured = ('-c', 'core.useReplaceRefs=true')
+
+    # Neither defence: the replace ref is live, so the two reads below are not vacuous.
+    assert conftest.run_git(*honoured, 'cat-file', 'blob', real, cwd=mirror.path).stdout == 'stand-in\n'
+    # The mirror's config alone: no GIT_NO_REPLACE_OBJECTS in a client's environment.
+    assert conftest.run_git('cat-file', 'blob', real, cwd=mirror.path).stdout == 'real\n'
+    # The environment alone, over a config that would honour the ref.
+    assert mirror.git(*honoured, 'cat-file', 'blob', real) == b'real\n'
 
 
 def test_every_push_writes_a_reflog_entry_that_keeps_its_tip_reachable(

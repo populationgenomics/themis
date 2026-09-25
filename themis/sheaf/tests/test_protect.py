@@ -14,7 +14,7 @@ import pytest
 
 from themis import sheaf
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import protect, server
+from themis.sheaf.wire import protect, reflog, server
 
 REPO = 'projects/demo'
 REF = 'refs/heads/main'
@@ -181,6 +181,82 @@ def test_an_orphan_root_commit_cannot_smuggle_a_protected_path(
     conftest.run_git('checkout', 'main', cwd=work)
     conftest.run_git('merge', '--allow-unrelated-histories', '-X', 'theirs', '--no-edit', 'fake', cwd=work)
     assert 'fabricated' in (work / ASSERTIONS).read_text('utf-8'), 'the merge took the orphan side'
+
+    refused = conftest.run_git('push', 'origin', 'main', cwd=work, check=False)
+    assert refused.returncode != 0
+    assert ASSERTIONS in refused.stderr
+    assert [line.split('"')[3] for line in curator.read_log(ref=REF, path=ASSERTIONS)] == ['PM2']
+
+
+def _benign_and_forged(work: pathlib.Path) -> tuple[str, str]:
+    """Two children of `main`: one revising an unprotected file, and one fabricating a sign-off, left checked out."""
+    conftest.run_git('checkout', '-q', '-b', 'decoy', cwd=work)
+    (work / 'documents').mkdir()
+    (work / 'documents' / 'report.md').write_text('a revision\n', 'utf-8')
+    conftest.run_git('add', 'documents/report.md', cwd=work)
+    conftest.run_git('commit', '-m', 'revise the report', cwd=work)
+    benign = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+
+    conftest.run_git('checkout', '-q', 'main', cwd=work)
+    with (work / ASSERTIONS).open('a', encoding='utf-8') as log:
+        log.write('{"code": "PP3", "state": "reviewed", "by": "reviewer.one@example.org"}\n')
+    conftest.run_git('commit', '-am', 'fabricate a sign-off', cwd=work)
+    forged = conftest.run_git('rev-parse', 'HEAD', cwd=work).stdout.strip()
+    return benign, forged
+
+
+def test_a_replace_ref_cannot_be_pushed_to_disguise_a_protected_write(
+    protected: server.SheafGitServer, curator: conftest.GitRepo, tmp_path: pathlib.Path
+) -> None:
+    """The two-push shape: first a replace ref standing a benign commit in for a forged one, then the forged commit.
+
+    Were the first push to land, a mirror's git honouring replace refs would check the second as the benign commit
+    while `pack-objects`, which ignores them, stored the forged one.
+    """
+    _sign_off(curator, 'PM2')
+    work = _clone(protected, tmp_path, 'work')
+    benign, forged = _benign_and_forged(work)
+
+    disguise = conftest.run_git('push', 'origin', f'{benign}:refs/replace/{forged}', cwd=work, check=False)
+    assert disguise.returncode != 0
+    assert f'refs/replace/{forged} is not a ref a push may write' in disguise.stderr
+
+    refused = conftest.run_git('push', 'origin', 'main', cwd=work, check=False)
+    assert refused.returncode != 0
+    assert ASSERTIONS in refused.stderr
+    assert not [ref for ref in curator.store.read().refs if ref.startswith('refs/replace/')]
+    assert [line.split('"')[3] for line in curator.read_log(ref=REF, path=ASSERTIONS)] == ['PM2']
+
+
+def test_a_replace_ref_already_in_the_mirror_does_not_change_what_the_hook_reads(
+    protected: server.SheafGitServer, curator: conftest.GitRepo, tmp_path: pathlib.Path
+) -> None:
+    """The mirror's git reads the objects a push carries, whatever replace refs the mirror holds.
+
+    The replace ref is published straight to the store, as a writer that never meets the hook could, so every sync
+    writes it into the mirror ahead of the push the hook then checks.
+    """
+    _sign_off(curator, 'PM2')
+    work = _clone(protected, tmp_path, 'work')
+    benign, forged = _benign_and_forged(work)
+    conftest.run_git('push', 'origin', 'decoy', cwd=work)
+
+    mirror = protected.bare(REPO)
+    base = mirror.sync()
+    replace_ref = f'refs/replace/{forged}'
+    entry = reflog.record(mirror.git, base.tip(reflog.REF), [reflog.Transition(replace_ref, None, benign)])
+    curator.store.publish(
+        base,
+        sheaf.Intent(
+            ref_updates={
+                replace_ref: sheaf.RefUpdate(None, benign),
+                reflog.REF: sheaf.RefUpdate(base.tip(reflog.REF), entry),
+            },
+            packs=[mirror.pack_for([entry])],
+        ),
+    )
+    mirror.sync()
+    assert mirror.local_refs()[replace_ref] == benign
 
     refused = conftest.run_git('push', 'origin', 'main', cwd=work, check=False)
     assert refused.returncode != 0

@@ -256,6 +256,15 @@ run *after* the pre-receive hook and cover branches only, so a server relying on
 git refused it, and would let a tag be moved or deleted. The hook also meets the narrow race where something landed
 between the sync and the swap.
 
+A replace ref, `refs/replace/<id>`, tells git to read another object whenever it is asked for `<id>`, and that lets a
+push make the hook check one commit while the store keeps another. The agent first pushes `refs/replace/<forged>`
+pointing at a harmless commit, then pushes the forged commit, which writes a protected path. Every git command the hook
+runs reads the harmless stand-in and passes it, but `pack-objects` ignores replace refs and stores the forged commit.
+Two defences close the two steps. A push may write only branches, tags, and the refs under `refs/stranded/` where the
+sandbox worker keeps work the store refused on its branch, so the first push is refused. And every git run against the
+mirror ignores replace refs, because a writer that publishes through the storage protocol without passing a hook can
+still store any ref, and every sync copies the store's refs into the mirror.
+
 Incoming objects are validated by git, not by the hook. That validation is off by default in receive-pack, and the
 default is wrong here: the hook is host-side code holding the store credential, and it walks a pack the sandbox
 composed. With validation on, receive-pack refuses a malformed object before the hook is invoked at all.

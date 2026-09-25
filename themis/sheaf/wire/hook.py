@@ -34,6 +34,9 @@ GIT_DIR_ENV = 'SHEAF_GIT_DIR'
 
 _MOVED = 'the workspace moved while your push was in flight'
 _MOVED_HINT = 'run `git pull --rebase` (or merge) and push again.'
+_POLICY_HINT = (
+    'history here is append-only: push only branches and tags, fast-forward them, and revert any protected path.'
+)
 
 
 def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str, str]:
@@ -42,7 +45,8 @@ def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str
     Scrubbed on purpose: the hook holds the store credential and reads a pack the client composed,
     so it must not inherit the host's secrets, and only the variables named here reach it. A server
     hands this to the `git` it spawns — `http-backend`, `upload-pack`, `receive-pack` — and adds
-    whatever that command itself needs.
+    whatever that command itself needs. It carries `bare.MIRROR_GIT_ENV`, so the served git and
+    everything it runs, this hook included, ignore replace refs.
     """
     # STORAGE_EMULATOR_HOST is the storage SDK's own contract for redirecting the client, and
     # carrying it through is what lets the whole path run against an emulator. Unset in
@@ -54,6 +58,7 @@ def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str
         'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
         SYNC_STATE_ENV: str(repo.sync_state_path),
         GIT_DIR_ENV: str(repo.path),
+        **bare.MIRROR_GIT_ENV,
     }
 
 
@@ -139,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     # also lost a race — otherwise the pusher is told to retry something that can never succeed.
     refusals = protect.violations(repo, updates, protect.Protection.from_env())
     if refusals:
-        return _refuse(refusals, 'history here is append-only: fast-forward the ref, and revert any protected path.')
+        return _refuse(refusals, _POLICY_HINT)
 
     # The client built its push against the refs advertised at `state.generation`. Anything else
     # there now means somebody landed in between, and the push has to be rebuilt rather than merged

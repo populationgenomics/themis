@@ -1,4 +1,4 @@
-"""What a push may not do: rewrite or delete history, touch sheaf's own refs, or write a protected path.
+"""What a push may not do: write outside the refs it may write, rewrite or delete history, or write a protected path.
 
 The first two hold for every repository and are not configurable. Protected paths are a `Protection`
 built from the process environment rather than from anything in the repository, so a push cannot
@@ -16,6 +16,10 @@ from themis.sheaf.wire import bare, reflog
 
 PATHS_ENV = 'SHEAF_PROTECTED_PATHS'
 SEPARATOR = ':'
+# Work a writer could not land on its branch, kept under a ref of its own for a later merge.
+STRANDED_NAMESPACE = 'refs/stranded'
+# The refs a push may write. Any other is refused, `refs/replace/` among them: it changes what git reads an object as.
+WRITABLE_NAMESPACES = ('refs/heads/', 'refs/tags/', f'{STRANDED_NAMESPACE}/')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,7 +103,7 @@ def new_commits(repo: bare.BareRepo, tip: str) -> list[str]:
 def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], protection: Protection) -> list[str]:
     """Return human-readable reasons the push must be refused, empty if it is allowed.
 
-    History first, for every ref: no deletion, no rewrite, and nothing under sheaf's own namespace.
+    History first, for every ref: nothing outside `WRITABLE_NAMESPACES`, no deletion, no rewrite.
     These are what make the store append-only, and they are the hook's to enforce rather than
     receive-pack's — `receive.denyNonFastForwards` and `receive.denyDeletes` are checked *after*
     the pre-receive hook, and only for branches, so relying on them would publish the rewrite before
@@ -123,9 +127,11 @@ def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], pro
 
 
 def history_reasons(repo: bare.BareRepo, ref: str, update: store_mod.RefUpdate) -> list[str]:
-    """Refuse deleting or rewriting any ref, and any write under sheaf's own namespace."""
+    """Refuse any ref outside `WRITABLE_NAMESPACES`, and deleting or rewriting any ref."""
     if ref.startswith(reflog.NAMESPACE):
         return [f'{ref} is written by sheaf, not by a push']
+    if not ref.startswith(WRITABLE_NAMESPACES):
+        return [f'{ref} is not a ref a push may write (those under {", ".join(WRITABLE_NAMESPACES)})']
     if update.new is None:
         return [f'{ref} may not be deleted: history here is append-only']
     if update.old is None:

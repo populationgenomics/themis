@@ -41,8 +41,8 @@ worker package asserting that its only `git` invocations are `Sandbox.run` (gues
 **The agent controls its snapshots.** The worker makes no commits. What the agent has not committed when the session
 ends is gone, and it is told so. The worker's one contribution is at teardown: a guest-side `git push origin --all`, so
 anything committed and not yet pushed survives. If that push is refused because the store moved, the tip is pushed to a
-fresh `refs/stranded/<session-id>` instead — creating a ref is always allowed — so the work survives for a later session
-to merge rather than dying with the container.
+fresh `refs/stranded/<session-id>` instead — creating a ref there is always allowed — so the work survives for a later
+session to merge rather than dying with the container.
 
 **History is append-only**, which the hook enforces ([`sheaf.md`](../design/sheaf.md)). The prompt says so, in git's own
 terms: no force-push, no branch deletion; `pull --rebase` then push is the recovery.
