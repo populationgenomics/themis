@@ -27,7 +27,11 @@ with this doc.
 ## Deploy trigger
 
 `deploy.yml` has two entry points, and merging to `main` is neither — a merge lints, tests, and builds images, but does
-not deploy.
+not deploy. A deploy is the images, the stack, the migrations, and the agent's declaration on the Anthropic side
+(`agents/svcv4-classifier.agent.yaml`, applied whole by `tools/agents`), in that order. The agent step runs as the same
+deploy SA, federated into the Anthropic workspace under a rule that pins that account
+([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md), the deploy workflow), so the ref binding below gates
+both sides of a deploy.
 
 - **Ad-hoc:** push the `deployed/<env>` branch — `git push --force origin <commit-ish>:deployed/dev`, taking a branch
   name or a bare SHA. The push *is* the deploy, so the branch always names what is live, and because the deployed commit
@@ -41,6 +45,24 @@ overwrites whatever is running there, without warning and possibly mid-demo: mer
 someone else's environment. Revisit once dev stops carrying ad-hoc demos of unreviewed code, and for `prod` when it
 exists — a stable environment wants deploy-on-merge (`on: push: branches: [main]`), and should not carry an ad-hoc
 deploy branch at all, which is why `bootstrap.sh` grants that member only when asked.
+
+### Order of a deploy
+
+The agent step runs last because the skill the agent carries is written against a particular build. It names rpcs by
+service and method, such as `Splice.PredictDeltas`, and the scoring modules the guest image ships, such as
+`themis.svcv4.frequency`. Between the stack step and the agent step, a new session runs the new image and services under
+the previous skill.
+
+Running the agent step first would reverse the skew: the new skill would call into the old build, so any rpc the change
+adds would fail until the stack step finished. With the agent step last, an added rpc is safe, because the previous
+skill never calls it. A renamed or removed rpc is the case to plan for: the previous skill still calls the old name, so
+the change takes two deploys. The first serves both names and moves the skill to the new one; the second removes the old
+name.
+
+When the agent step succeeds, the window lasts a few minutes. When it fails, the window has no bound: the stack and
+migrations have already applied, so the new build runs under the previous skill until someone applies the declaration by
+hand or a later deploy gets through. On a fresh environment whose deploy identifiers are still placeholders, every
+deploy fails this way ([`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md)).
 
 ### Who can deploy
 

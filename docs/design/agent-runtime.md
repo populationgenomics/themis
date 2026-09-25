@@ -208,9 +208,11 @@ role.
 
 ## Configuration and lifecycle
 
-Control plane / data plane split, per [`spike-infrastructure.md`](spike-infrastructure.md) §6/§8: agents and
-environments are version-controlled YAML applied via the `ant` CLI from CI; sessions are created and driven from the web
-backend via the SDK.
+Control plane / data plane split, per [`spike-infrastructure.md`](spike-infrastructure.md) §6/§8: the agent is
+version-controlled YAML (`agents/svcv4-classifier.agent.yaml`) applied whole by the deploy workflow through
+`tools/agents`, which publishes its custom skills from the repo when their content moved and pins the agent to the
+version it published; the environment is created once by hand; sessions are created and driven from the web backend via
+the SDK.
 
 Much of the lifecycle is the platform's: automatic prompt caching within a session (the session keeps the 5-minute-TTL
 cache alive across the run), context compaction, and rescheduling on retryable errors. We add a per-session timeout, the

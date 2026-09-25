@@ -93,9 +93,13 @@ the table says which — and on a first bring-up neither costs anything: the edg
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
 remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
-Anthropic-side entities that exist before any GCP service account does, and `themis:anthropicWorkerFederationRuleId`
-pins a service account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so
-its rule can be registered before the first `up`.
+Anthropic-side entities that exist before any GCP service account does; `themis:anthropicWorkerFederationRuleId` pins a
+service account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so its
+rule can be registered before the first `up`; and the deploy workflow's svac and rule
+(`themis:anthropicDeployServiceAccountId`, `themis:anthropicDeployFederationRuleId` —
+[`claude-api-wif.md`](claude-api-wif.md), the deploy workflow) pin the deploy SA, which bootstrap creates, so they too
+precede the first `up`. While either deploy id is a placeholder, the deploy's agent step fails at the token exchange
+after the stack has applied, and the agent's declaration is applied by hand.
 
 ```sh
 pulumi config set themis:iapBackendServiceId "$(pulumi stack output web_backend_service_id)"

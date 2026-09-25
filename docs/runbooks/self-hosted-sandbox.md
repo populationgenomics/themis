@@ -76,9 +76,11 @@ registered before a membership references it (FK).
 
 - **Env-key rotation** — regenerate in Console + `pulumi config set`; Anthropic cannot fast-revoke a leaked key.
 
-- **Updating the agent** — edit its yaml, then apply it. The declaration is sent whole, so what the yaml does not carry
-  is not on the agent; the API creates a new agent version only when a field changed, and `apply` prints the version
-  before and after:
+- **Updating the agent** — edit its yaml and deploy: `deploy.yml` applies the declaration after the stack, so pushing
+  `deployed/dev` is how a change reaches the agent, and the guest image the skill relies on lands first. The declaration
+  is sent whole, so what the yaml does not carry is not on the agent; the API creates a new agent version only when a
+  field changed, and `apply` prints the version before and after. The same command runs by hand when a change should not
+  wait for a deploy:
 
   ```sh
   export THEMIS_AGENT_MODEL_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentModelId)
@@ -90,12 +92,13 @@ registered before a membership references it (FK).
   A session pins the agent version at creation, so a running Analysis keeps the old prompt: create a fresh one to
   exercise the change.
 
-- **Updating a custom skill** — edit its files under `agents/skills/<directory>`, commit them, and apply the agent, as
-  above. `apply` publishes the directory as a new skill version when its content is not what the agent runs, and pins
-  the agent to that version. It refuses a directory with uncommitted or untracked changes, because the agent's record
-  names the commit the content came from. The record sits in the agent's `metadata` (`skill:<directory>` → the version,
-  a digest of the content, and the commit), so an apply that changes no skill publishes nothing. The next session's run
-  record is the proof: its `ran_skills` names the version each skill resolved to (`custom:<skill_id>@<version>`).
+- **Updating a custom skill** — edit its files under `agents/skills/<directory>`, commit them, and deploy, or apply by
+  hand as above. `apply` publishes the directory as a new skill version when its content is not what the agent runs, and
+  pins the agent to that version. It refuses a directory with uncommitted or untracked changes, because the agent's
+  record names the commit the content came from. The record sits in the agent's `metadata` (`skill:<directory>` → the
+  version, a digest of the content, and the commit), so a deploy that changes no skill publishes nothing. The next
+  session's run record is the proof: its `ran_skills` names the version each skill resolved to
+  (`custom:<skill_id>@<version>`).
 
 - **Adding a custom skill** — write its files under a new `agents/skills/<directory>`, then
   `uv run --group agents python -m tools.agents create-skill agents/skills/<directory>`: it creates the skill with the

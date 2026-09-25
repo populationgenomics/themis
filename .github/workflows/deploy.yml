@@ -1,12 +1,13 @@
 name: deploy
 
-# Deploys to dev: build the service images, push to Artifact Registry, then
-# `pulumi up` and apply migrations. Two ways in — push `deployed/dev`, or dispatch
-# on `main` — and merging to `main` is neither, so it deploys nothing
-# (docs/design/deployment.md, "Deploy trigger"). Authenticates as the deploy SA via
-# WIF, whose binding accepts exactly these two refs; a GitHub ruleset over `deployed/*`
-# bypasses only for the repository-admin role, which is what limits who can deploy
-# unreviewed code. PRs never reach this — they get a read-only preview (preview.yml).
+# Deploys to dev: build the service images, push to Artifact Registry, then `pulumi up`,
+# apply migrations, and apply the agent's declaration on the Anthropic side. Two ways
+# in — push `deployed/dev`, or dispatch on `main` — and merging to `main` is neither, so
+# it deploys nothing (docs/design/deployment.md, "Deploy trigger"). Authenticates as
+# the deploy SA via WIF, whose binding accepts exactly these two refs; a GitHub ruleset
+# over `deployed/*` bypasses only for the repository-admin role, which is what limits
+# who can deploy unreviewed code. PRs never reach this — they get a read-only preview
+# (preview.yml).
 on:
   push:
     branches: ['deployed/dev']
@@ -80,4 +81,33 @@ jobs:
           THEMIS_SQL_DATABASE: ${{ steps.pulumi.outputs.sql_database }}
           THEMIS_DB_USER: ${{ steps.pulumi.outputs.migrator_db_user }}
           THEMIS_MIGRATE_SUBSTITUTIONS: '{"AUTH_DB_USER": "${{ steps.pulumi.outputs.auth_db_user }}", "WEB_DB_USER": "${{ steps.pulumi.outputs.web_db_user }}", "INGEST_DB_USER": "${{ steps.pulumi.outputs.ingest_db_user }}", "EVIDENCE_DB_USER": "${{ steps.pulumi.outputs.evidence_db_user }}"}'
-        run: uv run --group migrate python -m themis.migrate
+        run: uv run --locked --group migrate python -m themis.migrate
+      # The agent is a control-plane resource on the Anthropic side, declared in
+      # agents/svcv4-classifier.agent.yaml and applied whole after the stack: the skill it carries
+      # names what the guest image and the services serve. The deploy SA's identity carries over —
+      # an ID token minted for it here is exchanged under the federation rule that pins the account
+      # (docs/runbooks/claude-api-wif.md, the deploy workflow) — so the same ref binding gates the
+      # stack and the agent.
+      - uses: google-github-actions/auth@v3
+        id: anthropic_identity
+        with:
+          project_id: cpg-themis-dev
+          workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
+          service_account: themis-deploy@cpg-themis-dev.iam.gserviceaccount.com
+          token_format: id_token
+          id_token_audience: https://api.anthropic.com
+          id_token_include_email: true
+          create_credentials_file: false
+      - name: Apply the agent declaration
+        env:
+          ANTHROPIC_IDENTITY_TOKEN: ${{ steps.anthropic_identity.outputs.id_token }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ steps.pulumi.outputs.anthropic_deploy_federation_rule_id }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ steps.pulumi.outputs.anthropic_organization_id }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ steps.pulumi.outputs.anthropic_deploy_service_account_id }}
+          ANTHROPIC_WORKSPACE_ID: ${{ steps.pulumi.outputs.anthropic_workspace_id }}
+          THEMIS_ANTHROPIC_AGENT_ID: ${{ steps.pulumi.outputs.anthropic_agent_id }}
+          # A secret output; the action masks it in the log.
+          THEMIS_AGENT_MODEL_ID: ${{ steps.pulumi.outputs.anthropic_agent_model_id }}
+        run: |-
+          uv run --locked --group agents python -m tools.agents apply \
+            agents/svcv4-classifier.agent.yaml --agent-id "$THEMIS_ANTHROPIC_AGENT_ID"

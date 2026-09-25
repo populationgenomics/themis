@@ -97,6 +97,10 @@ anthropic_worker_service_account_id = config.require('anthropicWorkerServiceAcco
 # (docs/runbooks/fresh-environment.md §3).
 anthropic_cost_exporter_federation_rule_id = config.require('anthropicCostExporterFederationRuleId')
 anthropic_cost_exporter_service_account_id = config.require('anthropicCostExporterServiceAccountId')
+# The deploy's own Path B identifiers, pinned to the bootstrap-created deploy SA: the deploy workflow applies the
+# agent's declaration under them after the stack.
+anthropic_deploy_federation_rule_id = config.require('anthropicDeployFederationRuleId')
+anthropic_deploy_service_account_id = config.require('anthropicDeployServiceAccountId')
 # The spend monitor's Slack channel — by name for the alerts' notification channel, by id for the report's file
 # uploads — the bot token of the Slack app that posts to it (encrypted config), and the alert tuning the design
 # leaves to the stack (docs/design/cost-monitoring.md).
@@ -734,6 +738,13 @@ pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_s
 pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)
 # The model the agent declaration is applied with; a secret output, as the config it comes from.
 pulumi.export('anthropic_agent_model_id', anthropic_agent_model_id)
+# What the deploy workflow's agent step reads: the agent it applies the declaration to, and the identity it
+# federates into the workspace as.
+pulumi.export('anthropic_agent_id', anthropic_agent_id)
+pulumi.export('anthropic_organization_id', anthropic_organization_id)
+pulumi.export('anthropic_workspace_id', anthropic_workspace_id)
+pulumi.export('anthropic_deploy_federation_rule_id', anthropic_deploy_federation_rule_id)
+pulumi.export('anthropic_deploy_service_account_id', anthropic_deploy_service_account_id)
 pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)

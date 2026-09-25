@@ -1,6 +1,6 @@
 # Runbook: Claude API auth via Workload Identity Federation
 
-Five workloads call the Claude API and authenticate by **WIF** — no stored `ANTHROPIC_API_KEY` (see
+Six workloads call the Claude API and authenticate by **WIF** — no stored `ANTHROPIC_API_KEY` (see
 [`spike-infrastructure.md`](../design/spike-infrastructure.md) §4/§8):
 
 1. **GitHub Actions** — the `claude-code-action` PR review (`internal-review.yml`).
@@ -12,6 +12,9 @@ Five workloads call the Claude API and authenticate by **WIF** — no stored `AN
    own service account and rule.
 1. **GitHub Actions, scheduled** — the doc-gardening agent (`internal-doc-garden.yml`); reuses workload 1's service
    account via a second federation rule (Path C), since a scheduled run's OIDC subject differs from a PR's.
+1. **GitHub Actions, as the GCP deploy SA** — the deploy workflow's agent step (`deploy.yml`), which applies the Managed
+   Agents agent declaration after the stack; it presents the deploy SA's Google identity, so it travels Path B under its
+   own svac and rule like a Cloud Run workload.
 
 Each exchanges an OIDC token from its own identity provider for a short-lived Anthropic token bound to a **service
 account** in the Anthropic org. Configure in the Claude Console (**Settings → Workload identity → Connect workload**) or
@@ -63,11 +66,13 @@ same as the GCP project/domain/group already in `Pulumi.dev.yaml`: Path A inline
 | rule `cpg-themis-convert-worker-rule` (Path B)            | `fdrl_01GQqwA9kP4Fve93ycq2q6kE`        |
 | svac `cpg-themis-dev-cost-exporter` (Path B)              | `svac_01Wh612pvuxbauiTokVBBNV7`        |
 | rule `cpg-themis-dev-cost-exporter-rule` (Path B)         | `fdrl_01GZB8c9yJ3B6QPjBg7rn3QR`        |
+| svac `cpg-themis-dev-deploy` (Path B)                     | `svac_01FZtKML114z6ek79DNXQvQA`        |
+| rule `cpg-themis-dev-deploy-rule` (Path B)                | `fdrl_012w2xPusX3kCLVbvTu7cCVa`        |
 
 These rows are the **dev** set. CI (the review and doc-garden) is repo-scoped and only ever runs against dev, so prod
-adds no ci-review counterpart — just its own `cpg-themis-prod` workspace, `cpg-themis-prod-web` and
-`cpg-themis-prod-cost-exporter` svacs + rules, and a convert-worker svac + rule pinned to the prod worker's own service
-account.
+adds no ci-review counterpart — just its own `cpg-themis-prod` workspace, `cpg-themis-prod-web`,
+`cpg-themis-prod-cost-exporter` and `cpg-themis-prod-deploy` svacs + rules, and a convert-worker svac + rule pinned to
+the prod worker's own service account.
 
 ## Path A — GitHub Actions → Claude API
 
@@ -111,16 +116,17 @@ For the `claude-code-action` review in `internal-review.yml`.
            anthropic_workspace_id:       wrkspc_014YcYcGz7XBbARzLRHwvhZt
    ```
 
-## Path B — GCP Cloud Run → Claude API
+## Path B — GCP service account → Claude API
 
-Three workloads travel this path, each running as its own Cloud Run runtime SA under its own Anthropic service account
-and federation rule: the web app, the convert worker and the cost exporter. Separate identities on both sides so
-disabling one GCP identity revokes only that workload, and Anthropic-side usage stays attributable per workload.
+Four workloads travel this path, each under its own Anthropic service account and federation rule pinned to its own GCP
+service account: the web app, the convert worker and the cost exporter as their Cloud Run runtime SAs, and the deploy
+workflow's agent step as the deploy SA. Separate identities on both sides so disabling one GCP identity revokes only
+that workload, and Anthropic-side usage stays attributable per workload.
 
 Each rule pins the numeric unique ID of a GCP service account, so **a rule can only be registered against an account
 that already exists**. The web app's and the cost exporter's accounts are minted by the environment's first `up`, so
 their rules follow the first deploy; the convert worker's was hand-created and adopted, so its rule could be registered
-before the program declared the account (below).
+before the program declared the account (below); the deploy SA is bootstrap's, so its rule can precede the first `up`.
 
 ### The web app
 
@@ -248,6 +254,55 @@ request.
    `themis:anthropicCostExporterFederationRuleId` (on a fresh environment, placeholders until this registration is done
    — [`fresh-environment.md`](fresh-environment.md) §3), and `cost.py` sets them, with the shared org and workspace, as
    the job's four `ANTHROPIC_*` env vars.
+
+### The deploy workflow
+
+For the agent step of `deploy.yml`, which applies `agents/svcv4-classifier.agent.yaml` to the Managed Agents agent after
+the stack ([`self-hosted-sandbox.md`](self-hosted-sandbox.md), the agent). Its identity is the deploy SA,
+`themis-deploy@cpg-themis-dev.iam.gserviceaccount.com`, bootstrap-created
+([`../../infra/bootstrap/bootstrap.sh`](../../infra/bootstrap/bootstrap.sh)) and impersonated by the workflow's GitHub
+OIDC token under the ref-scoped WIF binding — so the deploy's path to the agent is gated as the stack is
+([`../design/deployment.md`](../design/deployment.md), "Who can deploy"). The step is GitHub Actions presenting a Google
+identity: `google-github-actions/auth` mints the ID token for the impersonated account (`token_format: id_token`,
+audience `https://api.anthropic.com`, `id_token_include_email`) in place of a metadata server, and the SDK exchanges it
+as `ANTHROPIC_IDENTITY_TOKEN`. Everything below is an Anthropic-org-admin action, so it goes to that admin as one
+request.
+
+1. **Issuer**: already registered — the `gcp` issuer above.
+1. **Service account**: `cpg-themis-dev-deploy` (`svac_01FZtKML114z6ek79DNXQvQA`); add to the `cpg-themis-dev`
+   workspace. It is env-scoped, since it writes the dev workspace's agent; prod gets its own.
+1. **GCP SA unique ID** (the stable `sub`) — bootstrap-created, so read from GCP:
+   ```sh
+   gcloud iam service-accounts describe themis-deploy@cpg-themis-dev.iam.gserviceaccount.com --format='value(uniqueId)'
+   ```
+   For `cpg-themis-dev` this is `117289295216792624940` — a snapshot, as for the web app; the command is the source of
+   truth.
+1. **Federation rule** `cpg-themis-dev-deploy-rule` (`fdrl_012w2xPusX3kCLVbvTu7cCVa`) — match `sub` + `email`, as the
+   web rule does:
+   ```json
+   {
+     "match": {
+       "audience": "https://api.anthropic.com",
+       "claims": {
+         "sub": "117289295216792624940",
+         "email": "themis-deploy@cpg-themis-dev.iam.gserviceaccount.com"
+       }
+     },
+     "target": { "type": "service_account", "service_account_id": "svac_01FZtKML114z6ek79DNXQvQA" },
+     "workspace_id": "wrkspc_014YcYcGz7XBbARzLRHwvhZt",
+     "oauth_scope": "workspace:developer",
+     "token_lifetime_seconds": 600
+   }
+   ```
+   `workspace:developer` is the one scope that reaches agents and skills, and it reaches the workspace's sessions as
+   well, as it does for every identity on this path (`workspace:inference` reaches none of them). On the GCP side
+   nothing is added: the ref-scoped principals already hold `roles/iam.workloadIdentityUser` on the deploy SA, which
+   carries `iam.serviceAccounts.getOpenIdToken`, the permission that mints the ID token.
+1. **Stack config** — `themis:anthropicDeployServiceAccountId` and `themis:anthropicDeployFederationRuleId`, exported
+   for the workflow to read. On a fresh environment they are placeholders until this registration is done
+   ([`fresh-environment.md`](fresh-environment.md) §3); while either is, every deploy's agent step fails at the token
+   exchange after the stack has applied, and the declaration is applied by hand
+   ([`self-hosted-sandbox.md`](self-hosted-sandbox.md), the agent).
 
 ## Path C — GitHub Actions (scheduled, `main` ref) → Claude API
 
