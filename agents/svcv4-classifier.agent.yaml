@@ -1,0 +1,61 @@
+# The SVCv4 variant-classification agent — a control-plane resource, applied whole from this file by `tools.agents`
+# (docs/runbooks/self-hosted-sandbox.md). Sessions are the data plane, created against this agent + the self-hosted
+# environment (agents/selfhosted.environment.yaml); `model`/`skills`/`tools` live here. The agent classifies one
+# variant per session, writing its working document to `/workspace/working_document.md`.
+name: SVCv4 variant classifier
+# The model id is confidential stack config (`themis:anthropicAgentModelId`), supplied at apply; `effort` is spelled
+# out because a `model` sent without it resets effort to the model's default.
+model:
+  effort: high
+# The reviewer runs as a `self` entry: it needs this agent's skills and tools, which a roster entry naming another
+# agent would not carry.
+multiagent:
+  type: coordinator
+  agents:
+    - type: self
+# The capability lives in the attached skill; `system` only routes to it — description-triggering alone does not
+# reliably route a classification request to the skill.
+system: Use the classifying-sequence-variants skill for variant classification requests.
+# Every skill the agent carries is listed here: the list is sent whole, so one left out is detached. A skill the repo
+# holds names its directory under agents/skills/; `apply` publishes the directory when its content moved and pins the
+# agent to that version. Any other is pinned by a `version` string (`latest` is refused, since it would move the
+# deployed body with no change here).
+skills:
+  - type: anthropic
+    skill_id: pdf
+    version: "20260709"
+  - type: custom
+    # Server-assigned when the skill is created, once (`tools.agents create-skill`); there is no name-based addressing.
+    skill_id: skill_01YHb9PXy6GXxDaV1XdeFp6U
+    directory: classifying-sequence-variants
+tools:
+  # The prebuilt `agent_toolset_20260401`, everything on except `bash`. In a self_hosted environment the
+  # file tools (read/write/edit/glob/grep) are worker-executed and the SDK confines them to workdir
+  # (=/workspace), so they run safely in the trusted worker; `web_search`/`web_fetch` run on Anthropic's
+  # side and never touch the worker or the sandbox. `bash` is the one unconfined tool — it is disabled and
+  # replaced by the custom `shell` below, which marshals commands into the postern sandbox.
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: true
+    configs:
+      - name: bash
+        enabled: false
+  # Custom `shell` runs a command inside the postern sandbox (never on the worker host), so all arbitrary
+  # execution is isolated. The model-facing `intent` field is what makes the model emit a per-call label (a
+  # worker-local field alone is invisible to the model). Named `shell`, not `bash`, because a custom tool
+  # may not reuse a reserved prebuilt name.
+  - type: custom
+    name: shell
+    description: Run a shell command in the sandbox's /workspace, a git clone of this Analysis's repository. git, python3, the gRPC stubs, the SVCv4 library and the services/linter helpers are available.
+    input_schema:
+      type: object
+      properties:
+        command:
+          type: string
+          description: The shell command to run.
+        intent:
+          type: string
+          description: Required on every call. A short present-tense phrase naming what this command does and why — shown to the user as this action's label.
+      required:
+        - command
+        - intent

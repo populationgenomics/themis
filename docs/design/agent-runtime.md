@@ -199,10 +199,12 @@ The mapping into the trace schema:
 
 ## Model selection
 
-The model id lives on the Agent object and is pushed at deploy time via `ant` from gcpkms-encrypted stack config — it is
-secret-class confidential config (*Confidential config*, [`deployment.md`](deployment.md)): generic statements are
-public, the concrete id is not. Every thread of a session runs it, the coordinator's and its copies' alike (§Topology),
-so the choice is per scenario, not per role.
+The model id lives on the Agent object, and it is secret-class confidential config (*Confidential config*,
+[`deployment.md`](deployment.md)): a general statement about the model is public, but the concrete id is not. So the
+agent's tracked declaration carries every model setting except the id. The id comes from gcpkms-encrypted stack config,
+and [`tools/agents`](../../tools/agents) supplies it when it applies the declaration. Every thread of a session runs the
+same model, the coordinator's and its copies' alike (§Topology), so the choice is made per scenario rather than per
+role.
 
 ## Configuration and lifecycle
 

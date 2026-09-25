@@ -16,6 +16,8 @@ from collections.abc import Mapping
 
 from google.protobuf import json_format, struct_pb2
 
+from themis.svcv4 import exact
+
 
 def fields(raw: struct_pb2.Struct) -> dict[str, object]:
     """A response's `raw` Struct as plain JSON values."""
@@ -74,9 +76,8 @@ def block(payload: Mapping[str, object], path: str) -> dict[str, object] | None:
 def number(payload: Mapping[str, object], path: str) -> decimal.Decimal | None:
     """The number at a dotted path as an exact decimal, or None where the payload states none.
 
-    The JSON number arrives as a float, and its shortest round-trip decimal is the figure the
-    upstream published; `decimal.Decimal(float)` would instead carry the binary expansion, which
-    compares above a threshold the published figure sits on.
+    The JSON number arrives as a float and is read as the figure the upstream published
+    (`exact.decimal_of`), not as its binary expansion.
 
     Raises:
         ValueError: If the path is absent, or carries something other than a number.
@@ -86,7 +87,7 @@ def number(payload: Mapping[str, object], path: str) -> decimal.Decimal | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f'{path!r} carries a {type(value).__name__}, expected a number')
-    return decimal.Decimal(str(value))
+    return exact.decimal_of(value, what=repr(path))
 
 
 def count(payload: Mapping[str, object], path: str) -> int:

@@ -99,7 +99,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import clinvar_pb2, gnomad_pb2
-from themis.svcv4 import clinvar_classification, payload, provenance, reference
+from themis.svcv4 import clinvar_classification, exact, payload, provenance, reference
 
 # SM3: a founder/outlier variant is "significantly higher in frequency than other P/LP variants
 # (e.g., >5x higher)"; the top observed FAF is peeled when it exceeds this multiple of the next.
@@ -227,13 +227,13 @@ def unknown_faf() -> Faf:
     return Faf(value=decimal.Decimal(0), support=FafSupport.UNKNOWN, flags=())
 
 
-def joint_faf(faf95_popmax: decimal.Decimal | None, *, exome: Callset | None, genome: Callset | None) -> Faf:
+def joint_faf(faf95_popmax: exact.Figure | None, *, exome: Callset | None, genome: Callset | None) -> Faf:
     """Read a variant's POP_FRQ FAF off its gnomAD v4 frequency block.
 
     Args:
-        faf95_popmax: `joint.faf95.popmax`, or None where gnomAD reports no joint Grpmax FAF — a FAF
-            of 0 for this comparison (a 95% lower bound that does not clear zero is no benign
-            frequency evidence), not a missing input.
+        faf95_popmax: `joint.faf95.popmax` as the upstream serves it (a float is converted exactly),
+            or None where gnomAD reports no joint Grpmax FAF — a FAF of 0 for this comparison (a 95%
+            lower bound that does not clear zero is no benign frequency evidence), not a missing input.
         exome: The `exome` block's allele count and filters, or None where the variant is not in
             gnomAD's exome callset at all (the block comes back null).
         genome: The same, for the `genome` block.
@@ -249,11 +249,11 @@ def joint_faf(faf95_popmax: decimal.Decimal | None, *, exome: Callset | None, ge
             use `absent_faf`); or on a positive FAF over no called allele, which gnomAD cannot
             produce, so the arguments describe two different variants.
     """
-    if faf95_popmax is not None and faf95_popmax < 0:
+    value = decimal.Decimal(0) if faf95_popmax is None else exact.decimal_of(faf95_popmax, what='FAF')
+    if value < 0:
         raise ValueError(f'FAF must be non-negative, got {faf95_popmax}')
     if exome is None and genome is None:
         raise ValueError("joint_faf needs gnomAD's exome and/or genome block; for an absent variant use absent_faf()")
-    value = faf95_popmax if faf95_popmax is not None else decimal.Decimal(0)
     carrying = [callset for callset in (exome, genome) if callset is not None and callset.allele_count > 0]
     if not carrying:
         if value > 0:
@@ -376,11 +376,11 @@ class Daft:
             raise ValueError(f'a {self.method.value} DAFT must state what it was derived from')
 
 
-def curated_daft(value: decimal.Decimal, *, source: str) -> Daft:
+def curated_daft(value: exact.Figure, *, source: str) -> Daft:
     """A DAFT published by a VCEP, which supersedes every computed method (SM3).
 
     Args:
-        value: The published threshold.
+        value: The published threshold, as quoted (a float is converted exactly).
         source: The specification it is published in, e.g. "ClinGen Hearing Loss VCEP v3 (GN005)".
             Required: an expert-consensus threshold with no citation cannot be checked, and the
             report has to name where it came from.
@@ -394,7 +394,7 @@ def curated_daft(value: decimal.Decimal, *, source: str) -> Daft:
     if not source.strip():
         raise ValueError('a curated VCEP DAFT must name its source')
     return Daft(
-        value=value,
+        value=exact.decimal_of(value, what='DAFT'),
         method=DaftMethod.CURATED,
         lower_bound=False,
         basis=f'curated VCEP DAFT: {source.strip()}',
@@ -425,7 +425,7 @@ def binned_daft(
     table: BinningTable,
     *,
     prevalence_denominator: int,
-    penetrance: decimal.Decimal,
+    penetrance: exact.Figure,
 ) -> Daft:
     """Read a DAFT off one of SM3's binning tables (Tables 1-6).
 
@@ -447,7 +447,8 @@ def binned_daft(
         prevalence_denominator: X in the prevalence "1 in X" of the phenotype for the whole MDE,
             lumping every gene associated with it. Which population it is measured over is the
             table's business: a sex-specific table takes the sex-specific prevalence.
-        penetrance: Expected penetrance, a fraction in (0, 1].
+        penetrance: Expected penetrance, a fraction in (0, 1], as estimated (a float is converted
+            exactly).
 
     Returns:
         The `Daft`, its `basis` naming the table, the cell reached, and the estimates that reached
@@ -458,6 +459,7 @@ def binned_daft(
         reference.ReferenceDataError: If the reference does not carry `table`.
     """
     grid = ref.binning_grid(table.value)
+    penetrance = exact.decimal_of(penetrance, what='penetrance')
     if prevalence_denominator <= 0:
         raise ValueError(f'prevalence denominator must be positive, got {prevalence_denominator}')
     if not decimal.Decimal(0) < penetrance <= decimal.Decimal(1):
@@ -624,9 +626,9 @@ def daft_calculator(
     inheritance: Inheritance,
     *,
     prevalence_denominator: int,
-    genetic_heterogeneity: decimal.Decimal,
-    allelic_heterogeneity: decimal.Decimal,
-    penetrance: decimal.Decimal,
+    genetic_heterogeneity: exact.Figure,
+    allelic_heterogeneity: exact.Figure,
+    penetrance: exact.Figure,
 ) -> Daft:
     """Compute a DAFT by the calculator method (Whiffin maximum-credible-AF, PMID 28518168).
 
@@ -647,6 +649,8 @@ def daft_calculator(
         allelic_heterogeneity: Max proportion of the gene's disease attributable to a single allele.
         penetrance: Expected penetrance; the lowest reasonable value gives the highest DAFT.
 
+    The three proportions are taken as estimated: a float is converted exactly.
+
     Returns:
         The `Daft`: a maximum credible allele frequency, with the parameters it was computed from.
 
@@ -655,6 +659,9 @@ def daft_calculator(
     """
     if prevalence_denominator <= 0:
         raise ValueError(f'prevalence denominator must be positive, got {prevalence_denominator}')
+    penetrance = exact.decimal_of(penetrance, what='penetrance')
+    genetic_heterogeneity = exact.decimal_of(genetic_heterogeneity, what='genetic_heterogeneity')
+    allelic_heterogeneity = exact.decimal_of(allelic_heterogeneity, what='allelic_heterogeneity')
     for name, value in (
         ('penetrance', penetrance),
         ('genetic_heterogeneity', genetic_heterogeneity),

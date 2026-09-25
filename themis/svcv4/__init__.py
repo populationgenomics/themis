@@ -36,6 +36,8 @@ Modules:
     provenance: the upstream releases an answer rests on, carried from a response onto the tally.
     payload: reading a documented path out of a response's untyped `raw` payload, failing loudly
         where the upstream's shape has moved under a contract that still names it.
+    exact: a figure as the exact decimal it was quoted as, whatever type it arrives in — the one
+        conversion every entry point taking an upstream number runs.
     frequency: DAFT computation, POP_FRQ binning, POP_HMZ.
     predictor_policy: which calibrated missense predictor a gene's MIS_PRD score must come from —
         frozen, versioned data, resolved per gene rather than judged per variant (SM6) — and the two
@@ -56,8 +58,8 @@ supplement texts. The values are typed literals, so a dropped or renamed field i
 it is written; each cites the supplement line it is read from, and `tools/svcv4-oracle` holds every
 cap in it against the ClinGen pilot calculator. `data/predictor_policy.json` beside those modules is
 the frozen predictor choice SM6 requires be made in advance, and
-`data/gencc-lof-mechanism-framework.md` is the GenCC framework's four confidence terms, which SM18
-imports for the mechanism axis, with the evidence-point band that yields each.
+`data/gencc-lof-mechanism-framework.md` is the GenCC loss-of-function mechanism framework SM18 imports
+for the mechanism axis: its criteria with their points, and the confidence term each total yields.
 
 The SM*n* §*m* citations, and the decision-tree citations the modules below make, resolve against
 the document set `data.meta.CITED_DOCUMENTS` pins — supplement text extractions and one

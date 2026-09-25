@@ -45,7 +45,7 @@ from themis.rpc import (
 from themis.services.sandbox_worker import _generated
 
 # `time_remaining()` reports an absent caller deadline as the remainder of an int64-nanosecond one rather than as
-# an absence, so the bound has to be a cap and not a fallback. Held under `worker._TOOL_TIMEOUT_S`
+# an absence, so the bound has to be a cap and not a fallback. Held under `tool.COMMAND_TIMEOUT_S`
 # (sandbox-rpc-exposure.md, "Forwarder model").
 _FORWARD_CEILING_S = 90.0
 

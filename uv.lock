@@ -3740,6 +3740,10 @@ version = "0.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
+agents = [
+    { name = "anthropic" },
+    { name = "pyyaml" },
+]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },
@@ -4045,6 +4049,10 @@ tools-sheaf = [
 [package.metadata]
 
 [package.metadata.requires-dev]
+agents = [
+    { name = "anthropic" },
+    { name = "pyyaml" },
+]
 auth = [
     { name = "cloud-sql-python-connector" },
     { name = "grpcio" },

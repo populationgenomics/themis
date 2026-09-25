@@ -8,16 +8,15 @@ settled answer *in the status* (``NOT_FOUND`` for "the source holds no record", 
 does not accept). Retrying a settled answer only wastes the upstream's rate limit. Errors are never swallowed: once the
 attempts are spent, the last ``grpc.RpcError`` propagates.
 
-``cache_dir`` makes a repeated call within one session free. ``/workspace`` persists across turns (it is checkpointed
-to the store), so a cache under it survives a re-run — and inflates every checkpoint, which is why it is opt-in and
-per-call rather than always on. The key is the rpc and the request together: the method path plus the request's type
+``cache_dir`` makes a repeated call within one session free, for a sub-agent thread or a reviewer re-issuing the
+author's calls. Put it under ``/workspace/scratch/``, which is never pushed, so it lasts as long as the session and no
+longer. The key is the rpc and the request together: the method path plus the request's type
 and contents. The rpc has to be in it, because a request type says nothing about which method received it — two rpcs
 on one request type would otherwise answer each other's calls, and ``store.proto`` already has two on
 ``google.protobuf.Empty``.
 
-A cache under ``/workspace`` is also restored, not just written, and a scratch tree too large to restore is abandoned
-whole rather than trimmed — the session then starts with none of it (`sync.py`). So the cache holds itself to a small
-fraction of that limit, evicting its oldest entries rather than growing into it. Nothing about it is allowed to cost a
+The cache holds itself to a fixed size, evicting its oldest entries, so an identical request can still miss. Nothing
+about it is allowed to cost a
 caller an answer the rpc already gave: an entry this build cannot parse — or that another caller evicted mid-read — is
 a miss, and a write that fails is a warning.
 
@@ -42,9 +41,7 @@ from . import channel
 
 DEFAULT_TIMEOUT_S = channel.DEFAULT_TIMEOUT_S
 
-# What the cache may reach before a write evicts by age. sync.py restores the scratch tree at 20k entries / 512 MiB
-# and abandons an over-large one whole, so a cache that grew into that ceiling would cost a session everything else
-# under /workspace.
+# What the cache may reach before a write evicts by age: a session's cache stays a small part of the sandbox's disk.
 _MAX_CACHE_ENTRIES = 256
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 # Suffix of a write still staging; not an entry, and not another caller's to remove.

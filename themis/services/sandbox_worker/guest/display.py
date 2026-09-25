@@ -25,10 +25,19 @@ is closed, and a marker states how much was rendered. Fields past the cut do rea
 only thing saying otherwise, which is why the budget is set well above any ordinary response. Unknown-field content
 is given up before known content is, but only when rendering it would cost a large share of the budget; below that it
 stays, being the likeliest of all to carry the unexpected answer.
+
+A typed submessage is the shape that reaches the whole-rendering bound without any field of its own being oversized:
+a ClinVar record returned whole runs to tens of thousands of characters of short leaves, and rendered in place it
+takes the whole budget, cutting off every field after it. So once the whole overruns, a submessage whose rendering
+would take a large share of the budget is rendered as a marker instead — its type, its size, and the names of the
+fields it sets — and the fields around it render. A rendering that fits pays nothing: every submessage renders in
+place, whatever its share. The value stays on the message, and ``show`` on that submessage alone renders it with the
+whole budget to itself. The top-level message is never a marker: it is what the caller asked to see.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from collections.abc import Iterable, MutableMapping, MutableSequence
 from typing import cast
@@ -45,6 +54,8 @@ _MIN_BODY_CHARS = 400
 _MARKER_ALLOWANCE = 80
 # Unknown-field content is kept while it costs at most this fraction of the budget.
 _UNKNOWN_SHARE = 4
+# A submessage is rendered in place while its rendering costs at most this fraction of the budget.
+_SUBMESSAGE_SHARE = 4
 
 _TEXT_TYPES = (descriptor.FieldDescriptor.TYPE_STRING, descriptor.FieldDescriptor.TYPE_BYTES)
 # A proto2 group is a submessage under a different wire type; descending into one is the same job.
@@ -93,10 +104,12 @@ def render(
     Returns:
         The rendering, headed by the message's full name and at most ``max_chars`` characters long.
         Within the budget every field the message sets appears — the unknown ones too — and an
-        elided field appears as a marker naming its size, so none of them reads as absent. A message
-        whose fields all hold their default says so, rather than rendering empty. Past the budget the
-        head is what survives: fields beyond the cut are absent from the rendering, and the trailing
-        marker is what says so.
+        elided field appears as a marker naming its size, so none of them reads as absent. A
+        submessage whose rendering would take a large share of the budget appears as a marker
+        naming its type, its size and the fields it sets, so the fields around it still render. A
+        message whose fields all hold their default says so, rather than rendering empty. Past the
+        budget the head is what survives: fields beyond the cut are absent from the rendering, and
+        the trailing marker is what says so.
 
     Raises:
         ValueError: If ``max_field_size`` is not positive, or ``max_chars`` leaves too little room
@@ -127,13 +140,18 @@ def _bounded(msg: message.Message, max_chars: int) -> str:
     `msg` itself, which text format appends after the known ones; one nested inside a submessage renders where the
     submessage does, so its content is named by size rather than rendered.
     """
-    whole = _text_format(msg, unknown=True)
+    whole = _text_format(msg, unknown=True, max_submessage_chars=None)
+    if len(whole) <= max_chars:
+        return whole
+    # Only an overrun pays for elision: a submessage is a marker where rendering it would cost the fields after it.
+    submessage_chars = max_chars // _SUBMESSAGE_SHARE
+    whole = _text_format(msg, unknown=True, max_submessage_chars=submessage_chars)
     if len(whole) <= max_chars:
         return whole
     unknown = _unknown_bytes(msg)
     if not unknown:
         return _truncated(whole, max_chars, '')
-    known = _text_format(msg, unknown=False)
+    known = _text_format(msg, unknown=False, max_submessage_chars=submessage_chars)
     rendered_unknown = whole[len(known) :] if whole.startswith(known) else ''
     if rendered_unknown and len(rendered_unknown) <= max_chars // _UNKNOWN_SHARE:
         return _truncated(known, max_chars, rendered_unknown)
@@ -160,9 +178,9 @@ def _cut(body: str, room: int) -> tuple[str, str]:
     Cutting mid-line would split a token, and a cut that left a block open would put the marker inside it, where
     it reads as a field of that block and the unbalanced brace makes the block look empty. So the cut lands on a
     line boundary and the open blocks are closed explicitly. Closing them is what lets the head survive at any
-    depth: a response whose content all sits inside one top-level submessage reaches depth 0 only at its final
-    line, so a cut restricted to that depth would keep nothing at all. A block closed this way reads as one that
-    ended where it was cut, and the marker is what says otherwise.
+    depth: a response whose content sits in a few submessages returns to depth 0 only between them, so a cut
+    restricted to that depth would keep nothing of the block it landed in. A block closed this way reads as one
+    that ended where it was cut, and the marker is what says otherwise.
 
     Text format quotes every string value, so a trailing `{` is always structure, never data.
     """
@@ -191,20 +209,68 @@ def _unknown_bytes(msg: message.Message) -> int:
     return msg.ByteSize() - known.ByteSize()
 
 
-def _text_format(msg: message.Message, *, unknown: bool) -> str:
+def _text_format(
+    msg: message.Message,
+    *,
+    unknown: bool,
+    max_submessage_chars: int | None,
+    pool: descriptor_pool.DescriptorPool | None = None,
+) -> str:
     """`msg` as text format, never raising on a payload it cannot parse.
 
     Unknown fields are printed when `unknown`: a service deployed ahead of this image sends fields the guest's
-    committed descriptor does not know, and those are the likeliest of all to carry the unexpected answer.
+    committed descriptor does not know, and those are the likeliest of all to carry the unexpected answer. A
+    submessage whose own rendering exceeds `max_submessage_chars` is rendered as a marker in its place; `None`
+    renders every submessage in place.
     """
+    formatter = (
+        None
+        if max_submessage_chars is None
+        else functools.partial(_submessage_marker, root=msg, unknown=unknown, max_chars=max_submessage_chars, pool=pool)
+    )
     try:
-        return text_format.MessageToString(msg, as_utf8=True, print_unknown_fields=unknown)
+        return text_format.MessageToString(
+            msg, as_utf8=True, print_unknown_fields=unknown, descriptor_pool=pool, message_formatter=formatter
+        )
     except message.DecodeError:
+        if pool is not None:
+            raise
         # An `Any` payload that does not parse against the type its `type_url` names. An empty pool resolves
         # no type_url, so the payload prints as bytes rather than being re-parsed and taking the render down.
-        return text_format.MessageToString(
-            msg, as_utf8=True, print_unknown_fields=unknown, descriptor_pool=descriptor_pool.DescriptorPool()
+        return _text_format(
+            msg, unknown=unknown, max_submessage_chars=max_submessage_chars, pool=descriptor_pool.DescriptorPool()
         )
+
+
+def _submessage_marker(
+    sub: message.Message,
+    indent: int,
+    as_one_line: bool,
+    *,
+    root: message.Message,
+    unknown: bool,
+    max_chars: int,
+    pool: descriptor_pool.DescriptorPool | None,
+) -> str | None:
+    """The marker rendered in place of `sub` where rendering it would take more than its share; else None.
+
+    Called by text format for every message it prints, the root included, with the printer's indent and layout,
+    which the marker's one line does not depend on. The root is never a marker: it is what the caller asked
+    to see, and the whole-rendering bound is what bounds it.
+    """
+    del indent, as_one_line
+    if sub is root:
+        return None
+    rendered = text_format.MessageToString(sub, as_utf8=True, print_unknown_fields=unknown, descriptor_pool=pool)
+    if len(rendered) <= max_chars:
+        return None
+    names = [field.name for field, _ in sub.ListFields()]
+    listed = ', '.join(_short(name) for name in names[:_SUMMARISED_KEYS])
+    rest = '' if len(names) <= _SUMMARISED_KEYS else f', +{len(names) - _SUMMARISED_KEYS} more'
+    return (
+        f'<elided: {len(rendered)} chars of {_short(sub.DESCRIPTOR.full_name)}; '
+        f'{len(names)} field(s) set: {listed}{rest}; show(resp.<field>) renders it whole>'
+    )
 
 
 def _summarise(msg: message.Message, max_field_size: int) -> None:

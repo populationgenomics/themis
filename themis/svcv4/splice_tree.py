@@ -65,7 +65,7 @@ import enum
 from collections.abc import Mapping
 
 from themis.rpc import splice_pb2
-from themis.svcv4 import provenance, reference, scoring
+from themis.svcv4 import exact, provenance, reference, scoring
 
 _ZERO = decimal.Decimal(0)
 
@@ -515,7 +515,7 @@ def deltas_from_prediction(response: splice_pb2.PredictDeltasResponse) -> Splice
 def _delta(value: float, *, stated: bool) -> decimal.Decimal | None:
     # Through `str`: the shortest round-trip decimal of the double is the figure the host published,
     # where the binary expansion would compare either side of a threshold the figure sits on.
-    return decimal.Decimal(str(value)) if stated else None
+    return exact.decimal_of(value, what='splice delta') if stated else None
 
 
 def entry_tier(deltas: SpliceDeltas) -> EntryTier:

@@ -31,6 +31,17 @@ def test_oddspath_points(ref: reference.Reference, odds_path: str, expected: str
     assert functional.oddspath_points(ref, D(odds_path)) == D(expected)
 
 
+def test_an_oddspath_on_a_tavtigian_bound_as_a_float_reaches_the_bound(ref: reference.Reference) -> None:
+    """18.7 is the Pathogenic-Strong bound, inclusive; `Decimal(18.7)` is 18.699…, a step short of it."""
+    assert functional.oddspath_points(ref, 18.7) == D('4')
+    assert functional.oddspath_points(ref, 18.7) == functional.oddspath_points(ref, D('18.7'))
+
+
+def test_an_oddspath_that_is_not_a_number_fails_loud(ref: reference.Reference) -> None:
+    with pytest.raises(ValueError, match='OddsPath'):
+        functional.oddspath_points(ref, float('nan'))
+
+
 def test_oddspath_rejects_nonpositive(ref: reference.Reference) -> None:
     with pytest.raises(ValueError, match='OddsPath'):
         functional.oddspath_points(ref, D('0'))

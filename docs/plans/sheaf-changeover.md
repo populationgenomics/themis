@@ -3,7 +3,8 @@
 **Related:** [`../design/sheaf.md`](../design/sheaf.md) (the storage layer this switches the sandbox onto);
 [`../design/sandbox-worker.md`](../design/sandbox-worker.md) (the worker whose restore and checkpoint this replaces);
 [`../design/workspace-model.md`](../design/workspace-model.md) (what a workspace is for);
-`agents/sandbox-probe.agent.yaml` (the prompt this changes).
+[`../../agents/skills/classifying-sequence-variants/SKILL.md`](../../agents/skills/classifying-sequence-variants/SKILL.md)
+(where the agent reads the workspace rules this changes).
 
 ## Context
 
@@ -97,10 +98,12 @@ sequenceDiagram
 1. **Restore and teardown.** Replace `WorkspaceSync.restore` with the guest-side clone (plus the first commit for an
    empty repository), and its scratch checkpoint with the teardown push and the stranded-ref fallback. The working
    document moves into the repository; its rpc checkpoint stays for the BFF's sake (below).
-1. **Guest rootfs and prompt.** `git` and the gitconfig in the guest stage of the Dockerfile; prompt v2 (below) on the
-   probe agent, created fresh so a running Analysis keeps the prompt it started with.
-1. **Validate in dev** with the probe agent: clone, commit, push, a refused force-push and its recovery, a teardown with
-   unpushed commits, a second session finding the first's work.
+1. **Guest rootfs and prompt.** `git` and the gitconfig in the guest stage of the Dockerfile; prompt v2 (below) in the
+   classifier's skill, published as a new agent version so a running Analysis keeps the prompt it started with.
+1. **Validate in dev** with classifier sessions. An ordinary classification clones, commits and pushes, and a second
+   session on the same Analysis finds the first one's work. A refused force-push, its recovery, and a teardown with
+   unpushed commits never happen while the agent follows its instructions, so a dev session whose kickoff asks for each
+   one provokes it.
 1. **Retire the tar rpcs.** `PutWorkspace`/`GetWorkspace` go dead at step 3; removing them from `store.proto` is an
    interface change and its own PR.
 
@@ -151,16 +154,18 @@ of step 6 with it.
 
 ## The prompt
 
-What changes in `agents/sandbox-probe.agent.yaml`, at the level of what the agent is told:
+What the agent is told about the workspace. The classifier's skill carries it, in its section on the sandbox:
 
 - `/workspace` is a git clone of this Analysis's repository; `origin` is the store. Commit your work and push it. What
   is not pushed when the session ends is lost — the worker pushes commits you made and forgot to push, and nothing else.
 - History here is append-only. A push is refused if it would rewrite or delete anything; `git pull --rebase` and push
   again. Do not force-push; it will not work.
 - `scratch/` is yours and ignored; `skills/` is the platform's. Neither can be pushed.
-- `refs/sheaf/reflog` is the record of what each ref pointed at and when. Read it if you need it; you cannot write it.
 - The working document is `/workspace/working_document.md`, a file in the repository: commit and push it with the rest.
   It is also read back after each command, so its latest content reaches the reviewer before it is committed.
+
+The agent is not told about `refs/sheaf/reflog`, the record of what each ref pointed at and when. A classification never
+needs a ref's history, and the ref stays readable to a future agent that does.
 
 ## Open decisions
 

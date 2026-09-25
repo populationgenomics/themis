@@ -24,7 +24,7 @@ import decimal
 import enum
 
 from themis.rpc import mavedb_pb2
-from themis.svcv4 import provenance, reference
+from themis.svcv4 import exact, provenance, reference
 
 _ANIMAL_MODEL_RANGE = (decimal.Decimal(0), decimal.Decimal(4))
 
@@ -38,7 +38,7 @@ class PhenotypicConsistency(enum.Enum):
     NONE = 'none'  # no phenotypic consistency
 
 
-def oddspath_points(ref: reference.Reference, odds_path: decimal.Decimal) -> decimal.Decimal:
+def oddspath_points(ref: reference.Reference, odds_path: exact.Figure) -> decimal.Decimal:
     """Map an OddsPath value to FXN points via the Tavtigian calibration (SM20).
 
     An OddsPath above 1 favours pathogenicity, below 1 favours benignity; the value selects the
@@ -46,14 +46,16 @@ def oddspath_points(ref: reference.Reference, odds_path: decimal.Decimal) -> dec
 
     Args:
         ref: The loaded reference (supplies the calibration scale).
-        odds_path: The computed OddsPath (a positive likelihood ratio).
+        odds_path: The computed OddsPath (a positive likelihood ratio), as quoted — a float is
+            converted exactly, so a ratio on a calibration bound bins where the scale says.
 
     Returns:
         The FXN points (0.0 in the indeterminate middle). The caller applies the path's FXN cap.
 
     Raises:
-        ValueError: If `odds_path` is not positive.
+        ValueError: If `odds_path` is not a finite number, or not positive.
     """
+    odds_path = exact.decimal_of(odds_path, what='OddsPath')
     if odds_path <= 0:
         raise ValueError(f'OddsPath must be positive, got {odds_path}')
     pathogenic = sorted(((s.odds, s.points) for s in ref.oddspath if s.odds is not None and s.odds > 1), reverse=True)
@@ -199,7 +201,7 @@ def fxn_from_mavedb(
             derivation='the deposit carries no calibration for its score, so no OddsPath is derivable (FXN_ND)',
             releases=releases,
         )
-    odds_path = decimal.Decimal(str(response.oddspath_ratio))
+    odds_path = exact.decimal_of(response.oddspath_ratio, what='OddsPath')
     criterion = ' '.join(part for part in (response.acmg_criterion, response.acmg_strength) if part)
     asserted = f', asserting {criterion}' if criterion else ''
     return Fxn(

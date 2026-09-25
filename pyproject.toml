@@ -194,7 +194,7 @@ resources = ["google-cloud-storage", "requests"]
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }]
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
@@ -203,11 +203,14 @@ tools_sheaf = ["google-cloud-kms", "google-crc32c", { include-group = "session" 
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp", "pyyaml"]
+# agent declarations (tools/agents): the Managed Agents control plane through the SDK — skills published, the
+# agent created or updated from its yaml.
+agents = ["anthropic", "pyyaml"]
 # pre-commit: the lint CI job runs `pre-commit run --all-files`, so the hook
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
 # dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "agents" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).

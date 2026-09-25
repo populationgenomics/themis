@@ -21,7 +21,7 @@ import grpc
 import pytest
 
 from themis.rpc import hello_pb2, hello_pb2_grpc
-from themis.services.sandbox_worker import worker
+from themis.services.sandbox_worker import tool
 from themis.services.sandbox_worker.guest import channel, retry, services
 
 # An AF_UNIX path is capped near 104 characters, which pytest's `tmp_path` alone overruns.
@@ -96,10 +96,10 @@ def test_a_call_that_outlasts_the_default_is_cut_off(monkeypatch: pytest.MonkeyP
 def test_the_default_stays_under_the_tool_call_it_runs_inside() -> None:
     """It has to leave the snippet time to catch the failure and print what it did get.
 
-    A default at or above what the worker allows one `shell` call would expire only once the results
-    were already lost — so the two constants are asserted against each other, not against a number.
+    A default at or above what the shim allows one command would expire only once the results were
+    already lost — so the two constants are asserted against each other, not against a number.
     """
-    assert channel.DEFAULT_TIMEOUT_S < worker._TOOL_TIMEOUT_S
+    assert channel.DEFAULT_TIMEOUT_S < tool.COMMAND_TIMEOUT_S
 
 
 def test_the_retry_budget_is_the_channel_default() -> None:

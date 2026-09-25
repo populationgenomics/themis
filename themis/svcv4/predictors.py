@@ -28,45 +28,15 @@ import decimal
 import enum
 from collections.abc import Callable, Mapping
 
-Score = decimal.Decimal | float | str
-"""A predictor score as VEP serves it — a JSON number — or as an exact decimal string or `Decimal`."""
+from themis.svcv4 import exact
 
-# A float carries at most 17 significant decimal digits; every published bin bound has six or fewer.
-# Longer than this is the binary expansion of a float, not a score anyone quoted.
-_MAX_SIGNIFICANT_DIGITS = 17
+Score = exact.Figure
+"""A predictor score as VEP serves it — a JSON number — or as an exact decimal string or `Decimal`."""
 
 
 def _exact(score: Score) -> decimal.Decimal:
-    """`score` as an exact decimal, a float read through its shortest round-trip repr.
-
-    `decimal.Decimal(0.791)` is 0.791000000000000036…, which compares above the 0.791 bin bound, so
-    converting a float directly bins a boundary score one step toward pathogenic — and does so at
-    most of the bounds in the tables below. Going through `str` recovers the decimal the float was
-    parsed from, which is the form the bounds are written in.
-
-    A `Decimal` the caller built that way arrives carrying the expansion already, which is why an
-    over-long one is refused rather than binned: it is the one form in which this error is silent.
-
-    Raises:
-        ValueError: If `score` is not a finite number, or carries more significant digits than a
-            quoted score can.
-    """
-    if isinstance(score, decimal.Decimal):
-        exact = score
-    else:
-        try:
-            exact = decimal.Decimal(str(score))
-        except decimal.InvalidOperation as e:
-            raise ValueError(f'predictor score is not a number: {score!r}') from e
-    if not exact.is_finite():
-        raise ValueError(f'predictor score must be finite, got {score!r}')
-    if len(exact.as_tuple().digits) > _MAX_SIGNIFICANT_DIGITS:
-        raise ValueError(
-            f'predictor score carries {len(exact.as_tuple().digits)} significant digits, over the '
-            f'{_MAX_SIGNIFICANT_DIGITS} a score can be quoted to: {score!r}. A Decimal built from a float '
-            'reads this way, and binning it puts a bin-bound score one step high; pass the float itself.'
-        )
-    return exact
+    """`score` as an exact decimal (`exact.decimal_of`): a bin bound arriving as a float bins where the table says."""
+    return exact.decimal_of(score, what='predictor score')
 
 
 class Predictor(enum.Enum):

@@ -25,29 +25,19 @@ Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The inf
 
 1. **Set the environment id** — `pulumi config set themis:anthropicEnvironmentId "$ENV_ID"`.
 
-1. **Create the probe agent** — the config is `agents/sandbox-probe.agent.yaml`: `agent_toolset_20260401` with the
-   prebuilt bash disabled (file tools + `web_search`/`web_fetch` enabled, default `always_allow`) plus a custom `shell`
-   tool carrying a model-stated `intent`, no `mcp_toolset`/`mcp_servers`, and a system prompt that teaches the
-   `/workspace/working_document.md` contract path, the code-mode service calls, and the working-document linter. Create
-   it in the workspace that owns the environment — the agent carries no environment; a session binds the two. `create`
-   takes flags, not YAML, so generate them from the config rather than retyping it (the beta CLI's flags drift — check
-   `--help` if it rejects one):
+1. **Create the agent** — `agents/svcv4-classifier.agent.yaml` is the classifier's whole declaration: model, system
+   prompt, tools, skills and roster. An agent carries no environment — a session binds the two — so create it in the
+   workspace that owns the environment. `tools.agents` reads the declaration and makes the calls. It authenticates
+   through the SDK's credential resolution, which after `ant auth login` is the CLI's profile, and takes the model id
+   from the environment, since the id is confidential stack config rather than the yaml's:
 
    ```sh
-   eval "ant beta:agents create $(uv run --with pyyaml python - agents/sandbox-probe.agent.yaml <<'PY'
-   import json, shlex, sys, yaml
-
-   config = yaml.safe_load(open(sys.argv[1]))
-   args = ['--name', config['name'], '--model', config['model'], '--system', config['system']]
-   for tool in config['tools']:
-       args += ['--tool', json.dumps(tool)]
-   print(' '.join(shlex.quote(arg) for arg in args))
-   PY
-   )"
+   export THEMIS_AGENT_MODEL_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentModelId)
+   uv run --group agents python -m tools.agents create agents/svcv4-classifier.agent.yaml   # publishes its skills; prints the agent id
    ```
 
-   Record the returned `agent_…` id as `pulumi config set themis:anthropicAgentId "$AGENT_ID"`; the BFF reads it for
-   `sessions.create({agent, environment_id})`.
+   Record the printed `agent_…` id as `pulumi config set --stack dev themis:anthropicAgentId "$AGENT_ID"`; the BFF reads
+   it for `sessions.create({agent, environment_id})`.
 
 ## Project registry and membership
 
@@ -86,23 +76,31 @@ registered before a membership references it (FK).
 
 - **Env-key rotation** — regenerate in Console + `pulumi config set`; Anthropic cannot fast-revoke a leaked key.
 
-- **Updating the agent** — edit `agents/sandbox-probe.agent.yaml`, then push it as a new agent version. The id is
-  stable, so no stack config changes:
+- **Updating the agent** — edit its yaml, then apply it. The declaration is sent whole, so what the yaml does not carry
+  is not on the agent; the API creates a new agent version only when a field changed, and `apply` prints the version
+  before and after:
 
   ```sh
-  AGENT_ID=$(cd infra && pulumi config get themis:anthropicAgentId)
-  VERSION=$(ant --format json --transform version --raw-output beta:agents retrieve --agent-id "$AGENT_ID")
-  SYSTEM=$(uv run --with pyyaml python -c \
-    "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['system'], end='')" \
-    agents/sandbox-probe.agent.yaml)
-
-  ant beta:agents update --agent-id "$AGENT_ID" --version "$VERSION" --system "$SYSTEM"
+  export THEMIS_AGENT_MODEL_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentModelId)
+  AGENT_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentId)
+  uv run --group agents python -m tools.agents diff agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID"   # read-only
+  uv run --group agents python -m tools.agents apply agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID"
   ```
 
-  `update` is a partial patch — an omitted field is preserved, while `--tool`/`--skill`/`--mcp-server` replace wholesale
-  when passed, so a prompt-only change sends `--system` alone. `--version` must equal the server's current (it returns
-  the new one). A session pins the agent version at creation, so a running Analysis keeps the old prompt: create a fresh
-  one to exercise the change.
+  A session pins the agent version at creation, so a running Analysis keeps the old prompt: create a fresh one to
+  exercise the change.
+
+- **Updating a custom skill** — edit its files under `agents/skills/<directory>`, commit them, and apply the agent, as
+  above. `apply` publishes the directory as a new skill version when its content is not what the agent runs, and pins
+  the agent to that version. It refuses a directory with uncommitted or untracked changes, because the agent's record
+  names the commit the content came from. The record sits in the agent's `metadata` (`skill:<directory>` → the version,
+  a digest of the content, and the commit), so an apply that changes no skill publishes nothing. The next session's run
+  record is the proof: its `ran_skills` names the version each skill resolved to (`custom:<skill_id>@<version>`).
+
+- **Adding a custom skill** — write its files under a new `agents/skills/<directory>`, then
+  `uv run --group agents python -m tools.agents create-skill agents/skills/<directory>`: it creates the skill with the
+  directory as its first version and prints the `skill_…` id, which goes into the agent's yaml as a `custom` entry with
+  `directory: <directory>`. Then apply the agent.
 
 - **Replacing the agent** — only when the superseded agent must stay separately addressable: create it from the config,
   `pulumi config set themis:anthropicAgentId` to the new id, then archive the old one last (live sessions hold it).

@@ -54,10 +54,14 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
 # wheels the `guest` group installs above; `themis/rpc` and `themis/evidence/models` take no `__init__.py` and resolve as namespace packages under
 # the `themis` package this stage touches into place. Then the code-mode `services`, `retry` and `display` helpers
 # (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the accessors
-# ride, and the stdlib-only working-document linter.
+# ride, the stdlib-only working-document linter, and the SVCv4 scoring library.
 COPY themis/services/sandbox_worker/guest_contract/python/ /usr/local/lib/python3.13/site-packages/
 COPY themis/services/sandbox_worker/guest_contract/proto/ /usr/local/share/themis/proto/
-COPY themis/document_linter /usr/local/lib/python3.13/site-packages/themis/document_linter
+# A library ships as its modules and data, never as its directory: its `tests/` must not reach the guest.
+COPY themis/document_linter/*.py /usr/local/lib/python3.13/site-packages/themis/document_linter/
+COPY themis/svcv4/*.py /usr/local/lib/python3.13/site-packages/themis/svcv4/
+COPY themis/svcv4/models/*.py themis/svcv4/models/*.pyi /usr/local/lib/python3.13/site-packages/themis/svcv4/models/
+COPY themis/svcv4/data /usr/local/lib/python3.13/site-packages/themis/svcv4/data
 COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_worker/guest/channel.py \
     themis/services/sandbox_worker/guest/retry.py themis/services/sandbox_worker/guest/display.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/

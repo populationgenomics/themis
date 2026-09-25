@@ -21,8 +21,9 @@ from typing import override
 
 import grpc
 
-# The deadline a call gets when it names none, against the 120 s the worker allows one shell tool call before it
-# abandons it: what is left is what the snippet needs to catch the failure, print what it did get, and exit.
+# The deadline a call gets when it names none, against the bound one shell tool call has before the worker abandons
+# it (`sandbox_worker.tool.SHELL_TIMEOUT_S`, which the shim kills the command a margin inside): what is left is what
+# the snippet needs to catch the failure, print what it did get, and exit.
 DEFAULT_TIMEOUT_S = 90.0
 
 

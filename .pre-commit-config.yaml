@@ -83,10 +83,12 @@ repos:
         additional_dependencies:
           - mdformat-gfm==1.0.0
           - mdformat-frontmatter==2.1.2
-        # Verbatim payloads mdformat must not reflow: test data under tests/, and the
+        # Verbatim payloads mdformat must not reflow: test data under tests/, the
         # doc-garden workflow payloads (pr-body.md is posted as-is — hard wraps would
-        # render as `<br>` in GitHub's PR view, which breaks on single newlines).
-        exclude: '^(tests/|\.github/doc-garden/)'
+        # render as `<br>` in GitHub's PR view, which breaks on single newlines), and
+        # agent skills (a model reads SKILL.md as raw text, so `CLN_*` must not become
+        # `CLN\_*` and an explicitly numbered list must not renumber to all `1.`).
+        exclude: '^(tests/|\.github/doc-garden/|agents/skills/)'
 
   # YAML formatter (Biome can't format YAML).
   - repo: https://github.com/google/yamlfmt

@@ -152,6 +152,49 @@ def test_joint_faf_carries_the_flags_of_the_callsets_that_hold_the_variant() -> 
     assert faf.flags == ('lcr',)
 
 
+def test_joint_faf_takes_the_upstream_float_as_the_figure_it_prints_as() -> None:
+    """The upstream serves `faf95.popmax` as a JSON number; it arrives as a float and is read exactly."""
+    from_float = frequency.joint_faf(0.0013, exome=_PASSING_EXOME, genome=None)
+    assert from_float == frequency.joint_faf(D('0.0013'), exome=_PASSING_EXOME, genome=None)
+    assert from_float.value.as_tuple() == D('0.0013').as_tuple()
+
+
+def test_a_faf_on_a_daft_bound_as_floats_bins_where_the_framework_says(ref: reference.Reference) -> None:
+    """A FAF exactly 1.5x its DAFT is POP_FRQ -1.0; the floats' binary expansions put the multiple under 1.5."""
+    faf = frequency.joint_faf(0.0003, exome=_PASSING_EXOME, genome=None)
+    daft = frequency.curated_daft(0.0002, source='a VCEP specification')
+    assert frequency.pop_frq(ref, faf, daft).points == D('-1.0')
+
+
+def test_the_calculator_takes_its_proportions_as_estimated() -> None:
+    from_floats = frequency.daft_calculator(
+        frequency.Inheritance.MONOALLELIC,
+        prevalence_denominator=5000,
+        genetic_heterogeneity=1.0,
+        allelic_heterogeneity=1.0,
+        penetrance=0.85,
+    )
+    from_decimals = frequency.daft_calculator(
+        frequency.Inheritance.MONOALLELIC,
+        prevalence_denominator=5000,
+        genetic_heterogeneity=D('1.0'),
+        allelic_heterogeneity=D('1.0'),
+        penetrance=D('0.85'),
+    )
+    assert from_floats == from_decimals
+
+
+def test_a_proportion_built_from_a_float_as_a_decimal_fails_the_digit_bound() -> None:
+    with pytest.raises(ValueError, match='penetrance carries'):
+        frequency.daft_calculator(
+            frequency.Inheritance.MONOALLELIC,
+            prevalence_denominator=5000,
+            genetic_heterogeneity=D('1.0'),
+            allelic_heterogeneity=D('1.0'),
+            penetrance=decimal.Decimal(0.85),  # noqa: RUF032 — the mistake under test
+        )
+
+
 def test_joint_faf_rejects_a_negative_frequency() -> None:
     with pytest.raises(ValueError, match='FAF must be non-negative'):
         frequency.joint_faf(D('-0.001'), exome=_PASSING_EXOME, genome=None)

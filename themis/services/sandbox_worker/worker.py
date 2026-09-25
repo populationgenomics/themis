@@ -72,10 +72,6 @@ _GUEST_ROOTFS = '/opt/guest-root'
 # allowance and the agent's identity — is bound on its own.
 _GUEST_GITCONFIG = '/etc/gitconfig'
 _WORKSPACE_ROOT = '/workspace'
-# Must stay under the SDK's per-tool deadline (anthropic.lib TOOL_TIMEOUT, 150s): a sandbox run that
-# outlives it makes the SDK abort the (non-cancellable) tool call, reporting a spurious timeout and
-# skipping the post-call checkpoint.
-_TOOL_TIMEOUT_S = 120
 # Per-command bounds on the worker's own guest git, which runs outside any tool call. The restore's commands run
 # before the ack, so their bound has to keep the restore inside the dispatcher's reclaim window (600 s), or a slow
 # spawn is re-dispatched underneath itself; local mirror to local tree over a socket, a clone is disk-bound. The
@@ -316,7 +312,7 @@ async def _serve() -> None:
             try:
                 if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
                     return
-                shell = tool_mod.make_shell(sandbox, workspace_sync, timeout=_TOOL_TIMEOUT_S)
+                shell = tool_mod.make_shell(sandbox, workspace_sync)
                 worker = environments.EnvironmentWorker(
                     client, tools=lambda ctx: _tools_for_session(ctx, shell), workdir=sandbox.workspace
                 )

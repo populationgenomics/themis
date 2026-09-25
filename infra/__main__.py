@@ -54,10 +54,10 @@ _COST_EXPORTER_IMAGE_ENV = 'THEMIS_COST_EXPORTER_IMAGE'
 # Sized comfortably above worst-case poll→ack (§5): the reclaim clock starts at the dispatcher's poll, so
 # it must cover Job cold-start + Direct VPC egress cold-connect (§8, "a minute or more") + restore (up to
 # the 180 s startup-probe window) — a booting item is then never reclaimed mid-restore and double-spawned.
-# The cost of a wider window is that a genuinely failed spawn takes this long to become re-pollable. Task
-# timeout is the longest legitimate session plus margin (§6). Tune from agent_run usage.
+# The cost of a wider window is that a genuinely failed spawn takes this long to become re-pollable.
 _RECLAIM_OLDER_THAN_MS = 600_000
-_TASK_TIMEOUT_SECONDS = 3600
+# Caps the whole session execution: a classification with the literature sweep and the reviewer thread runs for hours.
+_TASK_TIMEOUT_SECONDS = 14400
 
 config = pulumi.Config()
 gcp_config = pulumi.Config('gcp')
@@ -79,6 +79,9 @@ anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
 anthropic_webhook_signing_key = config.require_secret('anthropicWebhookSigningKey')
 anthropic_environment_id = config.require('anthropicEnvironmentId')
 anthropic_agent_id = config.require('anthropicAgentId')
+# The model the agent runs: confidential config (docs/design/deployment.md, "Confidential config"), so encrypted here
+# and never in the agent's tracked declaration; `tools.agents` applies it from the exported output.
+anthropic_agent_model_id = config.require_secret('anthropicAgentModelId')
 # Anthropic Managed-Agents WIF (Path B) identifiers — plaintext, not credentials
 # (docs/runbooks/claude-api-wif.md); the web app (the client) presents these.
 anthropic_federation_rule_id = config.require('anthropicFederationRuleId')
@@ -729,6 +732,8 @@ pulumi.export('ingest_subnetwork', ingest_net.subnetwork.self_link)
 pulumi.export('session_token_signing_key', session_token_key.id)
 pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)
 pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)
+# The model the agent declaration is applied with; a secret output, as the config it comes from.
+pulumi.export('anthropic_agent_model_id', anthropic_agent_model_id)
 pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)

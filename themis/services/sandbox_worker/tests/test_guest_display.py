@@ -20,7 +20,7 @@ from collections.abc import Callable
 import pytest
 from google.protobuf import any_pb2, descriptor, descriptor_pb2, descriptor_pool, message, message_factory, struct_pb2
 
-from themis.rpc import cspec_pb2, gene_disease_pb2, gnomad_pb2, literature_pb2, store_pb2
+from themis.rpc import clinvar_pb2, cspec_pb2, gene_disease_pb2, gnomad_pb2, literature_pb2, store_pb2
 from themis.services.sandbox_worker.guest import display
 
 
@@ -349,23 +349,93 @@ def test_the_truncated_body_leaves_no_token_or_block_open() -> None:
     assert body.count('{') == body.count('}')
 
 
-def test_a_head_survives_a_first_field_larger_than_the_whole_budget() -> None:
+def test_a_head_survives_a_cut_inside_a_submessage() -> None:
     """The rendering has to be non-trivial, not merely bounded — a bound is also met by keeping nothing.
 
-    A response whose content all sits inside one top-level submessage returns to depth 0 only on its final
-    line, so a cut that refused to leave any block open would keep none of it: the caller would get the type
-    name and a marker reporting zero characters rendered. `ListSpecifications` is that shape today.
+    A response whose content sits inside a few submessages, each within its share, returns to depth 0 only
+    between them, so a cut that refused to leave any block open would keep whole blocks or nothing: the caller
+    could get the type name and a marker reporting zero characters rendered. `ListSpecifications` is that shape.
     """
     resp = cspec_pb2.ListSpecificationsResponse()
-    spec = resp.specifications.add(title='BRCA1 VCEP')
-    for index in range(200):
-        spec.criteria.add(code=f'PS{index}', instructions=['x' * 300])
+    for spec_index in range(12):
+        spec = resp.specifications.add(title=f'VCEP {spec_index}')
+        for index in range(12):
+            spec.criteria.add(code=f'PS{index}', instructions=['x' * 200])
     rendered = display.render(resp)
     body, _, marker = rendered.rpartition('<truncated:')
     assert marker  # the truncation path is the one under test
     assert 'PS0' in body  # the head is there, not just the header
     assert len(body) > display.DEFAULT_MAX_CHARS // 2  # and it is most of the budget, not a token amount
+    # The cut landed inside a specification — its last criterion is missing — and the block was closed.
+    assert body.count('code: "PS11"') < body.count('title: "VCEP')
     assert body.count('{') == body.count('}')
+    assert len(rendered) <= display.DEFAULT_MAX_CHARS
+
+
+def _clinvar_with_archive(history_entries: int) -> clinvar_pb2.DescribeVariantResponse:
+    """`DescribeVariant` as it answers: the reading first, the record whole after it, the provenance last."""
+    resp = clinvar_pb2.DescribeVariantResponse()
+    resp.this_variant.clinvar_id = 'VCV000012345'
+    resp.this_variant.classification = 'Pathogenic'
+    archive = resp.variation_archive
+    archive.variation_type = 'single nucleotide variant'
+    archive.record_type = archive.RECORD_TYPE_CLASSIFIED
+    for index in range(history_entries):
+        archive.replaced_list.add(accession=f'VCV{index:09d}', version=index)
+    resp.provenance.add(source='ClinVar E-utilities', dataset_versions=['2026-08'])
+    return resp
+
+
+def test_an_oversized_typed_submessage_is_summarised_rather_than_burying_its_siblings() -> None:
+    """A record returned whole has no oversized field to elide, only thousands of short leaves.
+
+    Rendered in place it takes the whole budget, and the provenance after it — the field that says which
+    release the record is from — is cut and reads as absent. The marker names the type, so the model knows what
+    to reach for, and the fields the record sets.
+    """
+    rendered = display.render(_clinvar_with_archive(history_entries=2_000))
+    assert 'ClinVar E-utilities' in rendered
+    assert '<truncated:' not in rendered
+    assert 'clinvar.VariationArchiveType' in rendered
+    assert 'field(s) set: variation_type, record_type, replaced_list' in rendered
+    assert 'show(resp.<field>) renders it whole' in rendered  # the marker says how to read what it stands for
+    assert 'VCV000001999' not in rendered
+
+
+def test_a_response_that_fits_renders_whole_whatever_its_submessages_share() -> None:
+    """Elision is paid for by an overrun only: a record over its share but under the budget is read whole."""
+    rendered = display.render(_clinvar_with_archive(history_entries=150))
+    assert display.DEFAULT_MAX_CHARS // display._SUBMESSAGE_SHARE < len(rendered) <= display.DEFAULT_MAX_CHARS
+    assert 'VCV000000149' in rendered
+    assert '<elided:' not in rendered
+    assert '<truncated:' not in rendered
+
+
+def test_a_marker_in_the_kept_head_leaves_the_cut_balanced() -> None:
+    """The cut counts brace depth line by line, so a marker line standing in for a submessage must not shift it."""
+    resp = _clinvar_with_archive(history_entries=2_000)
+    for index in range(4_000):
+        resp.provenance.add(source=f'source-{index:05d}', dataset_versions=['2026-08'])
+
+    body, cut, _ = display.render(resp).partition('<truncated:')
+
+    assert cut
+    assert 'show(resp.<field>) renders it whole' in body
+    assert body.count('{') == body.count('}')
+
+
+def test_a_typed_submessage_within_its_share_renders_whole() -> None:
+    rendered = display.render(_clinvar_with_archive(history_entries=3))
+    assert 'VCV000000002' in rendered
+    assert '<elided:' not in rendered
+
+
+def test_the_top_level_message_is_never_a_marker() -> None:
+    """`show` on the record itself is how the model reads it, so the record renders with the whole budget."""
+    archive = _clinvar_with_archive(history_entries=2_000).variation_archive
+    rendered = display.render(archive)
+    assert 'VCV000000000' in rendered  # the head is there, not a marker
+    assert '<truncated:' in rendered
     assert len(rendered) <= display.DEFAULT_MAX_CHARS
 
 

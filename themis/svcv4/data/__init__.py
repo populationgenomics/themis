@@ -17,8 +17,8 @@ here is the descriptive aggregates — the prose rules, the crosswalk from v3's 
 provenance of a whole set of tables — which a reader looks up next to the values they describe.
 
 Two data files sit beside these modules rather than in them: `predictor_policy.json`, which is
-versioned per gene and read by path, and `gencc-lof-mechanism-framework.md`, the GenCC confidence
-terms SM18 imports for the mechanism axis.
+versioned per gene and read by path, and `gencc-lof-mechanism-framework.md`, the GenCC loss-of-function
+mechanism framework — criteria, points and confidence terms — SM18 imports for the mechanism axis.
 """
 
 from __future__ import annotations

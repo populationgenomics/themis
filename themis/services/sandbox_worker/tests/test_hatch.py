@@ -30,7 +30,7 @@ from themis.rpc import (
     variant_pb2,
     vep_pb2,
 )
-from themis.services.sandbox_worker import hatch
+from themis.services.sandbox_worker import hatch, tool
 from themis.services.sandbox_worker.guest import services
 
 _TOKEN = 'TOK'
@@ -415,3 +415,12 @@ def test_the_ceiling_binds_a_live_call_that_named_no_deadline() -> None:
     # Rules out the cap passing by arriving as an already-spent deadline rather than as the ceiling. Twenty orders
     # of magnitude separate a capped deadline from an uncapped one, so no tolerance blurs the two.
     assert upstream_impl.remaining > hatch._FORWARD_CEILING_S / 2
+
+
+def test_the_forwarding_ceiling_sits_under_the_command_bound() -> None:
+    """A forwarded call that outlives the command that asked for it holds a serving thread for nothing.
+
+    The bound that fires on the command is the shim's, not the shell call's, so the ceiling is asserted
+    against that one — against the constant, not a number.
+    """
+    assert hatch._FORWARD_CEILING_S < tool.COMMAND_TIMEOUT_S

@@ -169,10 +169,12 @@ that hangs; putting it on the channel means an unbounded call is not reachable t
 The second is a renderer for whole responses, so no field goes unread for not having been named — the field a snippet
 did not think to print is the one saying why a lookup came back empty. Printing whole needs a length bound of its own,
 or one oversized field buries every other; past that bound the head is what survives, and a marker says how much was
-cut. The third is a retry that reissues a failure meaning the call never reached an answer, and returns a settled one —
-no record, a request refused — as it stands, since retrying that only spends the upstream's rate limit. It sets one
-budget covering every attempt and the waits between them, in place of the channel's per-call default. An opt-in response
-cache under `/workspace` spares a repeat, at the cost of riding into every checkpoint.
+cut. A submessage that would take a large share of the bound renders as a marker instead, naming its type and the fields
+it sets, so a record returned whole does not push the fields after it past the cut. The third is a retry that reissues a
+failure meaning the call never reached an answer, and returns a settled one — no record, a request refused — as it
+stands, since retrying that only spends the upstream's rate limit. It sets one budget covering every attempt and the
+waits between them, in place of the channel's per-call default. An opt-in response cache under `/workspace/scratch`, the
+ignored directory, spares a repeat.
 
 The working-document linter ships beside it, so the agent can check its own output without leaving the sandbox.
 
