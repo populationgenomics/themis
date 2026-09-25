@@ -28,6 +28,10 @@ export const file_themis_rpc_auth: GenFile = /*@__PURE__*/
  */
 export type ResolveTokenRequest = Message<"themis.rpc.auth.ResolveTokenRequest"> & {
   /**
+   * 43 characters of `[A-Za-z0-9_-]`: the unpadded base64url encoding of an HMAC-SHA256 over the
+   * session id (themis/clients/auth/derive.py). Documented, not enforced on the wire — a value of
+   * any other shape fails at the hash lookup.
+   *
    * @generated from field: string session_token = 1;
    */
   sessionToken: string;
@@ -49,11 +53,16 @@ export const ResolveTokenRequestSchema: GenMessage<ResolveTokenRequest> = /*@__P
  */
 export type SessionContext = Message<"themis.rpc.auth.SessionContext"> & {
   /**
+   * A registered Project's id (the `projects` table). Projects are administered out of band, so the id
+   * has no fixed shape.
+   *
    * @generated from field: string project_id = 1;
    */
   projectId: string;
 
   /**
+   * `an_` followed by a lowercase, hyphenated UUIDv4, minted when the Analysis is created.
+   *
    * @generated from field: string analysis_id = 2;
    */
   analysisId: string;
@@ -85,7 +94,8 @@ export type CallerClaim = Message<"themis.rpc.auth.CallerClaim"> & {
 
   /**
    * The session token, when `calling_as` names a session. Resolved to the Project + Analysis the call is
-   * scoped to; one that does not resolve is no binding, and the member is not satisfied.
+   * scoped to; one that does not resolve is no binding, and the member is not satisfied. Shaped as
+   * `ResolveTokenRequest.session_token` is.
    *
    * @generated from field: string session_token = 2;
    */

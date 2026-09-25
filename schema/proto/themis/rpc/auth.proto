@@ -12,6 +12,9 @@ import "themis/rpc/sandbox_options.proto";
 // The token forwarded to be resolved: a high-entropy per-session secret the auth service hashes
 // before lookup.
 message ResolveTokenRequest {
+  // 43 characters of `[A-Za-z0-9_-]`: the unpadded base64url encoding of an HMAC-SHA256 over the
+  // session id (themis/clients/auth/derive.py). Documented, not enforced on the wire — a value of
+  // any other shape fails at the hash lookup.
   string session_token = 1;
 }
 
@@ -19,7 +22,10 @@ message ResolveTokenRequest {
 // caller may read and write. Project first (a Project nests Analyses); `project_id` is the Themis
 // Project id (reserve `gcp_project_id` for a Google Cloud project id if one is ever needed).
 message SessionContext {
+  // A registered Project's id (the `projects` table). Projects are administered out of band, so the id
+  // has no fixed shape.
   string project_id = 1;
+  // `an_` followed by a lowercase, hyphenated UUIDv4, minted when the Analysis is created.
   string analysis_id = 2;
 }
 
@@ -33,7 +39,8 @@ message SessionContext {
 message CallerClaim {
   themis.rpc.CallingAs calling_as = 1;
   // The session token, when `calling_as` names a session. Resolved to the Project + Analysis the call is
-  // scoped to; one that does not resolve is no binding, and the member is not satisfied.
+  // scoped to; one that does not resolve is no binding, and the member is not satisfied. Shaped as
+  // `ResolveTokenRequest.session_token` is.
   string session_token = 2;
 }
 
