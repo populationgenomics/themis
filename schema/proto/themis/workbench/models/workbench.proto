@@ -13,8 +13,8 @@ package themis.workbench.models.workbench;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 
-// An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a markdown body
-// carrying the inline grammar (**bold**). A turn with no text (an agent turn that only makes tool
+// An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a GitHub-flavoured
+// markdown body with citation directives. A turn with no text (an agent turn that only makes tool
 // calls) is not emitted as a narration.
 message Narration {
   string text = 1;
@@ -28,7 +28,7 @@ message ToolResult {
 
 // The syntax a tool call's `command` is written in. UNSPECIFIED where that text is not one lexable
 // unit in a named language; a caller renders such a body unhighlighted
-// (agent-output-rendering.md, "The language belongs to the text, not the tool").
+// (agent-output-rendering.md, "A body's language is read from its text").
 enum ToolLanguage {
   TOOL_LANGUAGE_UNSPECIFIED = 0;
   TOOL_LANGUAGE_PYTHON = 1;
@@ -48,7 +48,7 @@ enum DiffLineKind {
 
 // One line of a projected replacement, in reading order. `text` carries no sign prefix: the sign is
 // `kind`, and a caller draws it. The lines diff the replacement the tool was given, never the file
-// it targets (agent-output-rendering.md, "A replacement crosses as kinded lines").
+// it targets (agent-output-rendering.md, "The BFF diffs a replacement").
 message DiffLine {
   DiffLineKind kind = 1;
   string text = 2;
@@ -58,8 +58,8 @@ message DiffLine {
 // shell tool's model-stated intent, else a prebuilt tool's well-known target field, else the name —
 // and is never empty. The body a row reveals on expand is EITHER `command`, the body text in
 // `language`, OR `diff`, a replacement line by line: never both, and neither where the body is
-// empty text. `result` is absent until the call returns. (agent-output-rendering.md, "A tool call
-// is a label and a body".)
+// empty text. `result` is absent until the call returns. (agent-output-rendering.md, "The projection
+// decides how a tool call looks".)
 message ToolCall {
   string name = 1;
   string intent = 2;

@@ -167,8 +167,8 @@ which every data access goes through, resolves the Analysis row and checks the c
 not-found to a non-member. The session id comes off that row, so no request field names a session.
 
 **The client.** Replaces its stream by event id. The reply is the whole stream every tick, the upstream log offering no
-since-cursor, and a tool body is untruncated ([`agent-output-rendering.md`](agent-output-rendering.md) §"A tool call is
-a label and a body"), so the reply grows with the run. The general fix is the incremental cursor open in
+since-cursor, and a tool body is untruncated ([`agent-output-rendering.md`](agent-output-rendering.md) §"The projection
+decides how a tool call looks"), so the reply grows with the run. The general fix is the incremental cursor open in
 [`frontend-framework.md`](frontend-framework.md) §Open questions.
 
 #### `GetThread`
@@ -264,8 +264,8 @@ condition it asserts is a live one, and stopping is the act it asked for.
 A conversation event is a oneof over four variants — assistant narration, a user turn, a tool call, a sub-agent card —
 so kind-iff-payload is structural, and the client surfaces it as a tagged union rather than checking a tag against a
 payload. All agent prose — narration and a card's summary, alongside the curator's own turns — renders through the one
-markdown surface, and never as HTML ([`agent-output-rendering.md`](agent-output-rendering.md) §"The agent never authors
-its own presentation markup"); how a tool row is drawn is that doc's too.
+markdown surface, and never as HTML ([`agent-output-rendering.md`](agent-output-rendering.md) §"Agent text never becomes
+markup or a request"); how a tool row is drawn is that doc's too.
 
 The server is what orders the stream: the projection emits events by their stamp. Leaving the sort to the client would
 mean inventing an answer for an event the log left unstamped, then disagreeing with any other consumer of the same
@@ -292,8 +292,8 @@ Four upstream statuses fold to three display states, which is what a curator rea
 is working, and a thread that has reported no status yet reads this way too, as does one upstream has rescheduled, a
 reschedule being a transient retry. **Idle**: the thread has returned to the coordinator and is waiting for its next
 instruction. **Done**: the thread is finished. A status this build predates renders as a neutral unknown pill rather
-than as an error ([`agent-output-rendering.md`](agent-output-rendering.md) §"An enum value a build predates renders as
-unknown").
+than as an error ([`agent-output-rendering.md`](agent-output-rendering.md) §"A value the tab's build does not know draws
+as unknown").
 
 Both of the card's texts — what the thread was asked, what it returned — are *absent* until they land, rather than
 empty, and the card distinguishes not-yet-asked from asked-with-no-text rather than showing a blank line.

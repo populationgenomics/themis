@@ -52,12 +52,12 @@ Two audiences, two registers:
 - **Everything under `docs/`** is written for a human first — a maintainer who has read
   [`docs/PRODUCT.md`](docs/PRODUCT.md) and [`GLOSSARY.md`](GLOSSARY.md) but not this area, and has to get the take-aways
   from one read on GitHub; under the review policy a design-doc PR is normally reviewed by a second maintainer. Explain
-  with the clarity and style of Martin Kleppmann — motivation before mechanism, specifics out of the argument's way.
-  Detail that restates code — field lists, paths, env vars, test names — stays in the code and is linked, never
-  transcribed. A model reads what a human reads. Design docs are the durable design record: one living doc per area
-  under `docs/design/`, rewritten in place; no ADRs — rationale lives in the doc, chronology in git. The guide is
-  [`docs/style/design-docs.md`](docs/style/design-docs.md); to write or rewrite one, load the `writing-design-docs`
-  skill.
+  with the clarity and style of Martin Kleppmann — motivation before mechanism, and an example or a figure wherever a
+  claim would otherwise be taken on trust. Detail that restates code — field lists, paths, env vars, test names — stays
+  in the code and is linked, never transcribed. A model reads what a human reads. Design docs are the durable design
+  record: one living doc per area under `docs/design/`, rewritten in place; no ADRs — rationale lives in the doc,
+  chronology in git. The guide is [`docs/style/design-docs.md`](docs/style/design-docs.md); to write or rewrite one,
+  load the `writing-design-docs` skill.
 
 ## Committing
 
@@ -95,7 +95,10 @@ design.
   findings autonomously; repeat until a pass surfaces only diminishing findings, then open the PR. Exempt: trivial
   changes, doc-only changes, resource/asset changes.
 - **A PR description is written for the human reviewer**: what the change is and why, the take-aways, and where to look
-  — the altitude of a design doc's Overview, shorter. The diff carries the detail; don't narrate it. Same style:
+  — plus what another rule or a workflow's own template requires there (screenshots, a new dependency). In an
+  interactive session, a question, an uncertainty or a dropped option meant for the author goes to them in the
+  conversation, not the body. Keep the prose under about 200 words; when it runs over, cut topics, not words. The diff
+  carries the detail; don't narrate it. Same style:
   [`docs/style/design-docs.md` § Style](docs/style/design-docs.md#style).
 - **Pin third-party GitHub Actions to the latest stable release**: the moving major tag (`@v3`) where the action
   publishes one, else the exact latest version (`@v8.2.0`). Verify against the action's releases when adding or bumping

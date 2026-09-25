@@ -12,7 +12,9 @@ policy. This is the procedure; it does not restate the guide.
 
 - The guide.
 - What the doc's reader has already read: `docs/PRODUCT.md`, `GLOSSARY.md`.
-- The doc as it stands, where one exists, and the Overview of each doc that will appear under `Related`.
+- The doc as it stands, where one exists, and the Overview of each doc that will appear under `Related`. Most docs
+  predate the guide: take what they decide, not how they are written. The register to match is the exemplar the guide
+  names.
 - The code and contract files the doc describes — the proto, the module entry points, the tests. "The code states it" is
   verified there before a fact is left out, never assumed.
 
@@ -30,15 +32,28 @@ report. No such fact goes into an inline comment beside the implementation (`doc
 
 ## Draft
 
-The guide's default shape, deviating where the design reads better another way. A doc covering a surface, a flow, or
-several interfaces uses the concrete forms the guide names: a mockup of the surface, a request diagram, a plain
-statement of what is stored where, one subsection per interface in one consistent shape.
+1. For each decision, note the question it answers, the obvious answer and what that gets right, the fact that breaks
+   it, one concrete instance of that fact (toy values where a real case carries noise), and what the decision costs.
+   Where a decision has no obvious rival, note that; don't invent one. This list is the Design section's skeleton and
+   the Overview's argument.
+1. Choose the figures before writing prose: a mockup for each surface, a diagram with example values for each flow, a
+   picture of each shape the reader must hold.
+1. Write in the guide's default shape. Background teaches each term where the argument first needs it; no definition
+   block.
 
 ## Re-read as the reader
 
 Read the draft as the maintainer the guide describes — has read `PRODUCT.md` and `GLOSSARY.md`, knows nothing about the
-area, one read on GitHub. Can they state each decision and the reason for it afterwards? Where not, fix the passage, not
-the reader.
+area, one read on GitHub — and list the passages each question finds. Look again once when a list is empty; empty on the
+second look is a pass.
+
+- Which decisions could they not restate with the reason?
+- Which sentences would they read twice? Split them, write out compressed noun phrases, drop the second aside.
+- Which claims the argument rests on have no instance beside them?
+- Which decisions are argued without the obvious alternative the reader would arrive holding?
+- Where do the guide's machine-register patterns recur?
+
+Fix the passage, not the reader.
 
 ## Checks
 
