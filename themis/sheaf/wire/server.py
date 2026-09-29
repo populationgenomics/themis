@@ -55,7 +55,7 @@ class SheafGitServer:
         *,
         host: str = '127.0.0.1',
         port: int = 0,
-        protection: protect.Protection | None = None,
+        protection: protect.Protection,
     ) -> None:
         """Serve `repositories`, keeping bare mirrors under `root`.
 
@@ -66,9 +66,11 @@ class SheafGitServer:
             root: Directory holding one bare mirror per served repository.
             host: Address to bind.
             port: Port to bind; 0 takes an ephemeral one, which `authority` then reports.
-            protection: Paths the pushing side may not write and refs it may not rewrite. It
-                reaches the hook through the environment rather than the repository, because a
-                tracked config file would be editable in the same push it constrains.
+            protection: What the pushing side may write: the paths it may not, the identity it
+                pushes as, and the deployment's content check. `protect.Protection.unprotected()`
+                for a server whose pushers are all trusted. It reaches the hook through the
+                environment rather than the repository, because a tracked config file would be
+                editable in the same push it constrains.
 
         Raises:
             TypeError: If a repository has no descriptor form, so the hook could never be handed
@@ -79,7 +81,7 @@ class SheafGitServer:
         # paths handed to it name this root.
         self.root = pathlib.Path(root).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.protection = protection or protect.Protection()
+        self.protection = protection
         self._repositories: dict[str, store_mod.Repository] = {}
         for repository in repositories:
             if repository.repo in self._repositories:
@@ -101,7 +103,7 @@ class SheafGitServer:
         repos: Collection[str],
         host: str = '127.0.0.1',
         port: int = 0,
-        protection: protect.Protection | None = None,
+        protection: protect.Protection,
     ) -> Self:
         """Serve the named repositories of `backend` through in-process stores.
 

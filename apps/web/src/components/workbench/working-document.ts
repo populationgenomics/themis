@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useWorkspaceDocument, useWorkspaceHistory } from "@/lib/queries";
+import {
+  type DocumentRead,
+  useWorkspaceDocument,
+  useWorkspaceHistory,
+} from "@/lib/queries";
 import type { PollResponse, WorkspaceTip } from "@/models/workbench";
 import type { RecordedTip } from "@/workspace-copy/copy";
 import { WORKSPACE_DAMAGED } from "@/workspace-copy/protocol";
@@ -29,7 +33,10 @@ export type WorkingDocumentState =
   | { kind: "damaged" }
   | { kind: "failed" }
   | { kind: "copyFailed" }
-  | { kind: "shown"; markdown: string };
+  /** `commit` is the one `markdown` was read at, which is the pinned or tip commit once it has
+   *  loaded and the previous version's until then; `pinned`, whether it was read as the version
+   *  the tab pins, which the view shows only to read, rather than as the tip's. */
+  | { kind: "shown"; markdown: string; commit: string; pinned: boolean };
 
 /** One row of the version picker: a tip the reflog recorded, numbered from the oldest. */
 export interface DocumentVersion {
@@ -179,6 +186,7 @@ export function useWorkingDocument(
           analysisId: signal.analysisId,
           tip: signal.tip.commit,
           commit: pinned ?? signal.tip.commit,
+          pinned: pinned !== null,
         }
       : null;
   const document = useWorkspaceDocument(key);
@@ -200,7 +208,7 @@ export function documentState(
   document: {
     isError: boolean;
     error: Error | null;
-    data: string | null | undefined;
+    data: DocumentRead | undefined;
   },
 ): WorkingDocumentState {
   if (signal === null) return { kind: "loading" };
@@ -226,6 +234,11 @@ export function documentState(
     }
   }
   if (document.data === undefined) return { kind: "loading" };
-  if (document.data === null) return { kind: "absent" };
-  return { kind: "shown", markdown: document.data };
+  if (document.data.value === null) return { kind: "absent" };
+  return {
+    kind: "shown",
+    markdown: document.data.value,
+    commit: document.data.commit,
+    pinned: document.data.pinned,
+  };
 }

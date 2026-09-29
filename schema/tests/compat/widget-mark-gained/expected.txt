@@ -1,0 +1,3 @@
+::error::compat themis/widgets/models/later.proto: ownership change(s) vs origin/main:
+  Message "themis.widgets.models.Later" became a widget payload; a push hook built before the change holds it unmarked in the widgets package, and refuses every push writing one of its assets.
+FAIL: compat gate: 1 proto contract(s) change a released widget message's judgements — a released field keeps its guard and element_key, a guard ignores only fields new with the change, and a released message gains no guard and keeps its widget mark

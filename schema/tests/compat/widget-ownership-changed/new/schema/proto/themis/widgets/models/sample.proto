@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package themis.widgets.models;
+
+import "themis/widgets/models/widget.proto";
+
+message Sample {
+  option (themis.widgets.models.widget) = true;
+
+  message Row {
+    string id = 1 [(themis.widgets.models.element_key) = true];
+    bool done = 2 [(themis.widgets.models.guard) = {ignores: ["hint", "label", "shade"]}];
+    string label = 3;
+    string hint = 4;
+    string shade = 5;
+  }
+
+  message Note {
+    string text = 1;
+    bool seen = 2 [(themis.widgets.models.guard) = {}];
+  }
+
+  repeated Row rows = 1;
+  Note note = 2;
+}

@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { RenderBoundary } from "@/components/render-boundary";
+import type { WidgetRevision } from "@/components/widgets/revision";
 import { api, paperContent } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Representation } from "@/models/literature";
@@ -13,6 +15,7 @@ import { applyQuoteHighlight, clearQuoteHighlight } from "./highlight";
 import { type Citation, corpusFigureResolver, Markdown } from "./markdown";
 import { WarningChip } from "./warning-chip";
 import type { WorkingDocumentState } from "./working-document";
+import type { WorkingDocumentSignal } from "./workspace-sync";
 
 // The content views for a tab, keyed on primitives (doc id, quote, name) rather than any tab-union
 // type, so both the F4 document pane and the F5 group render them unchanged. A paper's markdown/PDF
@@ -72,12 +75,17 @@ export function WorkingDocumentView({
   document,
   unavailable,
   clearing,
+  signal,
+  curatorEmail,
   onCitation,
 }: {
   document: WorkingDocumentState;
   unavailable: boolean;
   /** Clearing the browser's copy of the Analysis; null until the Poll names one. */
   clearing: CopyClearing | null;
+  /** The branch's tip the document was read against. */
+  signal: WorkingDocumentSignal | null;
+  curatorEmail: string;
   onCitation: (citation: Citation) => void;
 }): React.ReactElement {
   if (clearing?.state.kind === "clearing")
@@ -100,7 +108,12 @@ export function WorkingDocumentView({
     );
   }
   const body = (
-    <WorkingDocumentBody document={document} onCitation={onCitation} />
+    <WorkingDocumentBody
+      document={document}
+      signal={signal}
+      curatorEmail={curatorEmail}
+      onCitation={onCitation}
+    />
   );
   // Neither of these shows anything the notice could call out of date.
   if (
@@ -152,9 +165,14 @@ function ClearCopyControl({
 
 function WorkingDocumentBody({
   document,
+  signal,
+  curatorEmail,
   onCitation,
 }: {
   document: WorkingDocumentState;
+  /** The branch's tip the document was read against. */
+  signal: WorkingDocumentSignal | null;
+  curatorEmail: string;
   onCitation: (citation: Citation) => void;
 }): React.ReactElement {
   switch (document.kind) {
@@ -188,14 +206,71 @@ function WorkingDocumentBody({
       );
     case "shown":
       return (
-        <div className="tscroll flex-1 overflow-auto px-[28px] pt-[24px] pb-[30px]">
-          <div className="mb-[16px] font-mono text-[12px] text-ink-faint">
-            {DOCUMENT_PATH}
-          </div>
-          <Markdown text={document.markdown} onCitation={onCitation} />
-        </div>
+        <ShownDocument
+          markdown={document.markdown}
+          commit={document.commit}
+          pinned={document.pinned}
+          signal={signal}
+          curatorEmail={curatorEmail}
+          onCitation={onCitation}
+        />
       );
   }
+}
+
+function ShownDocument({
+  markdown,
+  commit,
+  pinned,
+  signal,
+  curatorEmail,
+  onCitation,
+}: {
+  markdown: string;
+  commit: string;
+  pinned: boolean;
+  signal: WorkingDocumentSignal | null;
+  curatorEmail: string;
+  onCitation: (citation: Citation) => void;
+}): React.ReactElement {
+  if (signal?.tip?.kind !== "commit") {
+    throw new Error(
+      `a working document is shown at ${commit} with no branch tip`,
+    );
+  }
+  const { analysisId } = signal;
+  const tip = signal.tip.commit;
+  // Memoized on its fields: the renderer rebuilds every widget when the revision's identity changes,
+  // and the window re-renders on each Poll.
+  const revision = useMemo<WidgetRevision>(
+    () => ({
+      analysisId,
+      tip,
+      commit,
+      // Only the tip is edited: a curator's change to an earlier version would land on a tip they
+      // are not looking at.
+      curatorEmail: commit === tip && !pinned ? curatorEmail : null,
+      pinned,
+    }),
+    [analysisId, tip, commit, curatorEmail, pinned],
+  );
+  return (
+    <div className="tscroll flex-1 overflow-auto px-[28px] pt-[24px] pb-[30px]">
+      <div className="mb-[16px] font-mono text-[12px] text-ink-faint">
+        {DOCUMENT_PATH}
+      </div>
+      <RenderBoundary
+        resetKey={commit}
+        fallback={(error) => (
+          <p className="text-[13px] text-ink-faint">
+            This version of the document could not be drawn: {error.message}
+          </p>
+        )}
+      >
+        <Markdown text={markdown} onCitation={onCitation} revision={revision} />
+      </RenderBoundary>
+    </div>
+  );
 }
 
 export function PaperMarkdownView({

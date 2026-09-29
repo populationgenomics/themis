@@ -7,7 +7,9 @@ and the verdict it produces committed beside it as ``expected.txt``. The gate's 
 
 The two Docker-gated tests outside that set assert properties of the repo's own
 committed module, which is not an a/b scenario. The two without Docker cover the tool
-failing rather than reporting — a condition no module pair can produce.
+failing rather than reporting — a condition no module pair can produce. The rule on who
+writes a released widget field has one case in the set, and is held to each kind of
+change without Docker, over descriptor sets built here.
 """
 
 from __future__ import annotations
@@ -15,9 +17,12 @@ from __future__ import annotations
 import pathlib
 import shutil
 import tempfile
+from collections.abc import Sequence
 
 import pytest
+from google.protobuf import descriptor_pb2, json_format
 
+from themis.widgets.models import widget_pb2
 from tools.schema import buf_compat
 
 _CASES = pathlib.Path(__file__).parent / 'compat'
@@ -102,3 +107,164 @@ def test_docker_noise_on_stderr_does_not_fail_a_clean_run() -> None:
         'Status: Downloaded newer image for bufbuild/buf@sha256:abc\n'
     )
     assert buf_compat._outcome('', pull_noise, 0, _BASELINE) == ([], None)
+
+
+_GATE_FILE = 'themis/widgets/cases/gate.proto'
+_GATE_PACKAGE = 'themis.widgets.cases.gate'
+
+
+def _field(
+    name: str, number: int, *, guard: Sequence[str] | None = None, key: bool = False, message: str = ''
+) -> dict[str, object]:
+    """A field, a guard ignoring `guard` when that is given, the element key when `key` is set."""
+    options: dict[str, object] = {}
+    if guard is not None:
+        options['[themis.widgets.models.guard]'] = {'ignores': list(guard)} if guard else {}
+    if key:
+        options['[themis.widgets.models.element_key]'] = True
+    shape = (
+        {'type': 'TYPE_MESSAGE', 'typeName': f'.{_GATE_PACKAGE}.{message}', 'label': 'LABEL_REPEATED'}
+        if message
+        else {'type': 'TYPE_STRING' if key else 'TYPE_BOOL', 'label': 'LABEL_OPTIONAL'}
+    )
+    return {'name': name, 'number': number, **shape, **({'options': options} if options else {})}
+
+
+def _files(**messages: list[dict[str, object]]) -> descriptor_pb2.FileDescriptorSet:
+    """A module holding `messages`, each a name and its fields, beside the options they read."""
+    files = descriptor_pb2.FileDescriptorSet()
+    for dependency in (descriptor_pb2.DESCRIPTOR, widget_pb2.DESCRIPTOR):
+        dependency.CopyToProto(files.file.add())
+    body = {
+        'name': _GATE_FILE,
+        'package': _GATE_PACKAGE,
+        'dependency': [widget_pb2.DESCRIPTOR.name],
+        'syntax': 'proto3',
+        'messageType': [{'name': name, 'field': fields} for name, fields in messages.items()],
+    }
+    json_format.ParseDict(body, files.file.add())
+    return files
+
+
+# The released module each case changes: a list of rows a user ticks, each tick judging its label and ignoring its
+# hint, and a note beside it holding no judgement.
+_ROW = [_field('id', 1, key=True), _field('done', 2, guard=['hint']), _field('label', 3), _field('hint', 4)]
+_NOTE = [_field('text', 1)]
+_HOLDER = [_field('rows', 1, message='Row'), _field('note', 2, message='Note')]
+_ROW_DONE = 1
+
+
+def _row(done: dict[str, object], *extra: dict[str, object]) -> list[dict[str, object]]:
+    return [*_ROW[:_ROW_DONE], done, *_ROW[_ROW_DONE + 1 :], *extra]
+
+
+@pytest.mark.parametrize(
+    ('new', 'expected'),
+    [
+        pytest.param(_files(Holder=_HOLDER, Row=_ROW, Note=_NOTE), [], id='unchanged'),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=_row(_field('done', 2)), Note=_NOTE),
+            ['"done" on message "themis.widgets.cases.gate.Row" is no longer a guard'],
+            id='a guard dropped',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=[*_ROW[:2], _field('label', 3, guard=[]), _ROW[3]], Note=_NOTE),
+            ['"label" on message "themis.widgets.cases.gate.Row" became a guard'],
+            id='a released field turned into a guard',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=_row(_field('done', 2, guard=[])), Note=_NOTE),
+            ['"done" on message "themis.widgets.cases.gate.Row" no longer ignores hint'],
+            id='a guard ignoring less',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=_row(_field('done', 2, guard=['hint', 'label'])), Note=_NOTE),
+            ['"done" on message "themis.widgets.cases.gate.Row" now ignores label, released before it'],
+            id='a guard ignoring a released field',
+        ),
+        pytest.param(
+            _files(
+                Holder=_HOLDER, Row=_row(_field('done', 2, guard=['hint', 'shade']), _field('shade', 5)), Note=_NOTE
+            ),
+            [],
+            id='a guard ignoring a field new with the change',
+        ),
+        pytest.param(
+            _files(
+                Holder=_HOLDER,
+                Row=[*_ROW[:1], _field('done', 2, guard=['hint', 'caption']), _field('caption', 3), _ROW[3]],
+                Note=_NOTE,
+            ),
+            ['"done" on message "themis.widgets.cases.gate.Row" now ignores caption, released before it'],
+            id='a guard ignoring a released field under a new name',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=[*_ROW[:3], _field('note', 4)], Note=_NOTE),
+            ['"done" on message "themis.widgets.cases.gate.Row" no longer ignores hint'],
+            id='the ignored field renamed out from under the guard',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=[_field('id', 1), *_ROW[1:3], _field('hint', 4, key=True)], Note=_NOTE),
+            [
+                '"id" on message "themis.widgets.cases.gate.Row" changed whether it is the element_key',
+                '"hint" on message "themis.widgets.cases.gate.Row" changed whether it is the element_key',
+            ],
+            id='the key moved',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=[*_ROW, _field('flag', 5, guard=[])], Note=_NOTE),
+            ['Message "themis.widgets.cases.gate.Row" gained the guard flag'],
+            id='a message holding a guard gains another',
+        ),
+        pytest.param(
+            _files(Holder=_HOLDER, Row=_ROW, Note=[*_NOTE, _field('seen', 2, guard=[])]),
+            [
+                'Message "themis.widgets.cases.gate.Note" gained the guard seen',
+                'Message "themis.widgets.cases.gate.Note" held no guard, directly or beneath it',
+            ],
+            id='a message holding none gains a guard',
+        ),
+        pytest.param(
+            _files(
+                Holder=_HOLDER,
+                Row=_ROW,
+                Note=[*_NOTE, _field('marks', 2, message='Mark')],
+                Mark=[_field('done', 1, guard=[])],
+            ),
+            ['Message "themis.widgets.cases.gate.Note" held no guard, directly or beneath it'],
+            id='a message holding none gains one beneath it',
+        ),
+        pytest.param(
+            _files(
+                Holder=_HOLDER, Row=_ROW, Note=_NOTE, Other=[_field('id', 1, key=True), _field('done', 2, guard=[])]
+            ),
+            [],
+            id='a new message holds a guard',
+        ),
+    ],
+)
+def test_the_gate_refuses_a_change_to_a_released_message_s_judgements(
+    new: descriptor_pb2.FileDescriptorSet, expected: list[str]
+) -> None:
+    changes = buf_compat.ownership_changes(_files(Holder=_HOLDER, Row=_ROW, Note=_NOTE), new)
+    found = changes.get(_GATE_FILE, [])
+    assert set(changes) <= {_GATE_FILE}
+    assert len(found) == len(expected), found
+    for finding, part in zip(found, expected, strict=True):
+        assert part in finding
+
+
+@pytest.mark.parametrize(('before', 'after', 'expected'), [(False, True, 'became'), (True, False, 'is no longer')])
+def test_the_gate_refuses_a_released_message_gaining_or_losing_the_widget_mark(
+    before: bool, after: bool, expected: str
+) -> None:
+    """An older hook refuses every asset of a type it holds unmarked, and checks one it holds marked as a payload."""
+
+    def marked(widget: bool) -> descriptor_pb2.FileDescriptorSet:
+        files = _files(Holder=_HOLDER, Row=_ROW, Note=_NOTE)
+        if widget:
+            files.file[-1].message_type[0].options.Extensions[widget_pb2.widget] = True  # pyright: ignore[reportArgumentType]
+        return files
+
+    [finding] = buf_compat.ownership_changes(marked(before), marked(after))[_GATE_FILE]
+    assert f'Message "{_GATE_PACKAGE}.Holder" {expected} a widget payload' in finding

@@ -1,4 +1,4 @@
-import type { RecordedTip } from "./copy";
+import type { FileAtCommit, RecordedTip } from "./copy";
 import { requireObjectId } from "./git-objects";
 import type { EditOutcome } from "./publish";
 
@@ -11,6 +11,10 @@ export const PUBLISH_OUTCOME_UNKNOWN = "PublishOutcomeUnknownError";
 /** The name a request fails under when the repository is damaged, whatever the request was: a
  *  window shows it as such and does not retry it. */
 export const WORKSPACE_DAMAGED = "WorkspaceDamagedError";
+
+/** The name a publish fails under when the repository was found damaged after a send of the edit
+ *  went unanswered, so the edit may have landed before the damage was found. */
+export const PUBLISH_DAMAGED_AFTER_UNKNOWN = "PublishDamagedAfterUnknownError";
 
 /** A file a curator's edit replaces, with the new bytes the widget made from the file at the
  *  edit's base. */
@@ -54,8 +58,8 @@ export interface CopyResults {
   sync: undefined;
   /** The working document's markdown at the commit, or null when the commit has none. */
   readDocument: string | null;
-  /** The file's bytes at the commit, or null when it has no such file. */
-  readFile: Uint8Array | null;
+  /** The file's bytes and tree mode at the commit, or null when it has no such file. */
+  readFile: FileAtCommit | null;
   /** Each tip the reflog recorded for the collaborative branch, newest first. */
   history: RecordedTip[];
   reset: undefined;

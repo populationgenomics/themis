@@ -15,7 +15,7 @@ import pytest
 from themis import sheaf
 from themis.sheaf import compact, orphans
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import bare, reflog, server
+from themis.sheaf.wire import bare, protect, reflog, server
 
 REPO, REF = 'projects/case', 'refs/heads/main'
 SIDE_REF = 'refs/heads/side'
@@ -289,7 +289,9 @@ def test_a_clone_still_works_after_compaction(
     del seeded
     store = sheaf.Store(backend, REPO)
     compact.compact(store, _mirror(backend, tmp_path))
-    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         work = tmp_path / 'work'
         subprocess.run(
             ['git', 'clone', '-q', instance.url(REPO), str(work)],

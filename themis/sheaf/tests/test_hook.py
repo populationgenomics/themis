@@ -27,6 +27,12 @@ def _mark(repo: conftest.GitRepo, line: str) -> None:
     repo.append_line(ref=REF, path='annotations/review.jsonl', line=line, author=AUTHOR, message=line)
 
 
+def _hand_over(monkeypatch: pytest.MonkeyPatch, mirror: bare.BareRepo) -> None:
+    """Set the environment an unprotected server runs the hook with."""
+    for name, value in hook.environment(mirror, protect.Protection.unprotected()).items():
+        monkeypatch.setenv(name, value)
+
+
 @pytest.mark.parametrize('width', [40, 64])
 def test_parse_stdin_reads_creates_updates_and_deletes(width: int) -> None:
     """Both hash widths: git sends the zero oid at the repository's own hash length."""
@@ -52,7 +58,10 @@ def test_a_malformed_push_line_is_refused_rather_than_dropped() -> None:
 
 
 def test_a_push_is_rejected_when_the_store_moved_after_the_sync(
-    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    backend: sheaf.LocalBackend,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     curator = conftest.GitRepo.open(backend, REPO, tmp_path / 'curator.git')
     _mark(curator, 'PM2')
@@ -72,14 +81,36 @@ def test_a_push_is_rejected_when_the_store_moved_after_the_sync(
     assert store.read().generation != synced.generation
     assert store.read().tip(REF) == head
 
-    monkeypatch.setenv(hook.SYNC_STATE_ENV, str(mirror.sync_state_path))
-    monkeypatch.setenv(hook.GIT_DIR_ENV, str(mirror.path))
+    _hand_over(monkeypatch, mirror)
     monkeypatch.setattr('sys.stdin', io.StringIO(f'{head} {head} {REF}\n'))
 
     before = store.read()
     assert hook.main() == 1
     after = store.read()
     assert after.generation == before.generation, 'a push refused for a lost race must publish nothing'
+    assert 'the workspace moved' in capsys.readouterr().err
+
+
+def test_a_push_is_refused_when_the_server_handed_over_no_protection(
+    backend: sheaf.LocalBackend,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An absent variable is a server that forgot it, never one that protects nothing."""
+    curator = conftest.GitRepo.open(backend, REPO, tmp_path / 'curator.git')
+    _mark(curator, 'PM2')
+    store = sheaf.Store(backend, REPO)
+    mirror = bare.BareRepo(store, tmp_path / 'bare')
+    head = mirror.sync().tip(REF)
+    _hand_over(monkeypatch, mirror)
+    monkeypatch.delenv(protect.PATHS_ENV)
+    monkeypatch.setattr('sys.stdin', io.StringIO(f'{head} {head} {REF}\n'))
+
+    before = store.read()
+    assert hook.main() == 1
+    assert store.read().generation == before.generation
+    assert f'{protect.PATHS_ENV} is not set' in capsys.readouterr().err
 
 
 def test_an_empty_push_is_accepted_without_touching_the_store(

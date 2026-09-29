@@ -20,9 +20,10 @@ import {
 import { branchTip, COLLABORATIVE_BRANCH } from "../../workspace";
 import { FIXTURE_LIMITS, FixtureWorkspace, packPath } from "./workspace";
 import {
-  agentHistory,
+  AGENT,
   REFLOG_REF,
   type SeedPublish,
+  seededHistory,
   WORKING_DOCUMENT_PATH,
 } from "./workspace-seed";
 
@@ -165,7 +166,16 @@ describe("a seeded repository", () => {
   test("a history the store refuses part of is never visible, in whole or in part", async () => {
     // Its first publish is accepted and its second refused: the first alone must not be served as
     // what the agent published, on the read that found the refusal or on any after it.
-    const [first] = agentHistory(["# Draft\n"], new Date(1_700_000_000_000));
+    const [first] = seededHistory(
+      [
+        {
+          files: { [WORKING_DOCUMENT_PATH]: "# Draft\n" },
+          author: AGENT,
+          message: "Working document, version 1",
+        },
+      ],
+      new Date(1_700_000_000_000),
+    );
     const refused: SeedPublish = {
       ...first,
       refUpdates: {

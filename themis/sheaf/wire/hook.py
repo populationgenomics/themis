@@ -140,9 +140,17 @@ def main(argv: list[str] | None = None) -> int:
         return _refuse([f'{type(exc).__name__}: {exc}'], 'this is a deployment fault, not yours.')
     repo = bare.BareRepo(store, os.environ.get(GIT_DIR_ENV) or os.environ.get('GIT_DIR', '.'))
 
+    try:
+        content_check = protection.load_check()
+    except ValueError as exc:
+        return _refuse([str(exc)], 'this is a deployment fault, not yours.')
+
     # Policy first: a protection violation is a definite refusal, so report it even where the push
     # also lost a race — otherwise the pusher is told to retry something that can never succeed.
-    found = protect.violations(repo, updates, protection)
+    try:
+        found = protect.violations(repo, updates, protection, content_check)
+    except protect.ContentCheckError as exc:
+        return _refuse([str(exc)], 'this is a deployment fault, not yours.')
     if found:
         return _refuse([v.reason for v in found], *dict.fromkeys(v.remedy for v in found))
 

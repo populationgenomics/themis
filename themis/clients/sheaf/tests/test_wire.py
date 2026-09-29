@@ -18,7 +18,7 @@ from themis.clients.sheaf import store as remote_mod
 from themis.clients.sheaf.tests import conftest
 from themis.services.sheaf import servicer as servicer_mod
 from themis.sheaf.tests import conftest as sheaf_conftest
-from themis.sheaf.wire import bare, server
+from themis.sheaf.wire import bare, protect, server
 
 REPO = conftest.ANALYSIS_ID
 REF = conftest.REF
@@ -28,7 +28,7 @@ SHA_A = 'a' * 40
 @pytest.fixture
 def git_server(remote: remote_mod.RemoteStore, tmp_path: pathlib.Path) -> Iterator[server.SheafGitServer]:
     """A running loopback git server whose one repository is the remote store."""
-    with server.SheafGitServer([remote], tmp_path / 'bare') as instance:
+    with server.SheafGitServer([remote], tmp_path / 'bare', protection=protect.Protection.unprotected()) as instance:
         yield instance
 
 
@@ -226,7 +226,7 @@ def test_a_publish_the_service_refuses_reaches_the_pusher_as_a_refusal(
     with (
         conftest.serving(backend, limits) as target,
         remote_mod.RemoteStore(target, token_file, repo=REPO) as remote,
-        server.SheafGitServer([remote], tmp_path / 'bare') as instance,
+        server.SheafGitServer([remote], tmp_path / 'bare', protection=protect.Protection.unprotected()) as instance,
     ):
         work = _clone(instance, tmp_path, 'work')
         _commit(work, 'a.md', 'a\n', 'add a')
@@ -246,7 +246,7 @@ def test_a_service_that_goes_away_under_the_publish_is_a_deployment_fault(
     with (
         conftest.serving(backend, servicer_class=conftest.PublishDown) as target,
         remote_mod.RemoteStore(target, token_file, repo=REPO) as remote,
-        server.SheafGitServer([remote], tmp_path / 'bare') as instance,
+        server.SheafGitServer([remote], tmp_path / 'bare', protection=protect.Protection.unprotected()) as instance,
     ):
         work = _clone(instance, tmp_path, 'work')
         _commit(work, 'a.md', 'a\n', 'add a')

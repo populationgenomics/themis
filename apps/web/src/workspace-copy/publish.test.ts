@@ -21,6 +21,7 @@ import { sha256Hex } from "./pack";
 import {
   type Edit,
   PUBLISH_ATTEMPTS,
+  PublishDamagedAfterUnknownError,
   PublishOutcomeUnknownError,
   publishEdit,
   RetryBudgetSpentError,
@@ -447,7 +448,7 @@ describe("a curator's edit", () => {
     expect((await storeRefs()).get(COLLABORATIVE_BRANCH)).toBe(before);
   });
 
-  test("a publish never answered whose resend finds the repository damaged ends as damaged, not unknown", async () => {
+  test("a publish never answered whose resend finds the repository damaged ends as damaged after an unknown outcome", async () => {
     const before = tipOf(await hydrated());
     let publishes = 0;
     const damaged: Remote = {
@@ -460,7 +461,7 @@ describe("a curator's edit", () => {
     };
     await expect(
       publish(await markReviewed("PS3", before), damaged),
-    ).rejects.toBeInstanceOf(WorkspaceDamagedError);
+    ).rejects.toBeInstanceOf(PublishDamagedAfterUnknownError);
     expect(publishes).toBe(2);
     expect(await copy.pending()).toBeUndefined();
   });
@@ -486,7 +487,7 @@ describe("a curator's edit", () => {
     expect(publishes).toBe(1);
   });
 
-  test("a publish never answered whose document read finds the repository damaged ends as damaged", async () => {
+  test("a publish never answered whose document read finds the repository damaged ends as damaged after an unknown outcome", async () => {
     const before = tipOf(await hydrated());
     let publishes = 0;
     const damaged: Remote = {
@@ -503,7 +504,30 @@ describe("a curator's edit", () => {
     };
     await expect(
       publish(await markReviewed("PS3", before), damaged),
-    ).rejects.toBeInstanceOf(WorkspaceDamagedError);
+    ).rejects.toBeInstanceOf(PublishDamagedAfterUnknownError);
+    expect(await copy.pending()).toBeUndefined();
+  });
+
+  test("a resend refused as the branch moved, whose read of the document finds the repository damaged, ends as damaged after an unknown outcome", async () => {
+    const before = tipOf(await hydrated());
+    let publishes = 0;
+    const damaged: Remote = {
+      ...remote,
+      readRefDoc: async () => {
+        if (publishes > 1)
+          throw new WorkspaceDamagedError("the stored document does not parse");
+        return remote.readRefDoc();
+      },
+      publish: async () => {
+        publishes += 1;
+        if (publishes === 1) throw new PublishFaultError("no answer");
+        throw new PublishRefusedError("branchMoved", "moved");
+      },
+    };
+    await expect(
+      publish(await markReviewed("PS3", before), damaged),
+    ).rejects.toBeInstanceOf(PublishDamagedAfterUnknownError);
+    expect(publishes).toBe(2);
     expect(await copy.pending()).toBeUndefined();
   });
 

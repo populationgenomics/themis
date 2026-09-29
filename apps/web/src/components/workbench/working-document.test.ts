@@ -18,10 +18,14 @@ import type { ReadTip, WorkingDocumentSignal } from "./workspace-sync";
 const TIP = "9e27".padEnd(40, "0");
 const LATER = "a1b2".padEnd(40, "0");
 const AT_TIP: ReadTip = { kind: "commit", commit: TIP };
-const READ = (data: string | null | undefined, error: Error | null = null) => ({
+const READ = (
+  value: string | null | undefined,
+  error: Error | null = null,
+  pinned = false,
+) => ({
   isError: error !== null,
   error,
-  data,
+  data: value === undefined ? undefined : { commit: TIP, value, pinned },
 });
 const named = (name: string) => Object.assign(new Error(name), { name });
 const signal = (
@@ -38,7 +42,9 @@ const signal = (
 
 describe("the working-document state", () => {
   test("is loading until the Poll answers", () => {
-    expect(documentState(null, READ(undefined))).toEqual({ kind: "loading" });
+    expect(documentState(null, READ(undefined))).toEqual({
+      kind: "loading",
+    });
   });
 
   test("with no commit on the branch, is an Analysis with no workspace repository yet", () => {
@@ -57,6 +63,13 @@ describe("the working-document state", () => {
     expect(documentState(signal(AT_TIP), READ("# Doc\n"))).toEqual({
       kind: "shown",
       markdown: "# Doc\n",
+      commit: TIP,
+      pinned: false,
+    });
+    expect(
+      documentState(signal(AT_TIP), READ("# Doc\n", null, true)),
+    ).toMatchObject({
+      pinned: true,
     });
     expect(documentState(signal(AT_TIP), READ(undefined))).toEqual({
       kind: "loading",
@@ -100,6 +113,8 @@ describe("the working-document state", () => {
     expect(documentState(signal(AT_TIP, true), READ("# Doc\n"))).toEqual({
       kind: "shown",
       markdown: "# Doc\n",
+      commit: TIP,
+      pinned: false,
     });
     expect(
       documentState(signal({ kind: "noCommit" }, true), READ(undefined)),
@@ -221,6 +236,8 @@ describe("the signal from the Poll", () => {
     expect(documentState(failing, READ("# Doc\n"))).toEqual({
       kind: "shown",
       markdown: "# Doc\n",
+      commit: TIP,
+      pinned: false,
     });
   });
 

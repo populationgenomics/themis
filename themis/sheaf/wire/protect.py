@@ -2,18 +2,22 @@
 
 The history rules hold for every repository and are not configurable, and so does one rule on names:
 no new path may carry a backslash, which the workbench's git library cannot read. What the pushing side
-may write — which paths, and under whose name — is a `Protection` built from the process environment
-rather than from anything in the repository, so a push cannot relax the policy it is being checked
-against. Design: `docs/design/sheaf.md`.
+may write — which paths, under whose name, and what a content check the deployment names lets through —
+is a `Protection` built from the process environment rather than from anything in the repository, so a
+push cannot relax the policy it is being checked against. A content check is code the deployment names,
+which the hook calls for each new commit and knows nothing about. Design: `docs/design/sheaf.md`.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import importlib
 import os
+import pathlib
 import re
-from typing import override
+from collections.abc import Sequence
+from typing import Protocol, cast, override
 
 from themis.sheaf import store as store_mod
 from themis.sheaf.wire import bare, reflog
@@ -21,6 +25,7 @@ from themis.sheaf.wire import bare, reflog
 PATHS_ENV = 'SHEAF_PROTECTED_PATHS'
 PUSHER_NAME_ENV = 'SHEAF_PUSHER_NAME'
 PUSHER_EMAIL_ENV = 'SHEAF_PUSHER_EMAIL'
+CHECK_ENV = 'SHEAF_CONTENT_CHECK'
 SEPARATOR = ':'
 # Work a writer could not land on its branch, kept under a ref of its own for a later merge.
 STRANDED_NAMESPACE = 'refs/stranded'
@@ -31,6 +36,10 @@ _HISTORY_REMEDY = 'history here is append-only: push only branches and tags, and
 _PROTECTED_REMEDY = (
     'take each protected path out of the unpushed commit that writes it; a later commit that reverts '
     'it does not help, because every new commit is checked.'
+)
+_CONTENT_REMEDY = (
+    'change what each refusal names in the unpushed commit that makes it; a later commit that undoes it does not '
+    'help, because every new commit is checked.'
 )
 _UNREADABLE_REMEDY = (
     'rename each path with a backslash in the unpushed commit that adds it; a later rename does not help, '
@@ -64,6 +73,21 @@ _FIELD_NAME = re.compile(rb'^[\x21-\x7e]+$')
 # What may follow a commit's committer line, and how often; git writes these and nothing else there.
 _COMMIT_TRAILING_ONCE = frozenset({b'encoding', b'gpgsig', b'gpgsig-sha256'})
 _COMMIT_TRAILING_REPEATED = frozenset({b'mergetag'})
+
+
+class ContentCheckError(RuntimeError):
+    """The content check failed rather than answered: a fault of the deployment's, not of the push."""
+
+
+class ContentCheck(Protocol):
+    """A deployment's rule over what a commit writes.
+
+    Called once for each new commit a push carries, with the bare repository holding the pushed objects, the
+    commit, and its parents; returns why the commit may not land, one reason per line the pusher reads, empty when
+    it may. It reads what it needs with git itself.
+    """
+
+    def __call__(self, git_dir: pathlib.Path, commit: str, parents: Sequence[str]) -> list[str]: ...
 
 
 @dataclasses.dataclass(frozen=True)
@@ -119,8 +143,11 @@ class Protection:
     match in any case, because a curator's clone may sit on a case-insensitive filesystem.
     `pusher` is the pusher's own identity — the agent's, behind the sandbox worker — which every new
     commit's author and committer, and every new tag's tagger, must carry, name and email both, so
-    one naming anyone else is refused. Both are opt-in, and the storage layer stays free of them:
-    empty paths protect nothing, and no pusher accepts any identity.
+    one naming anyone else is refused. The storage layer stays free of both.
+
+    Every server is handed one, and passes it to the hook in full. Within it each rule may be left
+    out: empty paths protect nothing, no pusher accepts any identity, and no content check runs.
+    A server that wants none of them says so with `unprotected()`.
 
     Raises:
         ValueError: If a pattern is not casefolded, or contains `SEPARATOR`. Colons are legal in POSIX paths, and the
@@ -131,15 +158,28 @@ class Protection:
 
     paths: tuple[str, ...] = ()
     pusher: Identity | None = None
+    # A `ContentCheck`, as `module:attribute`; empty for none.
+    content_check: str = ''
 
     def __post_init__(self) -> None:
         splittable = sorted(p for p in self.paths if SEPARATOR in p)
         if splittable:
             raise ValueError(f'a protection pattern may not contain {SEPARATOR!r}: {splittable}')
+        if self.content_check and self.content_check.count(':') != 1:
+            raise ValueError(f'a content check is named as module:attribute, not {self.content_check!r}')
         # The path is folded to match; folding a pattern would also rewrite its bracket ranges ([A-z], [ß]).
         unfolded = sorted(p for p in self.paths if p != p.casefold())
         if unfolded:
             raise ValueError(f'a protection pattern is matched in any case, so it is written casefolded: {unfolded}')
+
+    @classmethod
+    def unprotected(cls) -> Protection:
+        """A protection that protects no path, accepts any identity, and runs no content check.
+
+        For a server whose pushers are all trusted, such as a developer's own or a test's. The history rules,
+        the header grammar and the readable-name rule still hold on it, as they do on every server.
+        """
+        return cls()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Protection:
@@ -149,23 +189,47 @@ class Protection:
             env: Mapping to read instead of `os.environ`.
 
         Raises:
-            ValueError: If the environment names the pusher's name without its email or the other way
-                round, or either is not something git can record; half an identity is a server
-                misbuilt, not one checking nothing.
+            ValueError: If the environment lacks `PATHS_ENV`, which `as_env` always sets, empty when no
+                path is protected; or names the pusher's name without its email or the other way
+                round, or either is not something git can record. Either is a server misbuilt, not
+                one checking nothing.
         """
         env = dict(os.environ if env is None else env)
+        if PATHS_ENV not in env:
+            raise ValueError(f'{PATHS_ENV} is not set: the server hands every hook its protection')
         name, email = env.get(PUSHER_NAME_ENV), env.get(PUSHER_EMAIL_ENV)
         if (name is None) != (email is None):
             raise ValueError(f'{PUSHER_NAME_ENV} and {PUSHER_EMAIL_ENV} are set together or not at all')
         return cls(
-            paths=tuple(p for p in env.get(PATHS_ENV, '').split(SEPARATOR) if p),
+            paths=tuple(p for p in env[PATHS_ENV].split(SEPARATOR) if p),
             pusher=None if name is None or email is None else Identity(name, email),
+            content_check=env.get(CHECK_ENV, ''),
         )
 
     def as_env(self) -> dict[str, str]:
         """Render for passing to the hook."""
         pusher = {} if self.pusher is None else {PUSHER_NAME_ENV: self.pusher.name, PUSHER_EMAIL_ENV: self.pusher.email}
-        return {PATHS_ENV: SEPARATOR.join(self.paths), **pusher}
+        check = {CHECK_ENV: self.content_check} if self.content_check else {}
+        return {PATHS_ENV: SEPARATOR.join(self.paths), **pusher, **check}
+
+    def load_check(self) -> ContentCheck | None:
+        """The content check this protection names, imported; None when it names none.
+
+        Raises:
+            ValueError: If the module cannot be imported or holds no callable of that name — a deployment fault, and
+                never a reason to accept the push unchecked.
+        """
+        if not self.content_check:
+            return None
+        module_name, attribute = self.content_check.split(':')
+        try:
+            check = getattr(importlib.import_module(module_name), attribute)
+        except (ImportError, AttributeError) as exc:
+            raise ValueError(f'the content check {self.content_check} cannot be loaded: {exc}') from exc
+        if not callable(check):
+            raise ValueError(f'the content check {self.content_check} is not callable')
+        # Its signature is the deployment's promise; a mismatch fails the first push it checks, loudly.
+        return cast('ContentCheck', check)
 
     def forbids(self, path: str) -> bool:
         """Whether `path` is off limits, in any case: a case-insensitive filesystem opens `.MailMap` as `.mailmap`."""
@@ -222,6 +286,16 @@ def new_commits(repo: bare.BareRepo, tip: str) -> list[str]:
     """
     out = bare.git('rev-list', tip, '--not', '--all', cwd=repo.path)
     return [line for line in out.decode().splitlines() if line]
+
+
+def parents(repo: bare.BareRepo, commit: str) -> list[str]:
+    """The parents of `commit`, in order.
+
+    Raises:
+        RuntimeError: If git cannot read the commit.
+    """
+    out = bare.git('rev-list', '--parents', '-n', '1', commit, cwd=repo.path)
+    return out.decode().split()[1:]
 
 
 def new_tags(repo: bare.BareRepo, tip: str) -> list[str]:
@@ -298,7 +372,12 @@ def _shown(raw: bytes) -> str:
     return raw.decode('utf-8', 'backslashreplace')
 
 
-def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], protection: Protection) -> list[Violation]:
+def violations(
+    repo: bare.BareRepo,
+    updates: dict[str, store_mod.RefUpdate],
+    protection: Protection,
+    content_check: ContentCheck | None = None,
+) -> list[Violation]:
     """Return why the push must be refused, empty if it is allowed.
 
     History first, for every ref: nothing outside `WRITABLE_NAMESPACES`, no deletion, no rewrite.
@@ -307,13 +386,15 @@ def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], pro
     the pre-receive hook, and only for branches, so relying on them would publish the rewrite before
     git refused it. Then each commit and annotated tag the store does not have yet: under whose name
     it was made, what a commit introduces at a protected path — compared against every parent, so a
-    merge taking the other side's edit verbatim passes — and whether it adds a name the workbench
-    cannot read. An object already in the store is never rechecked, so a merge bringing in another
+    merge taking the other side's edit verbatim passes — whether it adds a name the workbench
+    cannot read, and what the content check says of each commit, its reasons prefixed with the
+    commit. An object already in the store is never rechecked, so a merge bringing in another
     writer's commit passes.
 
     Raises:
         RuntimeError: If git cannot walk the pushed commits, in which case nothing is decided and
             the push must not be accepted.
+        ContentCheckError: If the content check fails rather than answers.
     """
     found = []
     commits: dict[str, None] = {}
@@ -335,7 +416,23 @@ def violations(repo: bare.BareRepo, updates: dict[str, store_mod.RefUpdate], pro
         found.extend(_identity_violations(recorded, list(commits), list(tags), protection.pusher))
     for commit in commits:
         found.extend(_path_violations(repo, commit, protection))
+        if content_check is not None:
+            reasons = _run_check(content_check, repo, commit)
+            found.extend(Violation(f'{commit[:12]} {reason}', _CONTENT_REMEDY) for reason in reasons)
     return found
+
+
+def _run_check(content_check: ContentCheck, repo: bare.BareRepo, commit: str) -> list[str]:
+    """What the content check says of `commit`.
+
+    Raises:
+        ContentCheckError: If the check raises anything at all: it is the deployment's code, and a check that fails is
+            never a pass.
+    """
+    try:
+        return content_check(repo.path, commit, parents(repo, commit))
+    except Exception as exc:
+        raise ContentCheckError(f'the content check failed on {commit[:12]}: {type(exc).__name__}: {exc}') from exc
 
 
 def _peels_to_commit(repo: bare.BareRepo, tip: str) -> bool:

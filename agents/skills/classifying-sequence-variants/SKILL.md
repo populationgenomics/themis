@@ -183,7 +183,8 @@ decided.
    judge, and call `classify_variant`.
 1. **Sensitivity.** Re-run the tally across each judgement input's plausible range, to find the class-determinative
    calls.
-1. **Write** the working document to the kickoff's outline. Commit and push.
+1. **Write** the working document to the kickoff's outline. Run `python3 -m themis.document_linter <document path>` and
+   fix every issue it names. Commit and push.
 1. **Review** (below), fold in the findings, commit.
 1. **Questions for the curator** (below). Commit, push, and end the turn.
 
@@ -220,6 +221,21 @@ outline and add no sections. What the outline does not say:
   to the value `observations.total` priced. State caps in the framework's wording.
 - **Reflection (f)** quotes the code a ready helper should have written, judged by whether getting it wrong would be
   easy and silent, not by length. (b) is about the services; (f) is about the code around them.
+- **Things the curator confirms one by one**, such as the assumptions your open items proceed on, go in a checklist
+  rather than a markdown list: build a `checklist_pb2.Checklist` (`from themis.widgets.models import checklist_pb2`;
+  the schema is `/usr/local/share/themis/widgets/checklist.proto`), write it with
+  `widgets.write('assets/<name>.binpb', checklist)` (`from themis.agent import widgets`), and put
+  `::embed[assets/<name>.binpb]` on a line of its own where the list belongs. A field the schema marks `guard`, such
+  as `checked`, is the user's judgement on the rest of its item, its label and citation: you never set it, and a push
+  that sets one is refused. To revise the list, pull, then `widgets.update('assets/<name>.binpb', build)`: `build`
+  gets the committed checklist and returns yours with every tick left unset, and `update` keeps each item's tick by
+  its `id` where you left the item's label and citation as they were. Rewording or re-citing an item the user ticked
+  clears the tick, so the user has to review that item again; `update` reports each tick it clears, and a push that
+  keeps a tick on a changed item, or clears one on an unchanged item, is refused. Removing an item, giving it a new
+  id, or moving the asset to another path (which starts it as a new asset) also discards the user's review:
+  restructure or reword a reviewed checklist only when the work calls for it, and never reuse an id for another item.
+  A merge that takes in the user's edits is refused: `git pull` rebases, and when the asset conflicts, resolve it
+  with `update` and `git rebase --continue`.
 
 ## Review before you finish
 

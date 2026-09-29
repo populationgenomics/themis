@@ -3,6 +3,7 @@
 import { File, FileText, Loader2, Paperclip } from "lucide-react";
 import type { ReactNode } from "react";
 import type { MenuItem } from "@/components/ui/dropdown-menu";
+import { useWidgetsSaving } from "@/components/widgets/widget-state";
 import { api, paperContent } from "@/lib/api";
 import { Representation } from "@/models/literature";
 import type { ConversationEvent } from "@/models/workbench";
@@ -47,6 +48,8 @@ export interface RenderContext {
   documentVersions: DocumentVersion[] | null;
   /** Clearing the browser's copy of the Analysis; null until the Poll names one. */
   clearCopy: CopyClearing | null;
+  /** The email the BFF verified for this window's page: who a widget edit is committed as. */
+  curatorEmail: string;
   /** The active paper's highlight quote, or undefined. */
   highlight: string | undefined;
   /** Reveal a citation beside its source pane (the pane binds its own ids into the `Source`). */
@@ -124,6 +127,8 @@ const workingDoc: ContentKind<WorkingDocPayload> = {
       document={ctx.workingDocument}
       unavailable={ctx.documentSignal?.unavailable === true}
       clearing={ctx.clearCopy}
+      signal={ctx.documentSignal}
+      curatorEmail={ctx.curatorEmail}
       onCitation={ctx.onCitation}
     />
   ),
@@ -156,9 +161,11 @@ const workingDoc: ContentKind<WorkingDocPayload> = {
     const pinned = pinnedDocumentCommit(payload, analysisId);
     return (
       <>
-        <span className="text-[11.5px] text-ink-faintest">
-          {pinned === null ? "Saved" : "Earlier version"}
-        </span>
+        {pinned === null ? (
+          <TipSaveState analysisId={analysisId} />
+        ) : (
+          <DocumentState text="Earlier version" />
+        )}
         <VersionDropdown
           versions={ctx.documentVersions}
           selected={pinned ?? tip}
@@ -172,6 +179,17 @@ const workingDoc: ContentKind<WorkingDocPayload> = {
     );
   },
 };
+
+/** The tip's save state: saving while a change made in any of the Analysis's widgets still waits on
+ *  its publish, and saved otherwise. */
+function TipSaveState({ analysisId }: { analysisId: string }): ReactNode {
+  const saving = useWidgetsSaving(analysisId);
+  return <DocumentState text={saving ? "Saving…" : "Saved"} />;
+}
+
+function DocumentState({ text }: { text: string }): ReactNode {
+  return <span className="text-[11.5px] text-ink-faintest">{text}</span>;
+}
 
 interface PaperPayload {
   docId: string;

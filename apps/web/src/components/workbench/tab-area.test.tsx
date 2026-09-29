@@ -79,6 +79,7 @@ function renderArea(win: Win): string {
           workingDocument: { kind: "absent" },
           documentSignal: null,
           documentVersions: null,
+          curatorEmail: "curator@example.org",
         }}
       >
         <TabArea

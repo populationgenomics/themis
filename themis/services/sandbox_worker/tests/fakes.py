@@ -23,10 +23,13 @@ from postern import stream
 from themis.services.sandbox_worker import git_hatches
 
 # The worker's guest git has the identity and the ext:: allowance from the guest rootfs's /etc/gitconfig; a host
-# stand-in supplies them per invocation, and reads no configuration of the developer's own.
-_GIT_CONFIG = [
+# stand-in supplies them per invocation, and reads no configuration of the developer's own. test_guest_rootfs.py holds
+# these to the settings the Dockerfile's guest stage writes.
+GIT_CONFIG = [
     '-c',
     'protocol.ext.allow=always',
+    '-c',
+    'pull.rebase=true',
     '-c',
     f'user.name={git_hatches.AGENT_IDENTITY.name}',
     '-c',
@@ -138,7 +141,7 @@ class HostGitSandbox:
         if argv[0] != 'git':
             raise ValueError(f'the worker runs only git in the guest, not {argv[0]!r}')
         self.calls.append(argv)
-        return self._run(['git', *_GIT_CONFIG, *argv[1:]], timeout=timeout)
+        return self._run(['git', *GIT_CONFIG, *argv[1:]], timeout=timeout)
 
     def run_python(self, code: str, *, timeout: float = 60) -> postern.ProcResult:
         return self._run([sys.executable, '-c', code], timeout=timeout)

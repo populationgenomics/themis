@@ -12,7 +12,7 @@ import {
   type SerializedError,
 } from "./protocol";
 import { PublishRefusedError } from "./remote";
-import { CopyService } from "./service";
+import { workerCopyService } from "./worker-service";
 
 // The SharedWorker that owns every copy of a workspace repository this browser holds. Each window
 // connects a port and sends requests; each is answered once, on the port it came from. Its script is
@@ -30,7 +30,7 @@ const client = createClient(
     defaultTimeoutMs: Math.max(...Object.values(DEADLINES.rpcMs)),
   }),
 );
-const service = new CopyService({
+const service = workerCopyService({
   storage: lightningStorage(),
   remote: (analysisId) => connectRemote(client, analysisId, origin, DEADLINES),
   ledger: indexedDbLedger(),

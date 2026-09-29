@@ -176,11 +176,15 @@ class GitRepo:
 
         return self._publish(ref=ref, author=author, message=message, build_files=build_files)
 
-    def write_files(self, *, ref: str, files: Mapping[str, str], author: Author, message: str) -> store_mod.Snapshot:
-        """Set `files` to the given contents, replacing whatever is there."""
+    def write_files(
+        self, *, ref: str, files: Mapping[str, str | bytes], author: Author, message: str
+    ) -> store_mod.Snapshot:
+        """Set `files` to the given contents, text or bytes, replacing whatever is there."""
 
         def build_files(_entries: Entries) -> dict[str, bytes]:
-            return {path: content.encode() for path, content in files.items()}
+            return {
+                path: content if isinstance(content, bytes) else content.encode() for path, content in files.items()
+            }
 
         return self._publish(ref=ref, author=author, message=message, build_files=build_files)
 

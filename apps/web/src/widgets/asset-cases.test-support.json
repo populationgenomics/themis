@@ -1,0 +1,124 @@
+{
+  "cases": [
+    {
+      "name": "a checklist, as encode writes it",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEgoQCAESAWEaCWNvbmZpcm0gYQ==",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": true
+    },
+    {
+      "name": "a checklist failing its rules",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEAoGEgFhGgF4CgYSAWEaAXk=",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "an Any over a message outside the widgets package",
+      "bytes": "Ci10eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASAggB",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "an Any over a widget type this build does not know",
+      "bytes": "CjJ0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5QZWRpZ3JlZRICCAE=",
+      "rule": "malformed",
+      "draws": false
+    },
+    {
+      "name": "a checklist whose payload does not parse",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSBAoFYWI=",
+      "rule": "malformed",
+      "draws": false
+    },
+    {
+      "name": "an empty file",
+      "bytes": "",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "a markdown file",
+      "bytes": "IyBOb3RlcwoKTm90aGluZyBoZXJlIGlzIGFuIGFzc2V0Lgo=",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "the type URL tagged as a varint",
+      "bytes": "CDN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEgoQCAESAWEaCWNvbmZpcm0gYQ==",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "the value tagged as a varint",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QQEgoQCAESAWEaCWNvbmZpcm0gYQ==",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "an unknown field whose varint runs past ten bytes",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEgoQCAESAWEaCWNvbmZpcm0gYRiAgICAgICAgICAAA==",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "the type URL, invalid UTF-8 before its last slash",
+      "bytes": "CiV0eXBl/y90aGVtaXMud2lkZ2V0cy5tb2RlbHMuQ2hlY2tsaXN0EhIKEAgBEgFhGgljb25maXJtIGE=",
+      "rule": "no asset",
+      "draws": false
+    },
+    {
+      "name": "an unknown field after the value",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEgoQCAESAWEaCWNvbmZpcm0gYRgB",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "an unknown group after the value",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSEgoQCAESAWEaCWNvbmZpcm0gYRsIARw=",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "the value before the type URL",
+      "bytes": "EhIKEAgBEgFhGgljb25maXJtIGEKM3R5cGUuZ29vZ2xlYXBpcy5jb20vdGhlbWlzLndpZGdldHMubW9kZWxzLkNoZWNrbGlzdA==",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "a second type URL, the last naming the checklist",
+      "bytes": "Ci10eXBlLmdvb2dsZWFwaXMuY29tL2dvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAKM3R5cGUuZ29vZ2xlYXBpcy5jb20vdGhlbWlzLndpZGdldHMubW9kZWxzLkNoZWNrbGlzdBISChAIARIBYRoJY29uZmlybSBh",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "the type URL's length as an overlong varint",
+      "bytes": "CrMAdHlwZS5nb29nbGVhcGlzLmNvbS90aGVtaXMud2lkZ2V0cy5tb2RlbHMuQ2hlY2tsaXN0EhIKEAgBEgFhGgljb25maXJtIGE=",
+      "rule": "type themis.widgets.models.Checklist",
+      "draws": false
+    },
+    {
+      "name": "a checklist whose tick is written in a wire type its schema does not give it",
+      "bytes": "CjN0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QSFwoVEgFhGgtQTTIgYXBwbGllcwoDCgFh",
+      "rule": "malformed",
+      "draws": false
+    },
+    {
+      "name": "an Any over a message in the widgets package the option does not mark",
+      "bytes": "Cjh0eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLm1vZGVscy5DaGVja2xpc3QuSXRlbRIICAESAWEaAXg=",
+      "rule": "malformed",
+      "draws": false
+    },
+    {
+      "name": "a tree whose map holds a stamp",
+      "bytes": "Ci10eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLmNhc2VzLlRyZWUSCjoICgFhEgMKAWI=",
+      "rule": "type themis.widgets.cases.Tree",
+      "draws": true
+    },
+    {
+      "name": "a tree whose map entry holds its value in a wire type its schema does not give it",
+      "bytes": "Ci10eXBlLmdvb2dsZWFwaXMuY29tL3RoZW1pcy53aWRnZXRzLmNhc2VzLlRyZWUSBzoFCgFhEAU=",
+      "rule": "malformed",
+      "draws": false
+    }
+  ]
+}

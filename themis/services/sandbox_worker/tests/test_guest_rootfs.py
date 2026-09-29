@@ -27,12 +27,14 @@ import importlib.metadata
 import itertools
 import pathlib
 import re
+import shlex
 import sys
 import tomllib
 
 import pytest
 
 from themis.services.sandbox_worker import _generated, git_hatches, worker
+from themis.services.sandbox_worker.tests import fakes
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / 'Dockerfile'
@@ -42,7 +44,7 @@ _SITE_PACKAGES = '/site-packages/'
 _TESTS = 'tests'
 _PYCACHE = '__pycache__'
 # The libraries the guest ships whole but for their tests: modules, data files and subpackages alike.
-_LIBRARIES = (_REPO_ROOT / 'themis' / 'svcv4', _REPO_ROOT / 'themis' / 'document_linter')
+_LIBRARIES = tuple(_REPO_ROOT / 'themis' / name for name in ('svcv4', 'document_linter', 'widgets'))
 _GLOB_CHARACTERS = '*?['
 # The generated guest contract tree, and where the guest stage lands its sources for the model to read.
 _GUEST_CONTRACT = _REPO_ROOT / 'themis' / 'services' / 'sandbox_worker' / 'guest_contract'
@@ -350,12 +352,16 @@ def test_the_guest_ships_the_distributions_its_modules_import() -> None:
     module counts as satisfied when any distribution providing its top-level name is in the group. The mapping
     comes from what is installed here, which need not carry every group; a name that resolves to nothing
     installed falls back to matching the group's own names, so a distribution absent locally is not read as one
-    the group fails to carry.
+    the group fails to carry. A top-level name the rootfs ships itself — `buf`, the buf.validate stub the payload
+    stubs import, which the `protovalidate` wheel expects its consumer to generate — needs no distribution.
     """
     providers = importlib.metadata.packages_distributions()
     locked = _locked_guest_distributions()
+    landings = frozenset(_guest_modules())
 
     def satisfied(root: str) -> bool:
+        if _resolves(root, landings):
+            return True
         candidates = providers.get(root) or [root]
         return any(_canonical(name) in locked for name in candidates)
 
@@ -382,6 +388,26 @@ def test_the_guest_stage_writes_the_gitconfig_the_profile_binds() -> None:
     identities = {(key, value) for run in configured for key, value in _SYSTEM_IDENTITY.findall(run)}
     expected = {('name', git_hatches.AGENT_IDENTITY.name), ('email', git_hatches.AGENT_IDENTITY.email)}
     assert identities == expected, f'the guest commits as {identities}; the hook admits {git_hatches.AGENT_IDENTITY}'
+    assert any('git config --system pull.rebase true' in run for run in configured), 'a pull would merge, not rebase'
     bound = dict(worker._build_profile(None).ro_binds)
     assert bound[worker._GUEST_ROOTFS + worker._GUEST_GITCONFIG] == worker._GUEST_GITCONFIG
     assert worker._GUEST_GITCONFIG == '/etc/gitconfig'  # where `git config --system` writes
+
+
+def test_the_host_stand_in_configures_git_as_the_guest_stage_does() -> None:
+    """The host stand-in for the guest's git passes the guest's system gitconfig as `-c` pairs, setting for setting.
+
+    The push tests run the agent's git through the stand-in, so a setting the guest stage adds and the stand-in lacks
+    passes them and fails a session: a pull that merges in the tests and rebases in the guest, say.
+    """
+    written: dict[str, str] = {}
+    for run in _RUN.finditer(_guest_stage()):
+        for command in run['argv'].split('&&'):
+            argv = shlex.split(command)
+            if argv[:3] == ['git', 'config', '--system']:
+                key, value = argv[3:]
+                written[key] = value
+    assert written, 'the guest stage writes no system gitconfig'
+    flags, settings = fakes.GIT_CONFIG[0::2], fakes.GIT_CONFIG[1::2]
+    assert set(flags) == {'-c'}
+    assert dict(setting.split('=', 1) for setting in settings) == written

@@ -92,6 +92,7 @@ export function Pane({
         documentSignal: data.documentSignal,
         documentVersions: data.documentVersions,
         clearCopy,
+        curatorEmail: data.curatorEmail,
         highlight: controller.state.highlights[activeTab.id],
         onCitation: (citation) => onCitation(win.id, pane.id, citation),
         patch: (payload) => controller.patchTab(activeTab.id, payload),

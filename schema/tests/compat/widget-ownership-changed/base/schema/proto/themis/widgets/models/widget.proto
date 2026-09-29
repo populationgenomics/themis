@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package themis.widgets.models;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MessageOptions {
+  bool widget = 50020;
+}
+
+message Guard {
+  repeated string ignores = 1;
+}
+
+extend google.protobuf.FieldOptions {
+  Guard guard = 50021;
+  bool element_key = 50022;
+}

@@ -2,6 +2,8 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { UnsavedChangesGuard } from "@/components/widgets/clear-guard";
+import { WidgetStatesProvider } from "@/components/widgets/widget-state";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // Created in state, not module scope: a module-scope client would be shared
@@ -10,6 +12,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <WidgetStatesProvider>
+        <UnsavedChangesGuard>{children}</UnsavedChangesGuard>
+      </WidgetStatesProvider>
+    </QueryClientProvider>
   );
 }

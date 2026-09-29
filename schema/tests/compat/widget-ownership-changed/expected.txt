@@ -1,0 +1,5 @@
+::error::compat themis/widgets/models/sample.proto: ownership change(s) vs origin/main:
+  Field "2" with name "done" on message "themis.widgets.models.Sample.Row" now ignores label, released before it; a push hook built before the change still clears the judgement when it changes.
+  Message "themis.widgets.models.Sample.Note" gained the guard seen; a push hook built before the change reads it as a field it does not know.
+  Message "themis.widgets.models.Sample.Note" held no guard, directly or beneath it, and now holds one; a push hook built before the change does not compare it.
+FAIL: compat gate: 1 proto contract(s) change a released widget message's judgements — a released field keeps its guard and element_key, a guard ignores only fields new with the change, and a released message gains no guard and keeps its widget mark

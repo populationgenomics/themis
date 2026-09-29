@@ -15,7 +15,7 @@ from themis.document_linter import linter
 def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit('usage: python -m themis.document_linter <document.md>')
-    issues = linter.lint(pathlib.Path(sys.argv[1]).read_text())
+    issues = linter.lint_document(pathlib.Path(sys.argv[1]))
     for issue in issues:
         print(f'lint: {issue}', file=sys.stderr)
     raise SystemExit(1 if issues else 0)

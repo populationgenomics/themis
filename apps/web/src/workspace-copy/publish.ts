@@ -4,7 +4,10 @@ import { COLLABORATIVE_BRANCH, splitPath, type WorkspaceCopy } from "./copy";
 import { isTreeMode, type TreeEntry, utf8 } from "./git-objects";
 import type { Hydrated } from "./hydrate";
 import { sha256Hex } from "./pack";
-import { PUBLISH_OUTCOME_UNKNOWN } from "./protocol";
+import {
+  PUBLISH_DAMAGED_AFTER_UNKNOWN,
+  PUBLISH_OUTCOME_UNKNOWN,
+} from "./protocol";
 import { REFLOG_REF, recordEntry } from "./reflog";
 import {
   PublishFaultError,
@@ -69,6 +72,15 @@ export class PublishOutcomeUnknownError extends Error {
   }
 }
 
+/** The repository was found damaged after a send of the edit went unanswered: the edit may have
+ *  landed before the damage, and nothing sent or read can settle it. */
+export class PublishDamagedAfterUnknownError extends Error {
+  constructor(message: string, options: { cause: WorkspaceDamagedError }) {
+    super(message, options);
+    this.name = PUBLISH_DAMAGED_AFTER_UNKNOWN;
+  }
+}
+
 /** Brings the copy to the current document under the caller's lock, and returns it. */
 export type Rehydrate = () => Promise<Hydrated>;
 
@@ -91,7 +103,8 @@ interface Prepared {
  * brought to. Raises before any read for an edit that replaces no file or names a path a
  * repository cannot hold. Raises `PublishRefusedError` for an edit over a ceiling or malformed,
  * which is never resent; `WorkspaceDamagedError` as soon as a publish, or a read of the document
- * before the edit is known to have landed, finds the repository damaged, with nothing sent again;
+ * before the edit is known to have landed, finds the repository damaged, with nothing sent again,
+ * and `PublishDamagedAfterUnknownError` in its place when a send of the edit went unanswered first;
  * `PublishOutcomeUnknownError` when the attempts run out with the last one unanswered and not
  * shown landed; `RetryBudgetSpentError` when they run out otherwise; and any other failure as it
  * came.
@@ -142,7 +155,8 @@ export async function publishEdit(
           continue;
         }
         // Ahead of a resend's failure becoming an unknown outcome: damage ends the edit either way.
-        if (error instanceof WorkspaceDamagedError) throw error;
+        if (error instanceof WorkspaceDamagedError)
+          throw damaged(error, resent, prepared.commit);
         if (!(error instanceof PublishRefusedError)) {
           // A resend's failure says nothing of the publish before it, which went unanswered.
           if (resent) {
@@ -154,7 +168,14 @@ export async function publishEdit(
           throw error;
         }
         if (error.refusal === "raceLost" || error.refusal === "branchMoved") {
-          state = await rehydrate();
+          try {
+            state = await rehydrate();
+          } catch (failure) {
+            // After a refused resend, only the document says whether the send before it landed.
+            if (failure instanceof WorkspaceDamagedError)
+              throw damaged(failure, resent, prepared.commit);
+            throw failure;
+          }
           const moved = state.refs.get(COLLABORATIVE_BRANCH);
           if (
             moved !== undefined &&
@@ -217,7 +238,8 @@ export async function publishEdit(
       try {
         state = await rehydrate();
       } catch (error) {
-        if (error instanceof WorkspaceDamagedError) throw error;
+        if (error instanceof WorkspaceDamagedError)
+          throw damaged(error, true, prepared.commit);
         throw new PublishOutcomeUnknownError(
           `${prepared.commit} was published and never answered, and the document could not be read`,
           { cause: error },
@@ -241,6 +263,21 @@ export async function publishEdit(
   } finally {
     await copy.clearPending();
   }
+}
+
+/** The failure the repository's damage ends an edit with: as it came, or, when `unanswered`, a send
+ *  of `commit` went unanswered before it, marked so. */
+function damaged(
+  error: WorkspaceDamagedError,
+  unanswered: boolean,
+  commit: string,
+): Error {
+  return unanswered
+    ? new PublishDamagedAfterUnknownError(
+        `${commit} was published and never answered, and the repository is damaged`,
+        { cause: error },
+      )
+    : error;
 }
 
 /** Raises unless `paths`, the files an edit replaces, name at least one file, each at a path a

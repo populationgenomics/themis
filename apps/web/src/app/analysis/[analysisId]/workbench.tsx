@@ -35,6 +35,7 @@ import {
   WORKING_DOC_TAB_ID,
 } from "@/components/workbench/workspace-model";
 import { usePoll } from "@/lib/queries";
+import { useTipAnnouncements } from "@/lib/tip-announcements";
 
 /** The Analysis as its page resolved it — identity fixed for the life of the page, so it arrives as
  *  props rather than through a query the browser repeats. */
@@ -136,6 +137,7 @@ export function Workbench({
 
   const poll = usePoll(analysisId);
   useCopyClearedAnnouncements(analysisId);
+  useTipAnnouncements(analysisId);
   const pinnedCommit = pinnedDocumentCommit(
     findTab(workspace.state, WORKING_DOC_TAB_ID)?.payload,
     analysisId,
@@ -226,6 +228,7 @@ export function Workbench({
             workingDocument: workingDocument.document,
             documentSignal: workingDocumentSignal,
             documentVersions: workingDocument.versions,
+            curatorEmail: userEmail,
           }}
         >
           {(() => {

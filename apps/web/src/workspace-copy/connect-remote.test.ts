@@ -220,6 +220,7 @@ describe("a hydration whose download stalls", () => {
     } as unknown as Parameters<typeof connectRemote>[0];
     const records = new Map<string, CopyRecord>();
     const copies = new CopyService({
+      checkEdit: () => {},
       storage: {
         open: async (id) => directoryStorage(path.join(scratch.dir, id)),
         remove: async () => {},

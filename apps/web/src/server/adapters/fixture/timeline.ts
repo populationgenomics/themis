@@ -1,15 +1,24 @@
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { requireInputs } from "@/lib/scenario";
+import { ChecklistSchema } from "@/models/widgets";
 import {
   type Analysis,
   type ConversationEvent,
   ConversationEventSchema,
   SubAgentStatus,
 } from "@/models/workbench";
+import { writePayload } from "@/widgets/asset";
 import { kickoffText } from "../../kickoff";
 import { projectToolCall } from "../../tool-projection";
+import { DEV_USER_EMAIL } from "./identity";
 import { DOC_OCR, DOC_XML, XML_QUOTE } from "./literature";
+import {
+  AGENT,
+  type SeedCommit,
+  type SeedFiles,
+  WORKING_DOCUMENT_PATH,
+} from "./workspace-seed";
 
 // The scripted run the fixture reveals one stage per poll. Deterministic: a pure
 // function of (analysis, run state), so the poll→update loop is reproducible. Event
@@ -158,6 +167,51 @@ The finding draws on :paper[${DOC_XML}], specifically that :quote[${DOC_XML}, ${
 A scanned source :paper[${DOC_OCR}] is also cited, though the phrase :quote[${DOC_OCR}, a sentence not present in the scan] cannot be located in it.
 A malformed reference :paper[not-a-real-id] renders as broken.`;
 
+/** The checklist the corrected document embeds, and where the agent writes it. */
+const CHECKLIST_PATH = "assets/curator-checks.binpb";
+
+/** An asset the corrected document names before the agent has written it: a mid-edit state, which
+ *  the document pane draws as a placeholder. */
+const UNWRITTEN_ASSET_PATH = "assets/pedigree.binpb";
+
+/** What the corrected document adds after its Sources: the things the curator confirms, as a
+ *  checklist widget, and a widget whose asset is still to come. */
+const CHECKS_FINAL = `### Curator checks
+
+::embed[${CHECKLIST_PATH}]
+
+::embed[${UNWRITTEN_ASSET_PATH}]`;
+
+/** The Sources paragraph and what follows it once the run corrects them. */
+const EDITED_FINAL = `${SOURCES_FINAL}\n\n${CHECKS_FINAL}`;
+
+/** The checklist's asset as the agent's helper writes it: the payload validated, wrapped in an
+ *  Any and serialized. */
+function checklistAsset(ticked: ReadonlySet<string>): Uint8Array {
+  const checklist = create(ChecklistSchema, {
+    items: [
+      {
+        id: "regulatory-finding",
+        label: "The regulatory finding holds in the cited paper",
+        citation: { docId: DOC_XML, quote: XML_QUOTE },
+      },
+      {
+        id: "scanned-source",
+        label: "The scanned source supports the finding",
+        citation: { docId: DOC_OCR, quote: "" },
+      },
+      {
+        id: "hello-binding",
+        label: "The hello probe resolved this Analysis's own session",
+      },
+    ].map((item) => ({ ...item, checked: ticked.has(item.id) })),
+  });
+  return writePayload(ChecklistSchema, checklist);
+}
+
+/** The item a user ticked on a finished run's checklist, after the agent wrote it. */
+const TICKED_ITEM = "hello-binding";
+
 /** The document the agent writes at stage 2, before it corrects the Sources paragraph. */
 function documentDraft(analysis: Analysis): string {
   return [
@@ -178,7 +232,7 @@ function renderDocument(analysis: Analysis): string {
   if (!draft.includes(SOURCES_DRAFT)) {
     throw new Error("the scripted edit does not apply to the drafted document");
   }
-  return draft.replace(SOURCES_DRAFT, SOURCES_FINAL);
+  return draft.replace(SOURCES_DRAFT, EDITED_FINAL);
 }
 
 /** The produced document bodies, v1 first: the draft the `write` lands, then the
@@ -415,7 +469,7 @@ function editSources(result?: {
     input: {
       file_path: DOCUMENT_PATH,
       old_string: SOURCES_DRAFT,
-      new_string: SOURCES_FINAL,
+      new_string: EDITED_FINAL,
     },
     result,
   });
@@ -720,4 +774,35 @@ export function documentMarkdown(analysis: Analysis, version: number): string {
     throw new Error(`no such document version: ${version}`);
   }
   return render(analysis);
+}
+
+/** The files the agent's commit of a document version (1-based) writes: the working document, and
+ *  each asset that version embeds and the agent has written. Throws on a version the run never
+ *  produces. */
+export function documentFiles(analysis: Analysis, version: number): SeedFiles {
+  const markdown = documentMarkdown(analysis, version);
+  return version === FINAL_DOC_VERSION
+    ? {
+        [WORKING_DOCUMENT_PATH]: markdown,
+        [CHECKLIST_PATH]: checklistAsset(new Set()),
+      }
+    : { [WORKING_DOCUMENT_PATH]: markdown };
+}
+
+/** A finished run's history: the agent's commit of each document version, then a user's tick on
+ *  its checklist, committed as the workbench commits one. */
+export function finishedHistory(analysis: Analysis): SeedCommit[] {
+  const agent = Array.from({ length: FINAL_DOC_VERSION }, (_, i) => ({
+    files: documentFiles(analysis, i + 1),
+    author: AGENT,
+    message: `Working document, version ${i + 1}`,
+  }));
+  return [
+    ...agent,
+    {
+      files: { [CHECKLIST_PATH]: checklistAsset(new Set([TICKED_ITEM])) },
+      author: { name: DEV_USER_EMAIL, email: DEV_USER_EMAIL },
+      message: `Check ${TICKED_ITEM} in ${CHECKLIST_PATH}`,
+    },
+  ];
 }

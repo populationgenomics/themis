@@ -22,10 +22,11 @@ import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
 import {
   afterPoll,
   awaitingToolResult,
-  documentMarkdown,
+  documentFiles,
   FANOUT_PARTIAL_REVEAL,
   FANOUT_SPAWNED_REVEAL,
   FINAL_DOC_VERSION,
+  finishedHistory,
   initialRunState,
   interrupted,
   type RunState,
@@ -35,7 +36,6 @@ import {
   timelineAt,
 } from "./timeline";
 import type { FixtureWorkspace } from "./workspace";
-import { WORKING_DOCUMENT_PATH } from "./workspace-seed";
 
 interface Entry {
   analysis: Analysis;
@@ -206,10 +206,11 @@ export class FixtureDataPlane implements AnalysisDataPlane {
         entry.run = { ...entry.run, revealed: SCRIPTED_STAGES };
         entry.revealedDocVersion = FINAL_DOC_VERSION;
         entry.publishedDocVersion = FINAL_DOC_VERSION;
-        const documents = Array.from({ length: FINAL_DOC_VERSION }, (_, i) =>
-          documentMarkdown(entry.analysis, i + 1),
+        workspace.seedCommits(
+          entry.analysis.id,
+          finishedHistory(entry.analysis),
+          createdAt,
         );
-        workspace.seedAgentHistory(entry.analysis.id, documents, createdAt);
       } else if (seed.reveal !== "start") {
         entry.run = { ...entry.run, revealed: seed.reveal.heldAt, held: true };
       }
@@ -294,7 +295,7 @@ export class FixtureDataPlane implements AnalysisDataPlane {
       this.workspace.agentPublishes(
         entry.analysis.id,
         COLLABORATIVE_BRANCH,
-        { [WORKING_DOCUMENT_PATH]: documentMarkdown(entry.analysis, version) },
+        documentFiles(entry.analysis, version),
         new Date(created + (version - 1) * 60_000),
       );
       entry.publishedDocVersion = version;

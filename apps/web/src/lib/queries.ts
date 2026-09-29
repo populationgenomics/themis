@@ -16,7 +16,7 @@ import {
   type ThreadResponse,
 } from "@/models/workbench";
 import { workspaceCopy } from "@/workspace-copy/client";
-import type { RecordedTip } from "@/workspace-copy/copy";
+import type { FileAtCommit, RecordedTip } from "@/workspace-copy/copy";
 
 // TanStack Query wiring for what the browser must keep asking for: the liveness poll over the
 // generated Workbench client (`@/lib/rpc`), and the working document it signals, read from the
@@ -126,17 +126,36 @@ export function resetWorkspaceReads(
   return Promise.all([
     queryClient.resetQueries({ queryKey: ["workspace-document", analysisId] }),
     queryClient.resetQueries({ queryKey: ["workspace-history", analysisId] }),
+    queryClient.resetQueries({ queryKey: ["workspace-file", analysisId] }),
   ]).then(() => undefined);
+}
+
+/** What was read at a commit, beside the commit: a query keeps the previous commit's read on screen
+ *  while the next loads, and what is drawn from it has to name the commit it came from. */
+export interface ReadAt<T> {
+  commit: string;
+  value: T;
+}
+
+/** A working document read at a commit, and whether it was read as the commit the working-doc tab
+ *  pins: a body kept on screen while the next loads says what it was read as. */
+export interface DocumentRead extends ReadAt<string | null> {
+  pinned: boolean;
 }
 
 /** The working document at `commit`, read from the browser's copy of the Analysis's workspace
  *  repository once the copy holds `tip`: the Poll's tip when following the branch, an earlier
- *  commit when the working-doc tab pins one. Null data is a commit with no working document. */
+ *  commit when the working-doc tab pins one. A null value is a commit with no working document. */
 export function useWorkspaceDocument(
-  key: { analysisId: string; tip: string; commit: string } | null,
-): UseQueryResult<string | null> {
+  key: {
+    analysisId: string;
+    tip: string;
+    commit: string;
+    pinned: boolean;
+  } | null,
+): UseQueryResult<DocumentRead> {
   return useQuery({
-    queryKey: ["workspace-document", key?.analysisId, key?.commit],
+    queryKey: ["workspace-document", key?.analysisId, key?.commit, key?.pinned],
     queryFn: async () => {
       if (key === null) {
         throw new Error(
@@ -144,7 +163,11 @@ export function useWorkspaceDocument(
         );
       }
       await workspaceCopy.sync(key.analysisId, key.tip);
-      return workspaceCopy.readDocument(key.analysisId, key.commit);
+      return {
+        commit: key.commit,
+        value: await workspaceCopy.readDocument(key.analysisId, key.commit),
+        pinned: key.pinned,
+      };
     },
     enabled: key !== null,
     // A commit never changes, so a document read at one never goes stale.
@@ -177,5 +200,39 @@ export function useWorkspaceHistory(
     retry: retryCopy,
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[1] === key?.analysisId ? previous : undefined,
+  });
+}
+
+/** The file at `path` in `commit`, its bytes and tree mode, read from the browser's copy once it holds
+ *  `tip`: an asset a working-document widget draws. A null value is a commit with no such file. */
+export function useWorkspaceFile(
+  key: { analysisId: string; tip: string; commit: string; path: string } | null,
+): UseQueryResult<ReadAt<FileAtCommit | null>> {
+  return useQuery({
+    queryKey: ["workspace-file", key?.analysisId, key?.commit, key?.path],
+    queryFn: async () => {
+      if (key === null) {
+        throw new Error("useWorkspaceFile query ran with no file to read");
+      }
+      await workspaceCopy.sync(key.analysisId, key.tip);
+      return {
+        commit: key.commit,
+        value: await workspaceCopy.readFile(
+          key.analysisId,
+          key.commit,
+          key.path,
+        ),
+      };
+    },
+    enabled: key !== null,
+    // A commit never changes, so a file read at one never goes stale.
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: retryCopy,
+    // Keep the previous commit's asset drawn while the next commit's loads, never another file's.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === key?.analysisId &&
+      previousQuery?.queryKey[3] === key?.path
+        ? previous
+        : undefined,
   });
 }

@@ -14,6 +14,17 @@ export const REFLOG_REF = "refs/sheaf/reflog";
 /** The file the working document is at the branch tip (docs/design/workbench-workspace.md). */
 export const WORKING_DOCUMENT_PATH = "working_document.md";
 
+/** What an agent commit writes at a path: a regular file's content, content with the mode its tree
+ *  entry gets, or null to delete the file there. */
+export type AgentFile =
+  | string
+  | Uint8Array
+  | { content: string | Uint8Array; mode: string }
+  | null;
+
+/** The files one agent commit writes, by repository path, over the tree it is built on. */
+export type SeedFiles = Readonly<Record<string, AgentFile>>;
+
 /** One publish of the agent's history: the refs it moves and the pack it carries. */
 export interface SeedPublish {
   refUpdates: Record<string, { old?: string; new: string }>;
@@ -22,7 +33,24 @@ export interface SeedPublish {
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const ZERO_OID = "0".repeat(40);
-const AGENT = { name: "Themis agent", email: "agent@themis.invalid" };
+/** Who a seeded commit is authored and committed as. */
+export interface Identity {
+  name: string;
+  email: string;
+}
+
+export const AGENT: Identity = {
+  name: "Themis agent",
+  email: "agent@themis.invalid",
+};
+
+/** One commit of a seeded history: the files it writes over the previous commit's tree, who made it,
+ *  and its message. */
+export interface SeedCommit {
+  files: SeedFiles;
+  author: Identity;
+  message: string;
+}
 const SHEAF = { name: "sheaf", email: "sheaf@localhost" };
 
 type GitEnv = Record<string, string>;
@@ -66,7 +94,11 @@ function runGit(
   }
 }
 
-type Git = (args: readonly string[], input?: string, env?: GitEnv) => string;
+type Git = (
+  args: readonly string[],
+  input?: string | Uint8Array,
+  env?: GitEnv,
+) => string;
 
 function identity(who: { name: string; email: string }, at: Date): GitEnv {
   const date = `${Math.floor(at.getTime() / 1000)} +0000`;
@@ -133,17 +165,60 @@ function reflogEntry(
   );
 }
 
-/** The agent's history for `documents`, oldest first: publish `i` commits `documents[i]` as the
- *  working document on the collaborative branch. Commit `i` is dated `i` minutes after
- *  `authoredAt`.
+/** The tree of `base` (none: the empty tree) with `files` written over it, built through a scratch
+ *  index so a path may name directories. */
+function writeTree(
+  git: Git,
+  scratch: string,
+  base: string | undefined,
+  files: SeedFiles,
+): string {
+  const index = { GIT_INDEX_FILE: path.join(scratch, "agent.index") };
+  if (base === undefined) git(["read-tree", "--empty"], undefined, index);
+  else git(["read-tree", base], undefined, index);
+  for (const [filePath, file] of Object.entries(files)) {
+    if (file === null) {
+      if (!holdsFile(git, base, filePath)) {
+        throw new Error(
+          `the agent deletes ${filePath}, which the tip does not hold`,
+        );
+      }
+      // Mode 0 removes the entry; --force-remove would need a work tree.
+      git(
+        ["update-index", "--index-info"],
+        `0 ${"0".repeat(40)}\t${filePath}\n`,
+        index,
+      );
+      continue;
+    }
+    const { content, mode } =
+      typeof file === "string" || file instanceof Uint8Array
+        ? { content: file, mode: "100644" }
+        : file;
+    const blob = git(["hash-object", "-w", "--stdin"], content);
+    git(
+      ["update-index", "--add", "--cacheinfo", `${mode},${blob},${filePath}`],
+      undefined,
+      index,
+    );
+  }
+  return git(["write-tree"], undefined, index);
+}
+
+/** The history `commits` make, oldest first, as its writers' publishes would have left it: publish
+ *  `i` commits `commits[i]`'s files over the previous commit's tree on the collaborative branch, as
+ *  its author. Commit `i` is dated `i` minutes after `authoredAt`.
  *
- *  Raises when `documents` is empty, or when `git` is missing or fails. */
-export function agentHistory(
-  documents: readonly string[],
+ *  Raises when `commits` is empty or one writes no file, or when `git` is missing or fails. */
+export function seededHistory(
+  commits: readonly SeedCommit[],
   authoredAt: Date,
 ): SeedPublish[] {
-  if (documents.length === 0) {
-    throw new Error("an agent history publishes at least one document");
+  if (commits.length === 0) {
+    throw new Error("a seeded history publishes at least one commit");
+  }
+  if (commits.some((commit) => Object.keys(commit.files).length === 0)) {
+    throw new Error("a seeded commit writes at least one file");
   }
   const scratch = mkdtempSync(path.join(tmpdir(), "themis-fixture-workspace-"));
   try {
@@ -154,19 +229,15 @@ export function agentHistory(
     const publishes: SeedPublish[] = [];
     let tip: string | undefined;
     let reflog: string | undefined;
-    for (const [index, markdown] of documents.entries()) {
+    for (const [index, seeded] of commits.entries()) {
       const at = new Date(authoredAt.getTime() + index * 60_000);
-      const blob = git(["hash-object", "-w", "--stdin"], markdown);
-      const tree = git(
-        ["mktree"],
-        `100644 blob ${blob}\t${WORKING_DOCUMENT_PATH}\n`,
-      );
+      const tree = writeTree(git, scratch, tip, seeded.files);
       const commit = commitTree(
         git,
         tree,
         tip === undefined ? [] : [tip],
-        `Working document, version ${index + 1}`,
-        identity(AGENT, at),
+        seeded.message,
+        identity(seeded.author, at),
       );
       // A repository's first entry is parented on a parentless root sheaf wrote, so a first-parent
       // walk of the chain ends on sheaf's own commit.
@@ -215,10 +286,6 @@ export interface RepositoryState {
   reflog: string | undefined;
 }
 
-/** What an agent publish writes at a path: a regular file's content, content with the mode its
- *  tree entry gets, or null to delete the file there. */
-export type AgentFile = string | { content: string; mode: string } | null;
-
 /** The agent's next publish on `state`: one commit on `state.branch`'s tip writing `files` over the
  *  tip's tree, dated `at`, as a real agent's pull-then-push would leave it. Built in a scratch
  *  repository holding `state`'s packs, so it builds on whatever landed last, a curator's commit
@@ -228,7 +295,7 @@ export type AgentFile = string | { content: string; mode: string } | null;
  *  missing or fails. */
 export function agentPublish(
   state: RepositoryState,
-  files: Readonly<Record<string, AgentFile>>,
+  files: SeedFiles,
   at: Date,
 ): SeedPublish {
   if (Object.keys(files).length === 0) {
@@ -243,34 +310,7 @@ export function agentPublish(
     for (const pack of state.packs) {
       runGit(scratch, ["index-pack", "--stdin"], pack);
     }
-    const index = { GIT_INDEX_FILE: path.join(scratch, "agent.index") };
-    if (state.tip !== undefined)
-      git(["read-tree", state.tip], undefined, index);
-    for (const [filePath, content] of Object.entries(files)) {
-      if (content === null) {
-        if (!holdsFile(git, state.tip, filePath)) {
-          throw new Error(
-            `the agent deletes ${filePath}, which the tip does not hold`,
-          );
-        }
-        // Mode 0 removes the entry; --force-remove would need a work tree.
-        git(
-          ["update-index", "--index-info"],
-          `0 ${"0".repeat(40)}\t${filePath}\n`,
-          index,
-        );
-        continue;
-      }
-      const { content: bytes, mode } =
-        typeof content === "string" ? { content, mode: "100644" } : content;
-      const blob = git(["hash-object", "-w", "--stdin"], bytes);
-      git(
-        ["update-index", "--add", "--cacheinfo", `${mode},${blob},${filePath}`],
-        undefined,
-        index,
-      );
-    }
-    const tree = git(["write-tree"], undefined, index);
+    const tree = writeTree(git, scratch, state.tip, files);
     const commit = commitTree(
       git,
       tree,

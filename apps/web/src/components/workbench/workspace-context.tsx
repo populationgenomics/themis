@@ -18,6 +18,8 @@ export interface WorkspaceData {
   documentSignal: WorkingDocumentSignal | null;
   /** The versions the picker lists, newest first; null until the copy has been read. */
   documentVersions: DocumentVersion[] | null;
+  /** The email the BFF verified for this window's page: who a widget edit is committed as. */
+  curatorEmail: string;
 }
 
 const WorkspaceDataContext = createContext<WorkspaceData | null>(null);

@@ -38,8 +38,11 @@ AGENT_IDENTITY = protect.Identity(name='Themis agent', email='agent@localhost')
 # What the guest may never write: its ignored scratch, the skills the SDK lays down every spawn, and a `.mailmap`,
 # through which git's own readers would show the agent's commits under a curator's name. The bare names too: a
 # symlink committed at `skills` is recreated by the next session's clone, and the SDK resolves it before it writes.
+# And no push may alter a field a widget's schema gives to a user.
 PROTECTION = protect.Protection(
-    paths=('scratch', 'scratch/**', 'skills', 'skills/**', '.mailmap', '**/.mailmap'), pusher=AGENT_IDENTITY
+    paths=('scratch', 'scratch/**', 'skills', 'skills/**', '.mailmap', '**/.mailmap'),
+    pusher=AGENT_IDENTITY,
+    content_check='themis.services.sandbox_worker.widget_check:check',
 )
 
 _logger = logging.getLogger(__name__)

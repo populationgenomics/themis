@@ -29,12 +29,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #     worker's userland or credentials. ---
 FROM base AS guest
 # The agent's git, and the system gitconfig its clone of the Analysis repository needs: `ext::` is how git reaches
-# the stream hatch and is gated behind protocol.ext.allow; the identity is what its commits carry. postern binds
-# only the rootfs's /usr, /lib and /bin, so the worker binds this file into the guest's /etc on its own.
+# the stream hatch and is gated behind protocol.ext.allow; the identity is what its commits carry; a pull rebases,
+# since the push hook refuses a merge that takes in a user's edit to a widget asset. postern binds only the rootfs's
+# /usr, /lib and /bin, so the worker binds this file into the guest's /etc on its own.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system protocol.ext.allow always \
+    && git config --system pull.rebase true \
     && git config --system user.name 'Themis agent' \
     && git config --system user.email 'agent@localhost'
 # Install the guest's grpcio/protobuf from the committed lock (not a floating pip install) so it inherits the
@@ -52,9 +54,12 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
 # `test_guest_rootfs.py` holds the stage to these two directories and to the import closure of everything it
 # lands. The clinvar and literature stubs reach the upstream record schemas (`clinvar_proto`, `pubmed_proto`),
 # wheels the `guest` group installs above; `themis/rpc` and `themis/evidence/models` take no `__init__.py` and resolve as namespace packages under
-# the `themis` package this stage touches into place. Then the code-mode `services`, `retry` and `display` helpers
-# (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the accessors
-# ride, the stdlib-only working-document linter, and the SVCv4 scoring library.
+# the `themis` package this stage touches into place. Then the code-mode `services`, `retry`, `display` and `widgets`
+# helpers (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the
+# accessors ride, the working-document linter, the SVCv4 scoring library, and the widgets library: the payload stubs
+# and the asset contract the `widgets` helper writes through and the linter reads through, with the buf.validate stub
+# protovalidate reads their rules off (the `protovalidate` wheel ships none), and the payload schemas for the model
+# to read.
 COPY themis/services/sandbox_worker/guest_contract/python/ /usr/local/lib/python3.13/site-packages/
 COPY themis/services/sandbox_worker/guest_contract/proto/ /usr/local/share/themis/proto/
 # A library ships as its modules and data, never as its directory: its `tests/` must not reach the guest.
@@ -62,8 +67,13 @@ COPY themis/document_linter/*.py /usr/local/lib/python3.13/site-packages/themis/
 COPY themis/svcv4/*.py /usr/local/lib/python3.13/site-packages/themis/svcv4/
 COPY themis/svcv4/models/*.py themis/svcv4/models/*.pyi /usr/local/lib/python3.13/site-packages/themis/svcv4/models/
 COPY themis/svcv4/data /usr/local/lib/python3.13/site-packages/themis/svcv4/data
+COPY themis/widgets/*.py /usr/local/lib/python3.13/site-packages/themis/widgets/
+COPY themis/widgets/models/*.py themis/widgets/models/*.pyi /usr/local/lib/python3.13/site-packages/themis/widgets/models/
+COPY buf/validate/validate_pb2.py buf/validate/validate_pb2.pyi /usr/local/lib/python3.13/site-packages/buf/validate/
+COPY schema/proto/themis/widgets/models/*.proto /usr/local/share/themis/widgets/
 COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_worker/guest/channel.py \
     themis/services/sandbox_worker/guest/retry.py themis/services/sandbox_worker/guest/display.py \
+    themis/services/sandbox_worker/guest/widgets.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py
@@ -87,10 +97,14 @@ COPY themis/clients/auth/__init__.py themis/clients/auth/session.py themis/clien
 COPY themis/clients/sheaf/__init__.py themis/clients/sheaf/store.py ./themis/clients/sheaf/
 # sheaf whole: the mirror and the pre-receive hook git spawns, which imports it from this tree by its baked path.
 COPY themis/sheaf ./themis/sheaf
+# What the content check the hook imports by name (git_hatches.PROTECTION) reads assets with: the widgets library, its
+# payload stubs, and the buf.validate stub protovalidate reads their rules off.
+COPY themis/widgets ./themis/widgets
+COPY buf ./buf
 COPY themis/services/sandbox_worker ./themis/services/sandbox_worker
 # Import the worker and the hook's store at build time, so a module the COPY set misses, or a wheel the locked
 # group lacks, fails the build rather than the first session. The hook imports under this interpreter too.
-RUN python -c 'import themis.services.sandbox_worker.worker, themis.clients.sheaf.store, themis.sheaf.wire.hook'
+RUN python -c 'import themis.services.sandbox_worker.worker, themis.clients.sheaf.store, themis.sheaf.wire.hook, themis.services.sandbox_worker.widget_check'
 # postern binds /opt/guest-root/{usr,lib,...} read-only as the guest's system dirs (copying '/'
 # preserves the usrmerge symlink layout). Cloud Run gen2 provides the unprivileged user namespaces
 # bubblewrap needs; the worker's verify() gate refuses to serve if they are absent.

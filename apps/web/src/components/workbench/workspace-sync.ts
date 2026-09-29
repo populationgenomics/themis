@@ -203,11 +203,12 @@ export function pinnedCommitOf(snapshot: WorkspaceSnapshot): string | null {
 }
 
 /** What a window reads the working document with: the tip the copy is brought up to, and the
- *  commit to render — the tip, or the one the working-doc tab pins. */
+ *  commit to render — the tip, or the one the working-doc tab pins, which `pinned` says. */
 export interface DocumentFetchKey {
   analysisId: string;
   tip: string;
   commit: string;
+  pinned: boolean;
 }
 
 /** Apply a command from a mirror to the authoritative controller (main). The new-window case

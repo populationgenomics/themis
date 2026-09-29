@@ -1,10 +1,13 @@
-import type { Root } from "mdast";
 import { type ReactNode, useMemo } from "react";
 import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkDirective from "remark-directive";
 import remarkGfm from "remark-gfm";
+import { Embed, WidgetSurface } from "@/components/widgets/embed";
+import type { WidgetRevision } from "@/components/widgets/revision";
+import { type Citation, CitationMark } from "./citation";
+import { remarkDirectives } from "./directives";
 
 // GFM markdown rendered into the design tokens. Both panes route prose through
 // this: the agent emits real markdown (fenced code, tables, mixed heading
@@ -136,118 +139,20 @@ export function corpusFigureResolver(
   return (src) => (isCorpusFigureName(src) ? fileUrl(src) : null);
 }
 
-// A citation the agent embeds in narration or the working document: `:paper[id]` points at a
-// paper; `:quote[id, text]` points at a locatable quote within one. Clicking reveals it in the
-// document pane (opening the paper tab, then — for a quote — highlighting it).
-export type Citation =
-  | { kind: "paper"; docId: string }
-  | { kind: "quote"; docId: string; quote: string };
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// A minimal structural view of the mdast tree — enough to find directive nodes and read their
-// label text without pulling the full mdast/directive type graph in.
-interface MdastNode {
-  type: string;
-  name?: string;
-  value?: string;
-  children?: MdastNode[];
-  data?: { hName?: string; hProperties?: Record<string, string> };
-}
-
-// mdast keeps a node's own characters in `value` on these types and in `children` on every other.
-// `image` and `footnoteReference` are childless and carry none, so a missing `children` does not
-// imply an empty label.
-const VALUE_TYPES = new Set(["text", "inlineCode", "html", "code"]);
-
-function labelText(node: MdastNode): string {
-  if (VALUE_TYPES.has(node.type)) return node.value ?? "";
-  return (node.children ?? []).map(labelText).join("");
-}
-
-const DIRECTIVE_TYPES = new Set([
-  "textDirective",
-  "leafDirective",
-  "containerDirective",
-]);
-
-// remark plugin: turn `:paper[id]` / `:quote[id, text]` directives into `cite-paper` / `cite-quote`
-// hast elements carrying the parsed doc_id (and quote), which the components below render. `:quote`
-// splits on the first comma — the doc_id is a UUID (comma-free), so the remainder is the quote.
-//
-// `remark-directive` tokenizes `:name` only when a letter follows the colon (micromark requires the
-// name to start with an ASCII alpha), so a colon-then-digit like `chr1:12345`, `3:1`, or `10:30` is
-// never a directive and never at risk. A colon-then-letter is: `BRCA1:c.68delAG` tokenizes as name
-// `c`, `note:foo` as name `foo`, and the bare word in `the :quote directive` as name `quote` —
-// ordinary prose the parser mistook for a directive. So the citation trigger is a paper/quote name
-// carrying a `[…]` label; the bare word is prose, and every other directive is round-tripped back to
-// literal text. Leaving one as an unhandled directive is not benign: `remark-rehype` drops the node
-// *and the token after it*, silently corrupting the agent's narration and the working document.
-function remarkCitations() {
-  return (tree: Root): void => {
-    walkDirectives(tree as unknown as MdastNode);
-  };
-}
-
-function walkDirectives(node: MdastNode): void {
-  for (const child of node.children ?? []) {
-    if (DIRECTIVE_TYPES.has(child.type) && child.name) {
-      const data = labelled(child)
-        ? citationData(child.name, labelText(child).trim())
-        : null;
-      if (data) child.data = data;
-      else literalizeDirective(child);
-    }
-    walkDirectives(child);
-  }
-}
-
-// For a text or leaf directive the children are exactly the label, and `:paper` and `:paper[]` both
-// tokenize to none — so a label's presence is structural, not a count of the characters in it. A
-// container's children are its block content, which this reads as a label.
-function labelled(node: MdastNode): boolean {
-  return (node.children ?? []).length > 0;
-}
-
-function citationData(name: string, label: string): MdastNode["data"] | null {
-  if (name === "paper") {
-    return { hName: "cite-paper", hProperties: { docId: label } };
-  }
-  if (name === "quote") {
-    const comma = label.indexOf(",");
-    const docId = (comma === -1 ? label : label.slice(0, comma)).trim();
-    const quote = comma === -1 ? "" : label.slice(comma + 1).trim();
-    return { hName: "cite-quote", hProperties: { docId, quote } };
-  }
-  return null;
-}
-
-// Convert a non-citation directive node back to the source text the parser consumed, in place: the
-// marker (`:`/`::`/`:::`), the name, and any `[label]`. So `chr1:12345` survives as itself instead of
-// `chr1` + a dropped `12345`. The text is synthesised from the node rather than sliced out of the
-// source the node points at, so `{attrs}`, an empty `[]`, markup or escapes inside the label, and a
-// directive nested inside the label do not come back.
-function literalizeDirective(node: MdastNode): void {
-  const marker =
-    node.type === "containerDirective"
-      ? ":::"
-      : node.type === "leafDirective"
-        ? "::"
-        : ":";
-  const label = labelText(node);
-  node.type = "text";
-  node.value = `${marker}${node.name ?? ""}${label ? `[${label}]` : ""}`;
-  node.name = undefined;
-  node.children = undefined;
-  node.data = undefined;
-}
-
 // react-markdown passes the hast node; the parsed values live on its properties.
 type CitationNodeProps = { node?: { properties?: Record<string, unknown> } };
 
 function prop(node: CitationNodeProps["node"], key: string): string {
   const value = node?.properties?.[key];
   return typeof value === "string" ? value : "";
+}
+
+// One component for every render, reading its revision from context: a component whose identity
+// changed would be remounted on each Poll.
+function EmbedElement({ node }: CitationNodeProps) {
+  return (
+    <Embed path={prop(node, "path")} problem={prop(node, "problem") || null} />
+  );
 }
 
 function citationComponents(
@@ -276,35 +181,7 @@ function citationComponents(
   };
 }
 
-function CitationMark({
-  citation,
-  onCitation,
-  children,
-}: {
-  citation: Citation;
-  onCitation: (citation: Citation) => void;
-  children: ReactNode;
-}) {
-  if (!UUID.test(citation.docId)) {
-    return (
-      <span
-        title={`Unresolved citation: ${citation.docId || "missing id"}`}
-        className="rounded-[3px] bg-error-bg px-[3px] text-[13px] text-error-text line-through"
-      >
-        {children}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => onCitation(citation)}
-      className="rounded-[3px] px-[2px] text-left text-[14px] text-primary underline decoration-dotted underline-offset-2 hover:bg-surface-inset"
-    >
-      {children}
-    </button>
-  );
-}
+export type { Citation };
 
 // One root element, not a bare fragment: the rendered blocks must stay grouped
 // as a single child of whatever lays the prose out.
@@ -312,6 +189,7 @@ export function Markdown({
   text,
   resolveImage,
   onCitation,
+  revision,
   breaks,
 }: {
   text: string;
@@ -320,10 +198,17 @@ export function Markdown({
   /** Opt in to `:paper`/`:quote` citation directives (conversation + working document). Absent ⇒
    *  directives render as plain text. */
   onCitation?: (citation: Citation) => void;
+  /** Opt in to `::embed` widgets, drawn from this revision's tree (the working document); needs
+   *  `onCitation`, which a widget's citations raise. Absent ⇒ the directive renders as plain text. */
+  revision?: WidgetRevision;
   /** Opt in to honouring single newlines as line breaks (chat-style prose: the curator's typed
    *  turns). Absent ⇒ standard markdown, which folds them into the paragraph. */
   breaks?: boolean;
 }) {
+  if (revision !== undefined && onCitation === undefined) {
+    throw new Error("a surface drawing widgets has to handle their citations");
+  }
+  const drawsWidgets = revision !== undefined;
   // Memoized on the two opt-in callbacks: the `img` / `cite-*` overrides are fresh closures each call,
   // and React reconciles components by identity — a changed identity unmounts and remounts the whole
   // subtree. The workbench re-renders every poll (2.5 s), so without this the prose flickers continually.
@@ -350,19 +235,36 @@ export function Markdown({
     if (onCitation) {
       m = { ...m, ...citationComponents(onCitation) } as Components;
     }
+    if (drawsWidgets) {
+      m = { ...m, "widget-embed": EmbedElement } as Components;
+    }
     return m;
-  }, [resolveImage, onCitation]);
+  }, [resolveImage, onCitation, drawsWidgets]);
   const remarkPlugins = useMemo(() => {
-    const plugins = onCitation
-      ? [remarkGfm, remarkDirective, remarkCitations]
-      : [remarkGfm];
+    const citations = onCitation !== undefined;
+    const embeds = drawsWidgets;
+    const plugins: NonNullable<Options["remarkPlugins"]> =
+      citations || embeds
+        ? [
+            remarkGfm,
+            remarkDirective,
+            [remarkDirectives, { citations, embeds }],
+          ]
+        : [remarkGfm];
     return breaks ? [...plugins, remarkBreaks] : plugins;
-  }, [onCitation, breaks]);
+  }, [onCitation, drawsWidgets, breaks]);
+  const body = (
+    <ReactMarkdown remarkPlugins={remarkPlugins} components={merged}>
+      {text}
+    </ReactMarkdown>
+  );
   return (
     <div>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={merged}>
-        {text}
-      </ReactMarkdown>
+      {revision !== undefined && onCitation !== undefined ? (
+        <WidgetSurface value={{ revision, onCitation }}>{body}</WidgetSurface>
+      ) : (
+        body
+      )}
     </div>
   );
 }

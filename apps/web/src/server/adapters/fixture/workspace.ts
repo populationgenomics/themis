@@ -24,11 +24,14 @@ import {
 import type { WorkspaceRepository } from "../../ports";
 import { COLLABORATIVE_BRANCH } from "../../workspace";
 import {
-  type AgentFile,
-  agentHistory,
+  AGENT,
   agentPublish,
   REFLOG_REF,
+  type SeedCommit,
+  type SeedFiles,
   type SeedPublish,
+  seededHistory,
+  WORKING_DOCUMENT_PATH,
 } from "./workspace-seed";
 
 // The offline workspace repository: sheaf's storage protocol over an in-memory store, one repository
@@ -82,7 +85,26 @@ export class FixtureWorkspace implements WorkspaceRepository {
     documents: readonly string[],
     authoredAt: Date,
   ): void {
-    this.seedHistory(analysisId, () => agentHistory(documents, authoredAt));
+    this.seedCommits(
+      analysisId,
+      documents.map((markdown, index) => ({
+        files: { [WORKING_DOCUMENT_PATH]: markdown },
+        author: AGENT,
+        message: `Working document, version ${index + 1}`,
+      })),
+      authoredAt,
+    );
+  }
+
+  /** Give `analysisId` the repository the writers of `commits` would have left, each commit writing
+   *  its files over the last: one publish per commit, the last the branch tip. Built by `git` on
+   *  the repository's first read. */
+  seedCommits(
+    analysisId: string,
+    commits: readonly SeedCommit[],
+    authoredAt: Date,
+  ): void {
+    this.seedHistory(analysisId, () => seededHistory(commits, authoredAt));
   }
 
   /** Give `analysisId` the repository the publishes `build` returns leave, applied in order on the
@@ -100,7 +122,7 @@ export class FixtureWorkspace implements WorkspaceRepository {
   agentPublishes(
     analysisId: string,
     branch: string,
-    files: Readonly<Record<string, AgentFile>>,
+    files: SeedFiles,
     at: Date,
   ): void {
     const current = this.repository(analysisId);

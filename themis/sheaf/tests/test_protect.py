@@ -30,9 +30,10 @@ REVIEWER = conftest.Author('Reviewer One', 'reviewer.one@example.org')
 PUSHER = protect.Identity('Agent', 'agent@example.org')
 
 
-def test_protection_is_opt_in() -> None:
-    assert not protect.Protection().forbids(ASSERTIONS)
-    assert protect.Protection().pusher is None
+def test_unprotected_forbids_no_path_and_names_no_pusher() -> None:
+    unprotected = protect.Protection.unprotected()
+    assert not unprotected.forbids(ASSERTIONS)
+    assert unprotected.pusher is None
 
 
 @pytest.mark.parametrize('pattern', ['.MailMap', '[A-z]*'])
@@ -77,7 +78,7 @@ def test_an_identity_git_cannot_record_is_refused(name: str, email: str) -> None
 def test_half_an_identity_in_the_environment_is_refused(present: str) -> None:
     """A server that passed a name and no email is misbuilt; reading it as no identity would check nothing."""
     with pytest.raises(ValueError, match='together'):
-        protect.Protection.from_env({present: 'x'})
+        protect.Protection.from_env({protect.PATHS_ENV: '', present: 'x'})
 
 
 def test_a_pattern_carrying_the_separator_is_refused() -> None:
@@ -359,7 +360,9 @@ def test_without_protection_the_same_push_is_accepted(
 ) -> None:
     """Policy lives in the wire layer and is opt-in; the store itself has no opinion."""
     _sign_off(curator, 'PM2')
-    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         work = _clone(instance, tmp_path, 'work')
         (work / ASSERTIONS).write_text('{"code": "PP3", "state": "reviewed"}\n', 'utf-8')
         conftest.run_git('commit', '-am', 'write the log', cwd=work)
@@ -492,7 +495,9 @@ def test_without_a_pusher_identity_any_name_is_taken(
 ) -> None:
     """The negative control: the same push the identity rule refuses lands on a server that states none."""
     _sign_off(curator, 'PM2')
-    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         work = _clone(instance, tmp_path, 'work')
         _commit(work, 'notes.md', 'one\n')
         conftest.run_git('commit', '--amend', '--no-edit', '--author', f'Reviewer One <{REVIEWER.email}>', cwd=work)
@@ -921,7 +926,9 @@ def test_a_tag_with_a_header_before_its_tagger_is_refused(
 @pytest.fixture
 def unprotected(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> Iterator[server.SheafGitServer]:
     """A server configured with nothing: the name rule is not opt-in."""
-    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         yield instance
 
 

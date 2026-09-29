@@ -13,7 +13,10 @@ import {
   CommitNotInCopyError,
   CopyService,
   type CopyStorageFactory,
+  type EditCheck,
+  WORKING_DOCUMENT_PATH,
 } from "./service";
+import { workerCopyService } from "./worker-service";
 
 // The SharedWorker's logic with its surroundings on the host: a directory per copy, a map for the
 // ledger, the offline sheaf store for the relay.
@@ -82,9 +85,11 @@ function service(
   releaseAfterIdleMs?: number,
   remote: (id: string) => Remote = (id) => fixtureRemote(store, id),
   workerLocks: CopyLocks = locks,
+  checkEdit: EditCheck = () => {},
 ): CopyService {
   return new CopyService({
     storage: storage(),
+    checkEdit,
     remote,
     ledger,
     locks: workerLocks,
@@ -144,7 +149,8 @@ describe("the copy service", () => {
     expect(await copies.readDocument("an_1", tip)).toBeNull();
     expect(
       decodeUtf8(
-        (await copies.readFile("an_1", tip, "notes.md")) ?? new Uint8Array(),
+        (await copies.readFile("an_1", tip, "notes.md"))?.bytes ??
+          new Uint8Array(),
         "f",
       ),
     ).toBe("scratch\n");
@@ -155,6 +161,7 @@ describe("the copy service", () => {
     let reads = 0;
     const copies = new CopyService({
       storage: storage(),
+      checkEdit: () => {},
       remote: (id) => {
         const remote = fixtureRemote(store, id);
         return {
@@ -244,9 +251,152 @@ describe("the copy service", () => {
     expect((await copies.history("an_1", outcome.commit))[0].commit).toBe(
       outcome.commit,
     );
-    expect(await copies.readFile("an_1", outcome.commit, "state.txt")).toEqual(
-      utf8("reviewed\n"),
+    expect(
+      (await copies.readFile("an_1", outcome.commit, "state.txt"))?.bytes,
+    ).toEqual(utf8("reviewed\n"));
+  });
+
+  test("an edit the check refuses fails against the file at its base, and writes nothing", async () => {
+    store.seedAgentHistory("an_1", ["# v1\n"], AUTHORED);
+    const seen: [string, string | undefined, string][] = [];
+    const copies = service(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (path, before, after) => {
+        seen.push([
+          path,
+          before && decodeUtf8(before.bytes, path),
+          decodeUtf8(after, path),
+        ]);
+        throw new Error("not an edit a curator may make");
+      },
     );
+    const tip = await tipOf("an_1");
+    await copies.sync("an_1", tip);
+    await expect(
+      copies.publish(
+        "an_1",
+        tip,
+        "curator@example.org",
+        ...setState("reviewed"),
+      ),
+    ).rejects.toThrow("not an edit a curator may make");
+    expect(seen).toEqual([["state.txt", undefined, "reviewed\n"]]);
+    expect(await tipOf("an_1")).toBe(tip);
+  });
+
+  test.each([
+    { copy: "follows the tip", reads: 0 },
+    { copy: "records no document state", reads: 1 },
+  ])(
+    "on a copy that $copy, checks each file against its base before anything is sent",
+    async ({ copy, reads }) => {
+      store.seedAgentHistory("an_1", ["# v1\n"], AUTHORED);
+      const relay = fixtureRemote(store, "an_1");
+      let refuse = false;
+      const seen: (string | undefined)[] = [];
+      const copies = service(
+        undefined,
+        undefined,
+        () => relay,
+        undefined,
+        (file, before) => {
+          seen.push(before && decodeUtf8(before.bytes, file));
+          if (refuse) throw new Error("not an edit a curator may make");
+        },
+      );
+      const tip = await tipOf("an_1");
+      await copies.sync("an_1", tip);
+      const first = await copies.publish(
+        "an_1",
+        tip,
+        "curator@example.org",
+        ...setState("reviewed"),
+      );
+      if (first.kind !== "landed") throw new Error(`not landed: ${first.kind}`);
+      if (copy === "records no document state") {
+        rmSync(path.join(scratch.dir, "copies", "an_1", "THEMIS_GENERATION"));
+      }
+      const before = relay.calls.readRefDoc;
+      refuse = true;
+      await expect(
+        copies.publish(
+          "an_1",
+          first.commit,
+          "curator@example.org",
+          ...setState("reviewed again"),
+        ),
+      ).rejects.toThrow("not an edit a curator may make");
+      expect(seen).toEqual([undefined, "reviewed\n"]);
+      expect(relay.calls.readRefDoc).toBe(before + reads);
+      expect(relay.calls.publishes).toBe(1);
+      expect(await tipOf("an_1")).toBe(first.commit);
+    },
+  );
+
+  test("checks every file an edit replaces against the file at its base, not at the tip", async () => {
+    store.seedAgentHistory("an_1", ["# v1\n"], AUTHORED);
+    const seen: [string, string | undefined][] = [];
+    const copies = service(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (path, before) => {
+        seen.push([path, before && decodeUtf8(before.bytes, path)]);
+      },
+    );
+    const base = await tipOf("an_1");
+    await copies.sync("an_1", base);
+    store.agentPublishes(
+      "an_1",
+      COLLABORATIVE_BRANCH,
+      { [WORKING_DOCUMENT_PATH]: "# v2\n" },
+      AUTHORED,
+    );
+    // The copy follows the tip past the base, so the check can tell the two apart.
+    await copies.sync("an_1", await tipOf("an_1"));
+    const outcome = await copies.publish(
+      "an_1",
+      base,
+      "curator@example.org",
+      "Edit two files",
+      [
+        { path: WORKING_DOCUMENT_PATH, bytes: utf8("# mine\n") },
+        { path: "notes.md", bytes: utf8("n\n") },
+      ],
+    );
+    expect(seen).toEqual([
+      [WORKING_DOCUMENT_PATH, "# v1\n"],
+      ["notes.md", undefined],
+    ]);
+    expect(outcome.kind).toBe("fileChanged");
+  });
+
+  test("as the SharedWorker runs it, refuses an edit that is no widget asset's", async () => {
+    store.seedAgentHistory("an_1", ["# v1\n"], AUTHORED);
+    const copies = workerCopyService({
+      storage: storage(),
+      remote: (id) => fixtureRemote(store, id),
+      ledger,
+      locks,
+      now: () => clock,
+    });
+    const tip = await tipOf("an_1");
+    await copies.sync("an_1", tip);
+    await expect(
+      copies.publish(
+        "an_1",
+        tip,
+        "curator@example.org",
+        ...setState("reviewed"),
+      ),
+    ).rejects.toThrow(
+      "a user's edit changes an existing widget asset, and there is none",
+    );
+    expect(await tipOf("an_1")).toBe(tip);
   });
 
   test("an edit whose file the agent changed since its base resolves as fileChanged, at the new tip", async () => {

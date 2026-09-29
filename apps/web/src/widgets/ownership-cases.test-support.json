@@ -1,0 +1,3541 @@
+{
+  "schema": {
+    "name": "themis/widgets/cases/ownership_cases.proto",
+    "package": "themis.widgets.cases",
+    "dependency": ["themis/widgets/models/widget.proto"],
+    "messageType": [
+      {
+        "name": "Tree",
+        "field": [
+          {
+            "name": "title",
+            "number": 1,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "title"
+          },
+          {
+            "name": "nodes",
+            "number": 2,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Node",
+            "jsonName": "nodes"
+          },
+          {
+            "name": "scoped",
+            "number": 3,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Scoped",
+            "jsonName": "scoped"
+          },
+          {
+            "name": "note",
+            "number": 4,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Note",
+            "jsonName": "note"
+          },
+          {
+            "name": "approved",
+            "number": 5,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_BOOL",
+            "jsonName": "approved",
+            "options": {
+              "[themis.widgets.models.guard]": {
+                "ignores": ["nodes", "scoped", "note", "featured"]
+              }
+            }
+          },
+          {
+            "name": "featured",
+            "number": 6,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Node",
+            "jsonName": "featured"
+          },
+          {
+            "name": "stamps",
+            "number": 7,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Tree.StampsEntry",
+            "jsonName": "stamps"
+          }
+        ],
+        "nestedType": [
+          {
+            "name": "StampsEntry",
+            "field": [
+              {
+                "name": "key",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "key"
+              },
+              {
+                "name": "value",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.Stamp",
+                "jsonName": "value"
+              }
+            ],
+            "options": {
+              "mapEntry": true
+            }
+          }
+        ],
+        "options": {
+          "[themis.widgets.models.widget]": true
+        }
+      },
+      {
+        "name": "Node",
+        "field": [
+          {
+            "name": "id",
+            "number": 1,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "id",
+            "options": {
+              "[themis.widgets.models.element_key]": true
+            }
+          },
+          {
+            "name": "claim",
+            "number": 2,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "claim"
+          },
+          {
+            "name": "children",
+            "number": 3,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Node",
+            "jsonName": "children"
+          },
+          {
+            "name": "accepted",
+            "number": 4,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_BOOL",
+            "jsonName": "accepted",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "memo",
+            "number": 5,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Note",
+            "jsonName": "memo"
+          }
+        ]
+      },
+      {
+        "name": "Scoped",
+        "field": [
+          {
+            "name": "id",
+            "number": 1,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "id",
+            "options": {
+              "[themis.widgets.models.element_key]": true
+            }
+          },
+          {
+            "name": "claim",
+            "number": 2,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "claim"
+          },
+          {
+            "name": "children",
+            "number": 3,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Scoped",
+            "jsonName": "children"
+          },
+          {
+            "name": "accepted",
+            "number": 4,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_BOOL",
+            "jsonName": "accepted",
+            "options": {
+              "[themis.widgets.models.guard]": {
+                "ignores": ["children", "hint"]
+              }
+            }
+          },
+          {
+            "name": "hint",
+            "number": 5,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "hint"
+          }
+        ]
+      },
+      {
+        "name": "Note",
+        "field": [
+          {
+            "name": "text",
+            "number": 1,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "text"
+          },
+          {
+            "name": "ack",
+            "number": 2,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "ack",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "score",
+            "number": 3,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_DOUBLE",
+            "jsonName": "score",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "verdict",
+            "number": 4,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "oneofIndex": 1,
+            "proto3Optional": true,
+            "jsonName": "verdict",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "marks",
+            "number": 5,
+            "label": "LABEL_REPEATED",
+            "type": "TYPE_STRING",
+            "jsonName": "marks",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "stamp",
+            "number": 6,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_MESSAGE",
+            "typeName": ".themis.widgets.cases.Stamp",
+            "jsonName": "stamp",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "yes",
+            "number": 7,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_BOOL",
+            "oneofIndex": 0,
+            "jsonName": "yes",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          },
+          {
+            "name": "no",
+            "number": 8,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_BOOL",
+            "oneofIndex": 0,
+            "jsonName": "no",
+            "options": {
+              "[themis.widgets.models.guard]": {}
+            }
+          }
+        ],
+        "oneofDecl": [
+          {
+            "name": "answer"
+          },
+          {
+            "name": "_verdict"
+          }
+        ]
+      },
+      {
+        "name": "Stamp",
+        "field": [
+          {
+            "name": "by",
+            "number": 1,
+            "label": "LABEL_OPTIONAL",
+            "type": "TYPE_STRING",
+            "jsonName": "by"
+          }
+        ]
+      }
+    ],
+    "syntax": "proto3"
+  },
+  "schemas": [
+    {
+      "name": "a list whose elements mark no key",
+      "file": {
+        "name": "themis/widgets/cases/nokey.proto",
+        "package": "themis.widgets.cases.nokey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.nokey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.nokey.Holder",
+      "error": "it marks 0"
+    },
+    {
+      "name": "a list whose elements mark two keys",
+      "file": {
+        "name": "themis/widgets/cases/twokeys.proto",
+        "package": "themis.widgets.cases.twokeys",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.twokeys.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "n",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_INT64",
+                "jsonName": "n",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.twokeys.Holder",
+      "error": "it marks 2"
+    },
+    {
+      "name": "a float key",
+      "file": {
+        "name": "themis/widgets/cases/floatkey.proto",
+        "package": "themis.widgets.cases.floatkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.floatkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_DOUBLE",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.floatkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a bytes key",
+      "file": {
+        "name": "themis/widgets/cases/byteskey.proto",
+        "package": "themis.widgets.cases.byteskey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.byteskey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BYTES",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.byteskey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "an enum key",
+      "file": {
+        "name": "themis/widgets/cases/enumkey.proto",
+        "package": "themis.widgets.cases.enumkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.enumkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_ENUM",
+                "typeName": ".themis.widgets.cases.enumkey.Kind",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "enumType": [
+          {
+            "name": "Kind",
+            "value": [
+              {
+                "name": "KIND_UNSPECIFIED",
+                "number": 0
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.enumkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a guard key",
+      "file": {
+        "name": "themis/widgets/cases/guardkey.proto",
+        "package": "themis.widgets.cases.guardkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.guardkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.guard]": {},
+                  "[themis.widgets.models.element_key]": true
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.guardkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a repeated key",
+      "file": {
+        "name": "themis/widgets/cases/repeatedkey.proto",
+        "package": "themis.widgets.cases.repeatedkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.repeatedkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.repeatedkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a proto3 optional key",
+      "file": {
+        "name": "themis/widgets/cases/optionalkey.proto",
+        "package": "themis.widgets.cases.optionalkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.optionalkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "oneofIndex": 0,
+                "proto3Optional": true,
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ],
+            "oneofDecl": [
+              {
+                "name": "_id"
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.optionalkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a key in a oneof",
+      "file": {
+        "name": "themis/widgets/cases/oneofkey.proto",
+        "package": "themis.widgets.cases.oneofkey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.oneofkey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "oneofIndex": 0,
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ],
+            "oneofDecl": [
+              {
+                "name": "k"
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.oneofkey.Holder",
+      "error": "singular string, integer or bool"
+    },
+    {
+      "name": "a list whose elements hold a guard only beneath, and mark no key",
+      "file": {
+        "name": "themis/widgets/cases/beneath.proto",
+        "package": "themis.widgets.cases.beneath",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.beneath.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id"
+              },
+              {
+                "name": "sub",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.beneath.Sub",
+                "jsonName": "sub"
+              }
+            ]
+          },
+          {
+            "name": "Sub",
+            "field": [
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.beneath.Holder",
+      "error": "it marks 0"
+    },
+    {
+      "name": "a guard map",
+      "file": {
+        "name": "themis/widgets/cases/guardmap.proto",
+        "package": "themis.widgets.cases.guardmap",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "by_name",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.guardmap.Holder.ByNameEntry",
+                "jsonName": "byName",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ],
+            "nestedType": [
+              {
+                "name": "ByNameEntry",
+                "field": [
+                  {
+                    "name": "key",
+                    "number": 1,
+                    "label": "LABEL_OPTIONAL",
+                    "type": "TYPE_STRING",
+                    "jsonName": "key"
+                  },
+                  {
+                    "name": "value",
+                    "number": 2,
+                    "label": "LABEL_OPTIONAL",
+                    "type": "TYPE_MESSAGE",
+                    "typeName": ".themis.widgets.cases.guardmap.Element",
+                    "jsonName": "value"
+                  }
+                ],
+                "options": {
+                  "mapEntry": true
+                }
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.guardmap.Holder",
+      "error": "a map may not be a guard"
+    },
+    {
+      "name": "a map whose values hold guards",
+      "file": {
+        "name": "themis/widgets/cases/mapvalues.proto",
+        "package": "themis.widgets.cases.mapvalues",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "by_name",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.mapvalues.Holder.ByNameEntry",
+                "jsonName": "byName"
+              }
+            ],
+            "nestedType": [
+              {
+                "name": "ByNameEntry",
+                "field": [
+                  {
+                    "name": "key",
+                    "number": 1,
+                    "label": "LABEL_OPTIONAL",
+                    "type": "TYPE_STRING",
+                    "jsonName": "key"
+                  },
+                  {
+                    "name": "value",
+                    "number": 2,
+                    "label": "LABEL_OPTIONAL",
+                    "type": "TYPE_MESSAGE",
+                    "typeName": ".themis.widgets.cases.mapvalues.Element",
+                    "jsonName": "value"
+                  }
+                ],
+                "options": {
+                  "mapEntry": true
+                }
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.mapvalues.Holder",
+      "error": "values hold guards"
+    },
+    {
+      "name": "a keyed list, valid",
+      "file": {
+        "name": "themis/widgets/cases/keyed.proto",
+        "package": "themis.widgets.cases.keyed",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.keyed.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.keyed.Holder",
+      "error": null
+    },
+    {
+      "name": "a guard ignoring a name its message lacks",
+      "file": {
+        "name": "themis/widgets/cases/ignoresabsent.proto",
+        "package": "themis.widgets.cases.ignoresabsent",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.ignoresabsent.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "label",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "label"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {
+                    "ignores": ["lable"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.ignoresabsent.Holder",
+      "error": "which is not a field of"
+    },
+    {
+      "name": "a guard ignoring the element key",
+      "file": {
+        "name": "themis/widgets/cases/ignoreskey.proto",
+        "package": "themis.widgets.cases.ignoreskey",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.ignoreskey.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {
+                    "ignores": ["id"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.ignoreskey.Holder",
+      "error": "the element key"
+    },
+    {
+      "name": "a guard ignoring a guard",
+      "file": {
+        "name": "themis/widgets/cases/ignoresguard.proto",
+        "package": "themis.widgets.cases.ignoresguard",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.ignoresguard.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "seen",
+                "number": 8,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "seen",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {
+                    "ignores": ["seen"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.ignoresguard.Holder",
+      "error": "a guard, which no guard judges anyway"
+    },
+    {
+      "name": "a guard ignoring a name twice",
+      "file": {
+        "name": "themis/widgets/cases/ignorestwice.proto",
+        "package": "themis.widgets.cases.ignorestwice",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.ignorestwice.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "label",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "label"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {
+                    "ignores": ["label", "label"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.ignorestwice.Holder",
+      "error": "more than once"
+    },
+    {
+      "name": "a guard ignoring a field, valid",
+      "file": {
+        "name": "themis/widgets/cases/ignoresvalid.proto",
+        "package": "themis.widgets.cases.ignoresvalid",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.ignoresvalid.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "label",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "label"
+              },
+              {
+                "name": "hint",
+                "number": 3,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "hint"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {
+                    "ignores": ["hint"]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.ignoresvalid.Holder",
+      "error": null
+    },
+    {
+      "name": "a guard sharing a oneof with a field that is not one",
+      "file": {
+        "name": "themis/widgets/cases/mixedoneof.proto",
+        "package": "themis.widgets.cases.mixedoneof",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.mixedoneof.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "agent_pick",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "oneofIndex": 0,
+                "jsonName": "agentPick"
+              },
+              {
+                "name": "user_pick",
+                "number": 3,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "oneofIndex": 0,
+                "jsonName": "userPick",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ],
+            "oneofDecl": [
+              {
+                "name": "pick"
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.mixedoneof.Holder",
+      "error": "sharing the oneof"
+    },
+    {
+      "name": "guards alone in a oneof, valid",
+      "file": {
+        "name": "themis/widgets/cases/guardoneof.proto",
+        "package": "themis.widgets.cases.guardoneof",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.guardoneof.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "yes",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "oneofIndex": 0,
+                "jsonName": "yes",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              },
+              {
+                "name": "no",
+                "number": 3,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "oneofIndex": 0,
+                "jsonName": "no",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ],
+            "oneofDecl": [
+              {
+                "name": "answer"
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.guardoneof.Holder",
+      "error": null
+    },
+    {
+      "name": "a closed enum",
+      "file": {
+        "name": "themis/widgets/cases/closedenum.proto",
+        "package": "themis.widgets.cases.closedenum",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.closedenum.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "kind",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_ENUM",
+                "typeName": ".themis.widgets.cases.closedenum.Kind",
+                "jsonName": "kind"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "enumType": [
+          {
+            "name": "Kind",
+            "value": [
+              {
+                "name": "KIND_A",
+                "number": 0
+              },
+              {
+                "name": "KIND_B",
+                "number": 1
+              }
+            ]
+          }
+        ],
+        "syntax": "proto2"
+      },
+      "type": "themis.widgets.cases.closedenum.Holder",
+      "error": "closed enum"
+    },
+    {
+      "name": "a closed enum beneath a message holding no guard",
+      "file": {
+        "name": "themis/widgets/cases/closedbeneath.proto",
+        "package": "themis.widgets.cases.closedbeneath",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.closedbeneath.Element",
+                "jsonName": "elements"
+              },
+              {
+                "name": "extra",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.closedbeneath.Extra",
+                "jsonName": "extra"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          },
+          {
+            "name": "Extra",
+            "field": [
+              {
+                "name": "kind",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_ENUM",
+                "typeName": ".themis.widgets.cases.closedbeneath.Kind",
+                "jsonName": "kind"
+              }
+            ]
+          }
+        ],
+        "enumType": [
+          {
+            "name": "Kind",
+            "value": [
+              {
+                "name": "KIND_A",
+                "number": 0
+              },
+              {
+                "name": "KIND_B",
+                "number": 1
+              }
+            ]
+          }
+        ],
+        "syntax": "proto2"
+      },
+      "type": "themis.widgets.cases.closedbeneath.Holder",
+      "error": "closed enum"
+    },
+    {
+      "name": "an open enum, valid",
+      "file": {
+        "name": "themis/widgets/cases/openenum.proto",
+        "package": "themis.widgets.cases.openenum",
+        "dependency": ["themis/widgets/models/widget.proto"],
+        "messageType": [
+          {
+            "name": "Holder",
+            "field": [
+              {
+                "name": "elements",
+                "number": 1,
+                "label": "LABEL_REPEATED",
+                "type": "TYPE_MESSAGE",
+                "typeName": ".themis.widgets.cases.openenum.Element",
+                "jsonName": "elements"
+              }
+            ],
+            "options": {
+              "[themis.widgets.models.widget]": true
+            }
+          },
+          {
+            "name": "Element",
+            "field": [
+              {
+                "name": "id",
+                "number": 1,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_STRING",
+                "jsonName": "id",
+                "options": {
+                  "[themis.widgets.models.element_key]": true
+                }
+              },
+              {
+                "name": "kind",
+                "number": 2,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_ENUM",
+                "typeName": ".themis.widgets.cases.openenum.Kind",
+                "jsonName": "kind"
+              },
+              {
+                "name": "done",
+                "number": 9,
+                "label": "LABEL_OPTIONAL",
+                "type": "TYPE_BOOL",
+                "jsonName": "done",
+                "options": {
+                  "[themis.widgets.models.guard]": {}
+                }
+              }
+            ]
+          }
+        ],
+        "enumType": [
+          {
+            "name": "Kind",
+            "value": [
+              {
+                "name": "KIND_A",
+                "number": 0
+              },
+              {
+                "name": "KIND_B",
+                "number": 1
+              }
+            ]
+          }
+        ],
+        "syntax": "proto3"
+      },
+      "type": "themis.widgets.cases.openenum.Holder",
+      "error": null
+    }
+  ],
+  "cases": [
+    {
+      "name": "a new checklist with nothing ticked",
+      "type": "themis.widgets.models.Checklist",
+      "old": null,
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a new checklist with an item ticked",
+      "type": "themis.widgets.models.Checklist",
+      "old": null,
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "a ticked item unchanged keeps its tick",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a tick reset with nothing it judges changed",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked changed"],
+      "cleared": []
+    },
+    {
+      "name": "an unchanged item ticked by the agent",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked set"],
+      "cleared": []
+    },
+    {
+      "name": "a reworded label keeping the tick",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "PM2 applies",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "PM2 does not apply",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked not_cleared label"],
+      "cleared": ["items[a].checked label"]
+    },
+    {
+      "name": "a reworded label clearing the tick",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "PM2 applies",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "PM2 does not apply"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": ["items[a].checked label"]
+    },
+    {
+      "name": "a reworded label the agent ticks",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "old"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "new",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked set"],
+      "cleared": []
+    },
+    {
+      "name": "a changed citation quote keeping the tick",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "citation": {
+                "docId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                "quote": "one passage"
+              },
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "citation": {
+                "docId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                "quote": "another passage"
+              },
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked not_cleared citation"],
+      "cleared": ["items[a].checked citation"]
+    },
+    {
+      "name": "a changed citation quote clearing the tick",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "citation": {
+                "docId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                "quote": "one passage"
+              },
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "citation": {
+                "docId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                "quote": "another passage"
+              }
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": ["items[a].checked citation"]
+    },
+    {
+      "name": "a label and a citation changed, the tick kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "old",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "new",
+              "citation": {
+                "docId": "0f8fad5b-d9cb-469f-a165-70867728950e",
+                "quote": "q"
+              },
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked not_cleared label,citation"],
+      "cleared": ["items[a].checked label,citation"]
+    },
+    {
+      "name": "another item reworded, the tick kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "b",
+              "label": "reworded"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a ticked item removed",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": ["items[a].checked :removed"]
+    },
+    {
+      "name": "an item added again, unticked",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "an item added again, ticked",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "a ticked item under a new key",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "z",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[z].checked set_on_new"],
+      "cleared": ["items[a].checked :removed"]
+    },
+    {
+      "name": "items reordered, ticks kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "b",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "b",
+              "label": "x"
+            },
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "two items under one key",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x"
+            },
+            {
+              "id": "a",
+              "label": "x"
+            }
+          ]
+        }
+      },
+      "violations": ["items[a#2] duplicate_key"],
+      "cleared": []
+    },
+    {
+      "name": "a key two old items shared",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            },
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "items": [
+            {
+              "id": "a",
+              "label": "x",
+              "checked": true
+            }
+          ]
+        }
+      },
+      "violations": ["items[a].checked set_on_new"],
+      "cleared": ["items[a#1].checked :shared", "items[a#2].checked :shared"]
+    },
+    {
+      "name": "unknown fields of a retained item dropped",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CgwSAWEaAXhKBGtlcHQKBhIBYhoBeA=="
+      },
+      "new": {
+        "binary": "CgYSAWEaAXgKBhIBYhoBeA=="
+      },
+      "violations": ["items[a] unknown_changed"],
+      "cleared": []
+    },
+    {
+      "name": "unknown fields of a retained item kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CgwSAWEaAXhKBGtlcHQKBhIBYhoBeA=="
+      },
+      "new": {
+        "binary": "ChUSAWEaCnJlbGFiZWxsZWRKBGtlcHQKBhIBYhoBeA=="
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "an unknown group of a retained item kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CgwSAWEaAXijAQgBpAEKBhIBYhoBeA=="
+      },
+      "new": {
+        "binary": "ChUSAWEaCnJlbGFiZWxsZWSjAQgBpAEKBhIBYhoBeA=="
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "unknown fields on a new item",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CgYSAWIaAXg="
+      },
+      "new": {
+        "binary": "CgwSAWEaAXhKBGtlcHQKBhIBYhoBeA=="
+      },
+      "violations": ["items[a] unknown_changed"],
+      "cleared": []
+    },
+    {
+      "name": "unknown fields of a ticked item dropped, the tick kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "Cg4IARIBYRoBeEoEa2VwdA=="
+      },
+      "new": {
+        "binary": "CggIARIBYRoBeA=="
+      },
+      "violations": [
+        "items[a] unknown_changed",
+        "items[a].checked not_cleared fields this build does not know"
+      ],
+      "cleared": []
+    },
+    {
+      "name": "unknown fields inside the citation of a ticked item dropped, the tick kept",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CjYIARIBYRoBeCIsCiQwZjhmYWQ1Yi1kOWNiLTQ2OWYtYTE2NS03MDg2NzcyODk1MGVKBGtlcHQ="
+      },
+      "new": {
+        "binary": "CjAIARIBYRoBeCImCiQwZjhmYWQ1Yi1kOWNiLTQ2OWYtYTE2NS03MDg2NzcyODk1MGU="
+      },
+      "violations": ["items[a].checked not_cleared citation"],
+      "cleared": ["items[a].checked citation"]
+    },
+    {
+      "name": "unknown fields at the top level dropped",
+      "type": "themis.widgets.models.Checklist",
+      "old": {
+        "binary": "CgYSAWEaAXh4Kg=="
+      },
+      "new": {
+        "binary": "CgYSAWEaAXg="
+      },
+      "violations": ["Checklist unknown_changed"],
+      "cleared": []
+    },
+    {
+      "name": "a child changed under an accepted node, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "one"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "two"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].accepted not_cleared children"],
+      "cleared": ["nodes[a].accepted children"]
+    },
+    {
+      "name": "a child changed under an accepted node, the acceptance cleared",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "one"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "two"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": ["nodes[a].accepted children"]
+    },
+    {
+      "name": "a child's judgement is not its parent's content",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c",
+                  "accepted": true
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].children[b].accepted changed"],
+      "cleared": []
+    },
+    {
+      "name": "children reordered under an accepted node, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c"
+                },
+                {
+                  "id": "c",
+                  "claim": "c"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "c",
+                  "claim": "c"
+                },
+                {
+                  "id": "b",
+                  "claim": "c"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a grandchild changed under two acceptances, both kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c",
+                  "children": [
+                    {
+                      "id": "c",
+                      "claim": "one"
+                    }
+                  ],
+                  "accepted": true
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c",
+                  "children": [
+                    {
+                      "id": "c",
+                      "claim": "two"
+                    }
+                  ],
+                  "accepted": true
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": [
+        "nodes[a].accepted not_cleared children",
+        "nodes[a].children[b].accepted not_cleared children"
+      ],
+      "cleared": [
+        "nodes[a].children[b].accepted children",
+        "nodes[a].accepted children"
+      ]
+    },
+    {
+      "name": "a memo changed under an accepted node, both judgements kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "memo": {
+                "text": "one",
+                "ack": "ok"
+              }
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "memo": {
+                "text": "two",
+                "ack": "ok"
+              }
+            }
+          ]
+        }
+      },
+      "violations": [
+        "nodes[a].accepted not_cleared memo",
+        "nodes[a].memo.ack not_cleared text"
+      ],
+      "cleared": ["nodes[a].memo.ack text", "nodes[a].accepted memo"]
+    },
+    {
+      "name": "a memo's judgement changed, its node's acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "memo": {
+                "text": "one",
+                "ack": "ok"
+              }
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "memo": {
+                "text": "one",
+                "ack": "other"
+              }
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].memo.ack changed"],
+      "cleared": []
+    },
+    {
+      "name": "a singular element given another key, its acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "featured": {
+            "id": "ps3",
+            "claim": "x",
+            "accepted": true
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "featured": {
+            "id": "pm2",
+            "claim": "x",
+            "accepted": true
+          }
+        }
+      },
+      "violations": ["featured.accepted not_cleared id"],
+      "cleared": ["featured.accepted id"]
+    },
+    {
+      "name": "a child re-keyed under an accepted node, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b2",
+                  "claim": "x"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].accepted not_cleared children"],
+      "cleared": ["nodes[a].accepted children"]
+    },
+    {
+      "name": "a child removed under an accepted node, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].accepted not_cleared children"],
+      "cleared": ["nodes[a].accepted children"]
+    },
+    {
+      "name": "a child added under an accepted node, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x"
+                },
+                {
+                  "id": "c",
+                  "claim": "y"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].accepted not_cleared children"],
+      "cleared": ["nodes[a].accepted children"]
+    },
+    {
+      "name": "an accepted child removed under a node",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x",
+                  "accepted": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": ["nodes[a].children[b].accepted :removed"]
+    },
+    {
+      "name": "a node removed whose accepted children share a key, each acceptance reported",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x",
+                  "accepted": true
+                },
+                {
+                  "id": "b",
+                  "claim": "y",
+                  "accepted": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {}
+      },
+      "violations": [],
+      "cleared": [
+        "nodes[a].children[b#1].accepted :removed",
+        "nodes[a].children[b#2].accepted :removed"
+      ]
+    },
+    {
+      "name": "a node reworded, its child's acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "p",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x",
+                  "accepted": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "q",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "x",
+                  "accepted": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "an accepted singular node removed",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "featured": {
+            "id": "f",
+            "claim": "c",
+            "accepted": true
+          }
+        }
+      },
+      "new": {
+        "json": {}
+      },
+      "violations": [],
+      "cleared": ["featured.accepted :removed"]
+    },
+    {
+      "name": "a child added under an accepted node, accepted by the agent",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "nodes": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "c"
+                },
+                {
+                  "id": "c",
+                  "claim": "c",
+                  "accepted": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "violations": ["nodes[a].children[c].accepted set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "a child changed under a node that ignores its children, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "one"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "c",
+              "children": [
+                {
+                  "id": "b",
+                  "claim": "two"
+                }
+              ],
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "an ignored field changed, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "hint": "before"
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "c",
+              "accepted": true,
+              "hint": "after"
+            }
+          ]
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a scoped claim changed, the acceptance kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "one",
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "new": {
+        "json": {
+          "scoped": [
+            {
+              "id": "a",
+              "claim": "two",
+              "accepted": true
+            }
+          ]
+        }
+      },
+      "violations": ["scoped[a].accepted not_cleared claim"],
+      "cleared": ["scoped[a].accepted claim"]
+    },
+    {
+      "name": "a guard at the top level, its title reworded",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "title": "a",
+          "approved": true
+        }
+      },
+      "new": {
+        "json": {
+          "title": "b",
+          "approved": true
+        }
+      },
+      "violations": ["approved not_cleared title"],
+      "cleared": ["approved title"]
+    },
+    {
+      "name": "a guard at the top level, a field it ignores rewritten",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "title": "a",
+          "approved": true,
+          "note": {
+            "text": "x"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "title": "a",
+          "approved": true,
+          "note": {
+            "text": "y"
+          }
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a nested message acknowledged, new",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {}
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "t",
+            "ack": "ok"
+          }
+        }
+      },
+      "violations": ["note.ack set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "a nested message acknowledged, its text changed",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "ok"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "b",
+            "ack": "ok"
+          }
+        }
+      },
+      "violations": ["note.ack not_cleared text"],
+      "cleared": ["note.ack text"]
+    },
+    {
+      "name": "a nested acknowledgement changed with nothing it judges",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "ok"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "changed"
+          }
+        }
+      },
+      "violations": ["note.ack changed"],
+      "cleared": []
+    },
+    {
+      "name": "a nested message acknowledged, removed",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "ack": "ok"
+          }
+        }
+      },
+      "new": {
+        "json": {}
+      },
+      "violations": [],
+      "cleared": ["note.ack :removed"]
+    },
+    {
+      "name": "one judgement is not another's content",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "ok",
+            "score": 1
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "ok",
+            "score": 1
+          }
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a judged NaN kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "score": "NaN"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "score": "NaN"
+          }
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a judged zero turned negative",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "score": 0
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "score": -0.0
+          }
+        }
+      },
+      "violations": ["note.score set"],
+      "cleared": []
+    },
+    {
+      "name": "a judged value changed with nothing it judges",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "score": 1
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "score": 2
+          }
+        }
+      },
+      "violations": ["note.score changed"],
+      "cleared": []
+    },
+    {
+      "name": "a judgement changed along with what it judges",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a",
+            "ack": "ok"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "b",
+            "ack": "other"
+          }
+        }
+      },
+      "violations": ["note.ack not_cleared text"],
+      "cleared": ["note.ack text"]
+    },
+    {
+      "name": "a oneof of guards moved off the user's answer",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "yes": true
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "no": true
+          }
+        }
+      },
+      "violations": ["note.yes changed", "note.no set"],
+      "cleared": []
+    },
+    {
+      "name": "a oneof of guards carried across",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a",
+            "yes": true
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "a"
+          }
+        }
+      },
+      "violations": ["note.yes changed"],
+      "cleared": []
+    },
+    {
+      "name": "a judged negative zero set on a new asset",
+      "type": "themis.widgets.cases.Tree",
+      "old": null,
+      "new": {
+        "json": {
+          "note": {
+            "score": -0.0
+          }
+        }
+      },
+      "violations": ["note.score set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "an optional guard set on a new asset",
+      "type": "themis.widgets.cases.Tree",
+      "old": null,
+      "new": {
+        "json": {
+          "note": {
+            "verdict": ""
+          }
+        }
+      },
+      "violations": ["note.verdict set_on_new"],
+      "cleared": []
+    },
+    {
+      "name": "an optional guard set to its default where it was unset",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "text": "a"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "text": "a",
+            "verdict": ""
+          }
+        }
+      },
+      "violations": ["note.verdict set"],
+      "cleared": []
+    },
+    {
+      "name": "an optional guard kept",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "verdict": "fine"
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "verdict": "fine"
+          }
+        }
+      },
+      "violations": [],
+      "cleared": []
+    },
+    {
+      "name": "a repeated guard reordered",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "marks": ["a", "b"]
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "marks": ["b", "a"]
+          }
+        }
+      },
+      "violations": ["note.marks changed"],
+      "cleared": []
+    },
+    {
+      "name": "a message guard changed",
+      "type": "themis.widgets.cases.Tree",
+      "old": {
+        "json": {
+          "note": {
+            "stamp": {
+              "by": "a"
+            }
+          }
+        }
+      },
+      "new": {
+        "json": {
+          "note": {
+            "stamp": {
+              "by": "b"
+            }
+          }
+        }
+      },
+      "violations": ["note.stamp changed"],
+      "cleared": []
+    },
+    {
+      "name": "a message guard set on a new asset",
+      "type": "themis.widgets.cases.Tree",
+      "old": null,
+      "new": {
+        "json": {
+          "note": {
+            "stamp": {}
+          }
+        }
+      },
+      "violations": ["note.stamp set_on_new"],
+      "cleared": []
+    }
+  ]
+}

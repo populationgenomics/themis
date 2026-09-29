@@ -35,7 +35,7 @@ from typing import override
 from themis.clients.sheaf import store as remote_mod
 from themis.sheaf import errors
 from themis.sheaf import store as store_mod
-from themis.sheaf.wire import server
+from themis.sheaf.wire import protect, server
 from tools import clu
 
 _SERVICE = 'themis-sheaf'
@@ -142,7 +142,9 @@ def serve(
             signal.signal(signum, lambda *_: stop.set())
         with (
             remote_mod.RemoteStore(service_url, token_file, repo=analysis_id) as remote,
-            server.SheafGitServer([RefreshingStore(remote, keeper)], root, port=port) as instance,
+            server.SheafGitServer(
+                [RefreshingStore(remote, keeper)], root, port=port, protection=protect.Protection.unprotected()
+            ) as instance,
         ):
             print(f'serving {analysis_id} over {service_url}', file=sys.stderr)
             print(f'    git clone {instance.url(analysis_id)}', file=sys.stderr)

@@ -14,6 +14,7 @@ from themis import sheaf
 from themis.clients.auth.tests import fixture_session
 from themis.services.sandbox_worker import guest_git, store_client, sync
 from themis.services.sandbox_worker.tests import conftest, fakes
+from themis.sheaf.wire import protect
 
 MAIN = 'refs/heads/main'
 SESSION = 'sesn_01ABC'
@@ -206,7 +207,7 @@ def test_restore_removes_a_non_directory_the_clone_left_at_skills(
 ) -> None:
     # The hook refuses a push touching `skills`, so only a hook bypass could commit one; the restore still clears
     # it, since the SDK resolves that name before it writes there as the worker.
-    monkeypatch.setattr(analysis.hatches, 'protection', analysis.hatches.protection.__class__())
+    monkeypatch.setattr(analysis.hatches, 'protection', protect.Protection.unprotected())
     workspace_sync, guest = _sync(analysis, store_client.FixtureStore(document='d'), tmp_path / 'seed')
     asyncio.run(workspace_sync.restore())
     (guest.workspace / 'skills').symlink_to('/etc')

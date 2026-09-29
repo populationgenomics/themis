@@ -10,9 +10,12 @@ import type { WorkingDocumentState } from "./working-document";
 // tab showed stays, and a notice says it may be out of date.
 
 const NOTICE = "The workspace can&#x27;t be reached right now";
+const TIP = "9e27".padEnd(40, "0");
 const SHOWN: WorkingDocumentState = {
   kind: "shown",
   markdown: "# Variant summary\n\nPS3 applies.\n",
+  commit: TIP,
+  pinned: false,
 };
 const noop = () => {};
 
@@ -28,6 +31,14 @@ function render(
       document={document}
       unavailable={unavailable}
       clearing={clearing}
+      signal={{
+        analysisId: "an_1",
+        tip: { kind: "commit", commit: TIP },
+        pollFailed: false,
+        unavailable,
+        damaged: false,
+      }}
+      curatorEmail="curator@example.org"
       onCitation={noop}
     />,
   );
@@ -136,6 +147,8 @@ describe("clearing the browser's copy from the working document", () => {
         document: { kind: "copyFailed" },
         unavailable: false,
         clearing,
+        signal: null,
+        curatorEmail: "curator@example.org",
         onCitation: noop,
       }),
       "button",
@@ -162,6 +175,7 @@ describe("the working document's pane menu", () => {
     },
     documentVersions: null,
     clearCopy,
+    curatorEmail: "curator@example.org",
     highlight: undefined,
     onCitation: noop,
     patch: noop,

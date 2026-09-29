@@ -22,7 +22,7 @@ import pytest
 from themis import sheaf
 from themis.sheaf.backends import gcs
 from themis.sheaf.tests import conftest
-from themis.sheaf.wire import server
+from themis.sheaf.wire import protect, server
 
 REPO, REF = 'projects/case', 'refs/heads/main'
 LOG = 'annotations/assertions.jsonl'
@@ -128,7 +128,9 @@ def test_clone_and_push_against_gcs(
     writer.append_line(ref=REF, path=LOG, line='{"code":"PM2"}', author=REVIEWER, message='review PM2')
 
     git = ['git', '-c', 'user.email=agent@x', '-c', 'user.name=Agent', '-c', 'init.defaultBranch=main']
-    with server.SheafGitServer.over_backend(gcs_backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        gcs_backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         work = tmp_path / 'work'
         subprocess.run(
             [*git, 'clone', '-q', instance.url(REPO), str(work)], capture_output=True, check=True, timeout=180

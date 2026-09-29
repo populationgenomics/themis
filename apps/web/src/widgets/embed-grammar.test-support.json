@@ -1,0 +1,214 @@
+{
+  "cases": [
+    {
+      "name": "on a line of its own",
+      "markdown": "::embed[assets/a.binpb]",
+      "embeds": ["assets/a.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "interrupting a paragraph",
+      "markdown": "para\n::embed[a.binpb]\nmore",
+      "embeds": ["a.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "indented under four spaces",
+      "markdown": "   ::embed[a.binpb]",
+      "embeds": ["a.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with trailing spaces",
+      "markdown": "::embed[a.binpb]   ",
+      "embeds": ["a.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "in an indented code block",
+      "markdown": "    ::embed[a.binpb]",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in a backtick fence",
+      "markdown": "```\n::embed[a.binpb]\n```",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "in a tilde fence",
+      "markdown": "~~~\n::embed[a.binpb]\n~~~",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "in a block quote",
+      "markdown": "> ::embed[q/r.binpb]",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in a list item",
+      "markdown": "- ::embed[l.binpb]",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in an ordered list item",
+      "markdown": "1. ::embed[l.binpb]",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in a footnote definition",
+      "markdown": "Text.[^1]\n\n[^1]: A note.\n    ::embed[a.binpb]",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in a container directive",
+      "markdown": ":::note\n::embed[a.binpb]\n:::",
+      "embeds": ["a.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "after a table",
+      "markdown": "| a |\n| - |\n::embed[t.binpb]",
+      "embeds": ["t.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with text after it",
+      "markdown": "::embed[a.binpb] trailing",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "in a code span",
+      "markdown": "see `::embed[a.binpb]` inline",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "as a text directive",
+      "markdown": "see :embed[a.binpb] inline",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "as a container directive",
+      "markdown": ":::embed[a.binpb]\n:::",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "under another name",
+      "markdown": "::embedded[a.binpb]",
+      "embeds": [],
+      "stray": 0
+    },
+    {
+      "name": "with attributes",
+      "markdown": "::embed[a.binpb]{x=1}",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with a quoted brace in its attributes",
+      "markdown": "::embed[a.binpb]{x=\"}\"}",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with malformed attributes",
+      "markdown": "::embed[a.binpb]{!!}",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with an unclosed attribute block",
+      "markdown": "::embed[a.binpb]{",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with an unclosed label",
+      "markdown": "::embed[a.binpb",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with no label",
+      "markdown": "::embed",
+      "embeds": [],
+      "stray": 1
+    },
+    {
+      "name": "with an empty label",
+      "markdown": "::embed[]",
+      "embeds": [""],
+      "stray": 0
+    },
+    {
+      "name": "with underscores markdown reads as emphasis",
+      "markdown": "::embed[_b_.binpb]",
+      "embeds": ["_b_.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with a domain markdown reads as a link",
+      "markdown": "::embed[www.x.binpb]",
+      "embeds": ["www.x.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with a bare www.",
+      "markdown": "::embed[www.]",
+      "embeds": ["www."],
+      "stray": 0
+    },
+    {
+      "name": "with www. inside a path",
+      "markdown": "::embed[assets/a.www.]",
+      "embeds": ["assets/a.www."],
+      "stray": 0
+    },
+    {
+      "name": "with a link markdown reads as an autolink",
+      "markdown": "::embed[https://x.example/a]",
+      "embeds": ["https://x.example/a"],
+      "stray": 0
+    },
+    {
+      "name": "with an escaped bracket",
+      "markdown": "::embed[a\\]b.binpb]",
+      "embeds": ["a\\]b.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with nested brackets",
+      "markdown": "::embed[a[b]c]",
+      "embeds": ["a[b]c"],
+      "stray": 0
+    },
+    {
+      "name": "with emphasis",
+      "markdown": "::embed[a*b*c.binpb]",
+      "embeds": ["a*b*c.binpb"],
+      "stray": 0
+    },
+    {
+      "name": "with a code span",
+      "markdown": "::embed[`c`]",
+      "embeds": ["`c`"],
+      "stray": 0
+    },
+    {
+      "name": "twice",
+      "markdown": "::embed[one.binpb]\n\n::embed[two.binpb]",
+      "embeds": ["one.binpb", "two.binpb"],
+      "stray": 0
+    }
+  ]
+}

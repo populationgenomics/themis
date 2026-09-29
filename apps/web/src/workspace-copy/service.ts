@@ -1,6 +1,7 @@
 import {
   COLLABORATIVE_BRANCH,
   type CopyStorage,
+  type FileAtCommit,
   type RecordedTip,
   WorkspaceCopy,
 } from "./copy";
@@ -33,8 +34,21 @@ export interface CopyStorageFactory {
   list(): Promise<string[]>;
 }
 
+/** Raises unless writing `after` at `path` over `before`, the file there at an edit's base, is an edit
+ *  a curator may make. */
+export type EditCheck = (
+  path: string,
+  before: FileAtCommit | undefined,
+  after: Uint8Array,
+) => void;
+
 export interface CopyServiceOptions {
   storage: CopyStorageFactory;
+  /** Run on every file a publish replaces, against the file at the edit's base, before the edit's
+   *  commit is built or anything is sent; the publish stores the bytes as given, so the check refuses any it would not store as
+   *  they are, such as bytes not in the one encoding every reader reads alike. The base is enough: an
+   *  edit lands on a moved tip only where the file there is the base's. */
+  checkEdit: EditCheck;
   remote: (analysisId: string) => Remote;
   ledger: Ledger;
   locks: CopyLocks;
@@ -189,14 +203,14 @@ export class CopyService {
     const file = await this.readFile(analysisId, commit, WORKING_DOCUMENT_PATH);
     return file === null
       ? null
-      : decodeUtf8(file, `${WORKING_DOCUMENT_PATH} at ${commit}`);
+      : decodeUtf8(file.bytes, `${WORKING_DOCUMENT_PATH} at ${commit}`);
   }
 
   async readFile(
     analysisId: string,
     commit: string,
     path: string,
-  ): Promise<Uint8Array | null> {
+  ): Promise<FileAtCommit | null> {
     requireObjectId(commit, "the commit to read");
     return this.use(analysisId, "shared", async (copy) => {
       if (!(await copy.hasObject(commit))) {
@@ -204,7 +218,7 @@ export class CopyService {
           `the copy of ${analysisId} does not hold ${commit}`,
         );
       }
-      return (await copy.readFile(commit, path))?.bytes ?? null;
+      return (await copy.readFile(commit, path)) ?? null;
     });
   }
 
@@ -249,7 +263,9 @@ export class CopyService {
    *  against the document the copy last followed, with no read of the current one, unless the copy
    *  records none or its branch has not reached `base`. `files` holds each file
    *  the edit replaces, with the bytes the window made from it at `base`. Raises before taking the
-   *  copy's lock on a malformed email, message or path. */
+   *  copy's lock on a malformed email, message or path; under it, before anything is sent, when the
+   *  copy's branch does not reach `base` once it follows the document, or `checkEdit` refuses a
+   *  file. */
   async publish(
     analysisId: string,
     base: string,
@@ -281,6 +297,18 @@ export class CopyService {
         known !== undefined && (await holdsAtOrPast(copy, base))
           ? known
           : await rehydrate();
+      if (!(await holdsAtOrPast(copy, base))) {
+        throw new Error(
+          `the copy of ${analysisId} does not hold ${base} on its branch`,
+        );
+      }
+      for (const file of files) {
+        this.options.checkEdit(
+          file.path,
+          await copy.readFile(base, file.path),
+          file.bytes,
+        );
+      }
       try {
         return await publishEdit(
           copy,

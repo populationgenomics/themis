@@ -15,6 +15,10 @@ function seeded(): QueryClient {
       value: "# Doc\n",
     });
     client.setQueryData(["workspace-history", analysisId, COMMIT], []);
+    client.setQueryData(
+      ["workspace-file", analysisId, COMMIT, "assets/c.binpb"],
+      { commit: COMMIT, value: null },
+    );
   }
   return client;
 }
@@ -59,6 +63,9 @@ describe("clearing a copy", () => {
     ).toBeUndefined();
     expect(
       client.getQueryData(["workspace-history", "an_1", COMMIT]),
+    ).toBeUndefined();
+    expect(
+      client.getQueryData(["workspace-file", "an_1", COMMIT, "assets/c.binpb"]),
     ).toBeUndefined();
     expect(
       client.getQueryData(["workspace-document", "an_2", COMMIT]),

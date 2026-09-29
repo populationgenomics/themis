@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package themis.widgets.models;
+
+import "themis/widgets/models/widget.proto";
+
+message Later {
+  option (themis.widgets.models.widget) = true;
+
+  message Row {
+    string id = 1 [(themis.widgets.models.element_key) = true];
+    string label = 2;
+    bool done = 3 [(themis.widgets.models.guard) = {}];
+  }
+
+  repeated Row rows = 1;
+}

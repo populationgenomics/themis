@@ -26,7 +26,9 @@ REVIEWER = conftest.Author('Reviewer One', 'reviewer.one@example.org')
 @pytest.fixture
 def git_server(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> Iterator[server.SheafGitServer]:
     """A running loopback git server backed by the sheaf store."""
-    instance = server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO})
+    instance = server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    )
     with instance:
         yield instance
 
@@ -136,7 +138,9 @@ def test_stopping_a_server_that_never_started_returns(backend: sheaf.LocalBacken
     with no diagnostic at all. Run on a thread so a regression fails the test rather than hanging
     the suite.
     """
-    instance = server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO})
+    instance = server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    )
     stopping = threading.Thread(target=instance.stop, daemon=True)
 
     stopping.start()
@@ -508,7 +512,9 @@ def test_the_server_serves_only_the_repositories_it_was_given(
             message='seed',
         )
 
-    with server.SheafGitServer.over_backend(backend, tmp_path / 'bare', repos={REPO}) as instance:
+    with server.SheafGitServer.over_backend(
+        backend, tmp_path / 'bare', repos={REPO}, protection=protect.Protection.unprotected()
+    ) as instance:
         allowed = conftest.run_git('clone', instance.url(REPO), str(tmp_path / 'mine'), cwd=tmp_path, check=False)
         refused = conftest.run_git('clone', instance.url(other), str(tmp_path / 'theirs'), cwd=tmp_path, check=False)
 
