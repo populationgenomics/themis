@@ -59,16 +59,19 @@ CREATE TABLE curation.roles_window AS SELECT * FROM curation.roles;
 DELETE FROM curation.roles;
 ```
 
-**3. Deploy.** First read the dev ledger. The runner skips a version it has already recorded, whatever the file now
-contains, so a version number an earlier branch claimed is applied as *that* branch wrote it and the difference surfaces
-later as a missing column.
+**3. Deploy.** Push the chain to `deployed/dev`. The pipeline first checks dev's migration ledger against the chain's
+migrations, and stops if a version it has recorded differs from the chain's file of that version
+([`../design/migrations.md`](../design/migrations.md) §Checking the ledger against the tree). A stop there has changed
+nothing: the previous revision is still live, `0012` has not run, and the surface is still closed. The previous revision
+and the rows still agree, so you can reopen with step 6 while the ledger is sorted out, and later start again from step
+1 with a new `--closed-at`.
 
-```bash
-uv run python -m tools.psql -- -c 'SELECT version, name, applied_at FROM schema_migrations ORDER BY version'
-```
+If that step ends with a warning instead, it could not read the ledger and let the deploy go on. The migration runner
+checks the ledger again after `pulumi up`, so a disagreement then stops the runner with the pushed revision already live
+and `0012` not run.
 
-Then push the chain to `deployed/dev`. The pipeline builds and pushes the images, `pulumi up` rolls each Cloud Run
-service onto them, and the migration runner then applies `0012_curation_vocabulary` — the snapshots, and the drop of
+Once the check passes, the pipeline builds and pushes the images, `pulumi up` rolls each Cloud Run service onto them,
+and the migration runner then applies `0012_curation_vocabulary` — the snapshots, and the drop of
 `curation.variants.inheritance`. The revision you push must be one that no longer reads that column; the surface's own
 change is what makes it so, and deploying this migration ahead of it breaks the variant list in both directions.
 

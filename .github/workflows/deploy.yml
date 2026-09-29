@@ -1,13 +1,13 @@
 name: deploy
 
-# Deploys to dev: build the service images, push to Artifact Registry, then `pulumi up`,
-# apply migrations, and apply the agent's declaration on the Anthropic side. Two ways
-# in — push `deployed/dev`, or dispatch on `main` — and merging to `main` is neither, so
-# it deploys nothing (docs/design/deployment.md, "Deploy trigger"). Authenticates as
-# the deploy SA via WIF, whose binding accepts exactly these two refs; a GitHub ruleset
-# over `deployed/*` bypasses only for the repository-admin role, which is what limits
-# who can deploy unreviewed code. PRs never reach this — they get a read-only preview
-# (preview.yml).
+# Deploys to dev: check the migration ledger against this tree, build the service images,
+# push to Artifact Registry, then `pulumi up`, apply migrations, and apply the agent's
+# declaration on the Anthropic side. Two ways in — push `deployed/dev`, or dispatch on
+# `main` — and merging to `main` is neither, so it deploys nothing
+# (docs/design/deployment.md, "Deploy trigger"). Authenticates as the deploy SA via WIF,
+# whose binding accepts exactly these two refs; a GitHub ruleset over `deployed/*`
+# bypasses only for the repository-admin role, which is what limits who can deploy
+# unreviewed code. PRs never reach this — they get a read-only preview (preview.yml).
 on:
   push:
     branches: ['deployed/dev']
@@ -29,6 +29,8 @@ jobs:
       contents: read
     env:
       IMAGE_PREFIX: australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis
+      PULUMI_BACKEND_URL: gs://cpg-themis-dev-pulumi-state
+      PULUMI_STACK_NAME: dev
     steps:
       # The dispatch UI offers every ref, but the deploy SA's WIF binding accepts
       # only these two — refuse here so a wrong pick fails legibly instead of as
@@ -49,6 +51,38 @@ jobs:
           workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
           service_account: themis-deploy@cpg-themis-dev.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v3
+      # Installs the CLI only (no command), for the ledger preflight below.
+      - uses: pulumi/actions@v7
+      # Stop a ledger mismatch before `pulumi up` puts new revisions live, reading the
+      # connection settings from the stack's previous outputs. A stack with no outputs has
+      # never been deployed, so it has no database to check yet. Read-only; the migrate
+      # step's own check, under its advisory lock, stays authoritative. So only a finding
+      # (exit 1) stops the deploy; a ledger the check could not read (exit 3) is a warning,
+      # since the deploy may be the one that repairs the login.
+      - name: Check the migration ledger against the tree
+        run: |
+          OUTPUTS="$(pulumi stack output --stack "${PULUMI_STACK_NAME}" --json --cwd infra)"
+          if [[ "$(jq 'length' <<< "${OUTPUTS}")" == 0 ]]; then
+            echo "::notice::stack ${PULUMI_STACK_NAME} has no outputs, so it has never been deployed; skipping the ledger preflight"
+            exit 0
+          fi
+          output() {
+            jq -er --arg name "$1" --arg stack "${PULUMI_STACK_NAME}" \
+              '.[$name] // error("stack \($stack) has no output \($name)")' <<< "${OUTPUTS}"
+          }
+          THEMIS_SQL_CONNECTION_NAME="$(output sql_connection_name)"
+          THEMIS_SQL_DATABASE="$(output sql_database)"
+          THEMIS_DB_USER="$(output migrator_db_user)"
+          export THEMIS_SQL_CONNECTION_NAME THEMIS_SQL_DATABASE THEMIS_DB_USER
+          ERRORS="$(mktemp)"
+          STATUS=0
+          uv run --locked --group migrate python -m themis.migrate --check 2> "${ERRORS}" || STATUS=$?
+          cat "${ERRORS}" >&2
+          if [[ "${STATUS}" == 3 ]]; then
+            echo "::warning::the ledger preflight could not read the ledger, so it did not check it; the migrate step after pulumi up checks it again: $(tail -n 1 "${ERRORS}")"
+            exit 0
+          fi
+          exit "${STATUS}"
       - name: Build and push the service images
         run: |
           gcloud auth configure-docker australia-southeast1-docker.pkg.dev --quiet
@@ -69,9 +103,9 @@ jobs:
         id: pulumi
         with:
           command: up
-          stack-name: dev
+          stack-name: ${{ env.PULUMI_STACK_NAME }}
           work-dir: infra
-          cloud-url: gs://cpg-themis-dev-pulumi-state
+          cloud-url: ${{ env.PULUMI_BACKEND_URL }}
       # Apply pending DB migrations as the deploy SA (the schema-owning migrator),
       # after the stack has attached the auth SA as a DB user (the SELECT grant's
       # target). Connects through the connector with the job's WIF credentials.

@@ -28,7 +28,8 @@ with this doc.
 
 `deploy.yml` has two entry points, and merging to `main` is neither — a merge lints, tests, and builds images, but does
 not deploy. A deploy is the images, the stack, the migrations, and the agent's declaration on the Anthropic side
-(`agents/svcv4-classifier.agent.yaml`, applied whole by `tools/agents`), in that order. The agent step runs as the same
+(`agents/svcv4-classifier.agent.yaml`, applied whole by `tools/agents`), in that order. A read-only check of the
+database's migration ledger runs before all four ([`migrations.md`](migrations.md)). The agent step runs as the same
 deploy SA, federated into the Anthropic workspace under a rule that pins that account
 ([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md), the deploy workflow), so the ref binding below gates
 both sides of a deploy.
@@ -112,7 +113,10 @@ Accepted consequences:
 - **An ad-hoc deploy applies that branch's migrations, and those do not come back.** The migrate step runs on every
   deploy, so an unreviewed migration reaches the shared dev database. Migrations are forward-only
   ([`migrations.md`](migrations.md)), so redeploying a good ref — the remedy for every other item here — reverts the
-  stack but not the schema.
+  stack but not the schema. The ledger also keeps the branch's migration under its version number. A later deploy of a
+  tree that holds a different migration at that version, such as another branch that picked the same number, stops at
+  the ledger preflight until dev's ledger and that tree agree
+  ([`migrations.md`](migrations.md#checking-the-ledger-against-the-tree)).
 
 ## Deploy authentication
 
