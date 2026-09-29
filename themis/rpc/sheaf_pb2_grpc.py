@@ -51,6 +51,11 @@ class SheafStub:
                 request_serializer=themis_dot_rpc_dot_sheaf__pb2.PublishRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_sheaf__pb2.PublishResponse.FromString,
                 _registered_method=True)
+        self.SignPackUrls = channel.unary_unary(
+                '/themis.rpc.sheaf.Sheaf/SignPackUrls',
+                request_serializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.FromString,
+                _registered_method=True)
 
 
 class SheafServicer:
@@ -92,9 +97,24 @@ class SheafServicer:
         RESOURCE_EXHAUSTED when the declared packs exceed the deployment's per-publish byte ceiling, or
         the ref set the publish would leave exceeds its ref-count or document-size ceiling — both
         decided from the intent and the current document before any pack is stored. The ref set only
-        grows, since nothing is deleted, so it is bounded for the same reason the bytes are. Faults, not
-        refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage fault a caller
-        retries.
+        grows, since nothing is deleted, so it is bounded for the same reason the bytes are. DATA_LOSS
+        when the stored document does not parse as one this code wrote: damage, which a caller must not
+        retry. Faults, not refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage
+        fault a caller retries.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SignPackUrls(self, request, context):
+        """Signed download URLs, with sizes, for packs the current document lists, so a caller that keeps
+        its own copy of the repository downloads them from the bucket instead of streaming them through
+        this service. The signing happens here because a signed URL carries the signer's own read
+        permission, and this service is the one identity with a role on the bucket. Refusals as
+        SignPackUrlsRequest states. DATA_LOSS when the document lists a pack the store does not hold, or
+        the stored document does not parse as one this code wrote: damage, which a caller must not retry.
+        UNIMPLEMENTED when the deployment's storage backend cannot sign, as the local-directory backend
+        cannot.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -117,6 +137,11 @@ def add_SheafServicer_to_server(servicer, server):
                     servicer.Publish,
                     request_deserializer=themis_dot_rpc_dot_sheaf__pb2.PublishRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_sheaf__pb2.PublishResponse.SerializeToString,
+            ),
+            'SignPackUrls': grpc.unary_unary_rpc_method_handler(
+                    servicer.SignPackUrls,
+                    request_deserializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -201,6 +226,33 @@ class Sheaf:
             '/themis.rpc.sheaf.Sheaf/Publish',
             themis_dot_rpc_dot_sheaf__pb2.PublishRequest.SerializeToString,
             themis_dot_rpc_dot_sheaf__pb2.PublishResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SignPackUrls(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.sheaf.Sheaf/SignPackUrls',
+            themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsRequest.SerializeToString,
+            themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.FromString,
             options,
             channel_credentials,
             insecure,

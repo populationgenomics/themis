@@ -4,7 +4,9 @@ import grpc
 import warnings
 
 from themis.rpc import literature_pb2 as themis_dot_rpc_dot_literature__pb2
+from themis.rpc import sheaf_pb2 as themis_dot_rpc_dot_sheaf__pb2
 from themis.workbench.models import workbench_pb2 as themis_dot_workbench_dot_models_dot_workbench__pb2
+from themis.workbench.rpc import workbench_pb2 as themis_dot_workbench_dot_rpc_dot_workbench__pb2
 
 GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
@@ -82,6 +84,21 @@ class WorkbenchStub:
                 request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
                 response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
                 _registered_method=True)
+        self.ReadWorkspaceRefDoc = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/ReadWorkspaceRefDoc',
+                request_serializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.ReadWorkspaceRefDocRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_sheaf__pb2.RefDocSnapshot.FromString,
+                _registered_method=True)
+        self.SignWorkspacePackUrls = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/SignWorkspacePackUrls',
+                request_serializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.SignWorkspacePackUrlsRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.FromString,
+                _registered_method=True)
+        self.PublishWorkspace = channel.unary_unary(
+                '/themis.workbench.rpc.Workbench/PublishWorkspace',
+                request_serializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.PublishWorkspaceRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_sheaf__pb2.PublishResponse.FromString,
+                _registered_method=True)
         self.DescribePaper = channel.unary_unary(
                 '/themis.workbench.rpc.Workbench/DescribePaper',
                 request_serializer=themis_dot_rpc_dot_literature__pb2.DescribePaperRequest.SerializeToString,
@@ -128,7 +145,8 @@ class WorkbenchServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Poll(self, request, context):
-        """One liveness tick: the whole projected event stream plus the working-document version signal.
+        """One liveness tick: the whole projected event stream plus the working-document version signal and
+        the workspace branch's tip.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -160,6 +178,52 @@ class WorkbenchServicer:
 
     def GetDocument(self, request, context):
         """The current working document as a produced|not-produced result, or a named historical version.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReadWorkspaceRefDoc(self, request, context):
+        """The Analysis's workspace repository's ref document and generation, which the browser's copy of
+        the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
+        ReadRefDoc; an unset document is a repository that does not exist yet. The service's DATA_LOSS, a
+        stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not retry; every
+        other upstream failure is masked as INTERNAL.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SignWorkspacePackUrls(self, request, context):
+        """Signed download URLs and sizes for packs the Analysis's ref document lists. Relays the sheaf
+        service's SignPackUrls; each URL is a bearer capability until it expires. A pack the current
+        document no longer lists, the service's NOT_FOUND, reaches the caller as FAILED_PRECONDITION,
+        because NOT_FOUND on this surface means an Analysis outside the caller's membership: read the ref
+        document again and ask for what it lists. The service's DATA_LOSS, a listed pack the store does
+        not hold or a stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not
+        retry. Every other upstream failure is masked as INTERNAL.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PublishWorkspace(self, request, context):
+        """Publish a commit the browser built on a revision of the Analysis's workspace. Relays the sheaf
+        service's Publish. Five of its answers reach the caller as the same codes with the same meaning,
+        and every other upstream failure is masked as INTERNAL:
+        ABORTED: an unrelated publish landed first; rebuild the reflog entry and the pack against the
+        new document and publish again.
+        FAILED_PRECONDITION: the branch moved; if the pending commit is reachable from the new tip it
+        landed and only the response was lost, else apply the edit on the new tip and publish again.
+        RESOURCE_EXHAUSTED: the publish is over one of the service's ceilings; not retried, and the
+        curator is told the edit was not saved.
+        INVALID_ARGUMENT: the intent or the pack is malformed; not retried, and reported the same way.
+        It is relayed because the intent and the pack are the browser's own bytes, forwarded as sent;
+        the BFF always names a session, so the service's refusal of a call naming none cannot arise.
+        DATA_LOSS: the stored document does not parse; the repository is damaged. Not retried, and the
+        curator is told the workspace is damaged and the edit was not saved.
+        A retry of a publish whose response was lost succeeds while the branch still holds the publish's
+        commit as its tip.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -223,6 +287,21 @@ def add_WorkbenchServicer_to_server(servicer, server):
                     servicer.GetDocument,
                     request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.FromString,
                     response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.SerializeToString,
+            ),
+            'ReadWorkspaceRefDoc': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadWorkspaceRefDoc,
+                    request_deserializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.ReadWorkspaceRefDocRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_sheaf__pb2.RefDocSnapshot.SerializeToString,
+            ),
+            'SignWorkspacePackUrls': grpc.unary_unary_rpc_method_handler(
+                    servicer.SignWorkspacePackUrls,
+                    request_deserializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.SignWorkspacePackUrlsRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.SerializeToString,
+            ),
+            'PublishWorkspace': grpc.unary_unary_rpc_method_handler(
+                    servicer.PublishWorkspace,
+                    request_deserializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.PublishWorkspaceRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_sheaf__pb2.PublishResponse.SerializeToString,
             ),
             'DescribePaper': grpc.unary_unary_rpc_method_handler(
                     servicer.DescribePaper,
@@ -458,6 +537,87 @@ class Workbench:
             '/themis.workbench.rpc.Workbench/GetDocument',
             themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
             themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadWorkspaceRefDoc(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/ReadWorkspaceRefDoc',
+            themis_dot_workbench_dot_rpc_dot_workbench__pb2.ReadWorkspaceRefDocRequest.SerializeToString,
+            themis_dot_rpc_dot_sheaf__pb2.RefDocSnapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SignWorkspacePackUrls(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/SignWorkspacePackUrls',
+            themis_dot_workbench_dot_rpc_dot_workbench__pb2.SignWorkspacePackUrlsRequest.SerializeToString,
+            themis_dot_rpc_dot_sheaf__pb2.SignPackUrlsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PublishWorkspace(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.workbench.rpc.Workbench/PublishWorkspace',
+            themis_dot_workbench_dot_rpc_dot_workbench__pb2.PublishWorkspaceRequest.SerializeToString,
+            themis_dot_rpc_dot_sheaf__pb2.PublishResponse.FromString,
             options,
             channel_credentials,
             insecure,

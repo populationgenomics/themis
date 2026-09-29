@@ -1,17 +1,19 @@
-// The `sheaf` service: a repository's mutable state and packs, behind the one credential on the
-// workspace bucket (docs/design/sheaf.md). This proto is the source of truth; `regen` (buf generate) emits the
+// The `sheaf` service: a repository's mutable state and packs, behind the one credential on
+// sheaf's bucket (docs/design/sheaf.md). This proto is the source of truth; `regen` (buf generate) emits the
 // themis/rpc/sheaf stubs each consumer imports.
 //
 // Sheaf is git over object storage: content-addressed packfiles plus one ref document replaced by
 // compare-and-swap. The service holds the bucket and runs sheaf's storage protocol; a caller holds
-// the objects. That caller is the sandbox worker: its bare mirror hydrates through ReadRefDoc and
+// the objects. The first caller is the sandbox worker: its bare mirror hydrates through ReadRefDoc and
 // FetchPack, and its pre-receive hook publishes through Publish. The guest's git sees none of this —
 // it speaks git's own protocol to the worker's mirror over the stream hatch, and the mirror is where
-// git's world ends and sheaf's begins. The BFF is the deployment's second consumer through a
-// workspace-level interface of its own; it holds no objects and no session token, so it does not
-// call these rpcs. Every call here is scoped to one repository by the session it carries
-// (x-themis-session-token metadata resolves to an Analysis; the repository is that Analysis's), so
-// no request names a repository and a caller can reach only its own.
+// git's world ends and sheaf's begins. The curator's browser is the second caller: it keeps a copy
+// of the repository of its own, hydrated through ReadRefDoc and the packs SignPackUrls signs download
+// URLs for, and publishes a curator's commit through Publish. The BFF relays each of those calls as
+// the web tier, naming the Analysis through a session it derives for it
+// (docs/design/workbench-workspace.md). Every call here is scoped to one repository by the session
+// it names (resolved to an Analysis; the repository is that Analysis's), so no request names a
+// repository and a caller can reach only its own.
 //
 // The split of checks follows what each side holds. The service refuses what it can decide from
 // the document alone: a name or id git cannot hold, a ref set git cannot store, a deletion, a
@@ -29,8 +31,8 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { EmptySchema } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_empty } from "@bufbuild/protobuf/wkt";
+import type { EmptySchema, Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_empty, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { RefDoc, RefTarget } from "../sheaf/models/refdoc_pb";
 import { file_themis_sheaf_models_refdoc } from "../sheaf/models/refdoc_pb";
 import { file_themis_rpc_sandbox_options } from "./sandbox_options_pb";
@@ -40,7 +42,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/rpc/sheaf.proto.
  */
 export const file_themis_rpc_sheaf: GenFile = /*@__PURE__*/
-  fileDesc("ChZ0aGVtaXMvcnBjL3NoZWFmLnByb3RvEhB0aGVtaXMucnBjLnNoZWFmIloKDlJlZkRvY1NuYXBzaG90EjQKCGRvY3VtZW50GAEgASgLMiIudGhlbWlzLnNoZWFmLm1vZGVscy5yZWZkb2MuUmVmRG9jEhIKCmdlbmVyYXRpb24YAiABKAMiIwoQRmV0Y2hQYWNrUmVxdWVzdBIPCgdwYWNrX2lkGAEgASgJIhwKCVBhY2tDaHVuaxIPCgdjb250ZW50GAEgASgMIj8KCVJlZlVwZGF0ZRIQCgNvbGQYASABKAlIAIgBARIQCgNuZXcYAiABKAlIAYgBAUIGCgRfb2xkQgYKBF9uZXcipAIKDVB1Ymxpc2hJbnRlbnQSFwoPYmFzZV9nZW5lcmF0aW9uGAEgASgDEkQKC3JlZl91cGRhdGVzGAIgAygLMi8udGhlbWlzLnJwYy5zaGVhZi5QdWJsaXNoSW50ZW50LlJlZlVwZGF0ZXNFbnRyeRIzCgRoZWFkGAMgASgLMiUudGhlbWlzLnNoZWFmLm1vZGVscy5yZWZkb2MuUmVmVGFyZ2V0Ei8KBXBhY2tzGAQgAygLMiAudGhlbWlzLnJwYy5zaGVhZi5QYWNrRGVzY3JpcHRvchpOCg9SZWZVcGRhdGVzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsudGhlbWlzLnJwYy5zaGVhZi5SZWZVcGRhdGU6AjgBIi8KDlBhY2tEZXNjcmlwdG9yEgwKBHNpemUYASABKAQSDwoHcGFja19pZBgCIAEoCSJ/Cg5QdWJsaXNoUmVxdWVzdBIxCgZpbnRlbnQYASABKAsyHy50aGVtaXMucnBjLnNoZWFmLlB1Ymxpc2hJbnRlbnRIABIvCgVjaHVuaxgCIAEoCzIeLnRoZW1pcy5ycGMuc2hlYWYuUHVibGlzaENodW5rSABCCQoHbWVzc2FnZSItCgxQdWJsaXNoQ2h1bmsSDAoEcGFjaxgBIAEoDRIPCgdjb250ZW50GAIgASgMIiUKD1B1Ymxpc2hSZXNwb25zZRISCgpnZW5lcmF0aW9uGAEgASgDMoYCCgVTaGVhZhJNCgpSZWFkUmVmRG9jEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GiAudGhlbWlzLnJwYy5zaGVhZi5SZWZEb2NTbmFwc2hvdCIForUYAQQSVQoJRmV0Y2hQYWNrEiIudGhlbWlzLnJwYy5zaGVhZi5GZXRjaFBhY2tSZXF1ZXN0GhsudGhlbWlzLnJwYy5zaGVhZi5QYWNrQ2h1bmsiBaK1GAEEMAESVwoHUHVibGlzaBIgLnRoZW1pcy5ycGMuc2hlYWYuUHVibGlzaFJlcXVlc3QaIS50aGVtaXMucnBjLnNoZWFmLlB1Ymxpc2hSZXNwb25zZSIForUYAQQoAWIGcHJvdG8z", [file_google_protobuf_empty, file_themis_sheaf_models_refdoc, file_themis_rpc_sandbox_options]);
+  fileDesc("ChZ0aGVtaXMvcnBjL3NoZWFmLnByb3RvEhB0aGVtaXMucnBjLnNoZWFmIloKDlJlZkRvY1NuYXBzaG90EjQKCGRvY3VtZW50GAEgASgLMiIudGhlbWlzLnNoZWFmLm1vZGVscy5yZWZkb2MuUmVmRG9jEhIKCmdlbmVyYXRpb24YAiABKAMiIwoQRmV0Y2hQYWNrUmVxdWVzdBIPCgdwYWNrX2lkGAEgASgJIhwKCVBhY2tDaHVuaxIPCgdjb250ZW50GAEgASgMIj8KCVJlZlVwZGF0ZRIQCgNvbGQYASABKAlIAIgBARIQCgNuZXcYAiABKAlIAYgBAUIGCgRfb2xkQgYKBF9uZXcipAIKDVB1Ymxpc2hJbnRlbnQSFwoPYmFzZV9nZW5lcmF0aW9uGAEgASgDEkQKC3JlZl91cGRhdGVzGAIgAygLMi8udGhlbWlzLnJwYy5zaGVhZi5QdWJsaXNoSW50ZW50LlJlZlVwZGF0ZXNFbnRyeRIzCgRoZWFkGAMgASgLMiUudGhlbWlzLnNoZWFmLm1vZGVscy5yZWZkb2MuUmVmVGFyZ2V0Ei8KBXBhY2tzGAQgAygLMiAudGhlbWlzLnJwYy5zaGVhZi5QYWNrRGVzY3JpcHRvchpOCg9SZWZVcGRhdGVzRW50cnkSCwoDa2V5GAEgASgJEioKBXZhbHVlGAIgASgLMhsudGhlbWlzLnJwYy5zaGVhZi5SZWZVcGRhdGU6AjgBIi8KDlBhY2tEZXNjcmlwdG9yEgwKBHNpemUYASABKAQSDwoHcGFja19pZBgCIAEoCSJ/Cg5QdWJsaXNoUmVxdWVzdBIxCgZpbnRlbnQYASABKAsyHy50aGVtaXMucnBjLnNoZWFmLlB1Ymxpc2hJbnRlbnRIABIvCgVjaHVuaxgCIAEoCzIeLnRoZW1pcy5ycGMuc2hlYWYuUHVibGlzaENodW5rSABCCQoHbWVzc2FnZSItCgxQdWJsaXNoQ2h1bmsSDAoEcGFjaxgBIAEoDRIPCgdjb250ZW50GAIgASgMIicKE1NpZ25QYWNrVXJsc1JlcXVlc3QSEAoIcGFja19pZHMYASADKAkiQwoUU2lnblBhY2tVcmxzUmVzcG9uc2USKwoFcGFja3MYASADKAsyHC50aGVtaXMucnBjLnNoZWFmLlNpZ25lZFBhY2siaQoKU2lnbmVkUGFjaxIPCgdwYWNrX2lkGAEgASgJEgsKA3VybBgCIAEoCRIMCgRzaXplGAMgASgEEi8KC2V4cGlyZV90aW1lGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIlCg9QdWJsaXNoUmVzcG9uc2USEgoKZ2VuZXJhdGlvbhgBIAEoAzLuAgoFU2hlYWYSTgoKUmVhZFJlZkRvYxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRogLnRoZW1pcy5ycGMuc2hlYWYuUmVmRG9jU25hcHNob3QiBqK1GAIEARJVCglGZXRjaFBhY2sSIi50aGVtaXMucnBjLnNoZWFmLkZldGNoUGFja1JlcXVlc3QaGy50aGVtaXMucnBjLnNoZWFmLlBhY2tDaHVuayIForUYAQQwARJYCgdQdWJsaXNoEiAudGhlbWlzLnJwYy5zaGVhZi5QdWJsaXNoUmVxdWVzdBohLnRoZW1pcy5ycGMuc2hlYWYuUHVibGlzaFJlc3BvbnNlIgaitRgCBAEoARJkCgxTaWduUGFja1VybHMSJS50aGVtaXMucnBjLnNoZWFmLlNpZ25QYWNrVXJsc1JlcXVlc3QaJi50aGVtaXMucnBjLnNoZWFmLlNpZ25QYWNrVXJsc1Jlc3BvbnNlIgWitRgBAWIGcHJvdG8z", [file_google_protobuf_empty, file_google_protobuf_timestamp, file_themis_sheaf_models_refdoc, file_themis_rpc_sandbox_options]);
 
 /**
  * The repository's whole mutable state, and the version token a publish against it is conditional on.
@@ -302,6 +304,99 @@ export const PublishChunkSchema: GenMessage<PublishChunk> = /*@__PURE__*/
   messageDesc(file_themis_rpc_sheaf, 7);
 
 /**
+ * The packs a caller wants to download from the bucket itself, by the ids the current document lists.
+ *
+ * @generated from message themis.rpc.sheaf.SignPackUrlsRequest
+ */
+export type SignPackUrlsRequest = Message<"themis.rpc.sheaf.SignPackUrlsRequest"> & {
+  /**
+   * Lowercase hex SHA-256 ids, each named once, at most 256 per call, so a caller lacking more asks
+   * in batches. Empty, more than 256, an id that is not sixty-four hex digits, or an id named twice is
+   * INVALID_ARGUMENT. An id the current document does not list is NOT_FOUND, even when the pack
+   * exists, so a URL is only ever signed for a pack a reader of this repository can already name; a
+   * caller answered NOT_FOUND reads the document again, since the list it asked from may be stale.
+   *
+   * @generated from field: repeated string pack_ids = 1;
+   */
+  packIds: string[];
+};
+
+/**
+ * Describes the message themis.rpc.sheaf.SignPackUrlsRequest.
+ * Use `create(SignPackUrlsRequestSchema)` to create a new message.
+ */
+export const SignPackUrlsRequestSchema: GenMessage<SignPackUrlsRequest> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_sheaf, 8);
+
+/**
+ * Where to download each requested pack, and how large it is.
+ *
+ * @generated from message themis.rpc.sheaf.SignPackUrlsResponse
+ */
+export type SignPackUrlsResponse = Message<"themis.rpc.sheaf.SignPackUrlsResponse"> & {
+  /**
+   * One per requested id, in the order requested.
+   *
+   * @generated from field: repeated themis.rpc.sheaf.SignedPack packs = 1;
+   */
+  packs: SignedPack[];
+};
+
+/**
+ * Describes the message themis.rpc.sheaf.SignPackUrlsResponse.
+ * Use `create(SignPackUrlsResponseSchema)` to create a new message.
+ */
+export const SignPackUrlsResponseSchema: GenMessage<SignPackUrlsResponse> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_sheaf, 9);
+
+/**
+ * One pack's download.
+ *
+ * @generated from message themis.rpc.sheaf.SignedPack
+ */
+export type SignedPack = Message<"themis.rpc.sheaf.SignedPack"> & {
+  /**
+   * The id it was requested under. The downloaded bytes' SHA-256 must equal it, which is how a caller
+   * detects a truncated or altered download before indexing it.
+   *
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * A short-lived signed GET URL for the pack. It carries this service's read permission and works
+   * for anyone holding it until it expires: fetch it once, keep it in memory, never log it or
+   * navigate to it. A download that fails is signed afresh, never retried against the same URL,
+   * because an expired URL's refusal can reach a browser as an opaque network error.
+   *
+   * @generated from field: string url = 2;
+   */
+  url: string;
+
+  /**
+   * The pack's byte length, known before any byte is downloaded, so a caller can refuse a repository
+   * larger than its budget without starting.
+   *
+   * @generated from field: uint64 size = 3;
+   */
+  size: bigint;
+
+  /**
+   * When `url` stops working, so a caller downloading a long batch signs again before it does.
+   *
+   * @generated from field: google.protobuf.Timestamp expire_time = 4;
+   */
+  expireTime?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message themis.rpc.sheaf.SignedPack.
+ * Use `create(SignedPackSchema)` to create a new message.
+ */
+export const SignedPackSchema: GenMessage<SignedPack> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_sheaf, 10);
+
+/**
  * The generation at which the document holds this publish's outcome: the one the publish wrote, or,
  * when the call succeeded because the publish had already landed, the current one. Either way the
  * caller's next read sees it. Nothing else: the packs stored are exactly the intent's declared
@@ -321,7 +416,7 @@ export type PublishResponse = Message<"themis.rpc.sheaf.PublishResponse"> & {
  * Use `create(PublishResponseSchema)` to create a new message.
  */
 export const PublishResponseSchema: GenMessage<PublishResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_sheaf, 8);
+  messageDesc(file_themis_rpc_sheaf, 11);
 
 /**
  * A sheaf repository's storage protocol, served for the repository the session names.
@@ -370,9 +465,10 @@ export const Sheaf: GenService<{
    * RESOURCE_EXHAUSTED when the declared packs exceed the deployment's per-publish byte ceiling, or
    * the ref set the publish would leave exceeds its ref-count or document-size ceiling — both
    * decided from the intent and the current document before any pack is stored. The ref set only
-   * grows, since nothing is deleted, so it is bounded for the same reason the bytes are. Faults, not
-   * refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage fault a caller
-   * retries.
+   * grows, since nothing is deleted, so it is bounded for the same reason the bytes are. DATA_LOSS
+   * when the stored document does not parse as one this code wrote: damage, which a caller must not
+   * retry. Faults, not refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage
+   * fault a caller retries.
    *
    * @generated from rpc themis.rpc.sheaf.Sheaf.Publish
    */
@@ -380,6 +476,23 @@ export const Sheaf: GenService<{
     methodKind: "client_streaming";
     input: typeof PublishRequestSchema;
     output: typeof PublishResponseSchema;
+  },
+  /**
+   * Signed download URLs, with sizes, for packs the current document lists, so a caller that keeps
+   * its own copy of the repository downloads them from the bucket instead of streaming them through
+   * this service. The signing happens here because a signed URL carries the signer's own read
+   * permission, and this service is the one identity with a role on the bucket. Refusals as
+   * SignPackUrlsRequest states. DATA_LOSS when the document lists a pack the store does not hold, or
+   * the stored document does not parse as one this code wrote: damage, which a caller must not retry.
+   * UNIMPLEMENTED when the deployment's storage backend cannot sign, as the local-directory backend
+   * cannot.
+   *
+   * @generated from rpc themis.rpc.sheaf.Sheaf.SignPackUrls
+   */
+  signPackUrls: {
+    methodKind: "unary";
+    input: typeof SignPackUrlsRequestSchema;
+    output: typeof SignPackUrlsResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_themis_rpc_sheaf, 0);

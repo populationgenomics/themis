@@ -42,7 +42,8 @@ extend google.protobuf.EnumValueOptions {
 // `admits_caller`, and a misspelling is a compile error rather than an rpc that silently admits nobody.
 enum Caller {
   CALLER_UNSPECIFIED = 0;
-  // The web tier's runtime account: the BFF, calling on the browser's behalf with no session.
+  // The web tier's runtime account: the BFF, calling on the browser's behalf. It presents no session,
+  // except that it names, in a self claim, the session whose workspace repository a sheaf rpc acts on.
   CALLER_WEB = 1 [(themis.rpc.account_id) = "themis-web", (themis.rpc.calling_as) = CALLING_AS_SELF];
   // The developer's identity: the account a maintainer impersonates to exercise a deployed system by
   // hand. Admitted on every rpc the contract declares, so no rpc names it; whether anyone may become it,

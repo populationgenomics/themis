@@ -3,7 +3,9 @@
 **Status:** draft **Related:** [`frontend-framework.md`](frontend-framework.md) (web tier + BFF this rides on;
 anchored-comment offset convention); [`literature-evidence-layer.md`](literature-evidence-layer.md) (litcache + the
 evidence service that gains `Locate`/`Validate`); [`litcache-manifest.md`](litcache-manifest.md)
-(`Manifest`/`Rendering`/`AssociatedFile` this resolves against); [`services.md`](services.md) (the
+(`Manifest`/`Rendering`/`AssociatedFile` this resolves against); [`workbench-workspace.md`](workbench-workspace.md) (the
+browser's copy of the workspace repository a revision of the working document is read from);
+[`document-widgets.md`](document-widgets.md) (the typed blocks `::embed` draws); [`services.md`](services.md) (the
 proto+`grpc.aio`+fixture pattern the evidence-service additions follow); [`proto.md`](proto.md) (schema +
 serialization); [`workbench-navigation.md`](workbench-navigation.md) (the pages this one lives on, and its chrome);
 [`conversation-view.md`](conversation-view.md) (what the conversation region renders).
@@ -125,9 +127,11 @@ inherent DnD limit, with the menu as the secondary path.
 ### Reveal: beside the source, surface if already open
 
 `:paper`/`:quote` are parsed by `remark-directive` on the **shared `Markdown` component** (`markdown.tsx`), which both
-the conversation and working-document renderers use; a click handler wires each directive to a `reveal`. A reveal opens
-the paper **beside its source** so both are visible. The **already-open check runs first**: a paper is never duplicated
-(a tab lives in one pane). Let the *computed target* be the pane the placement rules below select.
+the conversation and working-document renderers use; a click handler wires each directive to a `reveal`. A citation
+*inside* a widget ([`document-widgets.md`](document-widgets.md)) raises the same `reveal`, so everything in this section
+applies to it unchanged. A reveal opens the paper **beside its source** so both are visible. The **already-open check
+runs first**: a paper is never duplicated (a tab lives in one pane). Let the *computed target* be the pane the placement
+rules below select.
 
 - **Already open somewhere.** Open in the **same window** → its existing tab **moves to the computed target** (so a
   document-sourced reveal still lands it beside the source). Open in a **different window** → that window is **raised**
@@ -198,18 +202,18 @@ mirror** with a tab area only. A **group** never pops; a **window** does, holdin
 - A `BroadcastChannel` carries a **whole-workspace snapshot** to every window and **commands back** to main; each window
   renders only its own tab area; main applies and re-broadcasts — no split-brain. The snapshot is **structure plus small
   signals** (window/pane/tab descriptors, ids, ratios, active ids, the highlight quote map, the strip label mode) and,
-  for the working document, its **version + analysisId** — the refetch signal, not the body. The two large bodies stay
-  **off** the channel: the conversation transcript is main-only (children never render it), and the working-document
-  **body is fetched by each window from the BFF**, keyed on the broadcast version, so a child re-fetches when the agent
-  republishes. (Unlike an immutable paper, the working document is versioned; the version is what a mirror needs, the
-  body is what it must not carry.)
+  for the working document, its **tip commit + analysisId** — the refetch signal, not the body. The two large bodies
+  stay **off** the channel: the conversation transcript is main-only (children never render it), and the
+  working-document **revision is read by each window from the browser's copy of the repository**, which one SharedWorker
+  owns for every window, keyed on the broadcast commit, so a child re-reads when the tip moves. (Unlike an immutable
+  paper, the working document moves; the commit is what a mirror needs, the body is what it must not carry.)
 - **Version pin.** The working-doc tab's payload may carry a **view-only pin** `{analysisId, version}` selecting a
-  historical version (the header dropdown writes it via `patchTab`; the list is `1..latest` — the store is append-only,
-  so no enumeration RPC is needed). A window holding the tab fetches the pinned body instead of the latest; a null or
-  absent pin follows the current document, and readers ignore a pin naming another analysis (stale after a switch).
-  Riding the tab payload means the pin crosses the channel with the snapshot and survives moving the tab between
-  windows, with no protocol addition; it is transient by construction — a load starts the working-doc tab with an empty
-  payload.
+  historical version, `version` being a commit id on the branch's history (the header dropdown writes it via `patchTab`,
+  listing from the branch's history in the browser's copy ([`workbench-workspace.md`](workbench-workspace.md) §"Versions
+  are the branch's history")). A window holding the tab fetches the pinned revision instead of the tip; a null or absent
+  pin follows the current document, and readers ignore a pin naming another analysis (stale after a switch). Riding the
+  tab payload means the pin crosses the channel with the snapshot and survives moving the tab between windows, with no
+  protocol addition; it is transient by construction — a load starts the working-doc tab with an empty payload.
 - **Process model: one process, one main thread.** Children open via `window.open` with the opener retained, so
   (same-origin) they share main's renderer **process and event loop** — not N parallel processes. Main holds the child
   handles for a direct `child.close()`, and a crash takes all windows together (no orphaned mirror outlives its source
@@ -280,8 +284,11 @@ inline (the one place a byte-stream path survives — behind the port, live neve
 The literature port **resolves** each selected object to a `ContentObject` (its `gs://` location live, a store path
 offline) and hands it to an injected **`ContentPort`** that serves it: a `302` to a signed URL (live) or the seeded
 bytes (fixture). `ContentPort` is the generic "serve a GCS object to the browser" primitive — signing, egress typing,
-the `302` — reusable by any surface backed by a bucket (the per-tenant working documents are the next); resolution
-(`doc_id + selector → object`) stays evidence-specific. Presign specifics:
+the `302` — reusable by any surface backed by a bucket; resolution (`doc_id + selector → object`) stays
+evidence-specific. The working document is not such a surface: it lives inside git packs in sheaf's bucket, whose signed
+URLs the sheaf service mints, because it is the one identity with a role on that bucket
+([`workbench-workspace.md`](workbench-workspace.md) §"Packs come straight from the bucket, by URLs the sheaf service
+signs"). Presign specifics:
 
 - The web SA signs V4 URLs via IAM `signBlob` (no stored key; `serviceAccountTokenCreator` on itself).
 - The **evidence adapter pins the corpus bucket**: it refuses a resolution naming an object outside it before handing it
@@ -379,6 +386,9 @@ end to end there.
 
 **Remaining:**
 
+- **Repository reads** — the pane fetches the working document as a markdown body and the picker lists integer versions;
+  reading the document and its files at a commit from the browser's copy of the repository, the commit-id pin and the
+  history behind the picker land with that copy ([`workbench-workspace.md`](workbench-workspace.md)).
 - **PDF quote highlighting** — the anchorite PDF matcher behind `Locate(…, PDF)` is not wired; until it is, that arm
   fails loud (gRPC `UNIMPLEMENTED`) and the BFF surfaces it as the pane's not-located warning rather than erroring the
   reveal. Blocked on the anchorite coordinate contract (see Open questions).

@@ -212,20 +212,22 @@ The one host-side git is the mirror's: a bare repository at a path the guest is 
 reaches over two stream hatches — one splicing to `upload-pack`, one to `receive-pack`, so the socket is the capability
 and a guest holding the fetch socket cannot push. Before either hands a connection to git the mirror is brought up to
 the repository's current state, so git's own fast-forward check does the rejecting in the common case; a push then runs
-the mirror's pre-receive hook, which refuses anything that rewrites history or writes a protected path and publishes the
-rest.
+the mirror's pre-receive hook, which refuses anything that rewrites history, writes a protected path, carries a commit
+in anyone's name but the agent's, or adds a path the workbench's git library cannot read, and publishes the rest. The
+agent's name is the one the guest's system git configuration gives it, and the worker hands the hook the same one
+([`sheaf.md`](sheaf.md) §"Protecting what the agent must not write").
 
 The mirror reads and publishes through the `Sheaf` service ([`sheaf-service.md`](sheaf-service.md)), never the bucket.
 The worker holds no bucket credential and makes no auth call, and its only credential for the repository is the session
 token, which the service resolves to the Analysis whose repository every call then acts on. The checks a repository's
 document can decide — that a publish is against the current generation, that no ref is deleted, that the reflog moved —
 run in the service; the checks that need the objects — that every move is a fast-forward, that no protected path is
-written — run in the worker's hook, which is the only place that has them. The hook is a subprocess `git receive-pack`
-spawns with a scrubbed environment, and it parses bytes the guest composed, so the token reaches it by a file path
-rather than through its environment: the worker writes the token, readable by its owner alone, under the mirror's
-host-only root at session start and removes it with the mirror at teardown; the hook is handed the path, not the token,
-and the sync state it reads names the path too. Nothing the guest can see, and no subprocess's environment or argument
-list, ever holds it. The client that implements this is
+written, that every new commit is the agent's — run in the worker's hook, which is the only place that has them. The
+hook is a subprocess `git receive-pack` spawns with a scrubbed environment, and it parses bytes the guest composed, so
+the token reaches it by a file path rather than through its environment: the worker writes the token, readable by its
+owner alone, under the mirror's host-only root at session start and removes it with the mirror at teardown; the hook is
+handed the path, not the token, and the sync state it reads names the path too. Nothing the guest can see, and no
+subprocess's environment or argument list, ever holds it. The client that implements this is
 [`themis.clients.sheaf.store`](../../themis/clients/sheaf/store.py); the mirror and the hook are
 [`themis.sheaf.wire`](../../themis/sheaf/wire).
 

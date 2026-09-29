@@ -23,7 +23,9 @@ import { requireUserContext } from "./context";
 // incidental. `Analysis.session_id` rides along on `listAnalyses`; it is not a credential, since a
 // session's bearer is a KMS MAC over it and the key material never leaves KMS.
 
-export const workbenchService: ServiceImpl<typeof Workbench> = {
+// Partial: the workspace-repository methods are declared ahead of their handlers. Connect's stand-in
+// for a missing handler runs inside the interceptor chain, so until they exist a call answers Internal.
+export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
   async listProjects(_request, ctx) {
     const { backend } = requireUserContext(ctx);
     return { projects: await backend.listProjects() };

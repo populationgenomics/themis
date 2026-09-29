@@ -146,11 +146,12 @@ repository tracks the document, its copy wins and the checkpoint is not written 
 that has fallen behind the repository catches up on the first command, and a document edited after the session's last
 commit is what the reviewer saw but not what the next session starts from — the agent is told to commit it. Two write
 paths for the one artifact the curator sees is a state to pass through, not to settle in, and the two PRs that end it
-are this one's immediate successors, not later work: first the read path the BFF needs — the document at a commit, and
-history — as the Sheaf service's second interface ([`../design/sheaf-service.md`](../design/sheaf-service.md), "The
-second consumer"), with the BFF reading versions from it; then the retirement of the checkpoint and of
-`GetWorkingDocument`/`PutWorkingDocument` from `store.proto`, an interface change of its own that can take the tar rpcs
-of step 6 with it.
+are this one's immediate successors, not later work: first the browser's own copy of the repository, hydrated from the
+store's packs and read locally, with the BFF relaying the ref document and the Sheaf service signing pack URLs
+([`../design/workbench-workspace.md`](../design/workbench-workspace.md), and
+[`../design/sheaf-service.md`](../design/sheaf-service.md), "The second caller"); then the retirement of the checkpoint
+and of `GetWorkingDocument`/`PutWorkingDocument` from `store.proto`, an interface change of its own that can take the
+tar rpcs of step 6 with it.
 
 ## The prompt
 

@@ -44,9 +44,10 @@ OTHER_ANALYSIS_ID = 'ana-other'
 
 Metadata = auth_fixture.Metadata
 
-# The callers a sheaf rpc meets, as the gate sees them. The worker, claiming its session, is the
-# principal every sheaf rpc names; the developer identity reaches every rpc and names the session
-# whose repository it wants in a self claim.
+# The callers a sheaf rpc meets, as the gate sees them. The worker, claiming its session, hydrates and
+# publishes its mirror. The web tier, relaying the curator's browser, names the session whose
+# repository it wants in a self claim. The developer identity names one the same way, and is admitted
+# on every rpc.
 WORKER: Metadata = auth_fixture.WORKER
 OTHER: Metadata = (
     *auth_fixture.SANDBOX_JOB,
@@ -59,6 +60,8 @@ BAD_SESSION: Metadata = (
 AGENT: Metadata = auth_fixture.AGENT
 CLU: Metadata = auth_fixture.CLU
 CLU_WITH_SESSION: Metadata = auth_fixture.CLU_WITH_SESSION
+WEB: Metadata = auth_fixture.WEB
+WEB_WITH_SESSION: Metadata = auth_fixture.WEB_WITH_SESSION
 NOBODY: Metadata = ()
 
 # Generous enough that every test not about a ceiling clears them.
@@ -94,7 +97,7 @@ def serving(
     session_resolver: session_mod.SessionResolver | None = None,
 ) -> Iterator[sheaf_pb2_grpc.SheafStub]:
     """Serve `backend` behind the gate on its own thread; `session_resolver` unstated is the two-token fixture map."""
-    servicer = servicer_mod.Servicer(backend, limits)
+    servicer = servicer_mod.Servicer(backend, limits)  # pyright: ignore[reportAbstractUsage]  # SignPackUrls has no handler yet
     with (
         in_process_grpc.serving_in_thread(
             lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server),

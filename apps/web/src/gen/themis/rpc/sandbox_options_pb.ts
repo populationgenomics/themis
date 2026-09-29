@@ -80,7 +80,8 @@ export enum Caller {
   UNSPECIFIED = 0,
 
   /**
-   * The web tier's runtime account: the BFF, calling on the browser's behalf with no session.
+   * The web tier's runtime account: the BFF, calling on the browser's behalf. It presents no session,
+   * except that it names, in a self claim, the session whose workspace repository a sheaf rpc acts on.
    *
    * @generated from enum value: CALLER_WEB = 1;
    */

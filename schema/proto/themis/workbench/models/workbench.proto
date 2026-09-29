@@ -11,6 +11,7 @@ syntax = "proto3";
 package themis.workbench.models.workbench;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
 // An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a GitHub-flavoured
@@ -237,6 +238,30 @@ message PollRequest {
 message PollResponse {
   repeated ConversationEvent events = 1;
   optional int32 working_document_version = 2 [(buf.validate.field).int32.gte = 1];  // absent until a working document is produced, then its version
+  // The workspace repository's collaborative branch, read from its ref document on every tick. Which
+  // branch is the collaborative one is open (docs/design/workbench-workspace.md, Open questions).
+  WorkspaceTip workspace_tip = 3 [(buf.validate.field).required = true];
+}
+
+// Where a Poll found the workspace's collaborative branch. Exactly one member is set: read the state
+// off the oneof case. A ref document the tick could not read, or one that does not parse, is a state
+// of its own, so the conversation's events still arrive while the workspace is unavailable or damaged.
+message WorkspaceTip {
+  oneof state {
+    option (buf.validate.oneof).required = true;
+
+    // The branch's tip. A window whose rendered commit differs brings the browser's copy of the
+    // repository up to date and renders the tip.
+    string commit = 1 [(buf.validate.field).string.pattern = "^[0-9a-f]{40}$"];
+    // The branch has no commit, including before the repository exists.
+    google.protobuf.Empty no_commit = 2;
+    // The ref document could not be read on this tick. The pane says the workspace is unavailable
+    // and keeps what it shows.
+    google.protobuf.Empty unavailable = 3;
+    // The stored ref document does not parse: the repository is damaged, which a later tick does not
+    // repair. The pane says the workspace is damaged.
+    google.protobuf.Empty damaged = 4;
+  }
 }
 
 // The spawned thread whose own conversation to fetch. No field names a session: it is read off the

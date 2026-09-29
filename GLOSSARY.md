@@ -10,10 +10,14 @@ Shared definitions so we use terms consistently (and so tooling has one source o
   datasets (≈ a Claude.ai project).
 - **Analysis** — a collaborative working session bound to a Project (≈ a Claude.ai "Chat", with subagents), with
   Claude.ai-style branching.
-- **Working document** — the Analysis's evolving artifact (≈ a Claude.ai artifact: written, rewritten, versioned); the
-  "opinion formed". *Not* the same as a Report.
+- **Working document** — the Analysis's evolving artifact (≈ a Claude.ai artifact: written, rewritten, versioned as the
+  history of the workspace repository); the "opinion formed". *Not* the same as a Report.
 - **Report** — the validated, approved form of a working document, linked to the Project's entities; Project-private;
-  one accepted per entity, versioned.
+  one accepted per entity, versioned. Promoted by a human **accept-to-publish** step, which records the workspace
+  revision it approves.
+- **Widget** — a typed block embedded in a working document — a pedigree chart, say — drawn by the client from an asset
+  rather than written out as prose.
+- **Asset** — the typed file a widget is drawn from; its type selects the widget that draws it.
 - **Dataset** — a consented collection of samples + metadata (e.g. pedigrees) a Project may be granted. **Cohort** — a
   dataset of patients/cases (e.g. CaRDinal).
 

@@ -77,6 +77,9 @@ _PRE_RELEASE = frozenset(
         'themis/rpc/transcript.proto',
         'themis/rpc/variant.proto',
         'themis/rpc/vep.proto',
+        # Until a deployment whose data is kept holds a push referencing a payload (document-widgets.md).
+        'themis/widgets/models/checklist.proto',
+        'themis/widgets/models/widget.proto',
     }
 )
 

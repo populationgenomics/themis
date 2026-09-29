@@ -1,0 +1,63 @@
+// A checklist the agent asks a user to work through, one item per thing to confirm, each ticked by
+// the user in the working document. The agent writes the items; a tick is the user's judgement on
+// its item's label and citation, made as a commit setting that item's `checked` by the browser
+// against the asset at the commit the checklist was drawn from; it lands on a moved tip only while
+// the asset there is unchanged. An agent's change to what a ticked item says clears its tick.
+//
+// Nothing here is presentation: the client draws every checklist the same way, and a label is shown
+// as plain text, never as markup.
+syntax = "proto3";
+
+package themis.widgets.models;
+
+import "buf/validate/validate.proto";
+import "themis/widgets/models/widget.proto";
+
+message Checklist {
+  option (themis.widgets.models.widget) = true;
+
+  // A passage or paper an item rests on, as `:quote[doc_id, quote]` or `:paper[doc_id]` carries it in
+  // prose: a click on it reveals the paper, and the quote within it, in the document pane.
+  message Citation {
+    // The litcache canonical doc_id.
+    string doc_id = 1 [(buf.validate.field).string.uuid = true];
+    // A verbatim passage of the paper, as `Validate` passed it. Empty cites the paper as a whole.
+    string quote = 2 [(buf.validate.field).string.max_len = 2000];
+  }
+
+  message Item {
+    // Whether a user has ticked it: the user's judgement on the item's label and citation.
+    bool checked = 1 [(themis.widgets.models.guard) = {}];
+    // Names the item across revisions: the guard rule matches an agent's rewrite of the list to the
+    // previous version by this id, so a tick stays with its item, and an id is kept for as long as
+    // the item is, and never reused for a different item.
+    string id = 2 [
+      (themis.widgets.models.element_key) = true,
+      (buf.validate.field).string = {
+        min_len: 1
+        max_len: 64
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+      }
+    ];
+    // What the user confirms, as plain text.
+    string label = 3 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 1000
+    }];
+    // Absent when the item rests on no single source.
+    Citation citation = 4;
+  }
+
+  // In the order the list is shown.
+  repeated Item items = 1 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 100
+    },
+    (buf.validate.field).cel = {
+      id: "checklist.items.unique_ids"
+      message: "every item needs an id of its own"
+      expression: "this.map(item, item.id).unique()"
+    }
+  ];
+}

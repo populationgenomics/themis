@@ -315,11 +315,13 @@ markdown by a model, which costs model budget. The other evidence interfaces are
 same deploy, as described above, and keep their in-body session checks until those are deleted.
 
 The sheaf service ([`sheaf-service.md`](sheaf-service.md)) is gated the same way, and is the server with streaming rpcs,
-`FetchPack` out and `Publish` in. Its contract names one principal, the sandbox job's account calling as the worker
-within a session, so the guest's forwarded calls — the agent's claim — never reach the repository directly; the worker's
-mirror does. Its servicer reads the Analysis from the bound context and holds no session code of its own. The developer
-identity reaches it by naming, in a self claim, the session whose repository it wants: a claim on a self-acting call
-admits nothing and is resolved for attribution, which is what scoping the repository needs.
+`FetchPack` out and `Publish` in. Its contract names two principals. One is the sandbox job's account calling as the
+worker within a session, so the guest's forwarded calls — the agent's claim — never reach the repository directly; the
+worker's mirror does. The other is the web tier relaying a curator's browser, which names the session whose repository
+it acts on in a self claim, as the developer identity does ([`workbench-workspace.md`](workbench-workspace.md)). Its
+servicer reads the Analysis from the bound context and holds no session code of its own. The developer identity reaches
+it by naming, in a self claim, the session whose repository it wants: a claim on a self-acting call admits nothing and
+is resolved for attribution, which is what scoping the repository needs.
 
 Literature's rpcs split three ways:
 

@@ -88,7 +88,9 @@ def build_limits() -> servicer_mod.Limits:
 
 async def _serve() -> None:
     server = interceptor_mod.gated_server(build_authorizer())
-    sheaf_pb2_grpc.add_SheafServicer_to_server(servicer_mod.Servicer(build_backend(), build_limits()), server)
+    # SignPackUrls is declared ahead of its handler, and grpc answers it UNIMPLEMENTED until one exists.
+    servicer = servicer_mod.Servicer(build_backend(), build_limits())  # pyright: ignore[reportAbstractUsage]
+    sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
     # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
     health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
     await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)

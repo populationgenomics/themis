@@ -5,15 +5,15 @@
 [`services.md`](services.md) (how a data-plane service is built and called).
 
 The `Sheaf` gRPC service is how a sheaf repository is read and written. It holds the only credential on the workspace
-bucket; a caller holds the objects — a bare git mirror — and drives the protocol through three rpcs. That caller is the
-sandbox worker: its mirror hydrates through `ReadRefDoc` and `FetchPack`, and its pre-receive hook publishes through
-`Publish`. The guest's `git` sees none of this: it speaks git's own protocol to the worker's mirror over the stream
-hatch, and the mirror is where git's world ends and sheaf's begins. The BFF is the deployment's second consumer, through
-a workspace-level interface of its own ([below](#the-second-consumer)); it holds no objects and no session token, so it
-does not call these three rpcs. The protocol lives in the service rather than in each caller so that the checks a
-repository's document can decide are made once, for every writer, and so that no caller needs a bucket credential of its
-own. Which deployment hosts the service is not part of the contract; every rpc is scoped by the session it carries, not
-by where it runs.
+bucket; a caller holds the objects — a bare git mirror — and drives the protocol through the rpcs below. The first
+caller is the sandbox worker: its mirror hydrates through `ReadRefDoc` and `FetchPack`, and its pre-receive hook
+publishes through `Publish`. The guest's `git` sees none of this: it speaks git's own protocol to the worker's mirror
+over the stream hatch, and the mirror is where git's world ends and sheaf's begins. The curator's browser is the second
+caller: it keeps a copy of the repository of its own, hydrated and published through the same rpcs, which the BFF
+relays, and it downloads packs by URLs this service signs ([below](#the-second-caller)). The protocol lives in the
+service rather than in each caller so that the checks a repository's document can decide are made once, for every
+writer, and so that no caller needs a bucket credential of its own. Which deployment hosts the service is not part of
+the contract; every rpc is scoped by the session it carries, not by where it runs.
 
 Contract: [`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto). Stubs: `themis.rpc.sheaf_pb2`,
 `themis.rpc.sheaf_pb2_grpc`.
@@ -21,12 +21,13 @@ Contract: [`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto). Stubs: `th
 ## Scope of a call
 
 Every rpc is gated by the auth interceptor ([`rpc-authorization.md`](rpc-authorization.md)): the caller is verified from
-the ID token Cloud Run forwards, its claim names the session it is calling within, and the contract admits one
-principal, the sandbox job's account calling as the worker within a session — and, as everywhere, the developer
-identity. The repository every rpc acts on is the Analysis that session resolves to — its ref document and packs under
-the Analysis's prefix in the workspace bucket. No request names a repository, so a caller cannot reach another
-Analysis's; a developer's call, admitted without a session, names one in its claim for the same reason, and one that
-names none is `INVALID_ARGUMENT`, since there is nothing to serve.
+the ID token Cloud Run forwards, its claim names the session it is calling within, and the contract admits two
+principals: the sandbox job's account calling as the worker within a session, and the web tier naming the Analysis it
+acts on through a session it derives, on the rpcs the browser reaches (§"The second caller"). As on every rpc, the
+developer identity is admitted too. The repository every rpc acts on is the Analysis that session resolves to — its ref
+document and packs under the Analysis's key prefix in sheaf's bucket. No request names a repository, so a caller cannot
+reach another Analysis's; a developer's call, admitted without a session, names one in its claim for the same reason,
+and one that names none is `INVALID_ARGUMENT`, since there is nothing to serve.
 
 The service never sends a status itself: every refusal is raised as the status it maps to, and the gate ends the call
 with it ([`rpc-authorization.md`](rpc-authorization.md), "Default-deny is enforced at the interceptor"). For `Publish`
@@ -82,7 +83,9 @@ intent alone is a complete publish when it declares no packs:
   tip the publish set, so every commit ever a tip stays reachable ([`sheaf.md`](sheaf.md), "The reflog ref says what was
   current"). The service can check that an entry is present; what it points at is the caller's contract. A publish that
   moves no ref outside `refs/sheaf/` is refused: nothing legitimate publishes only sheaf's own bookkeeping, and the
-  classification below is over exactly those refs, so the refusal is what keeps its receipt arm from being vacuous.
+  classification below is over exactly those refs. With none of them in the intent, the classification's receipt check
+  ("every such ref already holds its `new`") would hold trivially, and a publish that lost a race would be reported as
+  landed.
 - `PublishIntent.head` — optional `RefTarget`. Unset carries the document's HEAD over, except an unborn one — a symbolic
   HEAD naming a branch that does not exist — once the publish leaves a branch, so a clone lands on a branch rather than
   on nothing. Re-derivation, on a first publish and in that case, is one rule: `refs/heads/main` if it exists after the
@@ -115,6 +118,7 @@ Errors, and what each means to the caller:
 | `INVALID_ARGUMENT`    | A ref name or object id git cannot hold; two names that collide as a directory and a file; an update with no `new` or with the zero id (a deletion); an intent moving no ref outside `refs/sheaf/`; a declared pack id that is not sixty-four hex digits, or declared twice, or declared with no bytes; a pack whose bytes do not match its declared size or hash; a chunk carrying no bytes; a HEAD naming neither an object nor a ref; a publish that moves a ref outside `refs/sheaf/` without moving `refs/sheaf/reflog`; a malformed stream — no intent, an intent after a chunk, a pack index out of order or beyond the declared list. | Fix the intent; retrying the same one never lands.        |
 | `INVALID_ARGUMENT`    | The document is still at `base_generation`, and a ref the intent moves does not hold its `old` there: the intent disagrees with the document it claims to have been built from — a caller's bug, not a race, so it is not classified as one.                                                                                                                                                                                                                                                                                                                                                                                                  | Rebuild the intent from the document as read.             |
 | `INVALID_ARGUMENT`    | An admitted call whose claim names no session: no request names a repository, so there is nothing to serve.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Claim the session whose repository is meant.              |
+| `DATA_LOSS`           | The stored document does not parse as one this code wrote: a truncated or foreign encoding.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Stop: this is damage, not a fault to retry.               |
 | `UNAUTHENTICATED`     | No ID token the service can verify — the gate's denial, before anything is read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | —                                                         |
 | `PERMISSION_DENIED`   | The caller is not one the contract admits, or the session its claim names does not resolve.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | —                                                         |
 | `INTERNAL`            | The gate could not honour the caller's claim: none from an account that never calls as itself, one naming a session with no token, or one that does not decode. The details name which.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The caller is misbuilt or out of date; redeploy it.       |
@@ -133,10 +137,11 @@ holds its `new`, this publish landed and only its response was lost, so the call
 and a retry completes. Then the split: every such ref still at its `old` is `ABORTED`; one that moved is
 `FAILED_PRECONDITION`. Those are the two rejections [`sheaf.md`](sheaf.md) keeps distinct: the first is replayable and
 the second is semantic. The classification is the service's to do. Sheaf's in-process store — `Store.publish` in
-[`themis/sheaf/store.py`](../../themis/sheaf/store.py), which this rpc and the BFF's path both call — compares `old`
-against the caller's own base snapshot, which a caller deriving its intent from that snapshot can never fail, so without
-the re-read every moved generation would be `ABORTED` and the split would exist in the table alone. The worker's hook
-turns the first into git's "the remote moved, pull first" and the second into git's own non-fast-forward message.
+[`themis/sheaf/store.py`](../../themis/sheaf/store.py), which this rpc calls — compares `old` against the caller's own
+base snapshot. A caller that derives its intent from that snapshot can never fail that comparison, so without a re-read
+every moved generation would be `ABORTED`, and the split between `ABORTED` and `FAILED_PRECONDITION` would exist only in
+the table above. The service therefore re-reads the current document to make the split. The worker's hook turns the
+first into git's "the remote moved, pull first" and the second into git's own non-fast-forward message.
 
 ## What the service checks, and what the caller does
 
@@ -215,47 +220,68 @@ sequenceDiagram
 The hook does not update the mirror's refs on success; the next request's sync reads them from the document. Its exit
 status is what tells git to keep or discard the push's quarantine.
 
-## The second consumer
+## The second caller
 
-The BFF edits the workspace on a curator's behalf inside an HTTP request — a widget's state file changed, a comment span
-added to the document — and has to write each as a commit. It holds no objects, runs no `git` and carries no session
-token, so none of the three rpcs above fit it. It reaches the same deployment through a workspace-level interface of its
-own, whose unit is a file at a commit rather than a pack and a ref: read a file at a commit, or the working document
-together with every file it references so one call renders it, both immutable by commit and cached as such; commit a set
-of changes on a branch against a base commit, refused with the current tip when the branch has moved; and the branch's
-history, read from the ref document and the reflog ref. Those rpcs name the Analysis and are authorized by the BFF's
-service identity — the BFF having already checked that the curator belongs to the Analysis's Project, the authorization
-chokepoint [`workspace-model.md`](workspace-model.md) gives it — a different scope model from the session token, which
-is one reason they are a separate interface. Ingress becomes IAM-gated public when they land. Their contract is not this
-document's; it follows with the BFF-side design.
+A curator changes the workspace from the workbench, and the browser does it the way the worker does: it keeps a copy of
+the repository, hydrates it from the ref document and the packs, builds a commit and its reflog entry locally, and
+publishes ([`workbench-workspace.md`](workbench-workspace.md)).
 
-Behind that interface the service is itself a sheaf writer, and it shares everything with the worker's path except the
-hook: it hydrates a bare mirror per Analysis through the same code the worker runs, builds blob, tree and commit with
-git plumbing against that mirror, writes the reflog entry, packs, and publishes through the same in-process
-`Store.publish` the `Publish` rpc calls. So the document-level checks are made once for both consumers, and the writer's
-contract the hook enforces for a push is met by construction here: the commit's parent is the tip the intent was built
-against, and the reflog entry's parents are that tip and the previous entry. The storage protocol's own lost race is
-replayed inside the service and never crosses that interface; only a moved tip does, and the reapply belongs to the
-caller that holds the intent. Serving a file at a commit needs the Analysis's mirror hydrated in the service, so
-[`sheaf.md`](sheaf.md)'s pre-hydration ceiling and its warm-versus-per-request mirror question sit on that read path,
-and the image needs `git`.
+The browser never calls this service directly; the BFF relays each call. Before it does, it checks that the curator
+belongs to the Analysis's Project, the authorization check [`workspace-model.md`](workspace-model.md) gives the BFF. It
+then calls as the web tier and names the Analysis through a session it derives for it
+([`rpc-authorization.md`](rpc-authorization.md)). So the web tier is admitted on `ReadRefDoc` and `Publish` beside the
+worker, and `SignPackUrls` admits the web tier alone, since the worker streams packs through `FetchPack`. The service
+acts on that Analysis's repository as it does for the worker.
+
+A browser cannot stream a request body, so it hands the BFF a publish's intent and packs in one unary call, under a size
+cap, and the BFF streams them into `Publish`. The service makes the checks every publish gets and adds none for this
+caller. The browser is trusted as the worker is ([`workbench-workspace.md`](workbench-workspace.md) §Background). The
+agent is the one writer that is checked, and the hook checks its pushes before they reach this service. The writer's
+contract the hook meets for a push, a fast-forward and a correctly parented reflog entry, the browser meets by
+construction, because it builds its commit on the tip it read.
+
+### `SignPackUrls`
+
+`SignPackUrlsRequest{pack_ids}` → `SignPackUrlsResponse`
+
+Returns, for each named pack, a short-lived signed URL to download it from, and the pack's size. The browser hydrates
+through this rather than through `FetchPack`, because a first hydration downloads the whole repository. Streaming that
+through `FetchPack` would pass every byte through this service and then through the BFF, two instances that do nothing
+with it. A signed URL lets the browser download each pack straight from the bucket.
+
+- The service refuses to sign a pack the current document does not list, so a URL is only ever issued for a pack a
+  reader of this repository can already name.
+- The size comes back with the URL, so the browser can refuse a repository larger than its budget before it downloads
+  anything.
+- The signing happens here because a signed URL carries the signer's own permission to read, and this service is the one
+  identity with a role on the bucket. Signing anywhere else would need a second identity with read access to every
+  repository, and would move the bucket's key layout out of this service.
+
+A signed URL works for anyone who holds it until it expires, so the browser keeps it in memory and fetches it once.
+
+Errors: `INVALID_ARGUMENT` for a malformed request, such as more than 256 ids or one named twice. `NOT_FOUND` for a pack
+the current document does not list, even one that exists; the caller reads the document again, since the list it asked
+from may be stale. `DATA_LOSS` when the document lists a pack the store does not hold, or the stored document does not
+parse: damage, which a caller must not retry. `UNIMPLEMENTED` when the deployment's storage backend cannot sign, as the
+local-directory backend cannot.
 
 ## Deployment
 
 `Sheaf` is a logical service; which Cloud Run service hosts it, and beside which other interfaces, is the deploy's
-arrangement and is recorded there ([`deployment.md`](deployment.md)), not here, so that arrangement can change without
-this doc being wrong. The servicer's port is the library's own storage seam, `themis.sheaf.Backend`, rather than a port
-of its own ([`services.md`](services.md) has one per interface): the protocol already lives behind that seam, and its
-offline mode is the local-directory backend, which mirrors a versioned bucket, not a seeded fixture — a seedable git
-store would have nothing to seed it with. What the service needs of its deployment, wherever it lands:
+arrangement and is recorded there ([`deployment.md`](deployment.md)) rather than here, so the arrangement can change
+without making this doc wrong. The servicer's port is the library's own storage seam, `themis.sheaf.Backend`, rather
+than a port of its own ([`services.md`](services.md) has one per interface): the protocol already lives behind that
+seam, and its offline mode is the local-directory backend, which mirrors a versioned bucket, not a seeded fixture — a
+seedable git store would have nothing to seed it with. What the service needs of its deployment, wherever it lands:
 
-- **Credential:** the identity it runs as holds `roles/storage.objectUser` on the workspace bucket. The store service's
-  identity holds `objectAdmin` on the same bucket for the tar workspaces it keeps there, a role retired with that
-  service; no other identity holds a role on the bucket. Replacing the ref document under `ifGenerationMatch` is an
-  overwrite, and GCS requires `storage.objects.delete` for an overwrite, so a create-and-read role cannot implement the
-  protocol; "nothing deletes" is a property of the protocol, and if it is to be a property of the bucket too that is
-  object versioning or a retention policy on the pack prefix, not the role. The worker's identity holds `run.invoker` on
-  that service and nothing on the bucket.
+- **Credential:** the service's identity holds `roles/storage.objectUser` on sheaf's bucket, which the sheaf service's
+  infrastructure defines. No other identity holds a role on it. Replacing the ref document under `ifGenerationMatch` is
+  an overwrite, and GCS requires `storage.objects.delete` for an overwrite, so a role that can only create and read
+  cannot implement the protocol. "Nothing deletes" is a property of the protocol; making it a property of the bucket too
+  would take object versioning or a retention policy on the pack prefix, not a narrower role. The worker's identity
+  holds `run.invoker` on the service and nothing on the bucket.
+- **Signing:** pack URLs are signed through IAM `signBlob`, so the service's identity holds `serviceAccountTokenCreator`
+  on itself. The bucket carries a CORS rule that admits the workbench's origin, for the browser's downloads.
 - **Ingress:** IAM-gated public — `run.invoker` granted per caller, default-deny otherwise — because two of its callers
   have no path onto the services VPC: the BFF, and a person driving the protocol by hand through the automation user.
 - **Size:** chunks are sized under gRPC's default 4 MiB message limit. A publish's declared total, and the ref count and

@@ -237,10 +237,10 @@ target-version = "py313"
 # Generated code (buf generate; tools/schema/regen.py): committed, never hand-edited,
 # so linting it is noise (buf plugin output is not lint-clean) and a reformat would
 # fight the freshness gate. `themis/rpc`, `themis/evidence/models`, `themis/litcache/models`,
-# `themis/curation/models`, `themis/sheaf/models`, `themis/svcv4/models`, `themis/workbench/models` and `themis/workbench/rpc` are the generated
+# `themis/curation/models`, `themis/sheaf/models`, `themis/svcv4/models`, `themis/widgets/models`, `themis/workbench/models` and `themis/workbench/rpc` are the generated
 # proto/gRPC stubs; `buf` is the vendored buf.validate stub (protovalidate options). The pre-commit
 # ruff hooks pass --force-exclude, so this holds even when pre-commit hands ruff explicit paths.
-extend-exclude = ["themis/curation/models", "themis/evidence/models", "themis/litcache/models", "themis/sheaf/models", "themis/svcv4/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "themis/services/sandbox_worker/guest_contract", "buf"]
+extend-exclude = ["themis/curation/models", "themis/evidence/models", "themis/litcache/models", "themis/sheaf/models", "themis/svcv4/models", "themis/widgets/models", "themis/workbench/models", "themis/workbench/rpc", "themis/rpc", "themis/services/sandbox_worker/_generated.py", "themis/services/sandbox_worker/guest/services.py", "themis/services/sandbox_worker/guest_contract", "buf"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -380,7 +380,7 @@ reportImplicitOverride = "error"
 # the AttributeError to be the intended opt-in gate, so it will not be fixed
 # (https://github.com/grpc/grpc/issues/39555). The `.pyi` beside it stays checked — that is the file
 # the servicer base and stub types come from.
-# `sandbox_options_pb2.pyi` — protoc's --pyi_out annotates a top-level extension's field-number
-# constant `ClassVar[int]` at module scope, where `ClassVar` is not valid
+# `sandbox_options_pb2.pyi`, `widget_pb2.pyi` — protoc's --pyi_out annotates a top-level extension's
+# field-number constant `ClassVar[int]` at module scope, where `ClassVar` is not valid
 # (https://github.com/protocolbuffers/protobuf/issues/29221).
-ignore = ["**/*_pb2.py", "**/*_pb2_grpc.py", "themis/rpc/sandbox_options_pb2.pyi"]
+ignore = ["**/*_pb2.py", "**/*_pb2_grpc.py", "themis/rpc/sandbox_options_pb2.pyi", "themis/widgets/models/widget_pb2.pyi"]

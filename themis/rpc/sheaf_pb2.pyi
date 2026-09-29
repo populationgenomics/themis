@@ -1,4 +1,7 @@
+import datetime
+
 from google.protobuf import empty_pb2 as _empty_pb2
+from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from themis.sheaf.models import refdoc_pb2 as _refdoc_pb2
 from themis.rpc import sandbox_options_pb2 as _sandbox_options_pb2
 from google.protobuf.internal import containers as _containers
@@ -79,6 +82,30 @@ class PublishChunk(_message.Message):
     pack: int
     content: bytes
     def __init__(self, pack: _Optional[int] = ..., content: _Optional[bytes] = ...) -> None: ...
+
+class SignPackUrlsRequest(_message.Message):
+    __slots__ = ("pack_ids",)
+    PACK_IDS_FIELD_NUMBER: _ClassVar[int]
+    pack_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, pack_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class SignPackUrlsResponse(_message.Message):
+    __slots__ = ("packs",)
+    PACKS_FIELD_NUMBER: _ClassVar[int]
+    packs: _containers.RepeatedCompositeFieldContainer[SignedPack]
+    def __init__(self, packs: _Optional[_Iterable[_Union[SignedPack, _Mapping]]] = ...) -> None: ...
+
+class SignedPack(_message.Message):
+    __slots__ = ("pack_id", "url", "size", "expire_time")
+    PACK_ID_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    EXPIRE_TIME_FIELD_NUMBER: _ClassVar[int]
+    pack_id: str
+    url: str
+    size: int
+    expire_time: _timestamp_pb2.Timestamp
+    def __init__(self, pack_id: _Optional[str] = ..., url: _Optional[str] = ..., size: _Optional[int] = ..., expire_time: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class PublishResponse(_message.Message):
     __slots__ = ("generation",)

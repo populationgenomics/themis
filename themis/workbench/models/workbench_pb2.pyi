@@ -1,6 +1,7 @@
 import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
+from google.protobuf import empty_pb2 as _empty_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -203,12 +204,26 @@ class PollRequest(_message.Message):
     def __init__(self, analysis_id: _Optional[str] = ...) -> None: ...
 
 class PollResponse(_message.Message):
-    __slots__ = ("events", "working_document_version")
+    __slots__ = ("events", "working_document_version", "workspace_tip")
     EVENTS_FIELD_NUMBER: _ClassVar[int]
     WORKING_DOCUMENT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    WORKSPACE_TIP_FIELD_NUMBER: _ClassVar[int]
     events: _containers.RepeatedCompositeFieldContainer[ConversationEvent]
     working_document_version: int
-    def __init__(self, events: _Optional[_Iterable[_Union[ConversationEvent, _Mapping]]] = ..., working_document_version: _Optional[int] = ...) -> None: ...
+    workspace_tip: WorkspaceTip
+    def __init__(self, events: _Optional[_Iterable[_Union[ConversationEvent, _Mapping]]] = ..., working_document_version: _Optional[int] = ..., workspace_tip: _Optional[_Union[WorkspaceTip, _Mapping]] = ...) -> None: ...
+
+class WorkspaceTip(_message.Message):
+    __slots__ = ("commit", "no_commit", "unavailable", "damaged")
+    COMMIT_FIELD_NUMBER: _ClassVar[int]
+    NO_COMMIT_FIELD_NUMBER: _ClassVar[int]
+    UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    DAMAGED_FIELD_NUMBER: _ClassVar[int]
+    commit: str
+    no_commit: _empty_pb2.Empty
+    unavailable: _empty_pb2.Empty
+    damaged: _empty_pb2.Empty
+    def __init__(self, commit: _Optional[str] = ..., no_commit: _Optional[_Union[_empty_pb2.Empty, _Mapping]] = ..., unavailable: _Optional[_Union[_empty_pb2.Empty, _Mapping]] = ..., damaged: _Optional[_Union[_empty_pb2.Empty, _Mapping]] = ...) -> None: ...
 
 class ThreadRequest(_message.Message):
     __slots__ = ("analysis_id", "thread_id")

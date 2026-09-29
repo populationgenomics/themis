@@ -25,14 +25,19 @@ the mechanics. Vocabulary mirrors Claude.ai's deliberately (familiar to users an
   **versioned** (and *not* a conversation). It is the "opinion formed" — *not a rigid schema*, but a loose document with
   lightweight structural contracts only where deep-linking demands them (citations, evidence/provenance, the
   claims/verdicts that comments and traces anchor to). One Analysis ↔ one working document — which evolves through a
-  full version history, not a single fixed file.
+  full version history, not a single fixed file. Its versions are the **history of the workspace repository**: every tip
+  its collaborative branch has had, one per agent push or curator publish as the reflog records them, is a state a
+  reader can open, read at that tip's commit with every file it references
+  ([`workbench-workspace.md`](workbench-workspace.md), [`document-widgets.md`](document-widgets.md)), so every reference
+  in it resolves inside that revision.
 - **Report** — the **validated, approved** form of a working document; an explicit human **accept-to-publish** step
   promotes it. **Linked up to the Project's entities** (variant / gene / case / individual) and surfaced in the Project
   overview for oversight. **Project-private.** A Report lives at the **Project** level: **one accepted per entity**,
   **linearly versioned** (only versions — **not** branched), with full history retained for auditability.
 
 A working document is *not* a Report: the working document is the live, evolving artifact inside an Analysis; the Report
-is the approved snapshot that gets linked to the Project scope.
+is the approved snapshot that gets linked to the Project scope. Accepting one records the revision it approves, so an
+approved Report is reproducible — the exact document, and the exact assets the reviewer saw.
 
 ## Cross-Project sharing (default-deny)
 
@@ -111,3 +116,6 @@ This mirrors the session plane: `session_context(token_hash, project_id, …)` p
 - How a user's **institutional affiliation** is established and trusted for licensing-gated source access (uploads
   currently rest on user-declared affiliation).
 - Report reconciliation when branches diverge on the same entity.
+- Whether an Analysis's inputs can change under it. The lean is that changed input data means a new Analysis, with a
+  manifest of the inputs recorded in the database when the Analysis starts. Until then, a revision's reflog time says
+  when it was current, so it can be matched against when an input changed.

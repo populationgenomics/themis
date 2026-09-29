@@ -13,15 +13,15 @@
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../buf/validate/validate_pb";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { Empty, Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_empty, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file themis/workbench/models/workbench.proto.
  */
 export const file_themis_workbench_models_workbench: GenFile = /*@__PURE__*/
-  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJXCghEaWZmTGluZRI9CgRraW5kGAEgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lS2luZBIMCgR0ZXh0GAIgASgJIvYBCghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0EkEKCGxhbmd1YWdlGAUgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xMYW5ndWFnZRI5CgRkaWZmGAYgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lIqIBCghTdWJBZ2VudBIRCgl0aHJlYWRfaWQYASABKAkSQQoGc3RhdHVzGAIgASgOMjEudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN1YkFnZW50U3RhdHVzEhMKBnByb21wdBgDIAEoCUgAiAEBEhQKB3N1bW1hcnkYBCABKAlIAYgBAUIJCgdfcHJvbXB0QgoKCF9zdW1tYXJ5It8CChFDb252ZXJzYXRpb25FdmVudBIKCgJpZBgBIAEoCRIvCgtvY2N1cnJlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQQoJYXNzaXN0YW50GAIgASgLMiwudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLk5hcnJhdGlvbkgAEjwKBHVzZXIYAyABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASOwoEdG9vbBgEIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sQ2FsbEgAEkAKCXN1Yl9hZ2VudBgGIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5TdWJBZ2VudEgAQg0KBGtpbmQSBbpIAggBIiMKB1Byb2plY3QSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSKkAwobVmFyaWFudENsYXNzaWZpY2F0aW9uSW5wdXRzEn4KCnRyYW5zY3JpcHQYASABKAlCarpIZ7oBXwoUdHJhbnNjcmlwdC5ub25fYmxhbmsSMnRyYW5zY3JpcHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMY/wEScgoGaGd2c19jGAIgASgJQmK6SF+6AVcKEGhndnNfYy5ub25fYmxhbmsSLmhndnNfYyBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxj/ARKQAQoQY2xpbmljYWxfY29udGV4dBgDIAEoCUJ2ukhzugFrChpjbGluaWNhbF9jb250ZXh0Lm5vbl9ibGFuaxI4Y2xpbmljYWxfY29udGV4dCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiKEAQoORnJlZUZvcm1JbnB1dHMScgoGcHJvbXB0GAEgASgJQmK6SF+6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiLNAQoOQW5hbHlzaXNJbnB1dHMSYAoWdmFyaWFudF9jbGFzc2lmaWNhdGlvbhgBIAEoCzI+LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5WYXJpYW50Q2xhc3NpZmljYXRpb25JbnB1dHNIABJGCglmcmVlX2Zvcm0YAiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guRnJlZUZvcm1JbnB1dHNIAEIRCghzY2VuYXJpbxIFukgCCAEixwEKCEFuYWx5c2lzEgoKAmlkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRIuCgpjcmVhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJJCgZpbnB1dHMYBiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAQQBVIGcHJvbXB0Io0BChVDcmVhdGVBbmFseXNpc1JlcXVlc3QSGwoKcHJvamVjdF9pZBgCIAEoCUIHukgEcgIQARJJCgZpbnB1dHMYAyABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAEQAlIGcHJvbXB0IiQKFkNyZWF0ZUFuYWx5c2lzUmVzcG9uc2USCgoCaWQYASABKAkiMgoTTGlzdEFuYWx5c2VzUmVxdWVzdBIbCgpwcm9qZWN0X2lkGAEgASgJQge6SARyAhABIlUKFExpc3RBbmFseXNlc1Jlc3BvbnNlEj0KCGFuYWx5c2VzGAEgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkFuYWx5c2lzIhUKE0xpc3RQcm9qZWN0c1JlcXVlc3QiVAoUTGlzdFByb2plY3RzUmVzcG9uc2USPAoIcHJvamVjdHMYASADKAsyKi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUHJvamVjdCIrCgtQb2xsUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQASKhAQoMUG9sbFJlc3BvbnNlEkQKBmV2ZW50cxgBIAMoCzI0LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Db252ZXJzYXRpb25FdmVudBIuChh3b3JraW5nX2RvY3VtZW50X3ZlcnNpb24YAiABKAVCB7pIBBoCKAFIAIgBAUIbChlfd29ya2luZ19kb2N1bWVudF92ZXJzaW9uIkkKDVRocmVhZFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESGgoJdGhyZWFkX2lkGAIgASgJQge6SARyAhABIlYKDlRocmVhZFJlc3BvbnNlEkQKBmV2ZW50cxgBIAMoCzI0LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Db252ZXJzYXRpb25FdmVudCKaAQoMU3RlZXJSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABEmwKBHRleHQYAiABKAlCXrpIW7oBUwoOdGV4dC5ub25fYmxhbmsSLHRleHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMYkE4iDwoNU3RlZXJSZXNwb25zZSIwChBJbnRlcnJ1cHRSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABIhMKEUludGVycnVwdFJlc3BvbnNlIj0KD1dvcmtpbmdEb2N1bWVudBIYCgd2ZXJzaW9uGAEgASgFQge6SAQaAigBEhAKCG1hcmtkb3duGAIgASgJIloKD0RvY3VtZW50UmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQARIdCgd2ZXJzaW9uGAIgASgFQge6SAQaAigBSACIAQFCCgoIX3ZlcnNpb24iWAoQRG9jdW1lbnRSZXNwb25zZRJECghkb2N1bWVudBgBIAEoCzIyLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Xb3JraW5nRG9jdW1lbnQqsgEKDFRvb2xMYW5ndWFnZRIdChlUT09MX0xBTkdVQUdFX1VOU1BFQ0lGSUVEEAASGAoUVE9PTF9MQU5HVUFHRV9QWVRIT04QARIXChNUT09MX0xBTkdVQUdFX1NIRUxMEAISGgoWVE9PTF9MQU5HVUFHRV9NQVJLRE9XThADEhYKElRPT0xfTEFOR1VBR0VfSlNPThAEEhwKGFRPT0xfTEFOR1VBR0VfVFlQRVNDUklQVBAFKoABCgxEaWZmTGluZUtpbmQSHgoaRElGRl9MSU5FX0tJTkRfVU5TUEVDSUZJRUQQABIaChZESUZGX0xJTkVfS0lORF9DT05URVhUEAESGgoWRElGRl9MSU5FX0tJTkRfUkVNT1ZFRBACEhgKFERJRkZfTElORV9LSU5EX0FEREVEEAMqhgEKDlN1YkFnZW50U3RhdHVzEiAKHFNVQl9BR0VOVF9TVEFUVVNfVU5TUEVDSUZJRUQQABIcChhTVUJfQUdFTlRfU1RBVFVTX1JVTk5JTkcQARIZChVTVUJfQUdFTlRfU1RBVFVTX0lETEUQAhIZChVTVUJfQUdFTlRfU1RBVFVTX0RPTkUQA2IGcHJvdG8z", [file_buf_validate_validate, file_google_protobuf_timestamp]);
+  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJXCghEaWZmTGluZRI9CgRraW5kGAEgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lS2luZBIMCgR0ZXh0GAIgASgJIvYBCghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0EkEKCGxhbmd1YWdlGAUgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xMYW5ndWFnZRI5CgRkaWZmGAYgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lIqIBCghTdWJBZ2VudBIRCgl0aHJlYWRfaWQYASABKAkSQQoGc3RhdHVzGAIgASgOMjEudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN1YkFnZW50U3RhdHVzEhMKBnByb21wdBgDIAEoCUgAiAEBEhQKB3N1bW1hcnkYBCABKAlIAYgBAUIJCgdfcHJvbXB0QgoKCF9zdW1tYXJ5It8CChFDb252ZXJzYXRpb25FdmVudBIKCgJpZBgBIAEoCRIvCgtvY2N1cnJlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQQoJYXNzaXN0YW50GAIgASgLMiwudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLk5hcnJhdGlvbkgAEjwKBHVzZXIYAyABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASOwoEdG9vbBgEIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sQ2FsbEgAEkAKCXN1Yl9hZ2VudBgGIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5TdWJBZ2VudEgAQg0KBGtpbmQSBbpIAggBIiMKB1Byb2plY3QSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSKkAwobVmFyaWFudENsYXNzaWZpY2F0aW9uSW5wdXRzEn4KCnRyYW5zY3JpcHQYASABKAlCarpIZ7oBXwoUdHJhbnNjcmlwdC5ub25fYmxhbmsSMnRyYW5zY3JpcHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMY/wEScgoGaGd2c19jGAIgASgJQmK6SF+6AVcKEGhndnNfYy5ub25fYmxhbmsSLmhndnNfYyBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxj/ARKQAQoQY2xpbmljYWxfY29udGV4dBgDIAEoCUJ2ukhzugFrChpjbGluaWNhbF9jb250ZXh0Lm5vbl9ibGFuaxI4Y2xpbmljYWxfY29udGV4dCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiKEAQoORnJlZUZvcm1JbnB1dHMScgoGcHJvbXB0GAEgASgJQmK6SF+6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiLNAQoOQW5hbHlzaXNJbnB1dHMSYAoWdmFyaWFudF9jbGFzc2lmaWNhdGlvbhgBIAEoCzI+LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5WYXJpYW50Q2xhc3NpZmljYXRpb25JbnB1dHNIABJGCglmcmVlX2Zvcm0YAiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guRnJlZUZvcm1JbnB1dHNIAEIRCghzY2VuYXJpbxIFukgCCAEixwEKCEFuYWx5c2lzEgoKAmlkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRIuCgpjcmVhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJJCgZpbnB1dHMYBiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAQQBVIGcHJvbXB0Io0BChVDcmVhdGVBbmFseXNpc1JlcXVlc3QSGwoKcHJvamVjdF9pZBgCIAEoCUIHukgEcgIQARJJCgZpbnB1dHMYAyABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAEQAlIGcHJvbXB0IiQKFkNyZWF0ZUFuYWx5c2lzUmVzcG9uc2USCgoCaWQYASABKAkiMgoTTGlzdEFuYWx5c2VzUmVxdWVzdBIbCgpwcm9qZWN0X2lkGAEgASgJQge6SARyAhABIlUKFExpc3RBbmFseXNlc1Jlc3BvbnNlEj0KCGFuYWx5c2VzGAEgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkFuYWx5c2lzIhUKE0xpc3RQcm9qZWN0c1JlcXVlc3QiVAoUTGlzdFByb2plY3RzUmVzcG9uc2USPAoIcHJvamVjdHMYASADKAsyKi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUHJvamVjdCIrCgtQb2xsUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQASLxAQoMUG9sbFJlc3BvbnNlEkQKBmV2ZW50cxgBIAMoCzI0LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Db252ZXJzYXRpb25FdmVudBIuChh3b3JraW5nX2RvY3VtZW50X3ZlcnNpb24YAiABKAVCB7pIBBoCKAFIAIgBARJOCg13b3Jrc3BhY2VfdGlwGAMgASgLMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLldvcmtzcGFjZVRpcEIGukgDyAEBQhsKGV93b3JraW5nX2RvY3VtZW50X3ZlcnNpb24izgEKDFdvcmtzcGFjZVRpcBInCgZjb21taXQYASABKAlCFbpIEnIQMg5eWzAtOWEtZl17NDB9JEgAEisKCW5vX2NvbW1pdBgCIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eUgAEi0KC3VuYXZhaWxhYmxlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SAASKQoHZGFtYWdlZBgEIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eUgAQg4KBXN0YXRlEgW6SAIIASJJCg1UaHJlYWRSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABEhoKCXRocmVhZF9pZBgCIAEoCUIHukgEcgIQASJWCg5UaHJlYWRSZXNwb25zZRJECgZldmVudHMYASADKAsyNC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQ29udmVyc2F0aW9uRXZlbnQimgEKDFN0ZWVyUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQARJsCgR0ZXh0GAIgASgJQl66SFu6AVMKDnRleHQubm9uX2JsYW5rEix0ZXh0IG11c3QgY29udGFpbiBhIG5vbi13aGl0ZXNwYWNlIGNoYXJhY3RlchoTdGhpcy5tYXRjaGVzKCdcXFMnKXIDGJBOIg8KDVN0ZWVyUmVzcG9uc2UiMAoQSW50ZXJydXB0UmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQASITChFJbnRlcnJ1cHRSZXNwb25zZSI9Cg9Xb3JraW5nRG9jdW1lbnQSGAoHdmVyc2lvbhgBIAEoBUIHukgEGgIoARIQCghtYXJrZG93bhgCIAEoCSJaCg9Eb2N1bWVudFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESHQoHdmVyc2lvbhgCIAEoBUIHukgEGgIoAUgAiAEBQgoKCF92ZXJzaW9uIlgKEERvY3VtZW50UmVzcG9uc2USRAoIZG9jdW1lbnQYASABKAsyMi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guV29ya2luZ0RvY3VtZW50KrIBCgxUb29sTGFuZ3VhZ2USHQoZVE9PTF9MQU5HVUFHRV9VTlNQRUNJRklFRBAAEhgKFFRPT0xfTEFOR1VBR0VfUFlUSE9OEAESFwoTVE9PTF9MQU5HVUFHRV9TSEVMTBACEhoKFlRPT0xfTEFOR1VBR0VfTUFSS0RPV04QAxIWChJUT09MX0xBTkdVQUdFX0pTT04QBBIcChhUT09MX0xBTkdVQUdFX1RZUEVTQ1JJUFQQBSqAAQoMRGlmZkxpbmVLaW5kEh4KGkRJRkZfTElORV9LSU5EX1VOU1BFQ0lGSUVEEAASGgoWRElGRl9MSU5FX0tJTkRfQ09OVEVYVBABEhoKFkRJRkZfTElORV9LSU5EX1JFTU9WRUQQAhIYChRESUZGX0xJTkVfS0lORF9BRERFRBADKoYBCg5TdWJBZ2VudFN0YXR1cxIgChxTVUJfQUdFTlRfU1RBVFVTX1VOU1BFQ0lGSUVEEAASHAoYU1VCX0FHRU5UX1NUQVRVU19SVU5OSU5HEAESGQoVU1VCX0FHRU5UX1NUQVRVU19JRExFEAISGQoVU1VCX0FHRU5UX1NUQVRVU19ET05FEANiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_empty, file_google_protobuf_timestamp]);
 
 /**
  * An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a GitHub-flavoured
@@ -554,6 +554,14 @@ export type PollResponse = Message<"themis.workbench.models.workbench.PollRespon
    * @generated from field: optional int32 working_document_version = 2;
    */
   workingDocumentVersion?: number | undefined;
+
+  /**
+   * The workspace repository's collaborative branch, read from its ref document on every tick. Which
+   * branch is the collaborative one is open (docs/design/workbench-workspace.md, Open questions).
+   *
+   * @generated from field: themis.workbench.models.workbench.WorkspaceTip workspace_tip = 3;
+   */
+  workspaceTip?: WorkspaceTip | undefined;
 };
 
 /**
@@ -562,6 +570,62 @@ export type PollResponse = Message<"themis.workbench.models.workbench.PollRespon
  */
 export const PollResponseSchema: GenMessage<PollResponse> = /*@__PURE__*/
   messageDesc(file_themis_workbench_models_workbench, 18);
+
+/**
+ * Where a Poll found the workspace's collaborative branch. Exactly one member is set: read the state
+ * off the oneof case. A ref document the tick could not read, or one that does not parse, is a state
+ * of its own, so the conversation's events still arrive while the workspace is unavailable or damaged.
+ *
+ * @generated from message themis.workbench.models.workbench.WorkspaceTip
+ */
+export type WorkspaceTip = Message<"themis.workbench.models.workbench.WorkspaceTip"> & {
+  /**
+   * @generated from oneof themis.workbench.models.workbench.WorkspaceTip.state
+   */
+  state: {
+    /**
+     * The branch's tip. A window whose rendered commit differs brings the browser's copy of the
+     * repository up to date and renders the tip.
+     *
+     * @generated from field: string commit = 1;
+     */
+    value: string;
+    case: "commit";
+  } | {
+    /**
+     * The branch has no commit, including before the repository exists.
+     *
+     * @generated from field: google.protobuf.Empty no_commit = 2;
+     */
+    value: Empty;
+    case: "noCommit";
+  } | {
+    /**
+     * The ref document could not be read on this tick. The pane says the workspace is unavailable
+     * and keeps what it shows.
+     *
+     * @generated from field: google.protobuf.Empty unavailable = 3;
+     */
+    value: Empty;
+    case: "unavailable";
+  } | {
+    /**
+     * The stored ref document does not parse: the repository is damaged, which a later tick does not
+     * repair. The pane says the workspace is damaged.
+     *
+     * @generated from field: google.protobuf.Empty damaged = 4;
+     */
+    value: Empty;
+    case: "damaged";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.WorkspaceTip.
+ * Use `create(WorkspaceTipSchema)` to create a new message.
+ */
+export const WorkspaceTipSchema: GenMessage<WorkspaceTip> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 19);
 
 /**
  * The spawned thread whose own conversation to fetch. No field names a session: it is read off the
@@ -587,7 +651,7 @@ export type ThreadRequest = Message<"themis.workbench.models.workbench.ThreadReq
  * Use `create(ThreadRequestSchema)` to create a new message.
  */
 export const ThreadRequestSchema: GenMessage<ThreadRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 19);
+  messageDesc(file_themis_workbench_models_workbench, 20);
 
 /**
  * A spawned thread's own stream, in the same projection the coordinator's is in: the coordinator's
@@ -609,7 +673,7 @@ export type ThreadResponse = Message<"themis.workbench.models.workbench.ThreadRe
  * Use `create(ThreadResponseSchema)` to create a new message.
  */
 export const ThreadResponseSchema: GenMessage<ThreadResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 20);
+  messageDesc(file_themis_workbench_models_workbench, 21);
 
 /**
  * A curator turn appended to a running Analysis — an answer, a correction, a constraint the run must
@@ -636,7 +700,7 @@ export type SteerRequest = Message<"themis.workbench.models.workbench.SteerReque
  * Use `create(SteerRequestSchema)` to create a new message.
  */
 export const SteerRequestSchema: GenMessage<SteerRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 21);
+  messageDesc(file_themis_workbench_models_workbench, 22);
 
 /**
  * The steer reply. Empty: the turn is accepted, and the poll is what surfaces it and whatever the
@@ -652,7 +716,7 @@ export type SteerResponse = Message<"themis.workbench.models.workbench.SteerResp
  * Use `create(SteerResponseSchema)` to create a new message.
  */
 export const SteerResponseSchema: GenMessage<SteerResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 22);
+  messageDesc(file_themis_workbench_models_workbench, 23);
 
 /**
  * Halt the Analysis's current step: the run stops what it is doing and goes idle, ready for the
@@ -673,7 +737,7 @@ export type InterruptRequest = Message<"themis.workbench.models.workbench.Interr
  * Use `create(InterruptRequestSchema)` to create a new message.
  */
 export const InterruptRequestSchema: GenMessage<InterruptRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 23);
+  messageDesc(file_themis_workbench_models_workbench, 24);
 
 /**
  * The interrupt reply. Empty: the poll is what surfaces the halted step.
@@ -688,7 +752,7 @@ export type InterruptResponse = Message<"themis.workbench.models.workbench.Inter
  * Use `create(InterruptResponseSchema)` to create a new message.
  */
 export const InterruptResponseSchema: GenMessage<InterruptResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 24);
+  messageDesc(file_themis_workbench_models_workbench, 25);
 
 /**
  * A produced working document: its version and markdown body.
@@ -712,7 +776,7 @@ export type WorkingDocument = Message<"themis.workbench.models.workbench.Working
  * Use `create(WorkingDocumentSchema)` to create a new message.
  */
 export const WorkingDocumentSchema: GenMessage<WorkingDocument> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 25);
+  messageDesc(file_themis_workbench_models_workbench, 26);
 
 /**
  * The working document to fetch. `version` absent asks for the current document; naming a version
@@ -737,7 +801,7 @@ export type DocumentRequest = Message<"themis.workbench.models.workbench.Documen
  * Use `create(DocumentRequestSchema)` to create a new message.
  */
 export const DocumentRequestSchema: GenMessage<DocumentRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 26);
+  messageDesc(file_themis_workbench_models_workbench, 27);
 
 /**
  * The working document as a produced/not-produced result. `document` unset is the not-produced
@@ -757,7 +821,7 @@ export type DocumentResponse = Message<"themis.workbench.models.workbench.Docume
  * Use `create(DocumentResponseSchema)` to create a new message.
  */
 export const DocumentResponseSchema: GenMessage<DocumentResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 27);
+  messageDesc(file_themis_workbench_models_workbench, 28);
 
 /**
  * The syntax a tool call's `command` is written in. UNSPECIFIED where that text is not one lexable

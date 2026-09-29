@@ -22,17 +22,39 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 from themis.rpc import literature_pb2 as themis_dot_rpc_dot_literature__pb2
+from themis.rpc import sheaf_pb2 as themis_dot_rpc_dot_sheaf__pb2
 from themis.workbench.models import workbench_pb2 as themis_dot_workbench_dot_models_dot_workbench__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$themis/workbench/rpc/workbench.proto\x12\x14themis.workbench.rpc\x1a\x1bthemis/rpc/literature.proto\x1a\'themis/workbench/models/workbench.proto2\x83\t\n\tWorkbench\x12\x7f\n\x0cListProjects\x12\x36.themis.workbench.models.workbench.ListProjectsRequest\x1a\x37.themis.workbench.models.workbench.ListProjectsResponse\x12\x85\x01\n\x0e\x43reateAnalysis\x12\x38.themis.workbench.models.workbench.CreateAnalysisRequest\x1a\x39.themis.workbench.models.workbench.CreateAnalysisResponse\x12\x7f\n\x0cListAnalyses\x12\x36.themis.workbench.models.workbench.ListAnalysesRequest\x1a\x37.themis.workbench.models.workbench.ListAnalysesResponse\x12g\n\x04Poll\x12..themis.workbench.models.workbench.PollRequest\x1a/.themis.workbench.models.workbench.PollResponse\x12p\n\tGetThread\x12\x30.themis.workbench.models.workbench.ThreadRequest\x1a\x31.themis.workbench.models.workbench.ThreadResponse\x12j\n\x05Steer\x12/.themis.workbench.models.workbench.SteerRequest\x1a\x30.themis.workbench.models.workbench.SteerResponse\x12v\n\tInterrupt\x12\x33.themis.workbench.models.workbench.InterruptRequest\x1a\x34.themis.workbench.models.workbench.InterruptResponse\x12v\n\x0bGetDocument\x12\x32.themis.workbench.models.workbench.DocumentRequest\x1a\x33.themis.workbench.models.workbench.DocumentResponse\x12^\n\rDescribePaper\x12+.themis.rpc.literature.DescribePaperRequest\x1a .themis.rpc.literature.PaperInfo\x12U\n\x06Locate\x12$.themis.rpc.literature.LocateRequest\x1a%.themis.rpc.literature.LocateResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$themis/workbench/rpc/workbench.proto\x12\x14themis.workbench.rpc\x1a\x1b\x62uf/validate/validate.proto\x1a\x1bthemis/rpc/literature.proto\x1a\x16themis/rpc/sheaf.proto\x1a\'themis/workbench/models/workbench.proto\":\n\x1aReadWorkspaceRefDocRequest\x12\x1c\n\x0b\x61nalysis_id\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\"q\n\x1cSignWorkspacePackUrlsRequest\x12\x1c\n\x0b\x61nalysis_id\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x33\n\x08pack_ids\x18\x02 \x03(\tB!\xbaH\x1e\x92\x01\x1b\x08\x01\x10\x80\x02\x18\x01\"\x12r\x10\x32\x0e^[0-9a-f]{64}$\"\xb4\x02\n\x17PublishWorkspaceRequest\x12\x1c\n\x0b\x61nalysis_id\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x37\n\x06intent\x18\x02 \x01(\x0b\x32\x1f.themis.rpc.sheaf.PublishIntentB\x06\xbaH\x03\xc8\x01\x01\x12\x1e\n\npack_bytes\x18\x03 \x03(\x0c\x42\n\xbaH\x07\x92\x01\x04\x08\x01\x10\x01:\xa1\x01\xbaH\x9d\x01\x1a\x9a\x01\n)publish_workspace.pack_bytes_match_intent\x12;pack_bytes must carry exactly the packs the intent declares\x1a\x30size(this.pack_bytes) == size(this.intent.packs)2\xc9\x0b\n\tWorkbench\x12\x7f\n\x0cListProjects\x12\x36.themis.workbench.models.workbench.ListProjectsRequest\x1a\x37.themis.workbench.models.workbench.ListProjectsResponse\x12\x85\x01\n\x0e\x43reateAnalysis\x12\x38.themis.workbench.models.workbench.CreateAnalysisRequest\x1a\x39.themis.workbench.models.workbench.CreateAnalysisResponse\x12\x7f\n\x0cListAnalyses\x12\x36.themis.workbench.models.workbench.ListAnalysesRequest\x1a\x37.themis.workbench.models.workbench.ListAnalysesResponse\x12g\n\x04Poll\x12..themis.workbench.models.workbench.PollRequest\x1a/.themis.workbench.models.workbench.PollResponse\x12p\n\tGetThread\x12\x30.themis.workbench.models.workbench.ThreadRequest\x1a\x31.themis.workbench.models.workbench.ThreadResponse\x12j\n\x05Steer\x12/.themis.workbench.models.workbench.SteerRequest\x1a\x30.themis.workbench.models.workbench.SteerResponse\x12v\n\tInterrupt\x12\x33.themis.workbench.models.workbench.InterruptRequest\x1a\x34.themis.workbench.models.workbench.InterruptResponse\x12v\n\x0bGetDocument\x12\x32.themis.workbench.models.workbench.DocumentRequest\x1a\x33.themis.workbench.models.workbench.DocumentResponse\x12i\n\x13ReadWorkspaceRefDoc\x12\x30.themis.workbench.rpc.ReadWorkspaceRefDocRequest\x1a .themis.rpc.sheaf.RefDocSnapshot\x12s\n\x15SignWorkspacePackUrls\x12\x32.themis.workbench.rpc.SignWorkspacePackUrlsRequest\x1a&.themis.rpc.sheaf.SignPackUrlsResponse\x12\x64\n\x10PublishWorkspace\x12-.themis.workbench.rpc.PublishWorkspaceRequest\x1a!.themis.rpc.sheaf.PublishResponse\x12^\n\rDescribePaper\x12+.themis.rpc.literature.DescribePaperRequest\x1a .themis.rpc.literature.PaperInfo\x12U\n\x06Locate\x12$.themis.rpc.literature.LocateRequest\x1a%.themis.rpc.literature.LocateResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.workbench.rpc.workbench_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_WORKBENCH']._serialized_start=133
-  _globals['_WORKBENCH']._serialized_end=1288
+  _globals['_READWORKSPACEREFDOCREQUEST'].fields_by_name['analysis_id']._loaded_options = None
+  _globals['_READWORKSPACEREFDOCREQUEST'].fields_by_name['analysis_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST'].fields_by_name['analysis_id']._loaded_options = None
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST'].fields_by_name['analysis_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST'].fields_by_name['pack_ids']._loaded_options = None
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST'].fields_by_name['pack_ids']._serialized_options = b'\272H\036\222\001\033\010\001\020\200\002\030\001\"\022r\0202\016^[0-9a-f]{64}$'
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['analysis_id']._loaded_options = None
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['analysis_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['intent']._loaded_options = None
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['intent']._serialized_options = b'\272H\003\310\001\001'
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['pack_bytes']._loaded_options = None
+  _globals['_PUBLISHWORKSPACEREQUEST'].fields_by_name['pack_bytes']._serialized_options = b'\272H\007\222\001\004\010\001\020\001'
+  _globals['_PUBLISHWORKSPACEREQUEST']._loaded_options = None
+  _globals['_PUBLISHWORKSPACEREQUEST']._serialized_options = b'\272H\235\001\032\232\001\n)publish_workspace.pack_bytes_match_intent\022;pack_bytes must carry exactly the packs the intent declares\0320size(this.pack_bytes) == size(this.intent.packs)'
+  _globals['_READWORKSPACEREFDOCREQUEST']._serialized_start=185
+  _globals['_READWORKSPACEREFDOCREQUEST']._serialized_end=243
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST']._serialized_start=245
+  _globals['_SIGNWORKSPACEPACKURLSREQUEST']._serialized_end=358
+  _globals['_PUBLISHWORKSPACEREQUEST']._serialized_start=361
+  _globals['_PUBLISHWORKSPACEREQUEST']._serialized_end=669
+  _globals['_WORKBENCH']._serialized_start=672
+  _globals['_WORKBENCH']._serialized_end=2153
 # @@protoc_insertion_point(module_scope)

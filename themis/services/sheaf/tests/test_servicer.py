@@ -74,6 +74,37 @@ def test_the_developer_naming_no_session_is_refused_as_an_invalid_call(backend: 
         conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.CLU), backend)
 
 
+def test_the_web_tier_reaches_the_repository_of_the_session_it_names(backend: sheaf.LocalBackend) -> None:
+    conftest.seed(backend, {REF: (None, SHA_A)})
+    response = conftest.run(
+        lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WEB_WITH_SESSION), backend
+    )
+    assert refdoc.RefDoc.from_bytes(response.document.SerializeToString()).refs[REF] == SHA_A
+
+
+def test_the_web_tier_naming_no_session_is_refused_as_an_invalid_call(backend: sheaf.LocalBackend) -> None:
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.INVALID_ARGUMENT)):
+        conftest.run(lambda stub: stub.ReadRefDoc(empty_pb2.Empty(), metadata=conftest.WEB), backend)
+
+
+def test_the_web_tier_does_not_fetch_packs(backend: sheaf.LocalBackend) -> None:
+    """The browser downloads packs by signed URL; streaming them through this service is the worker's path alone."""
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
+
+    def scenario(stub: sheaf_pb2_grpc.SheafStub) -> bytes:
+        request = sheaf_pb2.FetchPackRequest(pack_id=sheaf.pack_id(PACK_1))
+        return b''.join([chunk.content for chunk in stub.FetchPack(request, metadata=conftest.WEB_WITH_SESSION)])
+
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+        conftest.run(scenario, backend)
+
+
+def test_the_worker_does_not_sign_pack_urls(backend: sheaf.LocalBackend) -> None:
+    request = sheaf_pb2.SignPackUrlsRequest(pack_ids=[sheaf.pack_id(PACK_1)])
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.PERMISSION_DENIED)):
+        conftest.run(lambda stub: stub.SignPackUrls(request, metadata=conftest.WORKER), backend)
+
+
 def test_a_fetch_by_a_worker_whose_session_does_not_resolve_is_permission_denied(backend: sheaf.LocalBackend) -> None:
     conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
 
@@ -127,6 +158,13 @@ def test_a_publish_lands_under_the_analysis_its_session_names(backend: sheaf.Loc
     assert conftest.store_for(backend, OTHER_ANALYSIS_ID).read().tip(REF) == SHA_B
     assert conftest.store_for(backend).read().generation is None
     assert conftest.store_for(backend, OTHER_ANALYSIS_ID).fetch_pack(sheaf.pack_id(PACK_2)) == PACK_2
+
+
+def test_the_web_tier_publishes_to_the_repository_of_the_session_it_names(backend: sheaf.LocalBackend) -> None:
+    messages = conftest.stream(conftest.intent(0, {REF: (None, SHA_B)}, packs=[PACK_2]), [PACK_2])
+    conftest.run(lambda stub: conftest.publish(stub, messages, metadata=conftest.WEB_WITH_SESSION), backend)
+    assert conftest.store_for(backend).read().tip(REF) == SHA_B
+    assert conftest.store_for(backend, OTHER_ANALYSIS_ID).read().generation is None
 
 
 # --- the first publish, and reading it back --------------------------------------------------------

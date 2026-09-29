@@ -1,17 +1,19 @@
-// The `sheaf` service: a repository's mutable state and packs, behind the one credential on the
-// workspace bucket (docs/design/sheaf.md). This proto is the source of truth; `regen` (buf generate) emits the
+// The `sheaf` service: a repository's mutable state and packs, behind the one credential on
+// sheaf's bucket (docs/design/sheaf.md). This proto is the source of truth; `regen` (buf generate) emits the
 // themis/rpc/sheaf stubs each consumer imports.
 //
 // Sheaf is git over object storage: content-addressed packfiles plus one ref document replaced by
 // compare-and-swap. The service holds the bucket and runs sheaf's storage protocol; a caller holds
-// the objects. That caller is the sandbox worker: its bare mirror hydrates through ReadRefDoc and
+// the objects. The first caller is the sandbox worker: its bare mirror hydrates through ReadRefDoc and
 // FetchPack, and its pre-receive hook publishes through Publish. The guest's git sees none of this —
 // it speaks git's own protocol to the worker's mirror over the stream hatch, and the mirror is where
-// git's world ends and sheaf's begins. The BFF is the deployment's second consumer through a
-// workspace-level interface of its own; it holds no objects and no session token, so it does not
-// call these rpcs. Every call here is scoped to one repository by the session it carries
-// (x-themis-session-token metadata resolves to an Analysis; the repository is that Analysis's), so
-// no request names a repository and a caller can reach only its own.
+// git's world ends and sheaf's begins. The curator's browser is the second caller: it keeps a copy
+// of the repository of its own, hydrated through ReadRefDoc and the packs SignPackUrls signs download
+// URLs for, and publishes a curator's commit through Publish. The BFF relays each of those calls as
+// the web tier, naming the Analysis through a session it derives for it
+// (docs/design/workbench-workspace.md). Every call here is scoped to one repository by the session
+// it names (resolved to an Analysis; the repository is that Analysis's), so no request names a
+// repository and a caller can reach only its own.
 //
 // The split of checks follows what each side holds. The service refuses what it can decide from
 // the document alone: a name or id git cannot hold, a ref set git cannot store, a deletion, a
@@ -27,6 +29,7 @@ syntax = "proto3";
 package themis.rpc.sheaf;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 import "themis/sheaf/models/refdoc.proto";
 import "themis/rpc/sandbox_options.proto";
 
@@ -127,6 +130,39 @@ message PublishChunk {
   bytes content = 2;
 }
 
+// The packs a caller wants to download from the bucket itself, by the ids the current document lists.
+message SignPackUrlsRequest {
+  // Lowercase hex SHA-256 ids, each named once, at most 256 per call, so a caller lacking more asks
+  // in batches. Empty, more than 256, an id that is not sixty-four hex digits, or an id named twice is
+  // INVALID_ARGUMENT. An id the current document does not list is NOT_FOUND, even when the pack
+  // exists, so a URL is only ever signed for a pack a reader of this repository can already name; a
+  // caller answered NOT_FOUND reads the document again, since the list it asked from may be stale.
+  repeated string pack_ids = 1;
+}
+
+// Where to download each requested pack, and how large it is.
+message SignPackUrlsResponse {
+  // One per requested id, in the order requested.
+  repeated SignedPack packs = 1;
+}
+
+// One pack's download.
+message SignedPack {
+  // The id it was requested under. The downloaded bytes' SHA-256 must equal it, which is how a caller
+  // detects a truncated or altered download before indexing it.
+  string pack_id = 1;
+  // A short-lived signed GET URL for the pack. It carries this service's read permission and works
+  // for anyone holding it until it expires: fetch it once, keep it in memory, never log it or
+  // navigate to it. A download that fails is signed afresh, never retried against the same URL,
+  // because an expired URL's refusal can reach a browser as an opaque network error.
+  string url = 2;
+  // The pack's byte length, known before any byte is downloaded, so a caller can refuse a repository
+  // larger than its budget without starting.
+  uint64 size = 3;
+  // When `url` stops working, so a caller downloading a long batch signs again before it does.
+  google.protobuf.Timestamp expire_time = 4;
+}
+
 // The generation at which the document holds this publish's outcome: the one the publish wrote, or,
 // when the call succeeded because the publish had already landed, the current one. Either way the
 // caller's next read sees it. Nothing else: the packs stored are exactly the intent's declared
@@ -142,6 +178,7 @@ service Sheaf {
   // wrote: that is damage, and a caller must not retry it as a fault.
   rpc ReadRefDoc(google.protobuf.Empty) returns (RefDocSnapshot) {
     option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+    option (themis.rpc.admits_caller) = CALLER_WEB;
   }
   // One packfile the document names, streamed. INVALID_ARGUMENT if `pack_id` is not sixty-four hex
   // digits; NOT_FOUND if no such pack: nothing in a sheaf store is ever deleted, so that is a fact
@@ -165,10 +202,23 @@ service Sheaf {
   // RESOURCE_EXHAUSTED when the declared packs exceed the deployment's per-publish byte ceiling, or
   // the ref set the publish would leave exceeds its ref-count or document-size ceiling — both
   // decided from the intent and the current document before any pack is stored. The ref set only
-  // grows, since nothing is deleted, so it is bounded for the same reason the bytes are. Faults, not
-  // refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage fault a caller
-  // retries.
+  // grows, since nothing is deleted, so it is bounded for the same reason the bytes are. DATA_LOSS
+  // when the stored document does not parse as one this code wrote: damage, which a caller must not
+  // retry. Faults, not refusals, are gRPC's ordinary codes: UNAVAILABLE or INTERNAL for a storage
+  // fault a caller retries.
   rpc Publish(stream PublishRequest) returns (PublishResponse) {
     option (themis.rpc.admits_caller) = CALLER_SANDBOX_WORKER;
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
+  // Signed download URLs, with sizes, for packs the current document lists, so a caller that keeps
+  // its own copy of the repository downloads them from the bucket instead of streaming them through
+  // this service. The signing happens here because a signed URL carries the signer's own read
+  // permission, and this service is the one identity with a role on the bucket. Refusals as
+  // SignPackUrlsRequest states. DATA_LOSS when the document lists a pack the store does not hold, or
+  // the stored document does not parse as one this code wrote: damage, which a caller must not retry.
+  // UNIMPLEMENTED when the deployment's storage backend cannot sign, as the local-directory backend
+  // cannot.
+  rpc SignPackUrls(SignPackUrlsRequest) returns (SignPackUrlsResponse) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
   }
 }

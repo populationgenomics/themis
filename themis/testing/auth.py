@@ -52,6 +52,8 @@ AGENT_OUTAGE: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_AG
 WORKER: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, _GOOD))
 # A caller calling as itself that presents a session anyway: resolved for attribution, admitting nothing.
 CLU_WITH_SESSION: Metadata = (*CLU, *claim(sandbox_options_pb2.CALLING_AS_SELF, _GOOD))
+# The web tier naming the Analysis it acts on through a session it derives, as it calls the sheaf service.
+WEB_WITH_SESSION: Metadata = (*WEB, *claim(sandbox_options_pb2.CALLING_AS_SELF, _GOOD))
 
 _CALLERS = {'web': WEB_EMAIL, 'clu': CLU_EMAIL, 'sandbox-job': SANDBOX_JOB_EMAIL}
 

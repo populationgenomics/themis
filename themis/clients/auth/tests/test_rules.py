@@ -7,7 +7,7 @@ from google.protobuf import descriptor_pb2, descriptor_pool
 
 from themis.clients.auth import context as auth_context
 from themis.clients.auth import rules
-from themis.rpc import auth_pb2, literature_pb2, sandbox_options_pb2, store_pb2
+from themis.rpc import auth_pb2, literature_pb2, sandbox_options_pb2, sheaf_pb2, store_pb2
 
 _PROJECT = 'x'
 _WEB = rules.account_email('themis-web', _PROJECT)
@@ -16,6 +16,7 @@ _CLU = rules.account_email('themis-clu', _PROJECT)
 _SESSION = auth_pb2.SessionContext(project_id='p', analysis_id='a')
 _LITERATURE = literature_pb2.DESCRIPTOR.services_by_name['Literature']
 _STORE = store_pb2.DESCRIPTOR.services_by_name['Store']
+_SHEAF = sheaf_pb2.DESCRIPTOR.services_by_name['Sheaf']
 
 _SELF = sandbox_options_pb2.CALLING_AS_SELF
 _AGENT_SESSION = sandbox_options_pb2.CALLING_AS_AGENT_SESSION
@@ -61,6 +62,20 @@ def test_the_worker_s_claim_is_not_the_agent_s() -> None:
     assert not _rule(_LITERATURE, 'GetMarkdown').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
     assert _rule(_STORE, 'PutWorkingDocument').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
     assert not _rule(_STORE, 'PutWorkingDocument').admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
+
+
+@pytest.mark.parametrize('method', ['ReadRefDoc', 'Publish'])
+def test_the_web_tier_and_the_worker_both_reach_the_repository_rpcs_the_browser_uses(method: str) -> None:
+    rule = _rule(_SHEAF, method)
+    assert rule.admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
+    assert rule.admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
+
+
+def test_only_the_web_tier_signs_pack_urls_and_only_the_worker_fetches_packs() -> None:
+    # The browser downloads packs by signed URL; the worker's mirror streams them through the service.
+    assert _rule(_SHEAF, 'SignPackUrls').admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
+    assert not _rule(_SHEAF, 'SignPackUrls').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
+    assert not _rule(_SHEAF, 'FetchPack').admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
 
 
 def test_the_deny_rule_admits_nobody_but_the_developer() -> None:

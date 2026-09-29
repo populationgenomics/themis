@@ -6,17 +6,21 @@ The BFF's Connect handler serves it and the browser's generated client calls it,
 Connect protocol as proto3-JSON. Unlike the themis/rpc/ services this one has no Python
 implementation — it is served by the web tier, in TypeScript.
 
-Message shapes live in the workbench models proto and are referenced fully-qualified from here;
-this file adds only the service. The split is the models file's history, not a rule: its
-request/reply envelopes predate this service and the compat gate forbids moving them. The paper
-read methods reuse the literature proto's messages directly — that read surface is itself the
+Most message shapes live in the workbench models proto and are referenced fully-qualified from
+here. The split is the models file's history, not a rule: its request/reply envelopes predate this
+service and the compat gate forbids moving them. The workspace-repository requests are declared
+here instead, because this file's messages may be deleted when their rpcs retire and the models
+file's may not. The paper read methods reuse the literature proto's messages directly, and the
+workspace-repository methods reuse the sheaf proto's replies: each of those surfaces is itself the
 BFF↔frontend view model, so there is no second envelope to define.
 """
 
 from collections import abc as _abc
 from grpc import aio as _aio
 from themis.rpc import literature_pb2 as _literature_pb2
+from themis.rpc import sheaf_pb2 as _sheaf_pb2
 from themis.workbench.models import workbench_pb2 as _workbench_pb2
+from themis.workbench.rpc import workbench_pb2 as _workbench_pb2_1
 import abc as _abc_1
 import grpc as _grpc
 import sys
@@ -62,7 +66,9 @@ class WorkbenchStub:
     ListAnalyses: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]
-    """One liveness tick: the whole projected event stream plus the working-document version signal."""
+    """One liveness tick: the whole projected event stream plus the working-document version signal and
+    the workspace branch's tip.
+    """
     GetThread: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]
     """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
     projection the coordinator's stream is in. A read: it advances nothing.
@@ -77,6 +83,40 @@ class WorkbenchStub:
     """
     GetDocument: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]
     """The current working document as a produced|not-produced result, or a named historical version."""
+    ReadWorkspaceRefDoc: _grpc.UnaryUnaryMultiCallable[_workbench_pb2_1.ReadWorkspaceRefDocRequest, _sheaf_pb2.RefDocSnapshot]
+    """The Analysis's workspace repository's ref document and generation, which the browser's copy of
+    the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
+    ReadRefDoc; an unset document is a repository that does not exist yet. The service's DATA_LOSS, a
+    stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not retry; every
+    other upstream failure is masked as INTERNAL.
+    """
+    SignWorkspacePackUrls: _grpc.UnaryUnaryMultiCallable[_workbench_pb2_1.SignWorkspacePackUrlsRequest, _sheaf_pb2.SignPackUrlsResponse]
+    """Signed download URLs and sizes for packs the Analysis's ref document lists. Relays the sheaf
+    service's SignPackUrls; each URL is a bearer capability until it expires. A pack the current
+    document no longer lists, the service's NOT_FOUND, reaches the caller as FAILED_PRECONDITION,
+    because NOT_FOUND on this surface means an Analysis outside the caller's membership: read the ref
+    document again and ask for what it lists. The service's DATA_LOSS, a listed pack the store does
+    not hold or a stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not
+    retry. Every other upstream failure is masked as INTERNAL.
+    """
+    PublishWorkspace: _grpc.UnaryUnaryMultiCallable[_workbench_pb2_1.PublishWorkspaceRequest, _sheaf_pb2.PublishResponse]
+    """Publish a commit the browser built on a revision of the Analysis's workspace. Relays the sheaf
+    service's Publish. Five of its answers reach the caller as the same codes with the same meaning,
+    and every other upstream failure is masked as INTERNAL:
+      ABORTED: an unrelated publish landed first; rebuild the reflog entry and the pack against the
+        new document and publish again.
+      FAILED_PRECONDITION: the branch moved; if the pending commit is reachable from the new tip it
+        landed and only the response was lost, else apply the edit on the new tip and publish again.
+      RESOURCE_EXHAUSTED: the publish is over one of the service's ceilings; not retried, and the
+        curator is told the edit was not saved.
+      INVALID_ARGUMENT: the intent or the pack is malformed; not retried, and reported the same way.
+        It is relayed because the intent and the pack are the browser's own bytes, forwarded as sent;
+        the BFF always names a session, so the service's refusal of a call naming none cannot arise.
+      DATA_LOSS: the stored document does not parse; the repository is damaged. Not retried, and the
+        curator is told the workspace is damaged and the edit was not saved.
+    A retry of a publish whose response was lost succeeds while the branch still holds the publish's
+    commit as its tip.
+    """
     DescribePaper: _grpc.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]
     """A corpus paper's representations, default, and files. IAP-only: a paper is a shared-corpus
     resource, so this is not Project-scoped. NOT_FOUND for an unknown doc_id.
@@ -109,7 +149,9 @@ class WorkbenchAsyncStub(WorkbenchStub):
     ListAnalyses: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]  # type: ignore[assignment]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _aio.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]  # type: ignore[assignment]
-    """One liveness tick: the whole projected event stream plus the working-document version signal."""
+    """One liveness tick: the whole projected event stream plus the working-document version signal and
+    the workspace branch's tip.
+    """
     GetThread: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]  # type: ignore[assignment]
     """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
     projection the coordinator's stream is in. A read: it advances nothing.
@@ -124,6 +166,40 @@ class WorkbenchAsyncStub(WorkbenchStub):
     """
     GetDocument: _aio.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]  # type: ignore[assignment]
     """The current working document as a produced|not-produced result, or a named historical version."""
+    ReadWorkspaceRefDoc: _aio.UnaryUnaryMultiCallable[_workbench_pb2_1.ReadWorkspaceRefDocRequest, _sheaf_pb2.RefDocSnapshot]  # type: ignore[assignment]
+    """The Analysis's workspace repository's ref document and generation, which the browser's copy of
+    the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
+    ReadRefDoc; an unset document is a repository that does not exist yet. The service's DATA_LOSS, a
+    stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not retry; every
+    other upstream failure is masked as INTERNAL.
+    """
+    SignWorkspacePackUrls: _aio.UnaryUnaryMultiCallable[_workbench_pb2_1.SignWorkspacePackUrlsRequest, _sheaf_pb2.SignPackUrlsResponse]  # type: ignore[assignment]
+    """Signed download URLs and sizes for packs the Analysis's ref document lists. Relays the sheaf
+    service's SignPackUrls; each URL is a bearer capability until it expires. A pack the current
+    document no longer lists, the service's NOT_FOUND, reaches the caller as FAILED_PRECONDITION,
+    because NOT_FOUND on this surface means an Analysis outside the caller's membership: read the ref
+    document again and ask for what it lists. The service's DATA_LOSS, a listed pack the store does
+    not hold or a stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not
+    retry. Every other upstream failure is masked as INTERNAL.
+    """
+    PublishWorkspace: _aio.UnaryUnaryMultiCallable[_workbench_pb2_1.PublishWorkspaceRequest, _sheaf_pb2.PublishResponse]  # type: ignore[assignment]
+    """Publish a commit the browser built on a revision of the Analysis's workspace. Relays the sheaf
+    service's Publish. Five of its answers reach the caller as the same codes with the same meaning,
+    and every other upstream failure is masked as INTERNAL:
+      ABORTED: an unrelated publish landed first; rebuild the reflog entry and the pack against the
+        new document and publish again.
+      FAILED_PRECONDITION: the branch moved; if the pending commit is reachable from the new tip it
+        landed and only the response was lost, else apply the edit on the new tip and publish again.
+      RESOURCE_EXHAUSTED: the publish is over one of the service's ceilings; not retried, and the
+        curator is told the edit was not saved.
+      INVALID_ARGUMENT: the intent or the pack is malformed; not retried, and reported the same way.
+        It is relayed because the intent and the pack are the browser's own bytes, forwarded as sent;
+        the BFF always names a session, so the service's refusal of a call naming none cannot arise.
+      DATA_LOSS: the stored document does not parse; the repository is damaged. Not retried, and the
+        curator is told the workspace is damaged and the edit was not saved.
+    A retry of a publish whose response was lost succeeds while the branch still holds the publish's
+    commit as its tip.
+    """
     DescribePaper: _aio.UnaryUnaryMultiCallable[_literature_pb2.DescribePaperRequest, _literature_pb2.PaperInfo]  # type: ignore[assignment]
     """A corpus paper's representations, default, and files. IAP-only: a paper is a shared-corpus
     resource, so this is not Project-scoped. NOT_FOUND for an unknown doc_id.
@@ -177,7 +253,9 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         request: _workbench_pb2.PollRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_workbench_pb2.PollResponse, _abc.Awaitable[_workbench_pb2.PollResponse]]:
-        """One liveness tick: the whole projected event stream plus the working-document version signal."""
+        """One liveness tick: the whole projected event stream plus the working-document version signal and
+        the workspace branch's tip.
+        """
 
     @_abc_1.abstractmethod
     def GetThread(
@@ -216,6 +294,58 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         context: _ServicerContext,
     ) -> _typing.Union[_workbench_pb2.DocumentResponse, _abc.Awaitable[_workbench_pb2.DocumentResponse]]:
         """The current working document as a produced|not-produced result, or a named historical version."""
+
+    @_abc_1.abstractmethod
+    def ReadWorkspaceRefDoc(
+        self,
+        request: _workbench_pb2_1.ReadWorkspaceRefDocRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_sheaf_pb2.RefDocSnapshot, _abc.Awaitable[_sheaf_pb2.RefDocSnapshot]]:
+        """The Analysis's workspace repository's ref document and generation, which the browser's copy of
+        the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
+        ReadRefDoc; an unset document is a repository that does not exist yet. The service's DATA_LOSS, a
+        stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not retry; every
+        other upstream failure is masked as INTERNAL.
+        """
+
+    @_abc_1.abstractmethod
+    def SignWorkspacePackUrls(
+        self,
+        request: _workbench_pb2_1.SignWorkspacePackUrlsRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_sheaf_pb2.SignPackUrlsResponse, _abc.Awaitable[_sheaf_pb2.SignPackUrlsResponse]]:
+        """Signed download URLs and sizes for packs the Analysis's ref document lists. Relays the sheaf
+        service's SignPackUrls; each URL is a bearer capability until it expires. A pack the current
+        document no longer lists, the service's NOT_FOUND, reaches the caller as FAILED_PRECONDITION,
+        because NOT_FOUND on this surface means an Analysis outside the caller's membership: read the ref
+        document again and ask for what it lists. The service's DATA_LOSS, a listed pack the store does
+        not hold or a stored document it cannot parse, reaches the caller as DATA_LOSS, which it must not
+        retry. Every other upstream failure is masked as INTERNAL.
+        """
+
+    @_abc_1.abstractmethod
+    def PublishWorkspace(
+        self,
+        request: _workbench_pb2_1.PublishWorkspaceRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_sheaf_pb2.PublishResponse, _abc.Awaitable[_sheaf_pb2.PublishResponse]]:
+        """Publish a commit the browser built on a revision of the Analysis's workspace. Relays the sheaf
+        service's Publish. Five of its answers reach the caller as the same codes with the same meaning,
+        and every other upstream failure is masked as INTERNAL:
+          ABORTED: an unrelated publish landed first; rebuild the reflog entry and the pack against the
+            new document and publish again.
+          FAILED_PRECONDITION: the branch moved; if the pending commit is reachable from the new tip it
+            landed and only the response was lost, else apply the edit on the new tip and publish again.
+          RESOURCE_EXHAUSTED: the publish is over one of the service's ceilings; not retried, and the
+            curator is told the edit was not saved.
+          INVALID_ARGUMENT: the intent or the pack is malformed; not retried, and reported the same way.
+            It is relayed because the intent and the pack are the browser's own bytes, forwarded as sent;
+            the BFF always names a session, so the service's refusal of a call naming none cannot arise.
+          DATA_LOSS: the stored document does not parse; the repository is damaged. Not retried, and the
+            curator is told the workspace is damaged and the edit was not saved.
+        A retry of a publish whose response was lost succeeds while the branch still holds the publish's
+        commit as its tip.
+        """
 
     @_abc_1.abstractmethod
     def DescribePaper(
