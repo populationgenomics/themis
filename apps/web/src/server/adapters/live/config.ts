@@ -1,7 +1,9 @@
 // Env-driven configuration for the live (self-hosted data-plane) adapter. Every
-// value is required and validated up front; a missing one is a fail-closed
-// misconfiguration, never a silent default. The names mirror the env infra sets on
-// the web Cloud Run service (infra/themis_infra/web.py) — keep them in lockstep.
+// value is required where it is read, and validated there; a missing one is a
+// fail-closed misconfiguration, never a silent default. Each loader reads only what its
+// consumer uses, so a variable fails the paths that need it and no other. The names are
+// the env `WebService` sets on the web Cloud Run service (infra/themis_infra/web.py)
+// — keep them in lockstep.
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -38,6 +40,12 @@ export interface EvidenceConfig {
    *  the authz boundary and refuses any object outside this bucket — so a service bug can't turn a
    *  paper-content route into a read of another bucket the web SA holds (e.g. per-tenant working docs). */
   corpusBucket: string;
+}
+
+/** The sheaf service the BFF relays the browser's workspace-repository calls to. `sheafUrl` is both
+ *  the transport base URL and the audience the ID-token interceptor mints for. */
+export interface SheafConfig {
+  sheafUrl: string;
 }
 
 /** IAP JWT audience inputs. The `aud` an IAP assertion carries is the backend
@@ -111,6 +119,24 @@ export function loadGcsConfig(env: EnvLike = process.env): GcsConfig {
 export function loadEvidenceConfig(env: EnvLike = process.env): EvidenceConfig {
   return {
     evidenceUrl: required(env, "THEMIS_EVIDENCE_URL"),
-    corpusBucket: required(env, "THEMIS_FULLTEXT_BUCKET"),
+    corpusBucket: loadCorpusBucket(env),
   };
+}
+
+/** Read + validate the sheaf service URL. */
+export function loadSheafConfig(env: EnvLike = process.env): SheafConfig {
+  return { sheafUrl: required(env, "THEMIS_SHEAF_URL") };
+}
+
+/** The corpus bucket the paper-content routes redirect into, which the page's content security
+ *  policy admits (lib/csp.ts). */
+export function loadCorpusBucket(env: EnvLike = process.env): string {
+  return required(env, "THEMIS_FULLTEXT_BUCKET");
+}
+
+/** Sheaf's bucket: where the sheaf service keeps every workspace repository, and so where the pack
+ *  URLs it signs point. The BFF holds no role on it and names no object in it; only the content security
+ *  policy reads it (lib/csp.ts). */
+export function loadSheafBucket(env: EnvLike = process.env): string {
+  return required(env, "THEMIS_SHEAF_BUCKET");
 }

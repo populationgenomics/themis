@@ -1,4 +1,7 @@
-import { loadEvidenceConfig } from "@/server/adapters/live/config";
+import {
+  loadCorpusBucket,
+  loadSheafBucket,
+} from "@/server/adapters/live/config";
 import { selectedBackend } from "@/server/backend";
 
 // The Content Security Policy the request perimeter declares on each response it returns, and the
@@ -23,6 +26,9 @@ export interface PolicyOptions {
   development: boolean;
   /** Where a paper's bytes reach the browser from, as CSP source expressions. */
   contentSources: readonly string[];
+  /** Where the browser's copy of a workspace repository downloads packs from. Admitted by the worker
+   *  policy alone: the worker that holds the copy is the one fetching them, and the page never does. */
+  sheafSources: readonly string[];
 }
 
 /**
@@ -36,15 +42,26 @@ export interface PolicyOptions {
  */
 export function contentSources(env: EnvLike = process.env): string[] {
   if (selectedBackend(env) !== "live") return [];
-  const { corpusBucket } = loadEvidenceConfig(env);
-  if (!BUCKET_NAME.test(corpusBucket)) {
-    throw new Error(
-      `THEMIS_FULLTEXT_BUCKET is not a bucket name: ${corpusBucket}`,
-    );
+  return [bucketSource(loadCorpusBucket(env), "THEMIS_FULLTEXT_BUCKET")];
+}
+
+/**
+ * The sources the browser's copy of a workspace repository downloads packs from: sheaf's bucket,
+ * which the sheaf service signs URLs into, scoped to its path as the corpus bucket is. The fixture serves packs
+ * from the BFF's own pack route, so offline there is nothing off-origin to admit.
+ */
+export function sheafSources(env: EnvLike = process.env): string[] {
+  if (selectedBackend(env) !== "live") return [];
+  return [bucketSource(loadSheafBucket(env), "THEMIS_SHEAF_BUCKET")];
+}
+
+/** A bucket's path on the GCS host, as a source expression. Path style, as `getSignedUrl` mints a
+ *  URL; one signed with `virtualHostedStyle` would move the bucket into the host and stop matching. */
+function bucketSource(bucket: string, variable: string): string {
+  if (!BUCKET_NAME.test(bucket)) {
+    throw new Error(`${variable} is not a bucket name: ${bucket}`);
   }
-  // Path style, as `getSignedUrl` mints it; signing with `virtualHostedStyle` would move the bucket
-  // into the host and stop matching this.
-  return [`https://storage.googleapis.com/${corpusBucket}/`];
+  return `https://storage.googleapis.com/${bucket}/`;
 }
 
 /** 16 bytes from the CSPRNG, base64. */
@@ -56,7 +73,7 @@ export function mintNonce(): string {
 
 /** The policy for one request, as a header value. */
 export function policy(nonce: string, options: PolicyOptions): string {
-  const content = options.contentSources.map((source) => ` ${source}`).join("");
+  const content = sourceList(options.contentSources);
   return [
     "default-src 'self'",
     // First of the `script-src*` directives: Next picks the one it reads the nonce from by prefix,
@@ -81,4 +98,31 @@ export function policy(nonce: string, options: PolicyOptions): string {
     "frame-ancestors 'none'",
     "upgrade-insecure-requests",
   ].join("; ");
+}
+
+/**
+ * The policy a worker runs under: every bundled worker, which starts from a script chunk, and
+ * pdf.js's, which is an emitted asset (proxy.ts serves it on both). A worker created from a URL takes
+ * the policy delivered with that script's own response, not its creator's, so a document's
+ * `connect-src` does not bound what a worker fetches; this does. A worker runs the page's code off
+ * its thread, so it reaches what the page reaches, and sheaf's bucket, which the SharedWorker
+ * holding the copies downloads packs from. No nonce: a worker loads its chunks with `importScripts`, which a nonce
+ * cannot sign, from the app's own origin. No eval: pdf.js's worker would compile a PDF's PostScript
+ * functions with it, and the pane tells it not to (paper-pdf-view.tsx).
+ */
+export function workerPolicy(options: PolicyOptions): string {
+  const connect = sourceList([
+    ...options.contentSources,
+    ...options.sheafSources,
+  ]);
+  return [
+    "default-src 'self'",
+    `script-src 'self'${options.development ? " 'unsafe-eval'" : ""}`,
+    `connect-src 'self'${connect}`,
+    "object-src 'none'",
+  ].join("; ");
+}
+
+function sourceList(sources: readonly string[]): string {
+  return sources.map((source) => ` ${source}`).join("");
 }

@@ -4,6 +4,12 @@ import type {
   Representation,
 } from "@/models/literature";
 import type {
+  PublishIntent,
+  PublishResponse,
+  RefDocSnapshot,
+  SignPackUrlsResponse,
+} from "@/models/sheaf";
+import type {
   Analysis,
   AnalysisInputs,
   DocumentResponse,
@@ -52,8 +58,9 @@ export interface AnalysisDataPlane {
   listAnalysesIn(projectIds: readonly string[]): Promise<Analysis[]>;
 
   /** One liveness tick: the FULL projected event list and the working-document
-   *  version signal. Takes the analysis row rather than its id — the caller has
-   *  already read it to authorize the access, and the run's session lives on it. */
+   *  version signal. `workspace_tip` is left unset: `AuthorizedBackend` reads it off
+   *  the workspace repository. Takes the analysis row rather than its id — the caller
+   *  has already read it to authorize the access, and the run's session lives on it. */
   pollEvents(analysis: Analysis): Promise<PollResponse>;
 
   /** One spawned thread's own projected stream — the body an expanded sub-agent card
@@ -142,4 +149,51 @@ export interface LiteraturePort {
     quote: string,
     representation: Representation,
   ): Promise<LocateResponse>;
+}
+
+/** An Analysis's workspace repository, as the browser's own copy of it reaches it
+ *  (docs/design/workbench-workspace.md): the ref document, signed download URLs for the packs it
+ *  lists, and a publish of a commit the browser built. Raw like the data plane, with NO
+ *  authorization: each method takes the analysis row `AuthorizedBackend` already authorized, and the
+ *  live adapter names that Analysis to the sheaf service through a session it derives from the row.
+ *
+ *  Each method answers with the sheaf service's own message and raises the service's refusals as the
+ *  typed errors the Workbench contract passes through; any other failure propagates, to be masked. */
+export interface WorkspaceRepository {
+  /** The ref document and its generation; an unset document is a repository that does not exist
+   *  yet. Raises `WorkspaceDamagedError` for a stored document the service cannot parse.
+   *  `signal` is the caller's request: the read stops when it goes. */
+  readRefDoc(analysis: Analysis, signal: AbortSignal): Promise<RefDocSnapshot>;
+
+  /** A download URL, size and expiry for each pack, in the order asked. Raises
+   *  `WorkspacePackNotListedError` when one is not listed by the current ref document, and
+   *  `WorkspaceDamagedError` for a listed pack the store does not hold or a stored document the
+   *  service cannot parse. `signal` as `readRefDoc`'s. */
+  signPackUrls(
+    analysis: Analysis,
+    packIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<SignPackUrlsResponse>;
+
+  /** Publish `intent` with the bytes of each pack it declares, in declared order. Raises
+   *  `WorkspacePublishError` for the four outcomes the browser acts on, and `WorkspaceDamagedError`
+   *  for a stored document the service cannot parse. Takes no signal: the message is whole once it
+   *  arrives, so a publish outlives a browser that stopped waiting, and a retry of it settles as
+   *  landed. */
+  publish(
+    analysis: Analysis,
+    intent: PublishIntent,
+    packs: readonly Uint8Array[],
+  ): Promise<PublishResponse>;
+
+  /** The bytes behind a URL `signPackUrls` minted, for a backend whose URLs point at the BFF rather
+   *  than at the bucket. Raises `ResourceNotFoundError` for a pack the repository does not hold, and
+   *  on a backend whose URLs never point here. */
+  servePack(analysis: Analysis, packId: string): Promise<Response>;
+}
+
+/** The two raw ports an Analysis is reached through, which `AuthorizedBackend` wraps together. */
+export interface AnalysisPorts {
+  dataPlane: AnalysisDataPlane;
+  workspace: WorkspaceRepository;
 }

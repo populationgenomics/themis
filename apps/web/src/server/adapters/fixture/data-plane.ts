@@ -35,6 +35,7 @@ import {
   threadTimeline,
   timelineAt,
 } from "./timeline";
+import type { FixtureWorkspace } from "./workspace";
 
 interface Entry {
   analysis: Analysis;
@@ -186,18 +187,26 @@ export class FixtureDataPlane implements AnalysisDataPlane {
   private readonly entries = new Map<string, Entry>();
   private counter = 0;
 
-  constructor() {
+  /** Seeds the prior analyses. A finished run is seeded with the workspace repository its agent
+   *  would have left, one publish per document version; every other run has published nothing, so
+   *  its repository does not exist yet. */
+  constructor(workspace: FixtureWorkspace) {
     const startup = Date.now();
     for (const seed of SEEDS) {
+      const createdAt = new Date(startup - seed.agedHours * HOUR_MS);
       const entry = this.mint(
         seed.projectId,
         seed.inputs,
-        new Date(startup - seed.agedHours * HOUR_MS),
+        createdAt,
         seed.unmanaged,
       );
       if (seed.reveal === "finished") {
         entry.run = { ...entry.run, revealed: SCRIPTED_STAGES };
         entry.revealedDocVersion = FINAL_DOC_VERSION;
+        const documents = Array.from({ length: FINAL_DOC_VERSION }, (_, i) =>
+          documentMarkdown(entry.analysis, i + 1),
+        );
+        workspace.seedAgentHistory(entry.analysis.id, documents, createdAt);
       } else if (seed.reveal !== "start") {
         entry.run = { ...entry.run, revealed: seed.reveal.heldAt, held: true };
       }

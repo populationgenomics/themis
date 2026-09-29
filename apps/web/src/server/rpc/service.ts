@@ -6,12 +6,12 @@ import { ClientInputError } from "@/server/errors";
 import { requireUserContext } from "./context";
 
 // The Workbench service implementation (schema/proto/themis/workbench/rpc/workbench.proto).
-// The analysis methods read their caller through `requireUserContext` and reach the data
-// plane only through that caller's `AuthorizedBackend`, so each access is membership-scoped by
-// construction. The paper methods (`describePaper`/`locate`) read the shared corpus through the
-// literature port instead — IAP-only, not Project-scoped — but still call `requireUserContext` as the
-// fail-loud backstop every method shares: it raises if the identity interceptor did not run, so an
-// unwired chokepoint can never serve them either. Browser-controlled request fields are validated
+// The analysis and workspace-repository methods read their caller through `requireUserContext` and
+// reach the data plane and the repository only through that caller's `AuthorizedBackend`, so each
+// access is membership-scoped by construction. The paper methods (`describePaper`/`locate`) read the
+// shared corpus through the literature port instead — IAP-only, not Project-scoped — but still call
+// `requireUserContext` as the fail-loud backstop every method shares: it raises if the identity
+// interceptor did not run, so an unwired chokepoint can never serve them either. Browser-controlled request fields are validated
 // here (a blank doc_id, an unspecified representation) so a client slip surfaces as InvalidArgument
 // rather than a masked Internal. The methods do no reshaping — the backend and the port already
 // return view-model messages, and Connect serializes them.
@@ -23,9 +23,7 @@ import { requireUserContext } from "./context";
 // incidental. `Analysis.session_id` rides along on `listAnalyses`; it is not a credential, since a
 // session's bearer is a KMS MAC over it and the key material never leaves KMS.
 
-// Partial: the workspace-repository methods are declared ahead of their handlers. Connect's stand-in
-// for a missing handler runs inside the interceptor chain, so until they exist a call answers Internal.
-export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
+export const workbenchService: ServiceImpl<typeof Workbench> = {
   async listProjects(_request, ctx) {
     const { backend } = requireUserContext(ctx);
     return { projects: await backend.listProjects() };
@@ -50,7 +48,7 @@ export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
 
   async poll(request, ctx) {
     const { backend } = requireUserContext(ctx);
-    return backend.pollEvents(request.analysisId);
+    return backend.pollEvents(request.analysisId, ctx.signal);
   },
 
   async getThread(request, ctx) {
@@ -74,6 +72,31 @@ export const workbenchService: Partial<ServiceImpl<typeof Workbench>> = {
   async getDocument(request, ctx) {
     const { backend } = requireUserContext(ctx);
     return backend.getDocument(request.analysisId, request.version);
+  },
+
+  async readWorkspaceRefDoc(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    return backend.readWorkspaceRefDoc(request.analysisId, ctx.signal);
+  },
+
+  async signWorkspacePackUrls(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    return backend.signWorkspacePackUrls(
+      request.analysisId,
+      request.packIds,
+      ctx.signal,
+    );
+  },
+
+  async publishWorkspace(request, ctx) {
+    const { backend } = requireUserContext(ctx);
+    // `intent` is validated present by the boundary interceptor, and `pack_bytes` to match it.
+    if (!request.intent) throw new Error("publish request carries no intent");
+    return backend.publishWorkspace(
+      request.analysisId,
+      request.intent,
+      request.packBytes,
+    );
   },
 
   async describePaper(request, ctx) {

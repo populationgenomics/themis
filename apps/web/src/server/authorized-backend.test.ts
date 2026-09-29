@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
 import {
+  type PublishIntent,
+  PublishIntentSchema,
+  type PublishResponse,
+  PublishResponseSchema,
+  type RefDocSnapshot,
+  RefDocSnapshotSchema,
+  type RefTarget,
+  type SignPackUrlsResponse,
+  SignPackUrlsResponseSchema,
+} from "@/models/sheaf";
+import {
   type Analysis,
   AnalysisInputsSchema,
   AnalysisSchema,
@@ -14,12 +25,19 @@ import {
   ThreadResponseSchema,
 } from "@/models/workbench";
 import { AuthorizedBackend } from "./authorized-backend";
-import { ResourceNotFoundError, UndecodableAnalysisError } from "./errors";
+import {
+  isWorkspaceDamagedError,
+  ResourceNotFoundError,
+  UndecodableAnalysisError,
+  WorkspaceDamagedError,
+} from "./errors";
 import type {
   AnalysisDataPlane,
   CreateAnalysisInput,
   ProjectMembership,
+  WorkspaceRepository,
 } from "./ports";
+import { COLLABORATIVE_BRANCH } from "./workspace";
 
 class FakeMembership implements ProjectMembership {
   constructor(private readonly byUser: Record<string, string[]>) {}
@@ -32,6 +50,9 @@ class FakeMembership implements ProjectMembership {
     );
   }
 }
+
+/** The events every poll of the fake data plane answers with. */
+const EVENT_IDS = ["ev_1", "ev_2"];
 
 class FakeDataPlane implements AnalysisDataPlane {
   readonly creates: CreateAnalysisInput[] = [];
@@ -59,7 +80,15 @@ class FakeDataPlane implements AnalysisDataPlane {
       .map(([id, projectId]) => create(AnalysisSchema, { id, projectId }));
   }
   async pollEvents(): Promise<PollResponse> {
-    return create(PollResponseSchema, {});
+    return create(PollResponseSchema, {
+      events: EVENT_IDS.map((id) => ({
+        id,
+        kind: {
+          case: "assistant" as const,
+          value: { text: `narration ${id}` },
+        },
+      })),
+    });
   }
   async getThread(
     analysis: Analysis,
@@ -91,6 +120,43 @@ class FakeDataPlane implements AnalysisDataPlane {
   }
 }
 
+/** Records which Analysis each call reached, and answers with `snapshot` or the read failure. A
+ *  read that `stalls` answers only when its signal aborts, with the abort, as the live adapter's does. */
+class FakeWorkspace implements WorkspaceRepository {
+  readonly reached: { method: string; analysisId: string }[] = [];
+  snapshot: RefDocSnapshot = create(RefDocSnapshotSchema, {});
+  readFailure: Error | null = null;
+  stalls = false;
+
+  async readRefDoc(
+    analysis: Analysis,
+    signal: AbortSignal,
+  ): Promise<RefDocSnapshot> {
+    this.reached.push({ method: "readRefDoc", analysisId: analysis.id });
+    if (this.stalls) {
+      await new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    }
+    if (this.readFailure !== null) throw this.readFailure;
+    return this.snapshot;
+  }
+  async signPackUrls(analysis: Analysis): Promise<SignPackUrlsResponse> {
+    this.reached.push({ method: "signPackUrls", analysisId: analysis.id });
+    return create(SignPackUrlsResponseSchema, {});
+  }
+  async publish(analysis: Analysis): Promise<PublishResponse> {
+    this.reached.push({ method: "publish", analysisId: analysis.id });
+    return create(PublishResponseSchema, {});
+  }
+  async servePack(analysis: Analysis): Promise<Response> {
+    this.reached.push({ method: "servePack", analysisId: analysis.id });
+    return new Response();
+  }
+}
+
 const INPUTS = create(AnalysisInputsSchema, {
   scenario: {
     case: "variantClassification",
@@ -104,24 +170,43 @@ const INPUTS = create(AnalysisInputsSchema, {
 
 // The user is a member of proj_a but not proj_b. an_mine ∈ proj_a; an_theirs ∈ proj_b.
 const USER = "user@example.org";
+
+/** A request that never goes away: these calls are not about cancellation. */
+const NEVER = new AbortController().signal;
+
+/** The Poll's budget for its tip read, short so a stalled read costs the suite little. */
+const POLL_TIP_BUDGET_MS = 50;
+
 function backend(extra: Record<string, string> = {}): {
   authz: AuthorizedBackend;
   data: FakeDataPlane;
+  workspace: FakeWorkspace;
 } {
   const data = new FakeDataPlane({
     an_mine: "proj_a",
     an_theirs: "proj_b",
     ...extra,
   });
+  const workspace = new FakeWorkspace();
   const membership = new FakeMembership({ [USER]: ["proj_a"] });
-  return { authz: new AuthorizedBackend(data, membership, USER), data };
+  return {
+    authz: new AuthorizedBackend(
+      data,
+      workspace,
+      membership,
+      USER,
+      POLL_TIP_BUDGET_MS,
+    ),
+    data,
+    workspace,
+  };
 }
 
 describe("AuthorizedBackend point access", () => {
   test("a member reaches an analysis in their Project", async () => {
     const { authz } = backend();
     await expect(authz.getDocument("an_mine")).resolves.toBeDefined();
-    await expect(authz.pollEvents("an_mine")).resolves.toBeDefined();
+    await expect(authz.pollEvents("an_mine", NEVER)).resolves.toBeDefined();
   });
 
   test("a non-member gets not-found, not a distinguishable forbidden", async () => {
@@ -130,7 +215,7 @@ describe("AuthorizedBackend point access", () => {
     expect(error).toBeInstanceOf(ResourceNotFoundError);
     // The refusal must not reveal which Project the analysis is in.
     expect((error as Error).message).not.toContain("proj_b");
-    await expect(authz.pollEvents("an_theirs")).rejects.toBeInstanceOf(
+    await expect(authz.pollEvents("an_theirs", NEVER)).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
   });
@@ -301,6 +386,166 @@ describe("AuthorizedBackend create", () => {
       authz.createAnalysis({ inputs: INPUTS, projectId: "proj_b" }),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
     expect(data.creates).toEqual([]);
+  });
+});
+
+const TIP = "c41e0000000000000000000000000000000000aa";
+const INTENT: PublishIntent = create(PublishIntentSchema, {});
+
+describe("AuthorizedBackend workspace repository", () => {
+  const calls: ReadonlyArray<
+    [string, (authz: AuthorizedBackend, analysisId: string) => Promise<unknown>]
+  > = [
+    ["readRefDoc", (authz, id) => authz.readWorkspaceRefDoc(id, NEVER)],
+    [
+      "signPackUrls",
+      (authz, id) => authz.signWorkspacePackUrls(id, ["p"], NEVER),
+    ],
+    ["publish", (authz, id) => authz.publishWorkspace(id, INTENT, [])],
+    ["servePack", (authz, id) => authz.serveWorkspacePack(id, "p")],
+  ];
+
+  test.each(calls)(
+    "a member's %s reaches their Analysis's repository",
+    async (method, call) => {
+      const { authz, workspace } = backend();
+      await call(authz, "an_mine");
+      expect(workspace.reached).toEqual([{ method, analysisId: "an_mine" }]);
+    },
+  );
+
+  test.each(calls)(
+    "a non-member's %s is not-found and never reaches the repository",
+    async (_method, call) => {
+      // A publish is a write into someone else's repository, and a read would hand them its whole
+      // history, so both refuse before the repository on the terms every point access does.
+      const { authz, workspace } = backend();
+      const error = await call(authz, "an_theirs").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ResourceNotFoundError);
+      expect((error as Error).message).not.toContain("proj_b");
+      await expect(call(authz, "an_absent")).rejects.toBeInstanceOf(
+        ResourceNotFoundError,
+      );
+      expect(workspace.reached).toEqual([]);
+    },
+  );
+});
+
+/** What `console.error` received while `work` ran. */
+async function loggedErrors(work: () => Promise<void>): Promise<unknown[]> {
+  const logged: unknown[] = [];
+  const wasError = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  try {
+    await work();
+  } finally {
+    console.error = wasError;
+  }
+  return logged;
+}
+
+/** A ref document whose collaborative branch names `target`. */
+function refDocNaming(target: RefTarget["target"]): RefDocSnapshot {
+  return create(RefDocSnapshotSchema, {
+    document: { refs: { [COLLABORATIVE_BRANCH]: { target } } },
+    generation: BigInt(7),
+  });
+}
+
+describe("AuthorizedBackend poll", () => {
+  test("carries the collaborative branch's tip commit from the ref document", async () => {
+    const { authz, workspace } = backend();
+    workspace.snapshot = refDocNaming({ case: "oid", value: TIP });
+    const response = await authz.pollEvents("an_mine", NEVER);
+    expect(response.workspaceTip?.state).toEqual({
+      case: "commit",
+      value: TIP,
+    });
+  });
+
+  test("a repository that does not exist yet has no commit", async () => {
+    const { authz } = backend();
+    const response = await authz.pollEvents("an_mine", NEVER);
+    expect(response.workspaceTip?.state.case).toBe("noCommit");
+  });
+
+  test.each([
+    [
+      "a damaged ref document",
+      (workspace: FakeWorkspace) => {
+        workspace.readFailure = new WorkspaceDamagedError("refs.pb: truncated");
+      },
+      "damaged",
+    ],
+    [
+      "an unreachable service",
+      (workspace: FakeWorkspace) => {
+        workspace.readFailure = new Error("sheaf unavailable");
+      },
+      "unavailable",
+    ],
+    [
+      "a branch that names another ref",
+      (workspace: FakeWorkspace) => {
+        workspace.snapshot = refDocNaming({
+          case: "ref",
+          value: "refs/heads/other",
+        });
+      },
+      "unavailable",
+    ],
+  ] as const)(
+    "%s leaves the workspace %s and the events arriving",
+    async (_name, arrange, state) => {
+      const { authz, workspace } = backend();
+      arrange(workspace);
+      const logged = await loggedErrors(async () => {
+        const response = await authz.pollEvents("an_mine", NEVER);
+        expect(response.workspaceTip?.state.case).toBe(state);
+        expect(response.events.map((event) => event.id)).toEqual(EVENT_IDS);
+      });
+      // A fault, not a normal state: it stays visible in the server log.
+      expect(logged).toHaveLength(1);
+    },
+  );
+
+  test("a stalled read leaves the workspace unavailable and the events on time", async () => {
+    const { authz, workspace } = backend();
+    workspace.stalls = true;
+    const started = performance.now();
+    const logged = await loggedErrors(async () => {
+      const response = await authz.pollEvents("an_mine", NEVER);
+      expect(response.workspaceTip?.state.case).toBe("unavailable");
+      expect(response.events.map((event) => event.id)).toEqual(EVENT_IDS);
+    });
+    // The stalled read answers only on its budget's abort; nothing else ends it.
+    expect(performance.now() - started).toBeLessThan(POLL_TIP_BUDGET_MS * 20);
+    expect(logged).toHaveLength(1);
+  });
+
+  test("a read the caller abandoned fails the tick, unlogged", async () => {
+    // No answer reaches a caller that went; the error interceptor answers it as cancelled.
+    const { authz, workspace } = backend();
+    const browser = new AbortController();
+    browser.abort();
+    workspace.readFailure = new Error("the request was cancelled");
+    const logged = await loggedErrors(async () => {
+      await expect(authz.pollEvents("an_mine", browser.signal)).rejects.toThrow(
+        "the request was cancelled",
+      );
+    });
+    expect(logged).toEqual([]);
+  });
+
+  test("a damaged ref document still reaches ReadWorkspaceRefDoc as damage", async () => {
+    const { authz, workspace } = backend();
+    workspace.readFailure = new WorkspaceDamagedError("refs.pb: truncated");
+    const read = await authz
+      .readWorkspaceRefDoc("an_mine", NEVER)
+      .catch((e: unknown) => e);
+    expect(isWorkspaceDamagedError(read)).toBe(true);
   });
 });
 

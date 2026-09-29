@@ -1,16 +1,23 @@
 import { loadSqlConfig } from "../../pg";
-import type { AnalysisDataPlane, ProjectMembership } from "../../ports";
+import type { AnalysisPorts, ProjectMembership } from "../../ports";
 import { AnthropicClient } from "./client";
-import { loadAnthropicConfig, loadGcsConfig, loadKmsConfig } from "./config";
+import {
+  loadAnthropicConfig,
+  loadGcsConfig,
+  loadKmsConfig,
+  loadSheafConfig,
+} from "./config";
 import { DataPlane } from "./data-plane";
 import { KmsSessionTokenDeriver } from "./derive";
 import { Gcs } from "./gcs";
 import { Membership } from "./membership";
 import { Sql } from "./sql";
+import { createWorkspace } from "./workspace";
 
 // The `THEMIS_BACKEND=live` composition: the raw `AnalysisDataPlane` over the
 // self-hosted data plane — Anthropic session control, KMS-derived bearer, Cloud SQL
-// persistence, GCS-direct working documents. Authorization is the AuthorizedBackend
+// persistence, GCS-direct working documents — and the workspace repository over the sheaf
+// service, which names each Analysis by a bearer the same deriver derives. Authorization is the AuthorizedBackend
 // decorator's job; this layer trusts the (user, project) its caller resolved.
 
 // One SQL pool + Cloud SQL connector, shared by the backend and membership (both
@@ -26,13 +33,17 @@ function sharedSql(): Sql {
   return holder.__themisLiveSql;
 }
 
-export function createDataPlane(): AnalysisDataPlane {
-  return new DataPlane(
-    new AnthropicClient(loadAnthropicConfig()),
-    new KmsSessionTokenDeriver(loadKmsConfig()),
-    sharedSql(),
-    new Gcs(loadGcsConfig()),
-  );
+export function createAnalysisPorts(): AnalysisPorts {
+  const deriver = new KmsSessionTokenDeriver(loadKmsConfig());
+  return {
+    dataPlane: new DataPlane(
+      new AnthropicClient(loadAnthropicConfig()),
+      deriver,
+      sharedSql(),
+      new Gcs(loadGcsConfig()),
+    ),
+    workspace: createWorkspace(loadSheafConfig(), deriver),
+  };
 }
 
 export function createMembership(): ProjectMembership {

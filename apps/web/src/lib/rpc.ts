@@ -1,3 +1,4 @@
+import type { DescMethod } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { Workbench } from "@/models/workbench";
@@ -16,12 +17,15 @@ const transport = createConnectTransport({
 
 export const workbench = createClient(Workbench, transport);
 
-/** True when the run refused a turn because the agent is mid-step (Connect
- *  `FailedPrecondition` — the one refusal the BFF types that way): the composer
- *  words this itself, pointing at the stop control beside it. */
-export function isAgentBusy(error: unknown): boolean {
+/** True when a call to `method` failed because the agent is mid-step: the composer words this
+ *  itself, pointing at the stop control beside it. Only a turn is refused that way, as Connect
+ *  `FailedPrecondition`; the same code from another method means something else, such as a publish
+ *  whose branch moved, so the code alone does not say the agent is busy. */
+export function isAgentBusy(method: DescMethod, error: unknown): boolean {
   return (
-    error instanceof ConnectError && error.code === Code.FailedPrecondition
+    method === Workbench.method.steer &&
+    error instanceof ConnectError &&
+    error.code === Code.FailedPrecondition
   );
 }
 

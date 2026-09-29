@@ -7,6 +7,11 @@ import {
   isSessionBusyError,
   isUnauthenticatedError,
   isUnmanagedSessionError,
+  isWorkspaceDamagedError,
+  isWorkspacePackNotListedError,
+  isWorkspacePublishError,
+  type WorkspacePublishError,
+  type WorkspacePublishFailure,
 } from "@/server/errors";
 import { setUserContext } from "./context";
 
@@ -38,9 +43,20 @@ export function errors(): Interceptor {
     try {
       return await next(req);
     } catch (error) {
+      if (req.signal.aborted) throw abandoned(req.signal);
       throw toConnectError(error);
     }
   };
+}
+
+/** The answer to a call whose request went before it finished — the browser navigated away, or its
+ *  own deadline passed. Whatever the work then failed with is that going, not a fault, so it is not
+ *  logged. */
+function abandoned(signal: AbortSignal): ConnectError {
+  const reason: unknown = signal.reason;
+  return reason instanceof ConnectError && reason.code === Code.DeadlineExceeded
+    ? new ConnectError("the call's deadline passed", Code.DeadlineExceeded)
+    : new ConnectError("the request was cancelled", Code.Canceled);
 }
 
 function toConnectError(error: unknown): ConnectError {
@@ -66,6 +82,53 @@ function toConnectError(error: unknown): ConnectError {
     // read — this is not internal state, so it is not masked.
     return new ConnectError(error.message, Code.InvalidArgument);
   }
+  if (isWorkspaceDamagedError(error)) {
+    return new ConnectError(
+      "the workspace repository is damaged",
+      Code.DataLoss,
+    );
+  }
+  if (isWorkspacePackNotListedError(error)) {
+    return new ConnectError(
+      "a pack the ref document no longer lists; read the ref document again",
+      Code.FailedPrecondition,
+    );
+  }
+  if (isWorkspacePublishError(error)) {
+    return publishFailure(error);
+  }
   console.error("unhandled rpc error", error);
   return new ConnectError(INTERNAL_MESSAGE, Code.Internal);
+}
+
+/** A publish's outcome as the sheaf service's own code. A fixed phrase for each race and ceiling; a
+ *  malformed publish keeps the service's reason, which describes the caller's own intent and pack. */
+const PUBLISH_FAILURES: Readonly<
+  Record<WorkspacePublishFailure, { code: Code; message?: string }>
+> = {
+  raceLost: {
+    code: Code.Aborted,
+    message:
+      "an unrelated publish landed first; rebuild against the new ref document",
+  },
+  branchMoved: {
+    code: Code.FailedPrecondition,
+    message: "the branch moved under this publish",
+  },
+  overCeiling: {
+    code: Code.ResourceExhausted,
+    message: "the publish is over one of the repository's ceilings",
+  },
+  malformed: { code: Code.InvalidArgument },
+};
+
+function publishFailure(error: WorkspacePublishError): ConnectError {
+  const mapped = PUBLISH_FAILURES[error.failure] as
+    | (typeof PUBLISH_FAILURES)[WorkspacePublishFailure]
+    | undefined;
+  if (mapped === undefined) {
+    console.error("unhandled rpc error", error);
+    return new ConnectError(INTERNAL_MESSAGE, Code.Internal);
+  }
+  return new ConnectError(mapped.message ?? error.message, mapped.code);
 }

@@ -76,6 +76,49 @@ export class UndecodableAnalysisError extends Error {
   }
 }
 
+/** Thrown when the sheaf service found an Analysis's workspace repository damaged: a stored ref
+ *  document it cannot parse, or a pack the document lists that the store does not hold. Damage, not
+ *  a fault a retry clears. Maps to Connect `DataLoss`, which the browser must not retry; the message
+ *  stays server-side. */
+export class WorkspaceDamagedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceDamagedError";
+  }
+}
+
+/** Thrown when a pack the browser asked to download is not one the repository's current ref document
+ *  lists, so its list is stale. Maps to Connect `FailedPrecondition`: on this surface `NotFound`
+ *  means an Analysis outside the caller's membership, so the sheaf service's own code cannot pass. */
+export class WorkspacePackNotListedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspacePackNotListedError";
+  }
+}
+
+/** Why a publish of a curator's commit did not land, each passed to the browser as the sheaf
+ *  service's own code (schema/proto/themis/workbench/rpc/workbench.proto, `PublishWorkspace`):
+ *  `raceLost` is `Aborted`, `branchMoved` is `FailedPrecondition`, `overCeiling` is
+ *  `ResourceExhausted`, `malformed` is `InvalidArgument`. */
+export type WorkspacePublishFailure =
+  | "raceLost"
+  | "branchMoved"
+  | "overCeiling"
+  | "malformed";
+
+/** Thrown when the sheaf service answered a publish with one of the four outcomes the browser acts
+ *  on. Every other failure of a publish is not this error, and stays masked. */
+export class WorkspacePublishError extends Error {
+  readonly failure: WorkspacePublishFailure;
+
+  constructor(failure: WorkspacePublishFailure, message: string) {
+    super(message);
+    this.name = "WorkspacePublishError";
+    this.failure = failure;
+  }
+}
+
 function named(error: unknown, name: string): error is Error {
   return error instanceof Error && error.name === name;
 }
@@ -110,4 +153,22 @@ export function isUndecodableAnalysisError(
   error: unknown,
 ): error is UndecodableAnalysisError {
   return named(error, "UndecodableAnalysisError");
+}
+
+export function isWorkspaceDamagedError(
+  error: unknown,
+): error is WorkspaceDamagedError {
+  return named(error, "WorkspaceDamagedError");
+}
+
+export function isWorkspacePackNotListedError(
+  error: unknown,
+): error is WorkspacePackNotListedError {
+  return named(error, "WorkspacePackNotListedError");
+}
+
+export function isWorkspacePublishError(
+  error: unknown,
+): error is WorkspacePublishError {
+  return named(error, "WorkspacePublishError");
 }

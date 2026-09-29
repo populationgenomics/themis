@@ -1,6 +1,6 @@
 import { type Backend, selectedBackend } from "../backend";
 import type {
-  AnalysisDataPlane,
+  AnalysisPorts,
   ContentPort,
   LiteraturePort,
   ProjectMembership,
@@ -13,12 +13,14 @@ export { type Backend, selectedBackend };
 // A narrow env shape so callers/tests need not supply a full ProcessEnv.
 type EnvLike = Record<string, string | undefined>;
 
-/** Build a FRESH data plane. `context.ts` is the sole caller — it memoizes one and
+/** Build a FRESH data plane and workspace repository. Built together because each backend's pair
+ *  shares a part: the live pair one session-bearer deriver, the fixture pair the scripted run, which
+ *  is what writes the repository offline. `context.ts` is the sole caller — it memoizes the pair and
  *  wraps it in an `AuthorizedBackend`, so routes never hold an unscoped backend. */
-export function createDataPlane(env: EnvLike = process.env): AnalysisDataPlane {
+export function createAnalysisPorts(env: EnvLike = process.env): AnalysisPorts {
   return selectedBackend(env) === "live"
-    ? live.createDataPlane()
-    : fixture.createDataPlane();
+    ? live.createAnalysisPorts()
+    : fixture.createAnalysisPorts();
 }
 
 /** Build a FRESH membership — the user↔Project mapping the `AuthorizedBackend`

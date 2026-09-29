@@ -20,6 +20,12 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
+// pdf.js compiles a PDF's PostScript functions into JavaScript with eval unless told not to. The
+// worker's content security policy refuses eval, and the interpreter pdf.js falls back to reads the
+// same functions without turning a document's bytes into code. One object: react-pdf reloads the
+// document when `options` changes identity.
+const PDF_OPTIONS = { isEvalSupported: false } as const;
+
 interface PdfRegion {
   page: number;
   rects: { x: number; y: number; width: number; height: number }[];
@@ -105,6 +111,7 @@ export default function PaperPdfView({
       >
         <Document
           file={url}
+          options={PDF_OPTIONS}
           onLoadSuccess={({ numPages }) => setPageCount(numPages)}
           loading={<PdfNotice text="Loading PDF…" />}
           error={<PdfNotice text="Could not load the PDF." />}

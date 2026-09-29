@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { getScriptNonceFromHeader } from "next/dist/server/app-render/get-script-nonce-from-header";
 import * as csp from "./csp";
 
+// The buckets alone: the policy needs no service URL, so a missing one must not fail a policy.
 const LIVE = {
   THEMIS_BACKEND: "live",
-  THEMIS_EVIDENCE_URL: "https://evidence.example",
   THEMIS_FULLTEXT_BUCKET: "cpg-themis-dev-fulltext",
 };
 
@@ -12,6 +12,7 @@ const nonced = (options?: Partial<csp.PolicyOptions>) =>
   csp.policy(csp.mintNonce(), {
     development: false,
     contentSources: [],
+    sheafSources: [],
     ...options,
   });
 
@@ -116,6 +117,73 @@ describe("paper content sources", () => {
 
   test("an unnamed backend refuses to build a policy", () => {
     expect(() => csp.contentSources({})).toThrow("THEMIS_BACKEND");
+  });
+});
+
+describe("pack download sources", () => {
+  const SHEAF_LIVE = {
+    ...LIVE,
+    THEMIS_SHEAF_BUCKET: "cpg-themis-dev-sheaf-repositories",
+  };
+  const bare = (policy: string, name: string) =>
+    directive(policy, name).filter((source) => !source.startsWith("'"));
+
+  test("the fixture backend admits nothing off-origin", () => {
+    // Its pack URLs name the BFF's own pack route.
+    expect(csp.sheafSources({ THEMIS_BACKEND: "fixture" })).toEqual([]);
+  });
+
+  test("the live backend admits sheaf's bucket's path to the worker alone", () => {
+    const sources = csp.sheafSources(SHEAF_LIVE);
+    expect(sources).toEqual([
+      `https://storage.googleapis.com/${SHEAF_LIVE.THEMIS_SHEAF_BUCKET}/`,
+    ]);
+    const options = {
+      development: false,
+      contentSources: [],
+      sheafSources: sources,
+    };
+    expect(bare(csp.workerPolicy(options), "connect-src")).toEqual(sources);
+    // The page never fetches a pack; the worker holding the copy does.
+    expect(bare(csp.policy(csp.mintNonce(), options), "connect-src")).toEqual(
+      [],
+    );
+  });
+
+  test("a live backend missing the bucket refuses to build a policy", () => {
+    expect(() =>
+      csp.sheafSources({
+        ...SHEAF_LIVE,
+        THEMIS_SHEAF_BUCKET: undefined,
+      }),
+    ).toThrow("THEMIS_SHEAF_BUCKET");
+  });
+
+  test("a worker reaches everything the page does", () => {
+    // A bundled worker is page code off its thread; a narrower policy would break a fetch moved
+    // there.
+    const options = {
+      development: false,
+      contentSources: csp.contentSources(SHEAF_LIVE),
+      sheafSources: csp.sheafSources(SHEAF_LIVE),
+    };
+    const page = directive(csp.policy(csp.mintNonce(), options), "connect-src");
+    expect(directive(csp.workerPolicy(options), "connect-src")).toEqual(
+      expect.arrayContaining(page),
+    );
+  });
+
+  test("a worker loads script from the app's own origin, unsigned", () => {
+    // `importScripts` carries no nonce, and 'strict-dynamic' would drop 'self'.
+    const sources = directive(
+      csp.workerPolicy({
+        development: false,
+        contentSources: [],
+        sheafSources: [],
+      }),
+      "script-src",
+    );
+    expect(sources).toEqual(["'self'"]);
   });
 });
 

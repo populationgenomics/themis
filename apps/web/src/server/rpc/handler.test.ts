@@ -1,13 +1,29 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { MethodOptions_IdempotencyLevel } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
+import { GET as getPack } from "@/app/api/workspaces/[analysisId]/packs/[packId]/route";
+import { POLL_TIP_BUDGET_MS } from "@/lib/workspace-deadlines";
+import type { RefDocSnapshot } from "@/models/sheaf";
 import { Workbench } from "@/models/workbench";
+import { FixtureDataPlane } from "@/server/adapters/fixture/data-plane";
+import { DEV_USER_EMAIL } from "@/server/adapters/fixture/identity";
 import { DOC_XML, XML_QUOTE } from "@/server/adapters/fixture/literature";
-import { UnauthenticatedError } from "@/server/errors";
+import { FixtureMembership } from "@/server/adapters/fixture/membership";
+import { FixtureWorkspace } from "@/server/adapters/fixture/workspace";
+import { AuthorizedBackend } from "@/server/authorized-backend";
+import {
+  UnauthenticatedError,
+  WorkspaceDamagedError,
+  WorkspacePackNotListedError,
+  WorkspacePublishError,
+} from "@/server/errors";
+import { setUserContext } from "./context";
 import type { FetchRouter } from "./fetch-router";
 import { createFetchRouter } from "./fetch-router";
-import { maskInternal, serveRpc } from "./handler";
+import { maskInternal, serveRpc, servingRpc } from "./handler";
 import { errors, INTERNAL_MESSAGE, identity } from "./interceptors";
+import { READ_MAX_BYTES } from "./limits";
 import { workbenchService } from "./service";
 
 // Drives the real handler over real fetch Requests, so the adapter, the interceptor
@@ -79,6 +95,43 @@ function raising(error: unknown): FetchRouter {
         },
       });
     },
+  });
+}
+
+/** A workspace repository whose every read of the ref document fails with `failure`. */
+class UnreadableWorkspace extends FixtureWorkspace {
+  constructor(private readonly failure: Error) {
+    super();
+  }
+  override async readRefDoc(): Promise<RefDocSnapshot> {
+    throw this.failure;
+  }
+}
+
+/** A router serving the Workbench over the fixture backend, but with a workspace repository whose
+ *  ref document never reads: the Poll's failure paths the fixture backend cannot produce. */
+function pollingPast(failure: Error): FetchRouter {
+  const backend = new AuthorizedBackend(
+    new FixtureDataPlane(new FixtureWorkspace()),
+    new UnreadableWorkspace(failure),
+    new FixtureMembership(),
+    DEV_USER_EMAIL,
+    POLL_TIP_BUDGET_MS,
+  );
+  return createFetchRouter({
+    grpc: false,
+    grpcWeb: false,
+    interceptors: [
+      errors(),
+      (next) => async (req) => {
+        setUserContext(req.contextValues, {
+          userEmail: DEV_USER_EMAIL,
+          backend,
+        });
+        return next(req);
+      },
+    ],
+    routes: (router) => router.service(Workbench, workbenchService),
   });
 }
 
@@ -282,6 +335,203 @@ describe("the paper read surface", () => {
     const { status, body } = await call("DescribePaper", { docId: "" });
     expect(status).toBe(400);
     expect(body?.code).toBe("invalid_argument");
+  });
+});
+
+// The fixture's first seed is a finished run in the dev user's Project, so its agent left a
+// repository; a freshly created Analysis has published nothing.
+const SEEDED = "an_1";
+const MAIN = "refs/heads/main";
+const REFLOG = "refs/sheaf/reflog";
+
+interface RefDocJson {
+  document?: {
+    refs: Record<string, { oid?: string }>;
+    packs: string[];
+  };
+  generation?: string;
+}
+
+const sha256 = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+/** A PublishWorkspace message moving `main` on from what `snapshot` holds, as a browser sends it. */
+function publishOn(
+  analysisId: string,
+  snapshot: RefDocJson,
+  next: string,
+  pack: Uint8Array,
+): unknown {
+  const holds = (ref: string) => snapshot.document?.refs[ref]?.oid;
+  return {
+    analysisId,
+    intent: {
+      baseGeneration: snapshot.generation ?? "0",
+      refUpdates: {
+        [MAIN]: { old: holds(MAIN), new: next },
+        [REFLOG]: { old: holds(REFLOG), new: "f".repeat(40) },
+      },
+      packs: [{ size: String(pack.length), packId: sha256(pack) }],
+    },
+    packBytes: [Buffer.from(pack).toString("base64")],
+  };
+}
+
+async function created(): Promise<string> {
+  const { body } = await call("CreateAnalysis", {
+    inputs: { freeForm: { prompt: "classify the variant" } },
+    projectId: "proj_fixture",
+  });
+  return body?.id as string;
+}
+
+describe("the workspace repository surface", () => {
+  test("the poll carries the commit the ref document names as the tip", async () => {
+    const read = await call("ReadWorkspaceRefDoc", { analysisId: SEEDED });
+    expect(read.status).toBe(200);
+    const tip = (read.body as RefDocJson).document?.refs[MAIN]?.oid;
+    expect(tip).toMatch(/^[0-9a-f]{40}$/);
+    const poll = await call("Poll", { analysisId: SEEDED });
+    expect(poll.body?.workspaceTip).toEqual({ commit: tip });
+  });
+
+  test("a repository nothing was published to has no document, and the poll no commit", async () => {
+    const id = await created();
+    const read = await call("ReadWorkspaceRefDoc", { analysisId: id });
+    expect(read.status).toBe(200);
+    expect(read.body?.document).toBeUndefined();
+    const poll = await call("Poll", { analysisId: id });
+    expect(poll.status).toBe(200);
+    expect(poll.body?.workspaceTip).toEqual({ noCommit: {} });
+  });
+
+  test.each([
+    [
+      "an unreachable service",
+      new Error("sheaf unavailable"),
+      { unavailable: {} },
+    ],
+    [
+      "a damaged ref document",
+      new WorkspaceDamagedError("refs.pb: truncated"),
+      { damaged: {} },
+    ],
+  ] as const)(
+    "the poll over %s answers its tip as %o, with the events",
+    async (_name, failure, tip) => {
+      const logged: unknown[] = [];
+      const wasError = console.error;
+      console.error = (...args: unknown[]) => {
+        logged.push(args);
+      };
+      let poll: RpcResult;
+      try {
+        poll = await send(pollingPast(failure), "Poll", { analysisId: SEEDED });
+      } finally {
+        console.error = wasError;
+      }
+      expect(poll.status).toBe(200);
+      expect(poll.body?.workspaceTip).toEqual(tip);
+      // Non-empty rules out a vacuous pass: the seeded Analysis has a conversation.
+      expect((poll.body?.events as unknown[]).length).toBeGreaterThan(0);
+      expect(logged).toHaveLength(1);
+    },
+  );
+
+  test("a signed pack URL serves the bytes its id hashes", async () => {
+    const read = await call("ReadWorkspaceRefDoc", { analysisId: SEEDED });
+    const packIds = (read.body as RefDocJson).document?.packs ?? [];
+    expect(packIds.length).toBeGreaterThan(0);
+    const signed = await call("SignWorkspacePackUrls", {
+      analysisId: SEEDED,
+      packIds,
+    });
+    expect(signed.status).toBe(200);
+    const packs = signed.body?.packs as {
+      packId: string;
+      url: string;
+      size: string;
+    }[];
+    for (const pack of packs) {
+      const response = await getPack(
+        new Request(`http://localhost${pack.url}`),
+        {
+          params: Promise.resolve({ analysisId: SEEDED, packId: pack.packId }),
+        },
+      );
+      expect(response.status).toBe(200);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(sha256(bytes)).toBe(pack.packId);
+      expect(String(bytes.length)).toBe(pack.size);
+    }
+  });
+
+  test("a pack the document no longer lists is failed_precondition, not not_found", async () => {
+    // NOT_FOUND on this surface means an Analysis outside the caller's membership.
+    const { status, body } = await call("SignWorkspacePackUrls", {
+      analysisId: SEEDED,
+      packIds: ["a".repeat(64)],
+    });
+    expect(status).toBe(400);
+    expect(body?.code).toBe("failed_precondition");
+  });
+
+  test("a curator's publish lands, and a publish built on the tip it replaced is failed_precondition", async () => {
+    const id = await created();
+    const empty = (await call("ReadWorkspaceRefDoc", { analysisId: id }))
+      .body as RefDocJson;
+    const pack = new Uint8Array([80, 65, 67, 75, 0, 1]);
+    const landed = await call(
+      "PublishWorkspace",
+      publishOn(id, empty, "9".repeat(40), pack),
+    );
+    expect(landed.status).toBe(200);
+    expect((await call("Poll", { analysisId: id })).body?.workspaceTip).toEqual(
+      { commit: "9".repeat(40) },
+    );
+    const stale = await call(
+      "PublishWorkspace",
+      publishOn(id, empty, "8".repeat(40), pack),
+    );
+    expect(stale.status).toBe(400);
+    expect(stale.body?.code).toBe("failed_precondition");
+    // Never read as the agent being busy: the code is the same, the method is not.
+  });
+
+  test.each([
+    "ReadWorkspaceRefDoc",
+    "SignWorkspacePackUrls",
+    "PublishWorkspace",
+  ])(
+    "%s on an analysis the caller cannot reach is not-found",
+    async (method) => {
+      const message = {
+        ReadWorkspaceRefDoc: { analysisId: "an_never_existed" },
+        SignWorkspacePackUrls: {
+          analysisId: "an_never_existed",
+          packIds: ["a".repeat(64)],
+        },
+        PublishWorkspace: publishOn(
+          "an_never_existed",
+          {},
+          "9".repeat(40),
+          new Uint8Array([1]),
+        ),
+      }[method];
+      const { status, body } = await call(method, message);
+      expect(status).toBe(404);
+      expect(body?.code).toBe("not_found");
+    },
+  );
+
+  test("a publish over the body cap is resource_exhausted, before any handler", async () => {
+    // Base64 inflates the pack by a third, so this pack's message is over the cap.
+    const pack = new Uint8Array(Math.ceil((READ_MAX_BYTES * 3) / 4) + 1);
+    const { body } = await call(
+      "PublishWorkspace",
+      publishOn(SEEDED, {}, "9".repeat(40), pack),
+    );
+    expect(body?.code).toBe("resource_exhausted");
   });
 });
 
@@ -491,6 +741,56 @@ describe("failures reaching the client", () => {
     expect(wire).not.toContain("ECONNREFUSED");
   });
 
+  test("a call whose request went is cancelled, and not logged as a fault", async () => {
+    // A browser leaving mid-Poll is ordinary; the sheaf call it cancels fails as Canceled.
+    let entered: () => void = () => {};
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const router = createFetchRouter({
+      grpc: false,
+      grpcWeb: false,
+      interceptors: [errors()],
+      routes: (route) => {
+        route.service(Workbench, {
+          async listProjects(_request, ctx) {
+            entered();
+            await new Promise((resolve) =>
+              ctx.signal.addEventListener("abort", resolve),
+            );
+            throw new ConnectError("sheaf call cancelled", Code.Canceled);
+          },
+        });
+      },
+    });
+    const logged: unknown[] = [];
+    const wasError = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    const browser = new AbortController();
+    const path = `${SERVICE}/ListProjects`;
+    try {
+      const answered = router(
+        new Request(`http://localhost/api/rpc${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+          signal: browser.signal,
+        }),
+        path,
+      );
+      await inside;
+      browser.abort();
+      const response = await answered;
+      const body = (await response.json()) as { code?: string };
+      expect(body.code).toBe("canceled");
+    } finally {
+      console.error = wasError;
+    }
+    expect(logged).toEqual([]);
+  });
+
   test("an unverifiable caller is unauthenticated, not internal", async () => {
     const router = raising(
       new UnauthenticatedError("no IAP assertion on the request"),
@@ -502,10 +802,119 @@ describe("failures reaching the client", () => {
   });
 
   test.each([
+    [
+      "a damaged workspace",
+      new WorkspaceDamagedError("refs.pb: truncated"),
+      500,
+      "data_loss",
+    ],
+    [
+      "a stale pack list",
+      new WorkspacePackNotListedError("not listed"),
+      400,
+      "failed_precondition",
+    ],
+    [
+      "a lost race",
+      new WorkspacePublishError("raceLost", "generation 9904"),
+      409,
+      "aborted",
+    ],
+    [
+      "a moved branch",
+      new WorkspacePublishError("branchMoved", "refs/heads/main moved"),
+      400,
+      "failed_precondition",
+    ],
+    [
+      "a publish over a ceiling",
+      new WorkspacePublishError("overCeiling", "313 MiB"),
+      429,
+      "resource_exhausted",
+    ],
+    [
+      "a malformed publish",
+      new WorkspacePublishError("malformed", "pack 0 hashes to 3be0…"),
+      400,
+      "invalid_argument",
+    ],
+  ] as const)(
+    "%s reaches the browser as the sheaf service's own code",
+    async (_name, error, wantStatus, wantCode) => {
+      const { status, body } = await send(raising(error), "ListProjects", {});
+      expect(status).toBe(wantStatus);
+      expect(body?.code).toBe(wantCode);
+    },
+  );
+
+  test("behind the boundary, a damaged workspace still reaches the caller as data_loss", async () => {
+    // Connect answers data_loss with a 500, the status the boundary masks.
+    const { status, body, headers } = await send(
+      servingRpc(raising(new WorkspaceDamagedError("refs.pb: truncated"))),
+      "ListProjects",
+      {},
+    );
+    expect(status).toBe(500);
+    expect(body?.code).toBe("data_loss");
+    expect(JSON.stringify(body)).not.toContain("refs.pb");
+    expect(headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  test.each([
+    ["an unrecognized failure", new Error("dsn=hunter2")],
+    [
+      "a service's own data_loss",
+      new ConnectError("sheaf detail", Code.DataLoss),
+    ],
+  ])("behind the boundary, %s is still masked", async (_name, error) => {
+    const { status, body } = await send(
+      servingRpc(raising(error)),
+      "ListProjects",
+      {},
+    );
+    expect(status).toBe(500);
+    expect(body).toEqual({ code: "internal", message: INTERNAL_MESSAGE });
+  });
+
+  test("a malformed publish keeps the service's reason; the others a fixed phrase", async () => {
+    // The reason describes the caller's own intent and pack; the rest carry nothing they act on.
+    const malformed = await send(
+      raising(new WorkspacePublishError("malformed", "pack 0 hashes to 3be0")),
+      "ListProjects",
+      {},
+    );
+    expect(malformed.body?.message).toBe("pack 0 hashes to 3be0");
+    const damaged = await send(
+      raising(new WorkspaceDamagedError("refs.pb: truncated at 4 bytes")),
+      "ListProjects",
+      {},
+    );
+    expect(JSON.stringify(damaged.body)).not.toContain("refs.pb");
+  });
+
+  test.each([
+    Code.DataLoss,
+    Code.Aborted,
+    Code.FailedPrecondition,
+    Code.Unavailable,
+  ])("an upstream code %s the adapter did not type is masked", async (code) => {
+    // Only the adapter's typed errors pass; the sheaf service's own ConnectError never does.
+    const { status, body } = await send(
+      raising(new ConnectError("sheaf detail", code)),
+      "ListProjects",
+      {},
+    );
+    expect(status).toBe(500);
+    expect(body).toEqual({ code: "internal", message: INTERNAL_MESSAGE });
+  });
+
+  test.each([
     ["ResourceNotFoundError", 404, "not_found"],
     ["UnauthenticatedError", 401, "unauthenticated"],
     ["SessionBusyError", 400, "failed_precondition"],
     ["ClientInputError", 400, "invalid_argument"],
+    ["WorkspaceDamagedError", 500, "data_loss"],
+    ["WorkspacePackNotListedError", 400, "failed_precondition"],
   ] as const)(
     "a %s minted by another module graph still maps by name",
     async (name, wantStatus, wantCode) => {

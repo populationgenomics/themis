@@ -63,19 +63,58 @@ export async function enforceRequestPolicy(
   return response;
 }
 
+/** Where the bundler serves what a worker can start from: script chunks, among them the entry script
+ *  every bundled worker starts from, and emitted assets, among them pdf.js's worker, which pdf.js
+ *  starts itself. Everything else served from either (other chunks, stylesheets, fonts, images) is
+ *  loaded by a document, which ignores a policy on it. */
+const WORKER_SCRIPT_PREFIXES = [
+  "/_next/static/chunks/",
+  "/_next/static/media/",
+];
+
+/** Whether `pathname` is served from where a worker's script can be. */
+export function servesWorkerScripts(pathname: string): boolean {
+  return WORKER_SCRIPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+/** The perimeter's answer to a static asset a worker can start from: the worker policy, which
+ *  governs the one that is a worker's script. Every other asset there carries it inertly, so no
+ *  asset has to be recognised as a worker's by its name. */
+export async function enforceChunkPolicy(
+  request: NextRequest,
+  identity: UserIdentity,
+  options: csp.PolicyOptions,
+): Promise<NextResponse> {
+  const response =
+    (await enforceRequestAuth(request, identity)) ?? NextResponse.next();
+  response.headers.set("content-security-policy", csp.workerPolicy(options));
+  return response;
+}
+
 // Next's entry point. It calls this with a second argument of its own, so the identity is
 // resolved here rather than taken as a parameter.
 export async function proxy(request: NextRequest): Promise<NextResponse> {
-  return enforceRequestPolicy(request, getUserIdentity(), {
+  const options: csp.PolicyOptions = {
     // Compared inline, so the bundler folds it to a literal and no runtime environment read can
     // reach the development concessions.
     development: process.env.NODE_ENV === "development",
     contentSources: csp.contentSources(),
-  });
+    sheafSources: csp.sheafSources(),
+  };
+  if (servesWorkerScripts(request.nextUrl.pathname)) {
+    return enforceChunkPolicy(request, getUserIdentity(), options);
+  }
+  return enforceRequestPolicy(request, getUserIdentity(), options);
 }
 
-// Skips Next's own asset serving — a performance filter, not an auth exemption:
-// PUBLIC_PATHS is the allowlist, and it matches exactly rather than by prefix.
+// Skips Next's own asset serving but for where a worker's script can be, which carries the worker
+// policy — a performance filter, not an auth exemption: PUBLIC_PATHS is the allowlist, and it
+// matches exactly rather than by prefix. The matcher must be a static literal, so it spells out
+// WORKER_SCRIPT_PREFIXES again.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/_next/static/chunks/:path*",
+    "/_next/static/media/:path*",
+  ],
 };

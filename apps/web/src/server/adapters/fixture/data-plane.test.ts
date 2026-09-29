@@ -13,6 +13,7 @@ import { ResourceNotFoundError } from "../../errors";
 import { FixtureDataPlane } from "./data-plane";
 import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
 import { FINAL_DOC_VERSION, SCRIPTED_STAGES } from "./timeline";
+import { FixtureWorkspace } from "./workspace";
 
 // The offline run ships the cards a curator can expand, so every one of them has to
 // resolve; expanding one must not move the run it belongs to, since `GetThread` is a
@@ -46,7 +47,7 @@ describe("the fixture's spawned threads", () => {
   test("every card the run shows resolves to a body", async () => {
     // A card whose thread id did not resolve would 404 the moment a curator expanded
     // it, and nothing short of expanding it would show that.
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const runs = await everyRun(data);
     expect(runs.length).toBeGreaterThan(0);
     let seen = 0;
@@ -66,7 +67,7 @@ describe("the fixture's spawned threads", () => {
   });
 
   test("a thread the run never spawned is not-found", async () => {
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const [run] = await everyRun(data);
     await expect(data.getThread(run, "sthr_invented")).rejects.toBeInstanceOf(
       ResourceNotFoundError,
@@ -74,7 +75,7 @@ describe("the fixture's spawned threads", () => {
   });
 
   test("reading a body advances nothing", async () => {
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const runs = await everyRun(data);
     const run = runs[runs.length - 1];
     const cards = await pollTo(data, run, 6);
@@ -91,7 +92,7 @@ describe("the fixture's spawned threads", () => {
   });
 
   test("holds a fan-out at a state the script would pass through in one tick", async () => {
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const runs = await everyRun(data);
     // Read twice, several ticks apart: a run that advanced would have left the state.
     const held = await Promise.all(
@@ -123,7 +124,7 @@ describe("the fixture's spawned threads", () => {
     // The hold is a display seed, not a frozen analysis: a run spoken to resumes. The
     // spliced turn alone grows the stream, so growth on the next poll proves nothing —
     // the run has to keep releasing its own stages, all the way to the document.
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const asJson = (response: PollResponse) =>
       JSON.stringify(toJson(PollResponseSchema, response));
     let released = 0;
@@ -160,7 +161,7 @@ describe("the fixture's document versions", () => {
     data: FixtureDataPlane;
     run: Analysis;
   }> {
-    const data = new FixtureDataPlane();
+    const data = new FixtureDataPlane(new FixtureWorkspace());
     const run = await data.createAnalysis({
       inputs: inputs(),
       projectId: FIXTURE_PROJECT,

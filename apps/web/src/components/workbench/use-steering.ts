@@ -1,9 +1,10 @@
 "use client";
 
+import type { DescMethod } from "@bufbuild/protobuf";
 import { useRef, useState } from "react";
 import { useInterrupt, useSteer } from "@/lib/queries";
 import { isAgentBusy } from "@/lib/rpc";
-import type { ConversationEvent } from "@/models/workbench";
+import { type ConversationEvent, Workbench } from "@/models/workbench";
 import {
   accepted,
   dropped,
@@ -26,6 +27,16 @@ import {
 export interface SteeringFailure {
   act: "send" | "stop";
   cause: unknown;
+}
+
+const ACT_METHODS: Readonly<Record<SteeringFailure["act"], DescMethod>> = {
+  send: Workbench.method.steer,
+  stop: Workbench.method.interrupt,
+};
+
+/** True when the failed act was a turn the run refused because the agent is mid-step. */
+export function isBusyRefusal(failure: SteeringFailure): boolean {
+  return isAgentBusy(ACT_METHODS[failure.act], failure.cause);
 }
 
 export interface Steering {
@@ -74,7 +85,7 @@ export function useSteering(
   // there.
   if (
     error !== null &&
-    isAgentBusy(error.cause) &&
+    isBusyRefusal(error) &&
     events !== undefined &&
     events !== refusedAgainst.current &&
     !events.some(

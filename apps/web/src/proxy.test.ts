@@ -3,12 +3,22 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { getScriptNonceFromHeader } from "next/dist/server/app-render/get-script-nonce-from-header";
 import { NextRequest } from "next/server";
-import type * as csp from "@/lib/csp";
+import * as csp from "@/lib/csp";
 import { Workbench } from "@/models/workbench";
 import { UnauthenticatedError } from "@/server/errors";
 import type { UserIdentity } from "@/server/identity";
+import {
+  CLOUD_RUN_HTTP1_REQUEST_MAX_BYTES,
+  READ_MAX_BYTES,
+} from "@/server/rpc/limits";
 import nextConfig from "../next.config";
-import { enforceRequestAuth, enforceRequestPolicy } from "./proxy";
+import {
+  enforceChunkPolicy,
+  enforceRequestAuth,
+  enforceRequestPolicy,
+  config as proxyConfig,
+  servesWorkerScripts,
+} from "./proxy";
 
 // The perimeter with its identity supplied, so both outcomes are reachable without the
 // live verifier's env or a network call.
@@ -129,7 +139,11 @@ const RESPONSE_POLICY = "content-security-policy";
 const APP_POLICY = "x-middleware-request-content-security-policy";
 
 /** The policy inputs are the composition root's to resolve; these tests are about the composition. */
-const OFFLINE: csp.PolicyOptions = { development: false, contentSources: [] };
+const OFFLINE: csp.PolicyOptions = {
+  development: false,
+  contentSources: [],
+  sheafSources: [],
+};
 
 const underPolicy = (request: NextRequest, identity: UserIdentity) =>
   enforceRequestPolicy(request, identity, OFFLINE);
@@ -192,6 +206,19 @@ describe("the content security policy", () => {
     ).toBe("an-assertion");
   });
 
+  test("the proxy buffers the whole of any body that can reach the app", () => {
+    // Past its limit the proxy drops whole chunks without failing the request. A limit only a chunk
+    // above the router's would hand an oversized chunked publish over short, to fail parsing rather
+    // than be answered resource_exhausted; nothing longer than Cloud Run's request limit arrives.
+    const limit = nextConfig.experimental?.proxyClientMaxBodySize;
+    if (typeof limit !== "number") {
+      throw new Error("next.config.ts sets no numeric proxy body limit");
+    }
+    expect(limit).toBeGreaterThanOrEqual(CLOUD_RUN_HTTP1_REQUEST_MAX_BYTES);
+    // And the router's own limit is one a request can exceed while still arriving whole.
+    expect(READ_MAX_BYTES).toBeLessThan(CLOUD_RUN_HTTP1_REQUEST_MAX_BYTES);
+  });
+
   test("the perimeter is the only source of a policy", async () => {
     // Two Content-Security-Policy headers are intersected by the browser, and the policy actually in
     // force becomes one that neither of them states.
@@ -206,5 +233,44 @@ describe("the content security policy", () => {
     expect(configured).not.toContain("content-security-policy");
     // Framing is refused in the perimeter's policy; this covers browsers that read only the header.
     expect(configured).toContain("x-frame-options");
+  });
+});
+
+describe("the worker policy", () => {
+  test("a script chunk carries it, so the worker it starts runs under it", async () => {
+    // A worker takes the policy delivered with its own entry script, not the page's.
+    const response = await enforceChunkPolicy(
+      request("/_next/static/chunks/turbopack-worker-abc.js"),
+      ADMITTING,
+      OFFLINE,
+    );
+    expect(response.headers.get(RESPONSE_POLICY)).toBe(
+      csp.workerPolicy(OFFLINE),
+    );
+  });
+
+  test("a chunk is behind the same perimeter as every other path", async () => {
+    const response = await enforceChunkPolicy(
+      request("/_next/static/chunks/a.js"),
+      REFUSING,
+      OFFLINE,
+    );
+    expect(response.status).toBe(401);
+  });
+});
+
+describe("where a worker's script can be", () => {
+  test.each([
+    "/_next/static/chunks/turbopack-worker-2gqdcwp7k90ea.js",
+    "/_next/static/media/pdf.worker.min.2th4soq4xwzz7.mjs",
+  ])("%s is served the worker policy, and the proxy runs for it", (path) => {
+    // pdf.js starts its own worker from an emitted asset, which parses third-party PDF bytes.
+    expect(servesWorkerScripts(path)).toBe(true);
+    const prefix = path.slice(0, path.lastIndexOf("/") + 1);
+    expect(proxyConfig.matcher).toContain(`${prefix}:path*`);
+  });
+
+  test("a page is not", () => {
+    expect(servesWorkerScripts("/analysis/an_1")).toBe(false);
   });
 });

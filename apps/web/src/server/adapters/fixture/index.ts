@@ -1,6 +1,6 @@
 import type { UserIdentity } from "../../identity";
 import type {
-  AnalysisDataPlane,
+  AnalysisPorts,
   ContentPort,
   LiteraturePort,
   ProjectMembership,
@@ -10,12 +10,14 @@ import { FixtureDataPlane } from "./data-plane";
 import { DevUserIdentity } from "./identity";
 import { FixtureLiterature, seedContentStore } from "./literature";
 import { FixtureMembership } from "./membership";
+import { FixtureWorkspace } from "./workspace";
 
-/** A FRESH in-memory data plane. The runtime composition root (`../index.ts`)
- *  memoizes one instance so a POST that creates an analysis and the following
- *  polls share the same in-memory state. */
-export function createDataPlane(): AnalysisDataPlane {
-  return new FixtureDataPlane();
+/** A FRESH in-memory data plane and the workspace repositories its scripted runs wrote. The runtime
+ *  composition root (`../index.ts`) memoizes one pair so a POST that creates an analysis and the
+ *  following polls share the same in-memory state. */
+export function createAnalysisPorts(): AnalysisPorts {
+  const workspace = new FixtureWorkspace();
+  return { dataPlane: new FixtureDataPlane(workspace), workspace };
 }
 
 /** The seeded fixture membership. */

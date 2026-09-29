@@ -2,8 +2,8 @@
 
 import { ArrowUp, CircleStop } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
-import { errorMessage, isAgentBusy } from "@/lib/rpc";
-import type { Steering } from "./use-steering";
+import { errorMessage } from "@/lib/rpc";
+import { isBusyRefusal, type Steering } from "./use-steering";
 
 // The curator's turn, pinned under the conversation stream. Enter sends and clears the
 // field; Shift+Enter inserts a newline; ⌘↵ sends too, so the create composer's gesture
@@ -77,7 +77,7 @@ export function SteerComposer({ steering }: { steering: Steering }) {
       </p>
       {steering.error !== null && (
         <p role="alert" className="mt-[4px] text-[12.5px] text-error-text">
-          {isAgentBusy(steering.error.cause)
+          {isBusyRefusal(steering.error)
             ? "The agent is still working on its current step — wait for it to finish, or stop it first."
             : steering.error.act === "send"
               ? `Could not send that turn: ${errorMessage(steering.error.cause)}`
