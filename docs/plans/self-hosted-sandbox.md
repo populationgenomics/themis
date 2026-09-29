@@ -1,9 +1,12 @@
 # Plan: Self-hosted sandbox on Cloud Run
 
 > **Execution + isolation model superseded** by [`../design/sandbox-worker.md`](../design/sandbox-worker.md): the
-> two-container Job + credential proxy + the §8 network subsystem (architecture §3–§4, sandbox job/proxy §6, egress §8,
-> `/workspace` sync §9) are replaced by a single trusted `EnvironmentWorker` over the `postern` sandbox. The why
-> (§1–§2), the dispatcher (§5), the credential model (§7), and the operations framing still stand.
+> two-container Job + credential proxy + the §8 network subsystem (architecture §3–§4, sandbox job/proxy §6, egress §8)
+> are replaced by a single trusted `EnvironmentWorker` over the `postern` sandbox. **Persistence superseded** by the
+> Analysis repository ([`../design/sheaf.md`](../design/sheaf.md),
+> [`../design/workbench-workspace.md`](../design/workbench-workspace.md)): the store service, its two buckets and the
+> `workspace put`/`get` sync (§9) are gone, and the §12 rows and questions about them describe that superseded design.
+> The why (§1–§2), the dispatcher (§5), the credential model (§7), and the operations framing still stand.
 
 This plan decides the **self-hosted execution sandbox**: where the agent's tool execution runs, and how the credentials
 involved stay out of the agent's reach. It is the **execution model the wiring builds on**
@@ -47,8 +50,8 @@ The design is held to four requirements:
   by the work it triggers and is never on the perceived critical path (§4). Scale-to-zero is unconditional — favoured
   over warmth, not balanced against it.
 - **Minimal moving parts.** Anthropic keeps the orchestration loop; we run tool execution plus a thin data plane. The
-  implementation should read as: one dispatcher, one job (agent + proxy), a session-token chokepoint, and a store
-  fronting two GCS buckets.
+  implementation should read as: one dispatcher, one job, a session-token chokepoint, and the session-scoped services
+  the job calls.
 
 ### Shapes rejected
 
@@ -84,16 +87,16 @@ What Anthropic gives us, condensed from the
 - `web_search` / `web_fetch` are Anthropic **server tools**; the self-hosted worker's toolset implements only
   `bash`/`read`/`write`/`edit`/`glob`/`grep`, so on that evidence they execute **Anthropic-side**, not in our sandbox —
   but the docs do not state the execution locus for self-hosted sandboxes, so this is inferred, not documented, and
-  wants an empirical confirmation (§12). Either way there is no MCP call and no Anthropic-reached server of ours — the
-  working document is a synced file (§9) — so the sandbox's required egress is the Anthropic API (the worker's stream)
-  plus the internal store the proxy syncs to (§8). Both web tools stay enabled, and exfiltration through them is bounded
-  by the tools themselves. `web_fetch` only retrieves URLs **already present in the conversation** — it cannot fetch a
-  URL the model fabricates, so the high-bandwidth attack (a prompt-injected agent posting the working document to a
-  crafted `attacker.com/?d=…` URL) is blocked at the source. `web_search` carries only a query to a provider whose logs
-  an attacker cannot read. The residual is narrow — a poisoned page could plant a collector URL for a later fetch, and
-  low-bandwidth staged channels survive — and is accepted and monitored (output/citation monitoring; synthetic data this
-  slice), not an unmanaged hole: the egress lockdown (§8) governs sandbox-originated egress, and the web tools are a
-  separate, bounded, monitored channel, not a gap it leaves open.
+  wants an empirical confirmation (§12). Either way there is no MCP call and no Anthropic-reached server of ours, since
+  the working document is a file in the Analysis repository (§9), so the worker's required egress is the Anthropic API
+  (its stream) plus the internal services it calls (§8). Both web tools stay enabled, and exfiltration through them is
+  bounded by the tools themselves. `web_fetch` only retrieves URLs **already present in the conversation** — it cannot
+  fetch a URL the model fabricates, so the high-bandwidth attack (a prompt-injected agent posting the working document
+  to a crafted `attacker.com/?d=…` URL) is blocked at the source. `web_search` carries only a query to a provider whose
+  logs an attacker cannot read. The residual is narrow — a poisoned page could plant a collector URL for a later fetch,
+  and low-bandwidth staged channels survive — and is accepted and monitored (output/citation monitoring; synthetic data
+  this slice), not an unmanaged hole: the egress lockdown (§8) governs sandbox-originated egress, and the web tools are
+  a separate, bounded, monitored channel, not a gap it leaves open.
   [Memory](https://platform.claude.com/docs/en/managed-agents/memory) is unsupported self-hosted (not used by the wiring
   slice).
 
@@ -151,7 +154,7 @@ a single trusted `EnvironmentWorker` over a `postern` sandbox replaces the two-c
 ## 4. The end-to-end flow — superseded
 
 The execution and isolation legs are superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md). The
-dispatch → credential-derivation → persistence flow it described still stands — see §5, §7, and §9 below.
+dispatch → credential-derivation flow it described still stands — see §5 and §7 below.
 
 ## 5. Dispatcher
 
@@ -169,8 +172,8 @@ BFF's webhook receiver, wiring §4). On `session.status_run_started` it:
    forwarded.
 1. **Derives the session token** — `HMAC(session_id)` via the KMS MAC key (§7). No DB access and no session→Analysis
    resolution here: the BFF already bound the session token to its Analysis at session create, and the auth service
-   resolves it at call time. (If the session has no session-token row, the store rejects downstream — a bug in session
-   create, surfaced there.)
+   resolves it at call time. (If the session has no session-token row, the session-scoped services reject it downstream,
+   a bug in session create, surfaced there.)
 1. **Triggers one sandbox job execution** via `jobs.run` with per-container environment overrides: session/work/
    environment ids to both containers; the environment key and the derived session token **to the proxy container
    only**. **If the spawn call fails, do nothing** — the item is still unacknowledged, so `reclaim_older_than_ms`
@@ -182,11 +185,11 @@ the queue**, and no documented mechanism returns an acked-but-heartbeatless item
 unspecified, and there is no re-enqueue endpoint — §12). So a dispatcher that acked on claim would strand a spawn that
 dies during cold start — after the ack, before the worker's first heartbeat — with **no automatic recovery**. Keeping
 the item unacked until the sandbox is proven up puts every cold-start failure back on the documented reclaim path. The
-**proxy** therefore issues the `ack` only after restore resolves (§9), just before it releases the agent-start gate: an
-instance that never comes up never acks, so reclaim brings the item back; an instance whose restore *fails* acks and
-stops the item — a restore error is terminal, not retried (§9), so it never loops. The lease is bound to the environment
-key + work id, not the ack'er's identity, so the sandbox heartbeats and stops the item the dispatcher polled (§2,
-verified against the SDK's `auto_stop=false` handoff).
+worker therefore issues the `ack` only after restore succeeds, just before it serves the session: an instance that never
+comes up never acks, so reclaim brings the item back; an instance whose restore meets the repository's terminal verdict
+acks and stops the item, so it never loops ([`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"The work item
+is acked once restore proves"). The lease is bound to the environment key + work id, not the ack'er's identity, so the
+sandbox heartbeats and stops the item the dispatcher polled (§2, verified against the SDK's `auto_stop=false` handoff).
 
 Webhook deliveries retry with the same event id and draining an empty queue is a no-op, so duplicate or overlapping
 deliveries are harmless. If the dispatcher is down, sessions queue rather than fail — but Anthropic **auto-disables** a
@@ -208,10 +211,11 @@ alert and runbook (§11).
 
 A double-spawn cannot become double-*service*: the sandbox's first `heartbeat` claims the lease with
 `expected_last_heartbeat: NO_HEARTBEAT`, and every later heartbeat echoes the server's value (412 on mismatch), so two
-workers can never hold one lease (§2). The loser's worker is cancelled on the 412 and exits before any `end_turn`, so it
-never reaches the checkpoint that would mint a document version (§9); its redundant `ack` is harmless (the item is
-already `starting`); and because both spawns derive the same per-session bearer, there is no stray session-token row to
-clean up (§7).
+workers can never hold one lease (§2). The loser's worker is cancelled on the 412 and exits before any `end_turn`, so
+its agent commits nothing and its teardown push finds nothing the repository lacks
+([`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"The workspace is a repository, and the agent's git is
+the only git in it"); its redundant `ack` is harmless (the item is already `starting`); and because both spawns derive
+the same per-session bearer, there is no stray session-token row to clean up (§7).
 
 ## 6. Sandbox job & the credential proxy — superseded
 
@@ -223,21 +227,20 @@ and marshals each command into the postern guest behind the method-allowlisted g
 
 The wiring plan's stance of keeping identities separate, extended. Three new identities, all narrow:
 
-| Identity                 | Holds                                                                                                                                                                                                                                                     | Deliberately lacks                                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Dispatcher SA** (new)  | environment-key secret access, plus the webhook-signing-key on the own-subscription path (§12); KMS *MAC* (use-only) on the session-token signing key, to derive the per-session bearer; `run.jobs.run` on the sandbox job                                | org API key; any table; the raw signing key; any GCS/store credential                                                                    |
-| **Sandbox job SA** (new) | `run.invoker` on the sandbox-reachable services only (the store and hello, behind the internal load balancer, §8)                                                                                                                                         | every other role; invoke alone yields no data — a metadata-minted token opens nothing without the session token (held only by the proxy) |
-| **Auth SA** (new)        | session-token-hash **read** on Cloud SQL, and nothing else                                                                                                                                                                                                | environment key; any GCS; any write                                                                                                      |
-| BFF SA                   | its wiring §4/§8 roles, minus the working-document-version write (now the store's checkpoint, §9), + KMS *MAC* (use-only, to compute the bearer whose hash it records at session create) + **read** on the working-document bucket (the version selector) | environment key; the raw signing key; GCS write                                                                                          |
-| Store SA                 | GCS **read/write** (object admin) on the working-document and ephemeral buckets; invoke the auth service                                                                                                                                                  | environment key; org API key; Cloud SQL (session tokens resolved via auth)                                                               |
+| Identity                 | Holds                                                                                                                                                                                                                      | Deliberately lacks                                                                                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dispatcher SA** (new)  | environment-key secret access, plus the webhook-signing-key on the own-subscription path (§12); KMS *MAC* (use-only) on the session-token signing key, to derive the per-session bearer; `run.jobs.run` on the sandbox job | org API key; any table; the raw signing key; any GCS/store credential                                                                    |
+| **Sandbox job SA** (new) | `run.invoker` on the services the worker reaches only (hello, evidence and sheaf)                                                                                                                                          | every other role; invoke alone yields no data — a metadata-minted token opens nothing without the session token (held only by the proxy) |
+| **Auth SA** (new)        | session-token-hash **read** on Cloud SQL, and nothing else                                                                                                                                                                 | environment key; any GCS; any write                                                                                                      |
+| BFF SA                   | its wiring §4/§8 roles, minus the working-document-version write, + KMS *MAC* (use-only, to compute the bearer whose hash it records at session create)                                                                    | environment key; the raw signing key; GCS write                                                                                          |
 
 - **Environment key.** Generated in the Anthropic Console (Console-only — a manual runbook step per environment), stored
   as encrypted stack config → Secret Manager, read by the dispatcher. It reaches the proxy container as a per-execution
   env override; at runtime it exists only in the dispatcher and the proxy container — never the agent container.
   Rotation = regenerate in Console + config update — and Anthropic cannot fast-revoke a leaked key, so keeping it out of
   the agent container is load-bearing, not defense-in-depth.
-- **Session token — the per-session sync credential, derived not stored.** One per-session key authorizes the whole
-  workspace sync — the working document and the ephemeral scratch (§9) — replacing the wiring §5 vault-stored session
+- **Session token — the per-session credential, derived not stored.** One per-session key authorizes every
+  session-scoped call the worker makes, the Analysis repository's included, replacing the wiring §5 vault-stored session
   token; its lifecycle is wiring §5's.
   - *Derivation.* The bearer is `HMAC(session-token-signing-key, session_id)`, the signing key a use-only Cloud KMS MAC
     key (the material never leaves KMS, so no service can exfiltrate it). So there is no plaintext at rest, no
@@ -245,10 +248,10 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
   - *At rest.* Only the one KMS key (read-only) and, in `session_context`, the hash of the bearer plus its binding
     (Analysis, Project) — written once by the BFF at session create (compute via KMS-MAC, hash, store) and revoked once
     at `terminated`.
-  - *Resolution.* The dispatcher re-derives the bearer at each spawn and injects it into the proxy (no DB write, no
-    lookup); the proxy presents it on its `workspace put`/`get` calls; the store forwards it to the auth service, which
-    hashes it, matches the row, and returns `SessionContext(analysis_id, project_id, created_by)`; the store keys the
-    blobs server-side from that Analysis (§9). One session token per session — no per-claim churn, no bulk-revoke.
+  - *Resolution.* The dispatcher re-derives the bearer at each spawn and injects it into the worker (no DB write, no
+    lookup); the worker presents it on its calls; the called service resolves it through the auth service, which hashes
+    it, matches the row, and returns `SessionContext(analysis_id, project_id, created_by)`; the service acts on that
+    Analysis. One session token per session, so no per-claim churn and no bulk-revoke.
   - *Blast radius.* The proxy only ever receives its own session's derived bearer, never the signing key, so a
     compromised proxy is confined to its own Analysis. The concentrated trust is the signing key: a compromised
     dispatcher or BFF can forge a bearer for any live session, so those two are the credential's blast radius — guarded
@@ -269,13 +272,10 @@ The wiring plan's stance of keeping identities separate, extended. Three new ide
   capabilities (signed URLs, downscoped tokens) so a caller reaches a resource *directly* is the evolution when the
   first non-blob API lands, and it trades sandbox-egress tightness (§8) for removing the byte-serving hop — deferred
   (§12). This is a change from wiring §5's per-server auth library, updated downstream.
-  - **Why not the env key for the sync?** The env key is environment-wide (identical for every session), so the store
-    couldn't derive *which* Analysis a call is for without a proxy-supplied session id — and authorizing on "valid env
-    key + session id" would let one compromised sandbox reach **every** session's document across all Projects. The
-    per-session token contains a sandbox compromise to its own Analysis.
-  - **Why one key for the whole sync?** Routing both the working document and the scratch through the same session token
-    → same Analysis check (§9) means the narrow per-session key does the job for both, and no blob-storage credential
-    goes near the sandbox — no workspace-writer SA, token minting, or downscoping.
+  - **Why not the env key?** The env key is environment-wide (identical for every session), so a service couldn't derive
+    *which* Analysis a call is for without a worker-supplied session id — and authorizing on "valid env key + session
+    id" would let one compromised sandbox reach **every** session's document across all Projects. The per-session token
+    contains a sandbox compromise to its own Analysis.
 - **Minimal job SA — invoke-only, inert without the session token.** Cloud Run instances share one runtime identity
   across containers, and agent code can always mint that SA's tokens from the metadata server (link-local, unblockable)
   — so the SA holds only `run.invoker` on the sandbox-reachable services and nothing else. That role is not a data
@@ -302,158 +302,12 @@ Superseded by [`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"On
 egress containment is the guest's empty network namespace, with the trusted worker on normal egress. No egress firewall,
 DNS sinkhole, or internal load balancer.
 
-## 9. Persistence — the working document and `/workspace`
+## 9. Persistence — superseded
 
-The store is reshaped. It is no longer an editor-tool MCP server the agent calls per edit; it is a session-token-authed
-blob mediator (`workspace put`/`get`) fronting two buckets, resolving the session token through the auth service (§7).
-The agent never calls it — **the model edits files, the proxy syncs them.** Two kinds of state, split by an explicit
-persistence contract:
-
-### The working document — a file the model edits directly
-
-- **Direct file editing.** The model authors the working document with the standard, well-trained file tools
-  (`edit`/`grep`/`read`/`write`/`glob`) on a plain markdown file at a **contract path** in `/workspace`. There is no
-  store CLI and no MCP editor tools; the agent YAML drops `mcp_toolset` and `mcp_servers` and enables `shell` + the file
-  tools (§10). The system prompt tells the model where the file is and what shape it takes (the ACMG outline, wiring
-  §3).
-- **Persistence contract.** A glob names the **durable** paths (default: the working document); the complement is
-  ephemeral scratch. Widening the glob to a whole directory is the same mechanism — a deliberate choice about *what
-  deserves versioning*, not a default, since scratch churn should not mint versions.
-- **Versioning — immutable version-per-blob.**
-  - *Creation.* Only the proxy writes a version, and only while its worker holds the lease — the proxy forwards the
-    heartbeats, so it sees the 412 on the next forwarded heartbeat when the lease is lost (§2 cadence; the fencing check
-    is a §12 build item) — on the live `end_turn` of the turn it served. A double-spawn straggler, whose heartbeat 412s
-    and whose runner is cancelled before it serves a turn (§5), writes none.
-  - *Layout.* Each version is `working-documents/<analysis_id>/versions/<n>` — a bare markdown object while the durable
-    glob matches one file, a tar once it matches several. `<n>` is **store-assigned**: the checkpoint reads the latest
-    stored key and writes `<n> = latest + 1`, **zero-padded** so a prefix listing orders numerically and the newest is
-    the last key. The store is the sequence authority — ordering never depends on Managed Agents exposing a comparable
-    per-session turn sequence (its high-water mark may be dedup-able only, wiring §4). The MA steer index, curator, and
-    session id ride in GCS custom metadata as **labels**, not as the ordering key; `timeCreated` is intrinsic.
-  - *Ordering.* The write is create-only (`if-generation-match: 0`) over the store-assigned successor of the latest key,
-    so two writers racing the same `<n>` cannot both win and no straggler can reorder or clobber history — the guarantee
-    rests only on GCS's atomic create and the lease fence (§12), both ours. `<n>` derives from the latest *stored* key,
-    never from restored content, so a corrupt-latest restore that falls back to a prior version still mints a
-    superseding higher `<n>` rather than colliding.
-  - *Not GCS generations.* No object-versioning anywhere: versions are first-class objects, so their identity is stable
-    and their history explicit, not a retention side effect. A future accept-to-publish freeze is a retention hold on
-    the chosen object (§12).
-- **Why blob, not Cloud SQL.** The document is fetched **whole** by `(analysis, version)`, never queried by content, so
-  Cloud SQL's relational strengths do not apply; a Cloud-SQL representation would force the checkpoint to *parse and
-  persist* — a server-side editor step the file+sync model exists to delete. Blob is the content's natural home and
-  collapses the document onto the **same sync path already needed for scratch**. (This reverses the wiring plan §7's
-  Cloud-SQL-for-small-artifacts rationale, which is downstream to update: small scale argued for SQL's *simplicity*; the
-  reason here is *fit* + one sync mechanism, not scale. Cloud SQL still holds the relational session-plane data — the
-  Analysis rows, Project membership, and `session_context` hashes — only the document *content* moves to the blob.)
-- **Read path — the BFF, directly.** The BFF reads the working-document bucket with a read-scoped SA, authorizing via
-  IAP + Project membership (wiring §4) — it does **not** go through the session-token chokepoint, which exists to
-  confine the *untrusted sandbox*, a different trust domain. The version selector lists the `versions/` prefix; the
-  current draft is the latest version. This resolves the wiring plan's Cloud-SQL working-document reads (wiring
-  §4/§6/§7) onto GCS. Version-creation **unifies**: the checkpoint *is* the version, so the wiring plan's separate
-  BFF-written per-turn version snapshot (on the `idled` webhook) is gone — the same `end_turn` boundary, one writer.
-- **Live mid-run draft.** The model's edits live only in `/workspace` between checkpoints, so the working-document pane
-  updates at **turn boundaries**, not per edit — a change from the MCP path, where each edit hit Cloud SQL immediately.
-  Turn-boundary coherence is acceptable for the slice (and avoids showing half-edited states); a debounced draft blob
-  the proxy overwrites on file-change is the enhancement if a live pane is wanted (§12).
-- **Validation.** The wiring plan's per-edit store validation is gone (there are no store edits). Two replacements: a
-  **linter** shipped in the sandbox image (a skill/CLI the model runs to self-correct during the turn — a convenience,
-  not a gate), and **render-time validation** in the frontend — the renderer is the arbiter, and on a parse/validation
-  failure it shows a warning and falls back to raw text (beside wiring §6's "no document produced" state). The hard
-  synchronous gate becomes a visible-at-render soft gate — weaker, but *visibly* weaker, which is the fail-loud property
-  that matters. Linter and renderer share rules where practical; the renderer is authoritative.
-
-### Durable `/workspace` — scratch continuity across respawns
-
-Run-lived sandboxes (§4) give each spawn a fresh `/workspace`. Within one spawn persistence is full — the same
-filesystem and one persistent bash subprocess carry across every tool call — but a **respawn** (the next `run_started`
-after the grace window) starts blank. Anthropic's **cloud** sandboxes instead keep the per-session container alive
-across turns, so the model is trained to treat its local files as session-persistent: a script it wrote a turn ago, a
-note-to-self, an intermediate dataset. Under run-lived self-hosting those vanish across a respawn. The durable
-*artifact* is safe (the working-document versions are immutable in GCS), but the agent's ephemeral *scratch* is not, and
-the gap surfaces as lost coherence when a curator steers after a pause.
-
-The naive fix reintroduces the exact credential hole the design avoids. A native Cloud Run GCS-FUSE volume authenticates
-as the **job's runtime SA**, and agent code sharing the instance's network namespace can mint that SA's token off the
-metadata server — blockable by neither the proxy (a cooperative injector, not a network chokepoint) nor the VPC firewall
-(metadata is link-local) (§7, §8). So it can call the GCS API directly and bypass the mount view. A shared bucket then
-means cross-session — and, since one job has one SA spanning all Projects, cross-**Project** — read/write: the
-GKE-sample hole (§1). So scratch persistence must hold three properties at once: the agent's SA holds **no storage
-role**, each session is confined to **its own state even against adversarial code**, and the agent still sees a **real
-filesystem**.
-
-That is a property of the shared network namespace, not of GCS-FUSE. Untrusted code confined to an **empty** network
-namespace has no route to the link-local metadata address at all, and cannot re-point the filesystem view it is handed
-(`mount`, `umount2`, `unshare`, `setns`, `pivot_root` are denied by seccomp), so a host-side mount bound in read-only
-holds the credential on the host side of the boundary and satisfies all three properties — the bypass is absent, not
-mitigated ([`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"One trusted process, not two containers").
-
-We route scratch through the same store under the same session token, so the proxy holds no GCS credential: it is just
-another authorized `workspace put`/`get`, using the per-session token that also carries the document (§7). `/workspace`
-is a shared in-memory `emptyDir` mounted into both containers; the `workspace put`/`get` pair carries the ephemeral
-complement of the durable glob, and the store persists it in the ephemeral bucket with its own identity, keyed
-server-side from the resolved session token.
-
-These endpoints take no caller-supplied key: the store derives the blob key server-side from the resolved session token
-(§7), so even a request the agent hand-crafts through `shell` to the store at L3 (§8) can only ever touch its own
-session's state.
-
-- **Restore — proxy, on startup, gates the agent, then acks.** The agent container declares a startup dependency on the
-  proxy; the proxy calls `workspace get`, unpacks into `/workspace`, and — only once restore completes — issues the
-  work-item `ack` (§5) and releases the gate, so the worker boots onto the restored filesystem and no item is acked
-  until its sandbox is proven up. A restore that fails closed (below) never acks, so reclaim re-surfaces the item.
-  - *Untrusted input.* The agent controls `/workspace` and can `workspace put` a hand-crafted archive, so extraction
-    rejects entries with `..`, absolute paths, or symlink/hardlink escapes, confines every write under `/workspace`, and
-    caps decompressed size, entry count, and compression ratio — unhardened, a crafted archive is an arbitrary-write or
-    persistent-DoS primitive against the credential-holding proxy (a decompression bomb OOMs the 2 GiB emptyDir on every
-    respawn, permanently wedging the Analysis) (§12). The checkpoint side tars without dereferencing symlinks and the
-    store caps the stored blob size.
-  - *Asymmetric failure.* A bad **scratch** archive fails open to empty scratch — the next checkpoint overwrites it, so
-    it self-heals. The **document** fails closed: a corrupt latest version restores the prior good version, and anything
-    ambiguous — a version present but unreadable, or the `workspace get` itself failing (store 5xx, session token
-    rejected) — fails the item (acked and stopped, §5) rather than boot onto a blank document, since a blank restore
-    would be served a turn and mint a superseding higher-sequence version that regresses the deliverable. Only a store
-    response that positively reports no versions boots empty — the genuine first spawn.
-  - *Restore failure is terminal — fail fast, no retry.* A document restore that fails (a store error resolving the
-    latest version or the session token, distinct from a positive NOT_FOUND) is not retried: the proxy acks the item
-    (stopping reclaim), stops the work item, and exits. Retrying buys nothing — the failures that recur every spawn are
-    permanent (a corrupt latest with no good fallback, a persistently-rejected session token), and a transient store
-    error is rare (Cloud Run cold-starts queue rather than error). Erroring is not lossy: the working document persists,
-    so a re-triggered session restores it cleanly. The one case retry would help — a brief mid-request blip — is left to
-    a bounded in-process retry (retryable gRPC codes, backoff, within the spawn), added only if such errors are observed
-    (§12); a cross-spawn reclaim loop is the wrong tool for it. A cold-start crash that never reaches restore still
-    reclaims (§5); a per-Analysis crash-loop there is an infrastructure alert, not restore state.
-- **Checkpoint — proxy, on its own `end_turn` subscription.** The proxy holds the environment key, so it subscribes to
-  the session's own real-time stream (`GET /v1/sessions/{id}/events/stream`, SSE) via the Anthropic SDK — which handles
-  keep-alive and reconnect — in a background task and watches for `session.status_idle` /
-  `stop_reason.type == end_turn`. This subscription is **independent of the worker's event reads**: the streaming worker
-  also sees `end_turn` on its own stream, but the checkpoint rides the proxy's subscription, not the agent's traffic,
-  and the worker exposes no per-turn hook — so the proxy sourcing the signal itself is what keeps the checkpoint
-  observable and worker-independent. On that signal it copies the durable glob — small (the versioned document this
-  slice) — to a staging path while the tool loop is quiet, then tars-and-`workspace put`s that copy as the new version
-  (gated as above), so a steer landing inside the grace and re-arming the worker cannot tear the versioned snapshot.
-  Scratch it tars live and best-effort: a steer inside the grace may tear it, but only scratch, never the versioned
-  document, is affected — consistency of files an agent-backgrounded process (§4) is still writing is the agent's
-  responsibility. There is **no SIGTERM backstop**: a single, observable trigger keeps a checkpoint failure attributable
-  (fail-loud) rather than masked by a fallback, and because `end_turn` fires at the start of the release grace the async
-  checkpoint — bounded by a store-call timeout under `--max-idle` — always resolves before the sidecar is reaped.
-- **Lifetime — the grace window is the checkpoint window.** The `end_turn` idle that triggers the checkpoint is the same
-  event that starts the 300 s `--max-idle` release countdown (§2), so checkpoint and release run concurrently; a
-  scratch-sized `workspace put` finishes well inside the grace. Across the run-lived boundary, state flows spawn N →
-  checkpoint at idle → store → restore at spawn N+1, so the agent sees a continuous `/workspace` and **run-lived becomes
-  indistinguishable from session-lived** (the Vercel reframe), scale-to-zero intact.
-- **TTL & cleanup.** The two buckets have different lifetimes — the reason for the split. Working-document versions are
-  the deliverable: they survive `session.status_terminated` (a reopened Analysis restores its last version),
-  retention/GC a separate policy (§12). Scratch is reaped by an Object Lifecycle age rule: a live session rewrites its
-  scratch each turn, resetting the age, so only scratch no live session is touching ages out — and once the session
-  token is revoked at `terminated` (wiring §5) nothing can refresh it. Set the TTL well above the longest expected
-  inter-steer pause, so a paused-but-live session keeps its scratch; the ~1-day age granularity means terminated scratch
-  lingers up to a day until the deferred prompt-delete route lands. Prompt deletion at `terminated` needs a
-  `workspace delete` route the BFF calls after re-deriving the bearer — ordered before session token revocation, since
-  the store's default-deny (§8) rejects a revoked bearer, and no identity today both writes the ephemeral bucket and
-  sees the `terminated` signal — so it is deferred (§12).
-- **No git (deferred).** Version-per-blob already gives history, cross-session persistence, and restart recovery — most
-  of what a git-backed workspace would give. The residue is analysis *branching* (deferred anyway, wiring §6) and
-  model-driven *intra-turn commits*; both are §12 seams.
+Superseded by the Analysis repository: `/workspace` is a clone of a sheaf repository the agent commits and pushes to
+([`../design/sandbox-worker.md`](../design/sandbox-worker.md) §"The workspace is a repository, and the agent's git is
+the only git in it"), and the workbench reads the working document from its own copy of that repository
+([`../design/workbench-workspace.md`](../design/workbench-workspace.md)).
 
 ## 10. Infrastructure & control plane
 
@@ -470,15 +324,13 @@ session's state.
   (`run.invoker` on the sandbox-reachable services only), the environment-key secret plumbing, the VPC egress wiring,
   the Cloud DNS response policy, and the egress-IP allowlist. Prerequisite: the baseline has no VPC/subnet today —
   Direct VPC egress needs one (small, single-region).
-- **The data plane** (with the store, or here): the **store** service + SA, the **auth service** + SA, the
-  **working-document bucket** (object-versioning off; retention/GC for terminated Analyses is a §12 policy) and the
-  **ephemeral workspace bucket** (Object Lifecycle TTL). No workspace-writer SA reaches the sandbox — persistence is the
-  store's (§7, §9).
+- **The data plane**: the **auth service** + SA. No workspace-writer SA reaches the sandbox; the worker reaches the
+  Analysis repository through the sheaf service (§9).
 - **Secret Manager / KMS delta**: the environment key; the **KMS MAC key** that derives the per-session bearer (BFF and
   dispatcher compute `HMAC(session_id)` via KMS — use-only, the key never leaves KMS, §7); a second webhook signing key
   if the dispatcher gets its own subscription (§12).
-- **CI**: six more images — the sandbox agent image, the credential-proxy image, the dispatcher, the hello service, the
-  store, and the auth service — built and pushed alongside `themis-web` on `push:main`.
+- **CI**: more images (the sandbox worker image, the dispatcher, the hello service and the auth service) built and
+  pushed alongside `themis-web` on `push:main`.
 
 ## 11. Operations
 

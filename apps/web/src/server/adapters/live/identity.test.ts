@@ -71,7 +71,7 @@ describe("IapVerifier", () => {
     [
       "another service's audience",
       {
-        aud: "/projects/123456789/locations/australia-southeast1/services/themis-store",
+        aud: "/projects/123456789/locations/australia-southeast1/services/themis-sheaf",
       },
     ],
     ["another issuer", { iss: "https://accounts.google.com" }],

@@ -12,8 +12,8 @@ attempts are spent, the last ``grpc.RpcError`` propagates.
 author's calls. Put it under ``/workspace/scratch/``, which is never pushed, so it lasts as long as the session and no
 longer. The key is the rpc and the request together: the method path plus the request's type
 and contents. The rpc has to be in it, because a request type says nothing about which method received it — two rpcs
-on one request type would otherwise answer each other's calls, and ``store.proto`` already has two on
-``google.protobuf.Empty``.
+on one request type, such as two reads whose only input is the session (``google.protobuf.Empty``), would otherwise
+answer each other's calls.
 
 The cache holds itself to a fixed size, evicting its oldest entries, so an identical request can still miss. Nothing
 about it is allowed to cost a

@@ -4094,16 +4094,6 @@ sql-pool = [
     { name = "pg8000" },
     { name = "sqlalchemy" },
 ]
-store = [
-    { name = "google-auth" },
-    { name = "google-cloud-storage" },
-    { name = "grpcio" },
-    { name = "grpcio-health-checking" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation-grpc" },
-    { name = "protobuf" },
-    { name = "requests" },
-]
 telemetry = [
     { name = "google-auth" },
     { name = "opentelemetry-api" },
@@ -4450,16 +4440,6 @@ sql-pool = [
     { name = "opentelemetry-api" },
     { name = "pg8000" },
     { name = "sqlalchemy" },
-]
-store = [
-    { name = "google-auth" },
-    { name = "google-cloud-storage" },
-    { name = "grpcio" },
-    { name = "grpcio-health-checking" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation-grpc" },
-    { name = "protobuf" },
-    { name = "requests" },
 ]
 telemetry = [
     { name = "google-auth" },

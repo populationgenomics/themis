@@ -1,7 +1,7 @@
 """The guest's two doors to the Analysis repository: `git upload-pack` and `git receive-pack` over stream hatches.
 
 The repository the agent works in is a sheaf repository behind the Sheaf service, and the guest reaches it through
-stock git against a bare mirror at a host-only path (sheaf-changeover.md). Each hatch splices the guest's bytes to
+stock git against a bare mirror at a host-only path (sandbox-worker.md). Each hatch splices the guest's bytes to
 one fixed service — the socket is the capability, so a guest holding the fetch socket cannot push — and before
 handing a connection over the handler brings the mirror up to the store's current state, under one lock, so git's
 own fast-forward check does the rejecting in the common case and a refused pusher's `git pull` converges (the

@@ -4,9 +4,8 @@
 through the hatch, and how that set is declared), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)
 (the dispatcher, the credential model and the session lifecycle this execution model sits inside),
 [`sheaf.md`](sheaf.md) and [`sheaf-service.md`](sheaf-service.md) (the repository the workspace is, and the service the
-worker reaches it through), [`../plans/sheaf-changeover.md`](../plans/sheaf-changeover.md) (the switch from a tar
-workspace to that repository), [`../runbooks/self-hosted-sandbox.md`](../runbooks/self-hosted-sandbox.md) (operating
-it), [`services.md`](services.md) (the data-plane services it reaches)
+worker reaches it through), [`../runbooks/self-hosted-sandbox.md`](../runbooks/self-hosted-sandbox.md) (operating it),
+[`services.md`](services.md) (the data-plane services it reaches)
 
 ## Overview
 
@@ -27,11 +26,8 @@ that boundary: how a session's code is isolated, what it can reach, and how its 
   repository, served to the guest's own `git` from a bare mirror the worker keeps at a host-only path. The worker holds
   no bucket credential: its mirror reads and publishes through the `Sheaf` service, and the session token — the one
   credential it has for the repository — is what scopes every call. What the agent has not committed when the session
-  ends is gone, and it is told so.
-- **The working document is checkpointed when a sandboxed command returns, and once more on the way out** — not when a
-  turn ends, because the turn boundary is not observable from the worker. The document is a file in the repository like
-  any other; the checkpoint is a copy of it for the reader that still takes the document from the store rather than from
-  git.
+  ends is gone, and it is told so. The working document is a file in that repository like any other, and the worker
+  keeps no copy of it.
 
 ## Background
 
@@ -77,11 +73,10 @@ without an egress firewall or a load balancer.
 - **No general-purpose method on the hatch.** Nothing shaped like `fetch(url)` or `query(sql)`. An exposed rpc whose
   answer depends on the session — a Project's scope, a data cutoff — derives that server-side from the token the worker
   injected, never from an argument the guest chose; a general method would move that decision inside the sandbox.
-- **Neither the store nor the `Sheaf` service is agent-reachable.** The agent reaches its repository through stock `git`
-  against the worker's mirror, over two stream hatches that splice to one fixed git service each; the service behind the
-  mirror, and the store the working document is checkpointed to, are worker-only, and no hatch method reaches either. A
-  guest-facing store API, were one ever wanted, would have to be scoped and size-capped by design rather than being the
-  raw rpcs put on the allowlist.
+- **The `Sheaf` service is not agent-reachable.** The agent reaches its repository through stock `git` against the
+  worker's mirror, over two stream hatches that splice to one fixed git service each. The service behind the mirror is
+  worker-only, and no hatch method reaches it. A guest-facing storage API, were one ever wanted, would have to be scoped
+  and size-capped by design rather than being the raw rpcs put on the allowlist.
 - **The guest's egress is not filtered, because it has none.** This design expresses no allowlist of hosts or CIDRs and
   has nowhere to put one. Containment is the absence of a network, not a policy over one.
 - **File I/O is not sandboxed** — only arbitrary execution is (§"Only arbitrary execution is sandboxed").
@@ -109,7 +104,6 @@ flowchart TB
     end
 
     worker -->|"calls directly (no proxy)"| anthropic["Anthropic API"]
-    worker <-->|"checkpoint/restore the working document<br/>reference-closed accessor, direct"| store["themis-store<br/>(internal ingress)"]
     mirror <-->|"ReadRefDoc · FetchPack · Publish<br/>(session token, from a file the hook reads)"| sheaf["themis-sheaf<br/>(IAM-gated ingress)"]
     hatch -->|"forwards the allowlisted rpcs<br/>(session-token injected)"| upstreams["the agent-exposed services"]
 ```
@@ -202,11 +196,10 @@ teardown so a commit the agent made and forgot to push survives. The guest owns 
 holding the credentials. Two layers enforce that, and only one of them is live: a test over this package asserts that
 its every `git` is the guest's or the mirror's, which holds in any deploy; the structural layer — the guest owning
 `/workspace` under a mapped uid, so a host-side `git` there meets git's ownership check — is built and proven under test
-but off until the SDK's file tools hand each written file down to that uid
-([`../plans/sheaf-changeover.md`](../plans/sheaf-changeover.md) states the constraint, the obstacle and the choice). The
-worker makes no commits on the agent's behalf — its one commit seeds an empty repository with the ignore file — so what
-the agent has not committed when the session ends is gone; a commit it made and did not push is carried by the teardown
-push, and one the store refuses then is preserved under a stranded ref for a later session to merge.
+but off until the SDK's file tools hand each written file down to that uid (§"The ownership guard is built and switched
+off"). The worker makes no commits on the agent's behalf — its one commit seeds an empty repository with the ignore file
+— so what the agent has not committed when the session ends is gone; a commit it made and did not push is carried by the
+teardown push, and one the repository refuses then is preserved under a stranded ref for a later session to merge.
 
 The one host-side git is the mirror's: a bare repository at a path the guest is never bound to, which the guest's `git`
 reaches over two stream hatches — one splicing to `upload-pack`, one to `receive-pack`, so the socket is the capability
@@ -231,57 +224,70 @@ subprocess's environment or argument list, ever holds it. The client that implem
 [`themis.clients.sheaf.store`](../../themis/clients/sheaf/store.py); the mirror and the hook are
 [`themis.sheaf.wire`](../../themis/sheaf/wire).
 
-The working document is a file in the repository like any other, committed and pushed by the agent. The worker also
-checkpoints it to the store through the document rpc — a copy of the tree's file, read and written through postern's
-reference-closed accessor so a document the guest replaced with a symlink to the process environment is not followed out
-of the tree — for the BFF, which still reads document versions from the store's bucket. When the repository tracks the
-document, its copy is the one the session works on and the checkpoint follows it; the store's copy is written into the
-tree only when the clone left no document, as an untracked file for the agent to commit. The checkpoint hangs on the
-return of a sandboxed command — every `shell` call checkpoints when its command comes back — plus one final checkpoint
-after the session loop returns. The unit one would rather have is the turn, and it is not available: the end-of-turn
-idle event is consumed inside the SDK's loop, which arms its own idle clock on exactly that event while yielding us tool
-calls. Reading the boundary would take a *second* subscription to the session's event stream, with reconnection, history
-re-paging and de-duplication by event id, and the last command of a turn is strictly earlier than the boundary anyway.
+The working document is a file in the repository like any other, committed and pushed by the agent, and the worker keeps
+no copy of it. So an edit to the document is durable exactly when any other edit is: once the agent has committed it and
+a push has landed. The teardown push runs on the way out of a failed session loop and on the task's SIGTERM, so a commit
+the agent made and did not push survives both. An exit that gives the worker no chance to run it, such as an
+out-of-memory kill, loses what the agent changed after its last commit. The accepted cost, and why no second copy of the
+document is kept, is argued in [`workbench-workspace.md`](workbench-workspace.md) §"Where things are stored".
 
-What that cadence costs is the checkpoint's exposure. Between checkpoints an edit to the document exists only in the
-container, and the SDK's own file tools store nothing: an edit a `write` or `edit` call made after the session's last
-sandboxed command reaches the store only in the final checkpoint, and an ungraceful exit — an out-of-memory kill, a
-preemption, the task timeout — loses every edit since the last command returned. The per-tool deadline is the other exit
-no checkpoint survives: when it fires the SDK abandons the call, so the checkpoint that would have followed the command
-never runs. The sandboxed command's own timeout is set below the SDK's, so a command that is merely slow still returns
-in time — the gap is narrowed rather than closed. The repository has no such exposure: a commit is durable once pushed,
-and the teardown push runs on the way out of a failed session loop and on the task's SIGTERM.
+Two failure policies fall out of what the repository is worth:
 
-Three failure policies fall out of what each part of the workspace is worth:
-
-- **Restore is fail-closed, on both counts.** The repository is the deliverable, so a clone that fails fails the spawn;
-  an Analysis with no repository yet clones an empty one and seeds it with the ignore file. The document's checkpoint is
-  read regardless, and any store error other than a definite "not there yet" fails the spawn too: booting onto a blank
-  document and then serving a turn would mint a version over the curator's work.
-- **A store error while checkpointing fails the command that triggered it.** The command's own work may well have
-  succeeded and the model is told the call failed regardless — accepted, because a session that goes on advancing while
-  nothing reaches the store loses more than one misreported call costs.
+- **Restore is fail-closed.** The repository is the deliverable, so a clone that fails fails the spawn; an Analysis with
+  no repository yet clones an empty one and seeds it with the ignore file. A repository with no working document starts
+  without one, and the agent writes it.
 - **A refused push is the agent's to resolve, in git's own wording.** History is append-only, so a force-push or a
   deletion is refused; a push behind the tip is told to pull and push again. The service's size ceilings bound what one
   push may publish ([`sheaf-service.md`](sheaf-service.md), Deployment), since the bytes are whatever the guest pushed
   and nothing in a sheaf store is reclaimed.
 
-A document unchanged since its last write mints no new version, so a command that touched nothing does not inflate the
-history. The skills the SDK re-downloads each spawn sit in writable `/workspace`, reachable by guest code — harmless,
-since the guest already runs arbitrary code and they refresh every spawn — and are ignored by the repository and
+The skills the SDK re-downloads each spawn sit in writable `/workspace`, reachable by guest code. That is harmless,
+since the guest already runs arbitrary code and they refresh every spawn, and they are ignored by the repository and
 protected by the hook, so no stale copy is ever pushed or restored; a genuinely read-only mount would need postern to
 overlay a read-only bind *inside* the workspace.
 
+### The ownership guard is built and switched off
+
+The structural layer works through ownership. postern can map the guest to a dedicated host uid, so every file the guest
+creates is owned by a uid that owns nothing else on the host. Git refuses to operate on a repository owned by another
+user, and root is not exempt (`fatal: detected dubious ownership`). So a host-side `git` in `/workspace` fails, and the
+only override is a `safe.directory` entry that a reviewer would see.
+
+Everything the guard needs exists: the uid and gid on the sandbox profile, a socket directory the mapped uid can
+traverse, and tests that clone, commit and push from the dropped guest and then watch a host-side `git status` refuse
+the result. The deploy sets neither uid, so the guard is off in production, and the test over the worker package is the
+layer that holds.
+
+The obstacle is the same mechanism pointed the other way. Ownership makes a host-side `git` refuse the guest's
+repository, and it equally makes a file the worker wrote refuse the guest. The SDK's `write` and `edit` tools run in the
+trusted worker, so under the mapping they create files the worker owns, with mode 0644, in a `/workspace` that carries
+the sticky bit. The guest can neither rewrite such a file in place nor unlink and recreate it, so a `git checkout` or a
+`git pull --rebase` that has to update one fails. The mode and the sticky bit each block it on their own, so relaxing
+either one alone changes nothing.
+
+There are three ways out:
+
+- **Chown each written path down to the guest.** The file tools stay in the worker. After a successful `write` or
+  `edit`, the worker hands the file's ownership to the guest's uid. The change is contained to the worker, and the test
+  that records the cost as an expected failure then pins the fix. Everything else the SDK writes, such as the skills
+  download, stays read-only to the guest, which is what it should be.
+- **Run the file tools in the guest.** Ownership then holds by construction. But it reverses the premise that only
+  arbitrary execution is sandboxed (§"Only arbitrary execution is sandboxed"), and it needs guest-side implementations
+  of read, write, edit, glob and grep.
+- **Change what postern does with a mapped workspace**: no sticky bit, and group-writable under a shared gid. It touches
+  the dependency, and it weakens the protection the sticky bit gives where no uid is mapped.
+
+The first is the choice. Until it is built, the deploy stays unmapped.
+
 ### The session's release lands about a minute after its last turn
 
-The SDK's loop returns when the session terminates, or when its idle interval — a minute, by default — passes with no
-new event following an end-of-turn idle. The final checkpoint, and the teardown push of what the agent left unpushed,
-are therefore made roughly a minute after the turn they belong to. A session the harness recorded as settled at 07:58:20
-had its document in the bucket at 07:59:20.
+The SDK's loop returns when the session terminates, or when its idle interval, a minute by default, passes with no new
+event following an end-of-turn idle. The teardown push of what the agent left unpushed is therefore made roughly a
+minute after the turn it belongs to. In one measured session, the harness recorded the session as settled at 07:58:20,
+and the worker's teardown ran at 07:59:20.
 
-A reader of the store has to expect that lag. What is stored is current as of the session's last sandboxed command; the
-edits after it — the model's closing write to the working document, typically — arrive a minute after the conversation
-goes quiet.
+A reader of the repository has to expect that lag for commits the agent made and did not push. What the agent pushed
+itself is in the repository as soon as its push lands.
 
 ### Only arbitrary execution is sandboxed
 
@@ -307,13 +313,13 @@ The worker acks after `/workspace` restore succeeds and before serving. That ord
 that dies before restore stays unacked and correctly re-surfaces on a later drain, and a session that outlives the
 reclaim window is not reclaimed and re-dispatched underneath itself.
 
-A store's verdict at restore — the store or the `Sheaf` service refusing the session token, the document rpc failing for
-any reason but an outage, a repository whose document is corrupt — is terminal: a respawn would meet the same failure,
-so that item is acked to stop reclaim and stopped to end it. It is the only item the worker stops itself. A failure that
-is not a verdict — a guest command failing, a node-local fault, either service out of reach — leaves the item unacked to
-reclaim onto a fresh spawn, which may outlive the outage. Once the session loop is entered the SDK force-stops the item
-on every exit from it, shielded against cancellation, so a stop from the worker would only race that one and take a
-conflict response the SDK tolerates and we do not.
+The repository's verdict at restore is terminal: the `Sheaf` service refusing the session token, or a ref document that
+is corrupt or names a pack that is gone. A respawn would meet the same failure, so that item is acked to stop reclaim
+and stopped to end it. It is the only item the worker stops itself. A failure that is not a verdict, such as a guest
+command failing, a node-local fault or the service out of reach, leaves the item unacked to reclaim onto a fresh spawn,
+which may outlive the outage. Once the session loop is entered the SDK force-stops the item on every exit from it,
+shielded against cancellation, so a stop from the worker would only race that one and take a conflict response the SDK
+tolerates and we do not.
 
 The accepted limitation is on the other side of the ack: a worker death *after* the ack wedges the session. The item is
 out of the reclaimable set, and the dispatcher drains only on a run-started webhook, which an idle waiting for action
@@ -321,12 +327,12 @@ never re-fires — so nothing re-drains it (§Open questions).
 
 ### The design is verifiable offline
 
-The whole test suite runs without bubblewrap, against fakes at the narrowest seams: the store, and the SDK's event
-stream. The repository path is not faked at all: the tests run the real `Sheaf` servicer in-process over a local
-backend, the mirror over the real client, and a real `git` against the hatches' host-side sockets, so everything but the
-isolation is the production path. The properties only a real launch can prove — the boot gate passing, the guest having
-no network, the hatch socket being the one channel bound in, the host uid mapping — are gated on the host having
-bubblewrap, so they run in CI and skip on a developer's laptop rather than silently passing there.
+The whole test suite runs without bubblewrap, against a fake at the narrowest seam, the SDK's event stream. The
+repository path is not faked at all: the tests run the real `Sheaf` servicer in-process over a local backend, the mirror
+over the real client, and a real `git` against the hatches' host-side sockets, so everything but the isolation is the
+production path. The properties only a real launch can prove — the boot gate passing, the guest having no network, the
+hatch socket being the one channel bound in, the host uid mapping — are gated on the host having bubblewrap, so they run
+in CI and skip on a developer's laptop rather than silently passing there.
 
 ## Alternatives considered
 

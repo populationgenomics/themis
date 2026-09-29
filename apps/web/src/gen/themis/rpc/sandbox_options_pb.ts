@@ -53,8 +53,8 @@ export enum CallingAs {
   AGENT_SESSION = 2,
 
   /**
-   * The sandbox worker calling on its own behalf within a session — its checkpoints, its mirror — with
-   * the session token and an actor mark naming the worker. Admitted only when the session resolves.
+   * The sandbox worker calling on its own behalf within a session — its mirror's reads and publishes —
+   * with the session token and an actor mark naming the worker. Admitted only when the session resolves.
    *
    * @generated from enum value: CALLING_AS_WORKER_SESSION = 3;
    */

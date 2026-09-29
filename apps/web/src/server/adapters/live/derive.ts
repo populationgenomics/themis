@@ -6,7 +6,7 @@ import type { KmsConfig } from "./config";
 
 // Derive a session's per-session bearer by MAC-signing its id, byte-identical to
 // `themis/clients/auth/derive.py` (the dispatcher re-derives the same bearer at
-// spawn and the store resolves it, so the two implementations MUST agree):
+// spawn and auth resolves it, so the two implementations MUST agree):
 // `bearer = base64url_unpadded(HMAC_SHA256(key, session_id))` via a Cloud KMS MAC
 // key whose material never leaves KMS. We store only `sha256(bearer)`; the
 // plaintext bearer is handed to Anthropic and never persisted.

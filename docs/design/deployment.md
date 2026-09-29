@@ -173,11 +173,11 @@ stack-gated grant appears as if held. One graph of everything is a hairball, so 
 question. A rectangle is a principal — an account, a group, or anyone; a double-edged box is a Cloud Run service or job;
 a cylinder is a resource. A solid edge is a capability, labelled with its class. A dotted edge is what makes reach
 followable across hops: which account a workload runs as — anyone may call the dispatcher, the dispatcher may spawn the
-sandbox job, the job's account may call the store. One compression to keep in mind: the deploy account's single Platform
-edge stands for fourteen project roles — `run.admin` and `iam.serviceAccountUser` rewrite every service and run as every
-account, `secretmanager.admin` reads every secret, `cloudkms.admin` can grant it the session key, and bootstrap's
-`storage.admin` reaches every bucket — so every edge in all three graphs is within its reach, though none is drawn for
-it.
+sandbox job, the job's account may call the sheaf service. One compression to keep in mind: the deploy account's single
+Platform edge stands for fourteen project roles — `run.admin` and `iam.serviceAccountUser` rewrite every service and run
+as every account, `secretmanager.admin` reads every secret, `cloudkms.admin` can grant it the session key, and
+bootstrap's `storage.admin` reaches every bucket — so every edge in all three graphs is within its reach, though none is
+drawn for it.
 
 **Calls** — who may call what.
 

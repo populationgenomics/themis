@@ -133,12 +133,12 @@ The package name doubles as the Python import path, so the committed stubs under
 rewriting. A freshness gate fails CI when they drift from the `.proto`.
 
 **One `Request` in, one `Response` out** — literally proto's `rpc Method(Request) returns (Response)`. A method returns
-the domain resource when it maps to one (`ResolveSession → SessionContext`,
-`GetWorkingDocument → WorkingDocumentSnapshot`), else a named `<Op>Response` (`PutWorkspace → PutWorkspaceResponse`).
-Two carve-outs, both first-class in proto: a streaming payload is a `stream` of a chunk message (`PutWorkspace`
-client-streams, `GetWorkspace` server-streams `WorkspaceChunk`), and a read whose only input is the implicit session
-takes `google.protobuf.Empty` as its request message. The wire evolves additively (add a field, never renumber or remove
-— retire with a `reserved` statement), so a generated caller never breaks; `buf breaking` flags a violation.
+the domain resource when it maps to one (`ResolveSession → SessionContext`, `ReadRefDoc → RefDocSnapshot`), else a named
+`<Op>Response` (`Publish → PublishResponse`). Two carve-outs, both first-class in proto: a streaming payload is a
+`stream` of a chunk message (`FetchPack` server-streams `PackChunk`), and a read whose only input is the implicit
+session takes `google.protobuf.Empty` as its request message (`ReadRefDoc`). The wire evolves additively (add a field,
+never renumber or remove — retire with a `reserved` statement), so a generated caller never breaks; `buf breaking` flags
+a violation.
 
 ## The forced contract: the generated servicer base
 
@@ -167,10 +167,9 @@ rather than stalling the `grpc.aio` event loop:
   reason to turn. Half an interface offline against half live is a state nobody deploys on purpose and everybody
   debugging one has to rule out. One var per interface also keeps the vocabulary honest: a var whose adapter is one
   technology can name it (`gcs`, `cloudsql`), while one whose adapter composes several names the mode — `live` against
-  the real world, `fixture` against memory. `store` and `auth` are the outliers, `THEMIS_STORAGE_BACKEND` naming the
-  port and `THEMIS_BACKEND` naming nothing; rename them when something else takes you into those files, rather than
-  reading them as a second convention. The shared session resolver keeps its own image-wide selector,
-  [above](#one-deployment-several-interfaces).
+  the real world, `fixture` against memory. `auth` is the outlier, its `THEMIS_BACKEND` naming nothing; rename it when
+  something else takes you into those files, rather than reading it as a second convention. The shared session resolver
+  keeps its own image-wide selector, [above](#one-deployment-several-interfaces).
 - **Fixture backend** — in-memory, for tests and a first deploy. Seed it *explicitly* from the environment, as one JSON
   document per interface with a named section per port method, so the seed is as single a thing as the switch that
   selects it. The code never defaults to an empty or placeholder store: the caller (image, deploy, test) supplies the
@@ -226,24 +225,23 @@ Two consumers, different shapes — know which a service is for:
   the `agent_exposed` option on each rpc in the `.proto`, from which `regen` emits the hatch's allowlist
   ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)); absent the option, nothing.
 - **The platform, service-to-service** — `auth` (called by a service to resolve a session where an rpc's answer depends
-  on it), `store` (the sandbox worker checkpoints `/workspace` to it) and the `Sheaf` interface (the workspace
-  repository's storage protocol, served by a data-plane deployment that [`sheaf-service.md`](sheaf-service.md) leaves to
-  the deploy to name) are consumed this way, never by the agent. The caller holds its own SA identity and presents its
-  ID token: the generated stub over a channel built with `themis.clients.id_token`, wrapped for auth by
-  `themis.clients.auth`.
+  on it) and the `Sheaf` interface (the workspace repository's storage protocol, which the sandbox worker's mirror and
+  the web tier call; [`sheaf-service.md`](sheaf-service.md)) are consumed this way, never by the agent. The caller holds
+  its own SA identity and presents its ID token: the generated stub over a channel built with `themis.clients.id_token`,
+  wrapped for auth by `themis.clients.auth`.
 
 **Sandbox-reachability is an explicit wiring step, not a default.** An agent-facing service is reached *through the
 hatch*, so making it callable from the sandbox takes four things: the `agent_exposed` option on each rpc the agent may
 call, a forwarder on the hatch, its generated stub shipped into the guest's rootfs, and, at deploy time, the worker
 job's SA holding `run.invoker` on it — internal services are IAM-gated rather than open. Platform services carry no
-option: `auth` sits behind the store, reached only service-to-service, never by the sandbox. Decide which kind a service
-is before the deploy PR.
+option: `auth` sits behind the session-scoped services, reached only service-to-service, never by the sandbox. Decide
+which kind a service is before the deploy PR.
 
 Most analysis services are agent-facing; design their surface for the agent first.
 
 ## Calling another service (service-to-service): the generated stub
 
-A service that calls another — the store resolves a session token through auth — neither hand-rolls a channel nor
+A service that calls another — hello resolves a session token through auth — neither hand-rolls a channel nor
 re-declares the callee's shapes. It imports the callee's **generated stub** from `themis.rpc.<domain>` (the same package
 the server subclasses) and builds a channel with the shared credential primitive:
 
@@ -265,15 +263,14 @@ spend — and fails loud without one. An rpc whose answer depends on none of tho
 ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Don't rebuild the resolving —
 `themis.clients.auth` layers it on the generated auth stub:
 
-- **In the servicer** — resolve the session once, at the top of each method that takes one. The store's document
-  operations are scoped by the Analysis, so every one of them does:
+- **In the servicer** — resolve the session once, at the top of each method that takes one. Hello's one rpc answers with
+  the Analysis the session is bound to, so it does:
   ```python
   self._session_resolver = session_resolver(auth_url)   # or a fixture SessionResolver in tests
 
-  async def PutWorkingDocument(self, request, context):
+  async def SayHello(self, request, context):
       session = await require_session(context, self._session_resolver)   # the binding, else aborts the RPC
-      version = await self._storage.put_working_document(session.analysis_id, request.markdown)
-      return store_pb2.PutWorkingDocumentResponse(version=version)
+      return hello_pb2.SayHelloResponse(greeting=f'hello from analysis {session.analysis_id}: {request.note}')
   ```
   `require_session` reads the `x-themis-session-token` metadata (the bearer never surfaces as a message field), resolves
   it, and `context.abort`s `UNAUTHENTICATED` on a missing token or `PERMISSION_DENIED` on one that does not resolve. It
@@ -288,7 +285,7 @@ spend — and fails loud without one. An rpc whose answer depends on none of tho
   timeout, an IAM misconfiguration) propagates rather than passing for a bad token; `require_session` is the servicer
   guard. Include the `session` dependency group.
 
-The store is the worked example.
+`hello` is the worked example.
 
 ## Wiring into the repo
 

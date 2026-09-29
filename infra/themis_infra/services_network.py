@@ -1,6 +1,6 @@
 """The internal data-plane services' shared egress VPC (docs/design/services.md).
 
-The internal services (store, hello, and the genomics/compute services to come) resolve every request's
+The internal services (hello, sheaf, evidence, and the genomics/compute services to come) resolve every request's
 session through the auth service, which is internal-ingress. A Cloud Run service egresses to the public
 internet by default, so a caller with no VPC attachment reaches auth's public front end and is rejected
 before IAM — internal ingress admits only traffic that arrives over a same-project VPC. This module

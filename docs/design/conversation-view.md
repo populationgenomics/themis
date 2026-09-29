@@ -124,7 +124,7 @@ What a tool row and a replacement look like inside the stream — the label, the
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Anthropic's session event log | The conversation itself: every curator turn, narration, tool call, result and sub-agent thread. That log *is* the transcript; the BFF relays it and keeps no copy.                                                                                                                                                         |
 | Postgres, the Analysis row    | Which session the Analysis runs in, which Project gates access to it, and the scenario inputs. Written once at create. Every method here reads the row — for the access check and the session id — but none reads the inputs: those are read at create, to render the kickoff, and by the surfaces that name the Analysis. |
-| GCS                           | Nothing for this surface. The working document lives in a bucket and a tick carries its version number, but the document itself is the document pane's.                                                                                                                                                                    |
+| GCS                           | Nothing for this surface. The working document lives in the Analysis repository in sheaf's bucket, and a tick carries its branch tip, but the document itself is the document pane's.                                                                                                                                      |
 
 Two things follow from the first row. A durable copy of a conversation would be the session-mirroring work rather than
 anything this surface does ([`analysis-scenarios.md`](analysis-scenarios.md) §"The kickoff text is rendered, not
@@ -142,7 +142,7 @@ hops. Every one of them is a `POST` carrying the request message as its body ([`
 **Trigger.** A tick of the region's polling loop, every few seconds while the Analysis page is open.
 
 **In response.** The BFF reads the Analysis row, lists the session's events, and returns the whole projected stream plus
-the working document's version number where one has been produced. Nothing is written.
+the tip of the working document's branch, read from the repository's ref document. Nothing is written.
 
 ```mermaid
 sequenceDiagram

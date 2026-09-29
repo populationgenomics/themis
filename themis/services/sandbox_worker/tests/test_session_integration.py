@@ -2,8 +2,8 @@
 
 Exercises the isolation properties that only a real bwrap launch can prove: the boot gate passes here, the guest has
 no network, and the hatch UDS is the one channel bound in. The typed hatch round-trip and its ``PERMISSION_DENIED`` on
-a non-allowlisted method are postern's own e2e (``tests/test_hatch_e2e.py``); the store forwarder's token injection is
-``test_hatch.py``. This test's unique value is that all of it holds together on the target platform.
+a non-allowlisted method are postern's own e2e (``tests/test_hatch_e2e.py``); the forwarders' session-token injection
+is ``test_hatch.py``. This test's unique value is that all of it holds together on the target platform.
 """
 
 from __future__ import annotations

@@ -260,7 +260,7 @@ def _twin(greeting: str) -> grpc.RpcMethodHandler:
 
 @contextlib.contextmanager
 def _serving_twins() -> Iterator[tuple[grpc.UnaryUnaryMultiCallable, grpc.UnaryUnaryMultiCallable]]:
-    """Two unary rpcs on one request type — the shape `store.proto` already has on `google.protobuf.Empty`."""
+    """Two unary rpcs on one request type, as two session-only reads on `google.protobuf.Empty` would be."""
     server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=2))
     server.add_generic_rpc_handlers(
         (grpc.method_handlers_generic_handler(_TWIN_SERVICE, {'First': _twin('first'), 'Second': _twin('second')}),)

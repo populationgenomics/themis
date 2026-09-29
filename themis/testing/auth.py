@@ -48,7 +48,7 @@ def claim(calling_as: sandbox_options_pb2.CallingAs, session_token: str) -> Meta
 AGENT: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, _GOOD))
 AGENT_BAD_SESSION: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, _BAD))
 AGENT_OUTAGE: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, _OUTAGE))
-# The worker calling as itself within the session — its own checkpoints and mirror traffic.
+# The worker calling as itself within the session — its mirror's traffic to sheaf.
 WORKER: Metadata = (*SANDBOX_JOB, *claim(sandbox_options_pb2.CALLING_AS_WORKER_SESSION, _GOOD))
 # A caller calling as itself that presents a session anyway: resolved for attribution, admitting nothing.
 CLU_WITH_SESSION: Metadata = (*CLU, *claim(sandbox_options_pb2.CALLING_AS_SELF, _GOOD))

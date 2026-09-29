@@ -3,7 +3,7 @@
 Each forwarding servicer runs in the trusted worker process (sandbox-worker.md §"The hatch is the capability
 boundary"): it injects the per-session token and forwards an allowlisted call to the real service, so the guest
 never holds a credential and never names an upstream. The hatch server is synchronous (postern's ``grpc.server``),
-so the forward stubs dial over synchronous channels — distinct from the worker's own async checkpoint channel.
+so the forward stubs dial over synchronous channels.
 """
 
 from __future__ import annotations

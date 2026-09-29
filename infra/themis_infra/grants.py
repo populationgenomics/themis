@@ -271,7 +271,7 @@ class SessionBearerDeriver(_Capability):
     """May MAC-sign with the session-token key, and so derive the bearer of any live session.
 
     A session's bearer is `HMAC(key, session_id)`; with this and a session id the holder acts as that
-    session against every session-scoped service — the store, hello, the sheaf service — for as long as
+    session against every session-scoped service — hello, evidence, the sheaf service — for as long as
     the session lives. The key material never leaves KMS, so the holder cannot take the key itself, but
     every session, past and present, is derivable while the grant stands. The holders are the
     credential's blast radius (`docs/plans/self-hosted-sandbox.md` §7).
@@ -760,7 +760,7 @@ class DataflowWorker(_Capability):
     """May run as a Dataflow worker in the project: claim work items and report status for any job there.
 
     Project-wide, since the role has no per-job scope — and the role carries more than Dataflow: it reads
-    and creates objects in every bucket in the project (the store's session data included) and deletes
+    and creates objects in every bucket in the project (the workspace repositories included) and deletes
     any VM. A worker identity holding it has that reach whatever its bucket-scoped grants say.
     """
 

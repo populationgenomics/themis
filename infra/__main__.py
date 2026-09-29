@@ -36,14 +36,12 @@ from themis_infra import (
     sheaf,
     sql,
     storage,
-    store,
     web,
 )
 
 _CONVERT_WORKER_IMAGE_ENV = 'THEMIS_CONVERT_WORKER_IMAGE'
 _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
-_STORE_IMAGE_ENV = 'THEMIS_STORE_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
 _GENE_DISEASE_REFRESH_IMAGE_ENV = 'THEMIS_GENE_DISEASE_REFRESH_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
@@ -201,15 +199,6 @@ services_net = services_network.ServicesNetwork(
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-store_service = store.StoreService(
-    project=project,
-    region=region,
-    image=_image(_STORE_IMAGE_ENV, lambda: _live_service_image('themis-store')),
-    auth_url=auth_service.url,
-    vpc_network=services_net.network.id,
-    vpc_subnetwork=services_net.subnetwork.id,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
-)
 hello_service = hello.HelloService(
     project=project,
     region=region,
@@ -315,7 +304,6 @@ grants.AccountUser(
 )
 # The data-plane services resolve session tokens through auth (§7).
 for label, invoker_sa_email in (
-    ('store', store_service.service_account_email),
     ('hello', hello_service.service_account_email),
     ('evidence', evidence_service.service_account_email),
     ('sheaf', sheaf_service.service_account_email),
@@ -454,7 +442,7 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     trace_sample_ratio=trace_sample_ratio,
-    opts=pulumi.ResourceOptions(depends_on=[base, database, store_service, sheaf_service]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
 # anything programmatic impersonates.
@@ -560,7 +548,7 @@ ingestion = ingest.IngestionRuntime(
 )
 # Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
 # (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
-# internal load balancer — the guest has zero network, and the trusted worker reaches the internal store
+# internal load balancer — the guest has zero network, and the trusted worker reaches the internal services
 # over Direct VPC egress. (The session-token KMS key is the shared substrate created above.)
 anthropic_environment_key_secret = sandbox.environment_key_secret(
     project=project,
@@ -580,21 +568,16 @@ sandbox_job = sandbox.SandboxJob(
     worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
     network=services_net.network.id,
     subnetwork=services_net.subnetwork.id,
-    store_url=store_service.url,
     hello_url=hello_service.url,
     evidence_url=evidence_service.url,
     sheaf_url=sheaf_service.url,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
-    opts=pulumi.ResourceOptions(
-        depends_on=[base, services_net, store_service, hello_service, evidence_service, sheaf_service]
-    ),
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net, hello_service, evidence_service, sheaf_service]),
 )
-# The job SA invokes the services the worker reaches: the store it checkpoints the working document to, the sheaf
-# service its mirror of the Analysis repository hydrates from and publishes to, and the hatch's forward targets.
-# Every one is session-scoped, so the binding is inert without the worker-held session token (§7); the job holds
-# nothing on the sheaf bucket.
+# The job SA invokes the services the worker reaches: the sheaf service its mirror of the Analysis repository
+# hydrates from and publishes to, and the hatch's forward targets. Every one is session-scoped, so the binding is
+# inert without the worker-held session token (§7); the job holds nothing on the sheaf bucket.
 for label, invoke_target in (
-    ('store', store_service.service_name),
     ('sheaf', sheaf_service.service_name),
     ('hello', hello_service.service_name),
     ('evidence', evidence_service.service_name),
@@ -710,10 +693,6 @@ pulumi.export('sql_database', database.database_name)
 pulumi.export('migrator_db_user', migrator_db_user.name)
 pulumi.export('auth_url', auth_service.url)
 pulumi.export('auth_sa_email', auth_service.service_account_email)
-pulumi.export('store_url', store_service.url)
-pulumi.export('store_sa_email', store_service.service_account_email)
-pulumi.export('store_working_document_bucket', store_service.working_document_bucket)
-pulumi.export('store_workspace_bucket', store_service.workspace_bucket)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('sheaf_url', sheaf_service.url)

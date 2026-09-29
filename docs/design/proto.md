@@ -101,7 +101,7 @@ generated-code-is-committed policy buys that.
 
 ```
 schema/proto/                     # hand-authored .proto — the source of truth
-  themis/rpc/                     # internal gRPC service contracts (auth, store, hello)
+  themis/rpc/                     # internal gRPC service contracts (auth, hello, sheaf, the evidence interfaces)
   themis/evidence/models/         # the value types and routing vocabularies the interfaces share
   themis/svcv4/models/            # the framework's own output vocabulary (the class ladder)
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes

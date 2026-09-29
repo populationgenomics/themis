@@ -3,7 +3,7 @@
 That is `Sandbox.run`, whose argv runs in the guest, and the mirror's `BareRepo.git` plus the `git upload-pack` /
 `receive-pack` a hatch verdict names. The guest owns `/workspace`, `.git` included, so a `git` the trusted worker
 ran there would execute whatever `core.hooksPath` or a clean filter pointed at, in the process holding the
-credential (sheaf-changeover.md). The structural guard is the host uid mapping, which the deploy may or may not
+credential (sandbox-worker.md). The structural guard is the host uid mapping, which the deploy may or may not
 enable; this scan is the tripwire that holds regardless — for the shapes a reviewer would otherwise have to spot,
 not for code written to evade it.
 """

@@ -24,8 +24,8 @@ enum CallingAs {
   // The sandbox worker forwarding a call from the guest: the session token the hatch injects, and an
   // actor mark naming the agent. Admitted only when the session resolves.
   CALLING_AS_AGENT_SESSION = 2;
-  // The sandbox worker calling on its own behalf within a session — its checkpoints, its mirror — with
-  // the session token and an actor mark naming the worker. Admitted only when the session resolves.
+  // The sandbox worker calling on its own behalf within a session — its mirror's reads and publishes —
+  // with the session token and an actor mark naming the worker. Admitted only when the session resolves.
   CALLING_AS_WORKER_SESSION = 3;
 }
 

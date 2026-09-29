@@ -1,6 +1,6 @@
-// The `auth` service: session-token resolution (docs/plans/self-hosted-sandbox.md §7). The store
-// forwards a sandbox's per-session token; the auth service — the sole reader of the token store —
-// resolves it to the Project + Analysis it grants access to. This proto is the source of truth (the
+// The `auth` service: session-token resolution (docs/plans/self-hosted-sandbox.md §7). A data-plane
+// service forwards the per-session token a call carries; the auth service — the sole reader of the
+// token store — resolves it to the Project + Analysis it grants access to. This proto is the source of truth (the
 // contract); `regen` (buf generate) emits the themis/rpc/auth stubs each consumer imports — the server
 // subclasses the servicer base, a caller uses the stub.
 

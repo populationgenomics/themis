@@ -124,11 +124,11 @@ session, and on whose behalf the account is calling, the account itself states, 
 what it is *calling as*, and the session token when that names a session. The claim is trusted rather than verified,
 because the account is trusted to make it; what is checked is only that the account has a member for what it claims. A
 call carrying no claim calls as itself. The sandbox job's account is why the claim exists: one account forwards the
-guest's calls, claiming the agent's session, and makes the worker's own calls — its checkpoints, its mirror — claiming
-the worker's; the same verified caller, two principals, told apart by what it says it is doing. The binding is a proto
-because it is what a resolution rpc returns; the person will join as a fourth fact, for the same reason, once the
-approval flow defines it. The context is a frozen dataclass, so an absent binding can be absent — the reason is under
-Alternatives.
+guest's calls, claiming the agent's session, and makes the worker's own calls — its mirror's reads and publishes —
+claiming the worker's; the same verified caller, two principals, told apart by what it says it is doing. The binding is
+a proto because it is what a resolution rpc returns; the person will join as a fourth fact, for the same reason, once
+the approval flow defines it. The context is a frozen dataclass, so an absent binding can be absent — the reason is
+under Alternatives.
 
 ```python
 @dataclasses.dataclass(frozen=True)
@@ -241,8 +241,7 @@ asyncio client records a write that fails after the call has completed as `INTER
 holds ([grpc/grpc#36066](https://github.com/grpc/grpc/issues/36066) describes the mechanism; it is filed against
 bidirectional streams, and measurements here reproduce it on stream-in; the fix is
 [grpc/grpc#43486](https://github.com/grpc/grpc/pull/43486)). So a stream-in rpc's client is the synchronous one until a
-grpcio release carries that fix — a constraint on any caller, including a worker that would checkpoint over the asyncio
-channel it already holds to the store.
+grpcio release carries that fix, a constraint on any caller.
 
 ### The binding names an Analysis, not a session
 

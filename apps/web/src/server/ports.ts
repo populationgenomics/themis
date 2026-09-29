@@ -109,9 +109,9 @@ export interface ContentObject {
 
 /** Serves a stored object to the browser. The live implementation signs a short-lived V4 read URL and
  *  answers a `302` (the bytes then flow browser↔GCS, never through the BFF); the fixture streams the
- *  seeded bytes with the egress headers. One reusable primitive across content surfaces (the
- *  literature corpus, per-tenant working documents): each surface resolves its own objects — bounding
- *  which bucket it trusts — and hands them here. */
+ *  seeded bytes with the egress headers. A reusable primitive, today serving the literature corpus:
+ *  each content surface resolves its own objects — bounding which bucket it trusts — and hands them
+ *  here. */
 export interface ContentPort {
   serve(object: ContentObject): Promise<Response>;
 }

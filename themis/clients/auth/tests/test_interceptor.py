@@ -1,7 +1,7 @@
 """The interceptor as served: every path gated, the caller verified, its claim read, the rule derived and applied.
 
 Driven over a real in-process ``grpc.aio`` server with generic handlers registered at real contract
-paths — the literature rpcs and a store rpc, whose options the contracts declare — plus a path no
+paths — the literature rpcs and a sheaf rpc, whose options the contracts declare — plus a path no
 contract declares, and the health check.
 """
 
@@ -20,12 +20,12 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from themis.clients.auth import claim as claim_mod
 from themis.clients.auth import context as auth_context
 from themis.clients.auth import interceptor as interceptor_mod
-from themis.rpc import literature_pb2, sandbox_options_pb2, store_pb2
+from themis.rpc import literature_pb2, sandbox_options_pb2, sheaf_pb2
 from themis.testing import auth as fixture
 from themis.testing import in_process_grpc
 
 _LITERATURE = 'themis.rpc.literature.Literature'
-_STORE = store_pb2.DESCRIPTOR.services_by_name['Store'].full_name  # imported here: the rule is read off the pool
+_SHEAF = sheaf_pb2.DESCRIPTOR.services_by_name['Sheaf'].full_name  # imported here: the rule is read off the pool
 _NOWHERE = 'themis.rpc.nowhere.Nothing'
 
 Metadata = fixture.Metadata
@@ -77,7 +77,7 @@ def _register(seen: _Seen) -> Callable[[grpc.aio.Server], None]:
                         'MaybeIngestPapers': (literature_pb2.MaybeIngestPapersRequest.FromString, _serialize),
                     },
                 ),
-                passthrough(_STORE, {'GetWorkingDocument': (empty_pb2.Empty.FromString, _serialize)}),
+                passthrough(_SHEAF, {'ReadRefDoc': (empty_pb2.Empty.FromString, _serialize)}),
                 passthrough(_NOWHERE, {'Call': (empty_pb2.Empty.FromString, _serialize)}),
             )
         )
@@ -123,12 +123,12 @@ def test_a_self_acting_caller_reaches_its_rpc_with_no_claim_at_all() -> None:
 
 def test_the_worker_s_claim_reaches_the_host_only_rpc_and_not_the_agent_s() -> None:
     # One account, two principals: the claim decides which member the call is.
-    code, auth = _call(f'/{_STORE}/GetWorkingDocument', fixture.WORKER)
+    code, auth = _call(f'/{_SHEAF}/ReadRefDoc', fixture.WORKER)
     assert code is grpc.StatusCode.OK
     assert auth == auth_context.AuthContext(
         caller=fixture.SANDBOX_JOB_EMAIL, calling_as=_WORKER_SESSION, session=fixture.SESSION
     )
-    code, auth = _call(f'/{_STORE}/GetWorkingDocument', fixture.AGENT)
+    code, auth = _call(f'/{_SHEAF}/ReadRefDoc', fixture.AGENT)
     assert code is grpc.StatusCode.PERMISSION_DENIED
     assert auth is None
     code, auth = _call(f'/{_LITERATURE}/GetMarkdown', fixture.WORKER)
@@ -213,8 +213,8 @@ def test_a_path_no_contract_declares_is_refused_even_to_the_developer(metadata: 
     assert auth is None
 
 
-def test_the_developer_identity_reaches_an_rpc_that_names_only_the_worker() -> None:
-    code, auth = _call(f'/{_STORE}/GetWorkingDocument', fixture.CLU)
+def test_the_developer_identity_reaches_a_host_only_rpc_that_does_not_name_it() -> None:
+    code, auth = _call(f'/{_SHEAF}/ReadRefDoc', fixture.CLU)
     assert code is grpc.StatusCode.OK
     assert auth == auth_context.AuthContext(caller=fixture.CLU_EMAIL, calling_as=_SELF, session=None)
 

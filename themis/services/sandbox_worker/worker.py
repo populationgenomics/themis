@@ -2,17 +2,16 @@
 
 One trusted process per Job execution. The dispatcher claims a work item and injects its per-execution env
 (``ANTHROPIC_WORK_ID`` / ``_ENVIRONMENT_ID`` / ``_SESSION_ID`` / ``_ENVIRONMENT_KEY``, plus the minted
-``THEMIS_SESSION_TOKEN``); the deploy supplies the service URLs (``THEMIS_STORE_URL`` / ``_HELLO_URL`` /
-``_EVIDENCE_URL`` / ``_SHEAF_URL``) and, optionally, the uid and gid bwrap runs as (``THEMIS_SANDBOX_HOST_UID`` /
+``THEMIS_SESSION_TOKEN``); the deploy supplies the service URLs (``THEMIS_HELLO_URL`` / ``_EVIDENCE_URL`` /
+``_SHEAF_URL``) and, optionally, the uid and gid bwrap runs as (``THEMIS_SANDBOX_HOST_UID`` /
 ``_GID``, both or neither). The worker:
 
 1. ``Sandbox.verify()`` — a fail-closed boot gate: refuse to serve unless isolation is actually enforced here
    (empty netns, userns created, non-root guest, seccomp/arch covered). Off-platform (no bubblewrap) this raises,
    so the worker never runs model code unsandboxed.
-2. Restore ``/workspace``: a guest-side ``git clone`` of the Analysis repository over the hatch, then the working
-   document from the store where the repository has none. Both fail-closed. The repository is reached through the
-   Sheaf service, which scopes every call by the session token the worker presents — the worker holds no bucket
-   credential and never learns the Analysis id.
+2. Restore ``/workspace``: a guest-side ``git clone`` of the Analysis repository over the hatch, fail-closed. The
+   repository is reached through the Sheaf service, which scopes every call by the session token the worker
+   presents — the worker holds no bucket credential and never learns the Analysis id.
 3. Ack the work item, restore proven — this moves it out of the dispatcher's reclaimable set
    (``reclaim_older_than_ms``), so a session running longer than that window is not reclaimed and
    re-dispatched mid-flight. A spawn that dies before restore stays unacked and re-surfaces.
@@ -20,8 +19,8 @@ One trusted process per Job execution. The dispatcher claims a work item and inj
    ``agent_toolset_20260401`` file tools (read/write/edit/glob/grep), which the SDK confines to ``workdir``
    (=/workspace) and so run in the trusted worker, plus ``shell`` — the sandboxed replacement for ``bash``
    that marshals every command into the guest behind the hello/evidence-forwarding hatch.
-5. Checkpoint the working document, push every branch the agent committed and left unpushed, and exit (one
-   execution per spawn — scale-to-zero preserved).
+5. Push every branch the agent committed and left unpushed, and exit (one execution per spawn — scale-to-zero
+   preserved).
 
 The session token reaches the mirror's pre-receive hook by a file under the mirror's host-only root (`_mirror`), named
 by path in the sync state the hook reads; the git processes that read guest bytes — the hatches' `upload-pack` and
@@ -50,7 +49,6 @@ from collections.abc import Coroutine, Iterator, Sequence
 
 import anthropic
 import grpc
-import grpc.aio
 import postern
 from anthropic.lib import environments
 from anthropic.lib.tools import agent_toolset
@@ -60,7 +58,7 @@ from themis.clients import id_token
 from themis.clients.sheaf import store as remote_mod
 from themis.clients.work_queue import client as work_queue_mod
 from themis.rpc import sandbox_options_pb2
-from themis.services.sandbox_worker import git_hatches, guest_git, store_client
+from themis.services.sandbox_worker import git_hatches, guest_git
 from themis.services.sandbox_worker import hatch as hatch_mod
 from themis.services.sandbox_worker import sync as sync_mod
 from themis.services.sandbox_worker import tool as tool_mod
@@ -86,10 +84,8 @@ _HOST_GID_ENV = 'THEMIS_SANDBOX_HOST_GID'
 # lines only, since which repository a call reaches is the session token's to decide.
 _TOKEN_FILE = 'session-token.json'  # noqa: S105 — the file's name, not a token
 _REPOSITORY = 'workspace'
-# The Sheaf service's verdicts on the session token itself; every other status it answers is a fault. The document rpc
-# has no retry policy, so its outages are named directly.
+# The Sheaf service's verdicts on the session token itself; every other status it answers is a fault.
 _TOKEN_REFUSED = frozenset({'PERMISSION_DENIED', 'UNAUTHENTICATED'})
-_OUTAGE = frozenset({grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED})
 _logger = logging.getLogger(__name__)
 
 
@@ -198,17 +194,14 @@ def _mirror(sheaf_url: str, session_token: str) -> Iterator[bare.BareRepo]:
 
 
 def _is_verdict(exc: Exception) -> bool:
-    """Whether a restore error is a store's verdict a respawn would meet again, rather than a fault it might not.
+    """Whether a restore error is the repository's verdict a respawn would meet again, rather than a fault it might not.
 
-    A verdict: the store or the Sheaf service refusing the session token, or answering the document rpc with
-    anything but an outage; a ref document that is corrupt or names a pack that is gone. A fault: either
-    service out of reach or out of time, or a token file this worker wrote and cannot read back — the next
-    spawn writes its own.
+    A verdict: the Sheaf service refusing the session token; a ref document that is corrupt or names a pack
+    that is gone. A fault: the service out of reach or out of time, or a token file this worker wrote and
+    cannot read back — the next spawn writes its own.
     """
     if isinstance(exc, sheaf.ServiceFault):
         return exc.code in _TOKEN_REFUSED
-    if isinstance(exc, grpc.aio.AioRpcError):
-        return exc.code() not in _OUTAGE
     if isinstance(exc, sheaf.CredentialsUnusable):
         return False
     return isinstance(exc, sheaf.SheafError)
@@ -217,12 +210,12 @@ def _is_verdict(exc: Exception) -> bool:
 async def _restore_or_fail_item(
     workspace_sync: sync_mod.WorkspaceSync, work_queue: work_queue_mod.WorkQueue, work_id: str
 ) -> bool:
-    """Restore ``/workspace``, then ack the work item; on a store verdict, ack + stop it instead.
+    """Restore ``/workspace``, then ack the work item; on a verdict, ack + stop it instead.
 
     The ack is deferred until restore proves: acking moves the item out of the dispatcher's reclaimable set
     (``reclaim_older_than_ms``), so a session outliving that window is not reclaimed and re-dispatched
-    mid-flight, while a spawn that dies before restore stays unacked and correctly re-surfaces. A store
-    verdict (`_is_verdict`) is terminal: a respawn would hit the same failure, so the item is acked to stop
+    mid-flight, while a spawn that dies before restore stays unacked and correctly re-surfaces. A verdict
+    (`_is_verdict`) is terminal: a respawn would hit the same failure, so the item is acked to stop
     reclaim and stopped to end it, rather than left to loop. Anything else — a guest git failure, a local disk
     write, the service out of reach — is not terminal: it propagates, leaving the item unacked so reclaim
     retries it on a fresh spawn, which can clear a node-local fault or outlive an outage.
@@ -250,7 +243,6 @@ async def _restore_or_fail_item(
 async def _serve() -> None:
     session_token = _require('THEMIS_SESSION_TOKEN')
     environment_key = _require('ANTHROPIC_ENVIRONMENT_KEY')
-    store_url = _require('THEMIS_STORE_URL')
     hello_url = _require('THEMIS_HELLO_URL')
     evidence_url = _require('THEMIS_EVIDENCE_URL')
     sheaf_url = _require('THEMIS_SHEAF_URL')
@@ -268,18 +260,14 @@ async def _serve() -> None:
         raise SystemExit(f'isolation self-test failed, refusing to serve: {exc}') from exc
     _logger.info('isolation verified; serving session %s (work %s)', session_id, work_id)
 
-    store_credentials = id_token.channel_credentials(store_url)
     hello_credentials = id_token.channel_credentials(hello_url)
     evidence_credentials = id_token.channel_credentials(evidence_url)
-    # The worker's own async channel drives the document checkpoint/restore. The hatch runs a synchronous
-    # grpc.server, so its forwarders dial over synchronous channels, as does the mirror's store.
-    async with (
-        anthropic.AsyncAnthropic(
-            auth_token=environment_key,
-            default_headers={'anthropic-beta': environments.MANAGED_AGENTS_BETA},
-        ) as client,
-        grpc.aio.secure_channel(_grpc_target(store_url), store_credentials) as async_store,
-    ):
+    # The hatch runs a synchronous grpc.server, so its forwarders dial over synchronous channels, as does the
+    # mirror's store.
+    async with anthropic.AsyncAnthropic(
+        auth_token=environment_key,
+        default_headers={'anthropic-beta': environments.MANAGED_AGENTS_BETA},
+    ) as client:
         work_queue = work_queue_mod.AnthropicWorkQueue(client, environment_id=environment_id)
         hello_sync = grpc.secure_channel(_grpc_target(hello_url), hello_credentials)
         evidence_sync = grpc.secure_channel(_grpc_target(evidence_url), evidence_credentials)
@@ -303,16 +291,11 @@ async def _serve() -> None:
                 hydrate_timeout=_HYDRATE_TIMEOUT_S,
                 teardown_timeout=_TEARDOWN_TIMEOUT_S,
             )
-            accessor = sandbox.accessor()
-            workspace_sync = sync_mod.WorkspaceSync(
-                store_client.GrpcStore(async_store, session_token=session_token),
-                accessor=accessor,
-                repository=repository,
-            )
+            workspace_sync = sync_mod.WorkspaceSync(workspace=sandbox.workspace, repository=repository)
             try:
                 if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
                     return
-                shell = tool_mod.make_shell(sandbox, workspace_sync)
+                shell = tool_mod.make_shell(sandbox)
                 worker = environments.EnvironmentWorker(
                     client, tools=lambda ctx: _tools_for_session(ctx, shell), workdir=sandbox.workspace
                 )
@@ -326,13 +309,12 @@ async def _serve() -> None:
                         _logger.exception('teardown after a failed session loop failed too')
                     raise
                 await _to_completion(workspace_sync.teardown(session_id))
-                _logger.info('session %s complete; document checkpointed and branches pushed', session_id)
+                _logger.info('session %s complete; branches pushed', session_id)
             finally:
                 hatch.close()
                 hatches.close()
                 hello_sync.close()
                 evidence_sync.close()
-                accessor.close()
                 sandbox.close()
                 shutil.rmtree(socket_dir, ignore_errors=True)
 

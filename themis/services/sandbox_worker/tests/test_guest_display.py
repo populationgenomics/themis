@@ -20,7 +20,7 @@ from collections.abc import Callable
 import pytest
 from google.protobuf import any_pb2, descriptor, descriptor_pb2, descriptor_pool, message, message_factory, struct_pb2
 
-from themis.rpc import clinvar_pb2, cspec_pb2, gene_disease_pb2, gnomad_pb2, literature_pb2, store_pb2
+from themis.rpc import clinvar_pb2, cspec_pb2, gene_disease_pb2, gnomad_pb2, literature_pb2, sheaf_pb2
 from themis.services.sandbox_worker.guest import display
 
 
@@ -511,7 +511,7 @@ def test_a_budget_the_message_name_alone_exhausts_is_rejected() -> None:
 
 
 def test_a_long_bytes_field_is_replaced_by_a_bytes_marker() -> None:
-    chunk = store_pb2.WorkspaceChunk(content=b'\x00' * 400_000)
+    chunk = sheaf_pb2.PackChunk(content=b'\x00' * 400_000)
     rendered = display.render(chunk)
     assert '400000 bytes' in rendered
     assert len(rendered) <= display.DEFAULT_MAX_CHARS

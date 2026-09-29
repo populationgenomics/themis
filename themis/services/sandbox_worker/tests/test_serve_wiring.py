@@ -1,10 +1,10 @@
 """`_serve` orchestration ordering, with every collaborator faked.
 
 Asserts the sequence the worker must hold regardless of the SDK internals: verify the sandbox (fail-closed boot gate)
-→ restore ``/workspace`` → ack the work item (restore proven) → serve the session → teardown (document checkpoint and
-push) → clean up; that a store verdict at restore — the Sheaf service's included — acks + stops the item terminally
-instead of serving; and that the mirror runs over a `RemoteStore` whose token file is the worker's alone. The dispatch
-mechanics are covered in ``test_session_dispatch.py``; here only the wiring order and cleanup matter.
+→ restore ``/workspace`` → ack the work item (restore proven) → serve the session → teardown (the push) → clean up;
+that the repository's verdict at restore acks + stops the item terminally instead of serving; and that the mirror
+runs over a `RemoteStore` whose token file is the worker's alone. The dispatch mechanics are covered in
+``test_session_dispatch.py``; here only the wiring order and cleanup matter.
 """
 
 from __future__ import annotations
@@ -16,8 +16,6 @@ import signal
 import stat
 from typing import ClassVar, Self, cast
 
-import grpc
-import grpc.aio
 import pytest
 from anthropic.lib import environments
 from anthropic.lib.tools import agent_toolset
@@ -30,7 +28,6 @@ from themis.sheaf.wire import bare
 _REQUIRED_ENV = (
     'THEMIS_SESSION_TOKEN',
     'ANTHROPIC_ENVIRONMENT_KEY',
-    'THEMIS_STORE_URL',
     'THEMIS_HELLO_URL',
     'THEMIS_EVIDENCE_URL',
     'THEMIS_SHEAF_URL',
@@ -47,7 +44,6 @@ _CLEANUP = {
     'hatches.close',
     'hello_sync.close',
     'evidence_sync.close',
-    'accessor.close',
     'sandbox.close',
 }
 
@@ -66,14 +62,6 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(worker._HOST_GID_ENV, raising=False)
 
 
-class _AioChannel:
-    async def __aenter__(self) -> object:
-        return object()
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-
 class _Client:
     async def __aenter__(self) -> Self:
         return self
@@ -84,10 +72,6 @@ class _Client:
 
 # Sentinel: the session loop is interrupted by SIGTERM, delivered to this process while it runs.
 _SIGTERM = RuntimeError('SIGTERM')
-
-
-def _rpc_error(code: grpc.StatusCode) -> grpc.aio.AioRpcError:
-    return grpc.aio.AioRpcError(code, grpc.aio.Metadata(), grpc.aio.Metadata())
 
 
 async def _fail_session(serve_error: Exception | None) -> None:
@@ -131,10 +115,6 @@ def _patch_serve_collaborators(
     acked: dict[str, list[str]] = {'ack': [], 'stop': []}
     sync_tags = iter(('hello_sync.close', 'evidence_sync.close'))
 
-    class _Accessor:
-        def close(self) -> None:
-            log.event('accessor.close')
-
     class _Sandbox:
         def __init__(self, _profile: object, *, hatch: object = None) -> None:
             self.workspace = tmp_path
@@ -144,15 +124,12 @@ def _patch_serve_collaborators(
             del timeout
             log.event('verify')
 
-        def accessor(self) -> _Accessor:
-            return _Accessor()
-
         def close(self) -> None:
             if self._serving:
                 log.event('sandbox.close')
 
     class _WorkspaceSync:
-        def __init__(self, _store: object, **_kwargs: object) -> None: ...
+        def __init__(self, **_kwargs: object) -> None: ...
 
         async def restore(self) -> None:
             log.event('restore')
@@ -195,10 +172,8 @@ def _patch_serve_collaborators(
 
     monkeypatch.setattr(worker.postern, 'Sandbox', _Sandbox)
     monkeypatch.setattr(worker.id_token, 'channel_credentials', lambda _url: object())
-    monkeypatch.setattr(worker.grpc.aio, 'secure_channel', lambda *_a, **_k: _AioChannel())
     monkeypatch.setattr(worker.grpc, 'secure_channel', lambda *_a, **_k: _SyncChannel(next(sync_tags)))
     monkeypatch.setattr(worker.hatch_mod, 'build_hatch', lambda *_a, **_k: _Hatch())
-    monkeypatch.setattr(worker.store_client, 'GrpcStore', lambda *_a, **_k: object())
     monkeypatch.setattr(worker.sync_mod, 'WorkspaceSync', _WorkspaceSync)
     monkeypatch.setattr(worker.work_queue_mod, 'AnthropicWorkQueue', _WorkQueue)
     monkeypatch.setattr(worker.tool_mod, 'make_shell', lambda *_a, **_k: object())
@@ -277,24 +252,20 @@ def test_the_mirror_runs_over_the_sheaf_service_with_a_token_file_of_the_workers
 @pytest.mark.parametrize(
     'restore_error',
     [
-        _rpc_error(grpc.StatusCode.PERMISSION_DENIED),
-        _rpc_error(grpc.StatusCode.INTERNAL),
         sheaf.CorruptRepository('names a pack that is gone'),
         sheaf.ServiceFault('PERMISSION_DENIED', 'the session token does not resolve'),
         sheaf.ServiceFault('UNAUTHENTICATED', 'no session token on the call'),
     ],
     ids=[
-        'document rpc refuses the token',
-        'document rpc fails',
         'repository store',
         'token refused by the sheaf service',
         'no token reached the service',
     ],
 )
-def test_serve_acks_and_stops_the_item_on_a_store_verdict_without_serving(
+def test_serve_acks_and_stops_the_item_on_a_repository_verdict_without_serving(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, restore_error: Exception
 ) -> None:
-    # A store verdict at restore is terminal: ack (stop reclaim) + stop (end the item) and never serve, else the
+    # A verdict at restore is terminal: ack (stop reclaim) + stop (end the item) and never serve, else the
     # item would sit unacked and be reclaimed into the same failure on the next drain.
     log = _Recorder()
     acked = _patch_serve_collaborators(monkeypatch, log, tmp_path, restore_error=restore_error)
@@ -330,16 +301,14 @@ def test_a_failed_session_loop_still_tears_down_before_the_error_propagates(
     [
         RuntimeError('clone failed'),
         sheaf.ServiceFault('UNAVAILABLE', 'the sheaf service could not be reached'),
-        _rpc_error(grpc.StatusCode.UNAVAILABLE),
-        _rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED),
         sheaf.CredentialsUnusable('the token file cannot be read'),
     ],
-    ids=['guest git', 'sheaf service unreachable', 'store unreachable', 'store out of time', 'token file unreadable'],
+    ids=['guest git', 'sheaf service unreachable', 'token file unreadable'],
 )
 def test_serve_leaves_the_item_unacked_on_a_fault_that_is_not_a_verdict(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, restore_error: Exception
 ) -> None:
-    # Not a store verdict: a fresh spawn may clear it or outlive an outage, so the item stays reclaimable and the
+    # Not a verdict: a fresh spawn may clear it or outlive an outage, so the item stays reclaimable and the
     # error propagates.
     log = _Recorder()
     mirrors = _Mirrors()

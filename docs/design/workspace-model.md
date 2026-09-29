@@ -87,7 +87,8 @@ Enforcement is a single default-on chokepoint ([`security.md`](security.md)), on
   the user reaches nothing (default-deny); a real deploy is closed until memberships are seeded.
 
 This mirrors the session plane: `session_context(token_hash, project_id, …)` project-scopes the **agent's** data access
-(the store resolves a bearer → its Project); `project_members` is the same boundary for the **user's** access.
+(a data-plane service resolves a bearer through auth → its Project); `project_members` is the same boundary for the
+**user's** access.
 
 ## Interaction model (the workbench it grows into)
 

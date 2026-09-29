@@ -171,7 +171,7 @@ rpc's code. An rpc whose reach is a URL built from fetched data — a host read 
 result, a redirect chased — does not qualify, and the shapes that violate the criterion and the residuals it leaves are
 argued once, in [`security.md`](security.md).
 
-Two services fail the condition plainly and carry no marks: `store` and `auth` are not written against a hostile caller
+Two services fail the condition plainly and carry no marks: `auth` and `sheaf` are not written against a hostile caller
 at all.
 
 ### A session is context, not a ticket

@@ -4,17 +4,16 @@
 
 **Related:** [`sheaf-service.md`](sheaf-service.md) (the rpc surface this protocol is served through, who calls it, and
 where the credential lives); [`workspace-model.md`](workspace-model.md) (the collaboration model whose workspace this
-would carry, and the branch-and-append semantics an Analysis has); [`services.md`](services.md) (the store service,
-which holds the workspace archive today, and how the sandbox reaches a service at all);
-[`agent-runtime.md`](agent-runtime.md) (the session the sandbox runs inside).
+would carry, and the branch-and-append semantics an Analysis has); [`services.md`](services.md) (how the sandbox reaches
+a service at all); [`agent-runtime.md`](agent-runtime.md) (the session the sandbox runs inside).
 
 ## Overview
 
 A Themis workspace has two writers. The agent writes into a sandbox that lives and dies with one session. A curator
 writes from the workbench, where the browser keeps a copy of the repository of its own and commits to it when the
-curator changes a widget's state. Today the workspace is an opaque tar archive, replaced whole by whoever writes it, and
-nothing records what a write changed. Only the sandbox writes it. Adding the second writer to that model means each one
-silently overwrites the other's work.
+curator changes a widget's state. The simplest way to store a workspace is an opaque tar archive, replaced whole by
+whoever writes it, which records nothing about what a write changed. That is enough while only the sandbox writes. With
+a second writer, each would silently overwrite the other's work.
 
 Git already solves this problem, and its object model fits an object store well. Git is an append-only,
 content-addressed object store plus a small set of mutable pointers. GCS provides both halves: immutable keys, and
@@ -432,11 +431,11 @@ size before downloading any and refuses a repository over its own budget
 serving one session, and dies with it. Cloud Run's filesystem is in-memory unless a volume says otherwise, so that
 mirror is resident bytes, and packs are fetched whole before they are indexed.
 
-The store service already reasons this way about the archive it holds today, and caps it, so a runaway workspace fails
-its own request instead of exhausting the instance. Hydration has no equivalent cap. Resident bytes are the repository's
-whole history, and [compaction](#living-with-append-only) bounds how many packs that history is spread across, not how
-large it is. So the largest workspace can take out the job serving its own session: an out-of-memory kill in the middle
-of the agent's work, where a refusal would have been something the session could report.
+A service that buffers a whole workspace in memory caps it, so that a runaway workspace fails its own request instead of
+exhausting the instance. Hydration has no equivalent cap of its own. Resident bytes are the repository's whole history,
+and [compaction](#living-with-append-only) bounds how many packs that history is spread across, not how large it is. So
+the largest workspace can take out the job serving its own session: an out-of-memory kill in the middle of the agent's
+work, where a refusal would have been something the session could report.
 
 **A ceiling checked before hydration turns that into an ordinary failure.** The manifest names every pack and the
 backend can size them, so a repository too large to serve can be refused whole, by the session that asked for it, before
@@ -484,9 +483,9 @@ silently did not run reports as a pass.
 
 ## Alternatives considered
 
-**Keep the tar archive, add last-write-wins.** The status quo, made explicit. Rejected because the loss is silent:
-nothing raises, nothing logs, and a curator's mark simply is not there. It also gives no history, so there is no way to
-answer what changed or who changed it.
+**A tar archive with last-write-wins.** The simplest shape, made explicit. Rejected because the loss is silent: nothing
+raises, nothing logs, and a curator's mark simply is not there. It also gives no history, so there is no way to answer
+what changed or who changed it.
 
 **A conventional git server behind a lease.** Run `git http-backend` over HTTPS against a persistent disk, and serialise
 writers with an advisory lock in Cloud SQL, a lease object, or by pinning the service to a single instance. Rejected on

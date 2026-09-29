@@ -59,7 +59,7 @@ def _methods(image: bytes) -> list[str]:
 def test_collects_only_marked_rpcs() -> None:
     image = _image(
         _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': _AGENT, 'Locate': None}}),
-        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None, 'Put': None}}),
+        _file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': None, 'Put': None}}),
     )
     assert _methods(image) == ['/themis.rpc.papers.Papers/Read']
 
@@ -67,7 +67,7 @@ def test_collects_only_marked_rpcs() -> None:
 def test_absent_option_is_fail_closed() -> None:
     image = _image(
         _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),
-        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}),
+        _file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': None}}),
     )
     assert _methods(image) == ['/themis.rpc.hello.Hello/Say']
 
@@ -75,7 +75,7 @@ def test_absent_option_is_fail_closed() -> None:
 def test_another_caller_alone_does_not_expose() -> None:
     image = _image(
         _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),
-        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': _WEB}}),
+        _file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': _WEB}}),
     )
     assert _methods(image) == ['/themis.rpc.hello.Hello/Say']
 
@@ -136,7 +136,7 @@ def test_two_files_of_one_name_in_different_packages_fail_loud() -> None:
 
 
 def test_an_image_with_no_marked_rpc_fails_loud() -> None:
-    image = _image(_file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}))
+    image = _image(_file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': None}}))
     with pytest.raises(ValueError, match='no rpc names CALLER_AGENT'):
         agent_exposed.marked_services(image)
 
@@ -145,30 +145,28 @@ def test_an_accessor_hands_back_the_stub_over_the_hatch_channel() -> None:
     """One accessor per marked service, named for its package, returning the stub protoc names for the service."""
     image = _image(
         _file('themis/rpc/papers.proto', 'themis.rpc.papers', services={'Papers': {'Read': _AGENT, 'Locate': None}}),
-        _file('themis/rpc/store.proto', 'themis.rpc.store', services={'Store': {'Get': None}}),
+        _file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': None}}),
     )
     rendered = agent_exposed.render_guest_services(agent_exposed.marked_services(image))
     assert 'def papers() -> papers_pb2_grpc.PapersStub:' in rendered
     assert 'return papers_pb2_grpc.PapersStub(channel.to_hatch())' in rendered
     assert 'from themis.rpc import (\n    papers_pb2_grpc,\n)' in rendered
-    assert 'Store' not in rendered
-    assert 'store_pb2' not in rendered
+    assert 'Ledger' not in rendered
+    assert 'ledger_pb2' not in rendered
 
 
 @_needs_buf
 def test_the_worker_only_services_are_never_exposed() -> None:
-    """No store, auth or sheaf method reaches the allowlist, however many agent-facing rpcs carry the option.
+    """No auth or sheaf method reaches the allowlist, however many agent-facing rpcs carry the option.
 
     The set itself is not pinned: every agent-facing rpc legitimately adds to it. What cannot change is that the
-    worker-only surface stays off the hatch — the working document and scratch are checkpointed by the worker,
-    a session token is resolved by it, and the repository is published by its pre-receive hook after the hook's own
-    checks — so none of it belongs to the guest, which speaks git to the mirror instead.
+    worker-only surface stays off the hatch — a session token is resolved by the worker, and the repository is
+    published by its pre-receive hook after the hook's own checks — so none of it belongs to the guest, which speaks
+    git to the mirror instead.
     """
     exposed = _methods(agent_exposed.build_image())
     assert exposed, 'nothing is exposed, so this would pass whatever the option did'
-    worker_only = [
-        m for m in exposed if m.startswith(('/themis.rpc.store.', '/themis.rpc.auth.', '/themis.rpc.sheaf.'))
-    ]
+    worker_only = [m for m in exposed if m.startswith(('/themis.rpc.auth.', '/themis.rpc.sheaf.'))]
     assert not worker_only
 
 

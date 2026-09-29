@@ -7,7 +7,7 @@ that leaves the process (a database query, a KMS call, a GCS request, an outgoin
 Trace, which assembles the spans of one request into one tree.
 
 Every outgoing call carries the trace, but only a service that records spans adds its part of the tree. The evidence and
-store services and the sandbox worker record none, so a call from the web tier to evidence shows as the web tier's
+hello services and the sandbox worker record none, so a call from the web tier to evidence shows as the web tier's
 client span with nothing under it.
 
 The pipeline itself lives in [`themis/telemetry/tracing.py`](../../themis/telemetry/tracing.py) for the Python services

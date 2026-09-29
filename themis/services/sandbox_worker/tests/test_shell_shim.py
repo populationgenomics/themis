@@ -16,7 +16,7 @@ import typing
 import postern
 import pytest
 
-from themis.services.sandbox_worker import sync, tool
+from themis.services.sandbox_worker import tool
 
 _OUTER_TIMEOUT_S = 30  # a shim that failed to bound its command fails this way, never by hanging the suite
 
@@ -74,16 +74,16 @@ def test_a_timeout_inside_the_kill_margin_fails_the_precondition() -> None:
 
 
 def test_a_timeout_past_the_tool_budget_fails_the_precondition() -> None:
-    """Past the SDK's per-tool deadline the call is abandoned with its checkpoint skipped, whatever the shim does."""
+    """Past the SDK's per-tool deadline the call is abandoned, whatever the shim does."""
     with pytest.raises(ValueError, match='SDK allows'):
         tool.shim('true', timeout=tool.SHELL_TIMEOUT_S + 1)
 
 
 def test_the_tool_refuses_a_bound_it_could_not_run_a_command_under_at_construction() -> None:
     """A bad bound fails where the tool is built, not on the model's first call."""
-    sandbox, workspace_sync = typing.cast('postern.Sandbox', object()), typing.cast('sync.WorkspaceSync', object())
+    sandbox = typing.cast('postern.Sandbox', object())
     with pytest.raises(ValueError, match='kill margin'):
-        tool.make_shell(sandbox, workspace_sync, timeout=1)
+        tool.make_shell(sandbox, timeout=1)
 
 
 def test_the_default_shim_names_the_one_command_bound() -> None:

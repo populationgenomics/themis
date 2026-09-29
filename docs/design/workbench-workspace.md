@@ -30,8 +30,8 @@ browser refuses the rebase, and the curator redoes the change on what the agent 
 The browser is trusted as the sandbox worker is: no server checks the objects it publishes. The agent is the one writer
 that is checked: a hook outside its sandbox checks every push, and among its rules is that the agent's commits carry
 only the agent's name. The cost of the design is that every curator's browser holds the whole workspace, history and the
-agent's working files included. Once the pane reads from that copy, the store service has nothing left to serve. It
-retires with both of its buckets, and sheaf's repositories move to a bucket of their own.
+agent's working files included. The repository is the only store of the workspace and of the working document's
+versions, so the agent's edits are durable once it commits them and a push lands, and not before.
 
 ## Background
 
@@ -470,6 +470,21 @@ the hook refuses because git and the browser would read them differently.
 - **The curator's browser**: the whole repository of each Analysis the curator has opened, until it is evicted.
 - **The BFF and the sheaf service**: nothing beyond the lifetime of a request.
 
+The repository is the one durable home of the working document. The obvious addition is a second store of document
+versions beside it, written by the sandbox worker after every command, which would keep an edit the agent had not yet
+committed. Such a store holds a history of its own, and the pane could only show one of the two, so the other would
+sooner or later disagree with it. So no service keeps a copy of the document outside the repositories.
+
+Sheaf's bucket holds the repositories and nothing else. A grant on a bucket reaches every object in it, so a service
+granted a shared bucket could read and overwrite another service's objects: if the cost exporter wrote its snapshots
+into sheaf's bucket, its write grant would reach every Analysis's packs. One bucket per service keeps each grant to the
+objects that service owns.
+
+The cost falls on the agent's side. The worker makes no commits for the agent, so an edit becomes durable only when the
+agent commits it and a push lands, its own or the push the worker makes at teardown
+([`sandbox-worker.md`](sandbox-worker.md)). If the sandbox exits ungracefully, killed for running out of memory for
+example, the teardown push never runs, and whatever the agent changed after its last commit is lost.
+
 The browser's copy holds every revision and the agent's working files, its scripts and intermediate outputs, as well as
 the document and its assets. It stays after sign-out. A curator removed from a Project keeps what they downloaded until
 it is evicted or they clear their browser: removal stops every later read but cannot reach the copy. This is accepted
@@ -481,38 +496,6 @@ its own. The SharedWorker records each copy's size and when it was last read, an
 least recently read copy whole, skipping a copy whose lock is held. The browser may also clear the origin's storage
 itself, under disk pressure or, in Safari, after a week without a visit. The workbench does not ask for persistent
 storage, because losing a copy costs a download.
-
-### The store service retires, with both of its buckets
-
-Today the store service keeps two things for an Analysis, in two buckets. The working-document bucket holds the document
-as numbered versions. The worker writes one after every sandboxed command through `PutWorkingDocument`, and the BFF
-reads them from the bucket for `GetDocument` and for the poll's version number. The workspace bucket holds the workspace
-as a tar archive, replaced whole through `PutWorkspace`, and it is also where sheaf keeps every repository today, under
-a prefix of its own.
-
-Once the workspace is a sheaf repository, the archive has no reader. Once the document's versions are the branch's
-history, a second version store could only disagree with it. Those four rpcs are the whole of the store's contract, so
-the service retires with them, and both buckets go too. Sheaf moves to a bucket of its own, named for it and configured
-for packs that are written once and never rewritten, so that no bucket holds two services' objects and nothing named for
-the store outlives it. The retirement is additive-first ([`proto.md`](proto.md) §Schema evolution), in this order:
-
-1. The sheaf service switches to its own bucket in one deploy.
-1. The pane reads the document from the browser's copy and follows the poll's tip.
-1. `GetDocument` and the poll's integer version lose their last caller and go, and with them the web tier's read access
-   to the working-document bucket.
-1. The worker stops writing through `PutWorkingDocument`, and the tar rpcs go as the changeover plan's last step
-   ([`../plans/sheaf-changeover.md`](../plans/sheaf-changeover.md)).
-1. The store service and both of its buckets are deleted.
-
-Two steps delete history without migrating it, because what they delete is dev's alone and no production Analysis
-predates the repository. Step 1 leaves dev's existing repositories behind; an Analysis whose repository is then empty is
-seeded again by the worker from the store's copy of the document, which still exists then. Step 5 deletes the documents
-of Analyses from before the changeover whose agent has not run since.
-
-One property goes with the store. Its document rpcs let the worker save the document after every command, so an edit
-survived an ungraceful exit up to the last command. In the repository, the document is durable once the agent commits
-and the teardown push lands, and the worker makes no commits for the agent. An ungraceful exit loses what came after the
-agent's last commit.
 
 ### Keeping the copy consistent
 
@@ -577,8 +560,8 @@ curator's request waits for the lock instead, because the curator asked for that
 
 These were measured in September 2026 against isomorphic-git 1.42.2, protobuf-es 2.13.0 and git 2.54.
 
-**Workspace sizes on dev.** The dev workspaces are still mostly the store service's uncompressed tar archives, which
-stand in for a workspace's content until sheaf repositories accumulate history:
+**Workspace sizes on dev.** Most dev workspaces were then uncompressed tar archives, written by the storage service that
+preceded the repository. They stand in for a workspace's content, since the sheaf repositories had little history yet:
 
 | Workspaces           | Median  | 90th percentile | Largest                       |
 | -------------------- | ------- | --------------- | ----------------------------- |

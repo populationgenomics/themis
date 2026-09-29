@@ -2,9 +2,9 @@
 
 Mocks Anthropic at the narrowest seam — ``client.beta.sessions.events`` — and runs the *real*
 ``anthropic.lib.environments.SessionToolRunner`` against our ``shell`` tool, so the dispatch contract is exercised end
-to end (tool-call event in → command runs in the sandbox → the working document checkpointed → result posted back)
-without a live session, credentials, or bwrap. The sandbox itself is faked here; real isolation is covered in
-``test_session_integration.py`` on a bwrap host.
+to end (tool-call event in → command runs in the sandbox → result posted back) without a live session, credentials,
+or bwrap. The sandbox itself is faked here; real isolation is covered in ``test_session_integration.py`` on a bwrap
+host.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import postern
 from anthropic import AsyncAnthropic
 from anthropic.lib import environments
 
-from themis.services.sandbox_worker import guest_git, store_client, sync, tool
+from themis.services.sandbox_worker import tool
 from themis.services.sandbox_worker.tests import fakes
 
 
@@ -32,25 +32,12 @@ def _runner(events: fakes.FakeEvents, shell: object) -> environments.SessionTool
     )
 
 
-def _workspace_sync(store: store_client.Store, workspace_dir: pathlib.Path) -> sync.WorkspaceSync:
-    # The repository is not reached here: the shell tool's checkpoint is the document's alone.
-    repository = cast('guest_git.GuestGit', object())
-    return sync.WorkspaceSync(store, accessor=postern.Workspace(workspace_dir), repository=repository)
-
-
-def test_tool_call_runs_in_the_sandbox_checkpoints_and_posts_a_result(tmp_path: pathlib.Path) -> None:
+def test_tool_call_runs_in_the_sandbox_and_posts_a_result(tmp_path: pathlib.Path) -> None:
     workspace_dir = tmp_path / 'ws'
     workspace_dir.mkdir()
 
-    def _run(code: str) -> postern.ProcResult:
-        del code  # the subprocess shim the shell tool builds; the fake just simulates a guest write
-        (workspace_dir / 'working_document.md').write_text('from-guest')
-        return postern.ProcResult(0, 'hi from guest', '')
-
-    sandbox = fakes.FakeSandbox(workspace_dir, _run)
-    store = store_client.FixtureStore()
-    workspace_sync = _workspace_sync(store, workspace_dir)
-    shell = tool.make_shell(cast('postern.Sandbox', sandbox), workspace_sync, timeout=30)
+    sandbox = fakes.FakeSandbox(workspace_dir, lambda _c: postern.ProcResult(0, 'hi from guest', ''))
+    shell = tool.make_shell(cast('postern.Sandbox', sandbox), timeout=30)
 
     events = fakes.FakeEvents(
         [
@@ -77,17 +64,12 @@ def test_tool_call_runs_in_the_sandbox_checkpoints_and_posts_a_result(tmp_path: 
     assert len(posted) == 1
     assert posted[0]['custom_tool_use_id'] == 'tu-1'
 
-    # the tool checkpointed the working document, capturing the guest's write
-    assert store.put_documents == ['from-guest']
-
 
 def test_unowned_tool_call_is_left_pending_not_answered(tmp_path: pathlib.Path) -> None:
     workspace_dir = tmp_path / 'ws'
     workspace_dir.mkdir()
     sandbox = fakes.FakeSandbox(workspace_dir, lambda _c: postern.ProcResult(0, '', ''))
-    store = store_client.FixtureStore()
-    workspace_sync = _workspace_sync(store, workspace_dir)
-    shell = tool.make_shell(cast('postern.Sandbox', sandbox), workspace_sync, timeout=30)
+    shell = tool.make_shell(cast('postern.Sandbox', sandbox), timeout=30)
 
     events = fakes.FakeEvents(
         [

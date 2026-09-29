@@ -3,7 +3,7 @@ import { createHash, createHmac } from "node:crypto";
 import { crc32c, encodeBearer, hashBearer } from "./derive";
 
 // Byte-for-byte parity with `themis/clients/auth/derive.py`: the dispatcher
-// re-derives the same bearer at spawn and the store resolves it, so the TS and
+// re-derives the same bearer at spawn and auth resolves it, so the TS and
 // Python derivations MUST agree. The KMS deriver and Python's `fixture_deriver`
 // share the same primitive — HMAC-SHA256 then base64url-unpadded (`_encode`) — so
 // proving the encoding of an HMAC over a fixed (secret, session_id) matches the

@@ -92,12 +92,12 @@ def test_every_reachable_service_has_an_allowlisted_rpc(
 
 
 def test_allowlist_reaches_nothing_beyond_the_reachable_services() -> None:
-    # closed world: every allowlisted method is an rpc a forwarded service declares — no store method, no stray
-    # entry. The store (working document + ephemeral-workspace scratch) is the trusted worker's, never over the hatch.
+    # closed world: every allowlisted method is an rpc a forwarded service declares — no sheaf method, no stray
+    # entry. The repository's storage protocol is the trusted worker's, never over the hatch.
     reachable = frozenset().union(*(_declared_methods(fd, name) for fd, name, _ in _REACHABLE_SERVICES))
     assert hatch.GUEST_METHODS, 'the allowlist is empty — the check would be vacuous'
     assert reachable >= hatch.GUEST_METHODS
-    assert not any('Store' in method for method in hatch.GUEST_METHODS)
+    assert not any(method.startswith('/themis.rpc.sheaf.') for method in hatch.GUEST_METHODS)
 
 
 class _RecordingCall:

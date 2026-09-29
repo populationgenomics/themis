@@ -4,8 +4,8 @@ Provisions the auth data-plane service for one environment — a runtime SA, an
 internal-ingress Cloud Run service, and the SA's Cloud SQL IAM DB-user login. The
 container runs the `cloudsql` backend, reaching `session_context` through the
 connector; that table's `SELECT` grant is applied by the migration (keyed on this
-login), not here. Ingress is internal-only with no invoker binding yet — the store
-that calls it does not exist; its `run.invoker` attaches when it lands. The service writes its
+login), not here. Ingress is internal-only; each data-plane service that resolves sessions
+through it holds `run.invoker` on it, granted in the program entrypoint. The service writes its
 spans to Cloud Trace at the stack's sample ratio.
 """
 
@@ -84,7 +84,7 @@ class AuthService(pulumi.ComponentResource):
             name='themis-auth',
             location=region,
             deletion_protection=False,
-            # Internal only: reachable service-to-service (the store, later), never
+            # Internal only: reachable service-to-service over the services VPC, never
             # from the public internet. Egress to the Cloud SQL Admin API is unaffected.
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(

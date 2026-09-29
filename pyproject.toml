@@ -86,10 +86,6 @@ curation = ["protobuf", { include-group = "cloudsql" }]
 # the client interceptor that carries the caller's trace context on each call, and the gate's
 # own span is opentelemetry-api's: both are no-ops in a process that installs no tracer provider.
 session = ["grpcio", "google-auth", "requests", "protobuf", "opentelemetry-api", "opentelemetry-instrumentation-grpc"]
-# store service (themis/services/store): the grpc.aio server + generated stubs + the GCS
-# backend (google-cloud-storage) for the working document and workspace archive. Includes the
-# session client — every request is authorized through auth before it touches storage.
-store = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-storage", { include-group = "session" }]
 # hello service (themis/services/hello): the sandbox forward leg's session-token-authed test
 # consumer. grpc.aio server + generated stubs; includes the session client — every request is
 # authorized through auth. No storage backend of its own.
@@ -177,9 +173,9 @@ sheaf = ["google-cloud-storage", "protobuf", "opentelemetry-api"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for
-# id_token + the store and sheaf stubs: the worker's own document client, and the Sheaf service client the
-# Analysis repository's mirror and its hook run over — the sheaf library itself needs only that group's
-# protobuf, since the worker holds no bucket credential and never loads the GCS backend. clinvar_proto and
+# id_token + the sheaf stubs: the Sheaf service client the Analysis repository's mirror and its hook run
+# over — the sheaf library itself needs only that group's protobuf, since the worker holds no bucket
+# credential and never loads the GCS backend. clinvar_proto and
 # pubmed_proto: the clinvar and literature contracts embed the upstream record schemas, so importing the
 # generated stubs pulls in the wheels' message modules. protovalidate: the hook's content check decodes widget assets.
 sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", { include-group = "session" }]
@@ -191,13 +187,8 @@ sandbox_worker = ["postern[grpc]==0.4.0", "anthropic", "anyio", "clinvar_proto==
 # working-document linter; markdown-it-py is the linter's markdown parser. Locked rather than a floating pip
 # install so the guest inherits the age gate and stays version-aligned with the worker's own grpcio/protobuf.
 guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", "markdown-it-py"]
-# classifier evaluation CLI (themis/classifier_eval): anthropic reads the session event logs and the
-# resolved agent each case ran; google-cloud-storage reads the store's working-document and workspace
-# buckets; google-auth is the ADC preflight resolves; pyyaml reads the checked-out agent config
-# preflight compares the deployed agent against. requests carries each round's call to the deployed
-# web app: analyses are created through it, so the rows are the app's to write.
-# protobuf + pubmed_proto + cloudsql: the supplied-papers check reads litcache manifests and the
-# crosswalk (themis/classifier_eval/literature.py).
+# classifier evaluation CLI: the libraries its session-log collector, agent preflight, web-app rounds and
+# supplied-papers check import.
 classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests", "pyyaml", "protobuf", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
 # schema compat gate (tools/schema/buf_compat.py, .github/workflows/schema-compat.yml): protobuf reads the
 # compiled descriptor sets; protovalidate is what themis.widgets decodes a payload's ownership rules with.
@@ -211,7 +202,7 @@ resources = ["google-cloud-storage", "requests"]
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
@@ -227,11 +218,11 @@ agents = ["anthropic", "pyyaml"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
 # dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "agents" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "store" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "guest" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "agents" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "guest" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/store/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/telemetry/tests", "themis/document_linter/tests", "themis/widgets/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
+testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/telemetry/tests", "themis/document_linter/tests", "themis/widgets/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
 markers = [
   "sandbox: needs a real bubblewrap launch (Linux only)",
   "sandbox_root: needs a real bubblewrap launch from a root worker (the host uid drop); implies sandbox",

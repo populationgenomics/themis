@@ -1,7 +1,7 @@
 """The worker's own git commands against `/workspace`, every one run inside the guest.
 
 The guest owns `/workspace`, `.git` included, so a `git` the trusted worker ran there would execute whatever
-`core.hooksPath` or a clean filter pointed at, in the process holding the credential (sheaf-changeover.md). So the
+`core.hooksPath` or a clean filter pointed at, in the process holding the credential (sandbox-worker.md). So the
 worker never runs git host-side against the working tree: hydration is a guest-side `git clone` over the
 upload-pack hatch, and the teardown push is a guest-side `git push` over the receive-pack hatch, with a fetch over the
 upload-pack hatch to tell what the store still lacks. The worker makes

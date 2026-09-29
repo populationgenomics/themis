@@ -292,9 +292,9 @@ signs"). Presign specifics:
 
 - The web SA signs V4 URLs via IAM `signBlob` (no stored key; `serviceAccountTokenCreator` on itself).
 - The **evidence adapter pins the corpus bucket**: it refuses a resolution naming an object outside it before handing it
-  to the `ContentPort`, so an evidence-service bug can't turn a content route into a signed read of another bucket the
-  web SA holds (the per-tenant working-document bucket). The pin is the resolver's (which bucket it trusts), not the
-  generic port's — a second surface pins its own.
+  to the `ContentPort`, so an evidence-service bug can't turn a content route into a signed read of any other bucket the
+  web SA holds or is later granted. The pin is the resolver's (which bucket it trusts), not the generic port's — a
+  second surface pins its own.
 - Egress typing — corpus content is third-party, so anything off the inline allowlist is forced to
   `Content-Disposition: attachment`, carried on the live path by the signed URL's `response-content-disposition`
   override (`response-content-type` sets the media type). A downloaded file's declared name rides that same disposition

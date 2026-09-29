@@ -10,7 +10,7 @@ The Job is a single trusted container: the EnvironmentWorker worker that runs ea
 inside a postern bubblewrap sandbox (empty netns) whose only exit is a method-allowlisted hatch.
 There is no dedicated VPC / egress firewall / NAT / DNS sinkhole and no internal load balancer —
 the guest has zero network by construction, and the trusted worker reaches the internal-ingress
-store over Direct VPC egress on the shared services network. The SA-scoped key/secret bindings are
+hello service over Direct VPC egress on the shared services network. The SA-scoped key/secret bindings are
 granted where the consuming identities are wired (the program entrypoint).
 """
 
@@ -261,19 +261,18 @@ class SandboxJob(pulumi.ComponentResource):
     session token (injected per-execution by the dispatcher's ``jobs.run``, never baked) — and runs every
     ``shell`` command inside a postern bubblewrap sandbox, so no untrusted code shares the container.
 
-    Direct VPC egress on the shared services network reaches the internal-ingress store, hello and evidence
-    services; the IAM-gated sheaf service is reached the same way. There is no dedicated sandbox VPC and no
+    Direct VPC egress on the shared services network reaches the internal-ingress hello service; the
+    IAM-gated evidence and sheaf services are reached the same way. There is no dedicated sandbox VPC and no
     egress firewall — the guest has zero network regardless, so containment rests on that rather than on
     shaping the trusted worker's egress.
 
     The Analysis repository the agent works in is a sheaf repository, mirrored inside the worker
-    (sheaf-changeover.md) and reached only through the sheaf service, which scopes every call by the session
+    (sandbox-worker.md) and reached only through the sheaf service, which scopes every call by the session
     token the worker presents: the job holds no credential on the sheaf bucket and makes no auth call.
 
     Attributes:
-        service_account_email: The job's runtime SA — ``run.invoker`` on the store it checkpoints the working
-            document to, on the sheaf service its mirror runs over, and on the hatch's forward targets; inert
-            without the session token the worker holds.
+        service_account_email: The job's runtime SA — ``run.invoker`` on the sheaf service its mirror runs
+            over and on the hatch's forward targets; inert without the session token the worker holds.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
     """
 
@@ -285,7 +284,6 @@ class SandboxJob(pulumi.ComponentResource):
         worker_image: pulumi.Input[str],
         network: pulumi.Input[str],
         subnetwork: pulumi.Input[str],
-        store_url: pulumi.Input[str],
         hello_url: pulumi.Input[str],
         evidence_url: pulumi.Input[str],
         sheaf_url: pulumi.Input[str],
@@ -317,9 +315,9 @@ class SandboxJob(pulumi.ComponentResource):
                     # short default, which would kill a long agent-backgrounded computation.
                     timeout=f'{task_timeout_seconds}s',
                     max_retries=0,
-                    # ALL_TRAFFIC so the internal-ingress store is reachable at its (public) run.app IP over
-                    # the VPC — private-ranges-only would send that straight to the internet and the store
-                    # would refuse it. Trade-off (sandbox-worker.md §"One trusted process, not two
+                    # ALL_TRAFFIC so the internal-ingress hello service is reachable at its (public) run.app
+                    # IP over the VPC — private-ranges-only would send that straight to the internet and the
+                    # service would refuse it. Trade-off (sandbox-worker.md §"One trusted process, not two
                     # containers"): the trusted worker then has unrestricted public egress, so
                     # post-compromise exfil containment rests on the worker being trusted-only code
                     # and the guest having zero network.
@@ -336,7 +334,6 @@ class SandboxJob(pulumi.ComponentResource):
                             name='worker',
                             image=worker_image,
                             envs=[
-                                _job_env('THEMIS_STORE_URL', store_url),
                                 _job_env('THEMIS_HELLO_URL', hello_url),
                                 _job_env('THEMIS_EVIDENCE_URL', evidence_url),
                                 _job_env('THEMIS_SHEAF_URL', sheaf_url),

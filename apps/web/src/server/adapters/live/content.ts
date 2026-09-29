@@ -4,9 +4,9 @@ import type { ContentObject, ContentPort } from "../../ports";
 
 // The live content port: serve a stored GCS object by signing a short-lived V4 read URL and answering
 // a 302, so the bytes flow browser↔GCS and never pass through the BFF. Generic over the object — it
-// signs whatever bucket/object it is handed (bounded by the web SA's IAM), so a second content surface
-// (per-tenant working documents) reuses it; the trust boundary on *which* bucket a resolution may name
-// is the resolving adapter's (`literature.ts` pins the corpus bucket).
+// signs whatever bucket/object it is handed (bounded by the web SA's IAM), so a later content surface
+// reuses it; the trust boundary on *which* bucket a resolution may name is the resolving adapter's
+// (`literature.ts` pins the corpus bucket).
 
 /** A signed read URL for one GCS object, valid until `expiresMs`. `responseType`/`responseDisposition`
  *  override what GCS serves the object as, carrying the egress typing onto the direct download. */

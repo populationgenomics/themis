@@ -1,8 +1,8 @@
 """The ``shell`` tool the worker exposes to the agent (sandbox-worker.md §"Only arbitrary execution is sandboxed").
 
 ``EnvironmentWorker`` dispatches each ``custom_tool_use`` to this ``@beta_async_tool``; its inferred name/schema is
-``shell(command, intent)``. Every call runs ``command`` inside the postern sandbox and checkpoints the working
-document on return; the rest of ``/workspace`` is the agent's repository, and the agent commits and pushes it itself.
+``shell(command, intent)``. Every call runs ``command`` inside the postern sandbox; ``/workspace`` is the agent's
+repository, and the agent commits and pushes it itself.
 The command runs via postern's hatch-bound ``run_python`` path (a subprocess shim), so a ``python3`` the command
 spawns inherits ``$POSTERN_HATCH`` and can reach the allowlisted internal services in code mode.
 
@@ -23,8 +23,6 @@ import postern
 from anthropic.lib import tools
 from anyio import to_thread
 
-from themis.services.sandbox_worker import sync as sync_mod
-
 _logger = logging.getLogger(__name__)
 
 # postern binds the hatch UDS and exports POSTERN_HATCH only on the run_python path; a subprocess inherits that
@@ -43,9 +41,9 @@ except subprocess.TimeoutExpired:
     sys.exit(124)
 """
 # The bound one `shell` call gets, under the SDK's per-tool deadline (anthropic.lib TOOL_TIMEOUT, 150 s): a sandbox
-# run that outlives that makes the SDK abort the (non-cancellable) tool call, reporting a spurious timeout and
-# skipping the post-call checkpoint. The one figure every other bound — the hatch's forwarding ceiling, the guest
-# channel's default deadline, the shim's own — sits under.
+# run that outlives that makes the SDK abort the (non-cancellable) tool call, reporting a spurious timeout. The one
+# figure every other bound — the hatch's forwarding ceiling, the guest channel's default deadline, the shim's own —
+# sits under.
 SHELL_TIMEOUT_S = 120
 # How far inside postern's deadline the shim's own bound sits: room for the kill, the message and the exit.
 _KILL_MARGIN_S = 10
@@ -96,10 +94,8 @@ def _format(result: postern.ProcResult) -> str:
     return '\n'.join(parts) if parts else '(no output)'
 
 
-def make_shell(
-    sandbox: postern.Sandbox, workspace_sync: sync_mod.WorkspaceSync, *, timeout: float = SHELL_TIMEOUT_S
-) -> tools.BetaAsyncFunctionTool:
-    """Build the ``shell`` tool bound to ``sandbox``, checkpointing the working document after each call.
+def make_shell(sandbox: postern.Sandbox, *, timeout: float = SHELL_TIMEOUT_S) -> tools.BetaAsyncFunctionTool:
+    """Build the ``shell`` tool bound to ``sandbox``.
 
     Raises:
         ValueError: If ``timeout`` is outside what the shim can run a command under.
@@ -120,7 +116,6 @@ def make_shell(
         # intent is the model's own label for the action; logging it (with the exit code) gives a
         # worker-side audit of what ran in the sandbox, alongside the BFF's per-event copy.
         _logger.info('shell [%s] exit=%d', intent, result.returncode)
-        await workspace_sync.checkpoint()
         return _format(result)
 
     return shell

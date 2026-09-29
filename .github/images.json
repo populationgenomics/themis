@@ -1,7 +1,6 @@
 [
   { "name": "web", "context": "apps/web", "file": "apps/web/Dockerfile", "env": "THEMIS_WEB_IMAGE", "runtime": "bun" },
   { "name": "auth", "context": ".", "file": "themis/services/auth/Dockerfile", "env": "THEMIS_AUTH_IMAGE", "runtime": "python" },
-  { "name": "store", "context": ".", "file": "themis/services/store/Dockerfile", "env": "THEMIS_STORE_IMAGE", "runtime": "python" },
   { "name": "hello", "context": ".", "file": "themis/services/hello/Dockerfile", "env": "THEMIS_HELLO_IMAGE", "runtime": "python" },
   { "name": "sheaf", "context": ".", "file": "themis/services/sheaf/Dockerfile", "env": "THEMIS_SHEAF_IMAGE", "runtime": "python" },
   { "name": "dispatcher", "context": ".", "file": "themis/services/dispatcher/Dockerfile", "env": "THEMIS_DISPATCHER_IMAGE", "runtime": "python" },

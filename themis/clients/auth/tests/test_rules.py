@@ -7,7 +7,7 @@ from google.protobuf import descriptor_pb2, descriptor_pool
 
 from themis.clients.auth import context as auth_context
 from themis.clients.auth import rules
-from themis.rpc import auth_pb2, literature_pb2, sandbox_options_pb2, sheaf_pb2, store_pb2
+from themis.rpc import auth_pb2, literature_pb2, sandbox_options_pb2, sheaf_pb2
 
 _PROJECT = 'x'
 _WEB = rules.account_email('themis-web', _PROJECT)
@@ -15,7 +15,6 @@ _JOB = rules.account_email('themis-sandbox-job', _PROJECT)
 _CLU = rules.account_email('themis-clu', _PROJECT)
 _SESSION = auth_pb2.SessionContext(project_id='p', analysis_id='a')
 _LITERATURE = literature_pb2.DESCRIPTOR.services_by_name['Literature']
-_STORE = store_pb2.DESCRIPTOR.services_by_name['Store']
 _SHEAF = sheaf_pb2.DESCRIPTOR.services_by_name['Sheaf']
 
 _SELF = sandbox_options_pb2.CALLING_AS_SELF
@@ -58,10 +57,10 @@ def test_the_agent_is_the_job_account_claiming_the_agent_s_session_that_resolves
 
 
 def test_the_worker_s_claim_is_not_the_agent_s() -> None:
-    # Same account; the claim decides which member the call is, and store names only the worker's.
+    # Same account; the claim decides which member the call is, and FetchPack names only the worker's.
     assert not _rule(_LITERATURE, 'GetMarkdown').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-    assert _rule(_STORE, 'PutWorkingDocument').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-    assert not _rule(_STORE, 'PutWorkingDocument').admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
+    assert _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
+    assert not _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
 
 
 @pytest.mark.parametrize('method', ['ReadRefDoc', 'Publish'])
@@ -89,7 +88,7 @@ def test_the_developer_identity_is_admitted_on_every_rpc_without_being_named() -
     # everywhere. Its claim rules still hold: a session it claims is resolved, and the wrong claim is not it.
     for service, method in (
         (_LITERATURE, 'GetMarkdown'),
-        (_STORE, 'PutWorkingDocument'),
+        (_SHEAF, 'FetchPack'),
         (_LITERATURE, 'MaybeIngestPapers'),
     ):
         rule = _rule(service, method)
