@@ -21,6 +21,7 @@ _BODY = '---\nname: a-skill\ndescription: d\n---\ntext\n'
 _MINIMAL = 'name: an agent\n'
 _MODEL = 'claude-test-1'
 _COMMIT = 'c0ffee' * 6 + 'c0ff'
+_TOOLSET = 'tools:\n  - type: agent_toolset_20260401\n    default_config:\n      enabled: false\n    configs:\n'
 
 
 @pytest.fixture
@@ -83,6 +84,13 @@ def test_a_minimal_declaration_loads(tmp_path: pathlib.Path) -> None:
         ('name: x\nmodel:\n  id: claude-opus-5\n', 'confidential stack config'),
         (_MINIMAL + 'system: 3\n', '`system`'),
         (_MINIMAL + 'tools: {}\n', '`tools`'),
+        (_MINIMAL + 'tools:\n  - type: agent_toolset_20260401\n', 'default-deny'),
+        (_MINIMAL + _TOOLSET.replace('enabled: false', 'enabled: true', 1), 'default-deny'),
+        (_MINIMAL + _TOOLSET + '      - name: read\n', '`read` states `enabled'),
+        (_MINIMAL + _TOOLSET + '      - name: read\n        enabled: "no"\n', '`read` states `enabled'),
+        (_MINIMAL + _TOOLSET + '      - name: read\n        enabled: true\n' * 2, '`read` twice'),
+        (_MINIMAL + _TOOLSET + '      - enabled: true\n', '`name`'),
+        (_MINIMAL + _TOOLSET.removesuffix('    configs:\n') + '    configs: read\n', '`configs` is a list'),
         (_MINIMAL + 'skills:\n  - type: other\n    skill_id: s\n    version: "1"\n', 'skill `type`'),
         (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n', 'exactly one of a `version`'),
         (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n    directory: d\n', 'unknown keys'),
@@ -104,6 +112,13 @@ def test_a_minimal_declaration_loads(tmp_path: pathlib.Path) -> None:
         'model-with-an-id',
         'system-not-a-string',
         'tools-not-a-list',
+        'toolset-without-a-default',
+        'toolset-default-on',
+        'toolset-entry-without-enabled',
+        'toolset-entry-enabled-not-a-bool',
+        'toolset-entry-twice',
+        'toolset-entry-without-a-name',
+        'toolset-configs-not-a-list',
         'skill-type',
         'anthropic-skill-unpinned',
         'anthropic-skill-with-directory',
@@ -333,17 +348,22 @@ class _FakeAgents:
                     for entry in typing.cast('list[dict[str, object]]', multiagent['agents'])
                 ],
             }
-        fields['tools'] = [
-            _with_policy(tool) for tool in typing.cast('list[dict[str, object]]', fields.get('tools', []))
-        ]
+        fields['tools'] = [_as_served(tool) for tool in typing.cast('list[dict[str, object]]', fields.get('tools', []))]
         return {**fields, 'id': agent_id, 'version': version}
 
 
-def _with_policy(tool: dict[str, object]) -> dict[str, object]:
+def _as_served(tool: dict[str, object]) -> dict[str, object]:
+    """A toolset as the server echoes it: each config in declared order, given a permission policy and a `type`."""
     if 'default_config' not in tool:
         return tool
+    policy = {'permission_policy': {'type': 'always_allow'}}
     default_config = typing.cast('dict[str, object]', tool['default_config'])
-    return {**tool, 'default_config': {**default_config, 'permission_policy': {'type': 'always_allow'}}}
+    configs = typing.cast('list[dict[str, object]]', tool.get('configs', []))
+    return {
+        **tool,
+        'default_config': {**default_config, **policy},
+        'configs': [{**item, **policy, 'type': item['name']} for item in configs],
+    }
 
 
 def _fake_client() -> tuple[anthropic.Anthropic, _FakeAgents, _FakeSkills]:
@@ -356,10 +376,10 @@ def _fake_client() -> tuple[anthropic.Anthropic, _FakeAgents, _FakeSkills]:
 def _declared(monkeypatch: pytest.MonkeyPatch, repo: pathlib.Path) -> config.AgentConfig:
     monkeypatch.setattr(config, 'SKILLS_DIR', repo / 'skills')
     _write_skill(repo / 'skills' / 'a')
-    text = _MINIMAL + (
+    text = (
+        _MINIMAL + _TOOLSET + '      - name: read\n        enabled: true\n'
         'model:\n  effort: xhigh\n'
         'system: use the skill\n'
-        'tools:\n  - type: agent_toolset_20260401\n    default_config:\n      enabled: true\n'
         'skills:\n'
         '  - type: anthropic\n    skill_id: pdf\n    version: "20260709"\n'
         '  - type: custom\n    skill_id: skill_a\n    directory: a\n'

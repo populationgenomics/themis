@@ -293,8 +293,9 @@ itself is in the repository as soon as its push lands.
 
 The session's toolset is the SDK's standard file tools — read, write, edit, glob, grep — with `bash` dropped and a
 `shell` tool in its place. The file tools resolve every path against the working directory and reject escapes, so they
-run in the trusted worker; `shell` marshals its command into the guest. The agent's web search and fetch run on
-Anthropic's side and touch neither the worker nor the sandbox.
+run in the trusted worker; `shell` marshals its command into the guest. The agent's web search runs on Anthropic's side
+and touches neither the worker nor the sandbox. The agent has no web fetch: it would fetch any URL a tool printed, which
+makes it an exfiltration channel ([`security.md`](security.md#what-counts-as-an-exfiltration-channel)).
 
 `shell` marshals **every** command, with no fast path for anything. The command runs through postern's hatch-bound
 Python entry point, which is what exports the hatch's socket address into the environment, so a `python3` the command

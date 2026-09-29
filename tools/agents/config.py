@@ -10,6 +10,7 @@ import dataclasses
 import hashlib
 import pathlib
 import subprocess
+import typing
 from collections.abc import Mapping
 
 import yaml
@@ -23,6 +24,7 @@ MODEL_ID_ENV = 'THEMIS_AGENT_MODEL_ID'
 
 _AGENT_KEYS = frozenset({'name', 'model', 'system', 'description', 'tools', 'skills', 'multiagent'})
 _SKILL_TYPES = frozenset({'anthropic', 'custom'})
+_PREBUILT_TOOLSET_PREFIX = 'agent_toolset_'
 _DIGEST_PREFIX = 'sha256:'
 
 SkillFiles = tuple[tuple[str, bytes], ...]
@@ -79,7 +81,8 @@ def load(path: pathlib.Path) -> AgentConfig:
 
     Raises:
         ConfigError: If the yaml is not a mapping of the declaration's keys, lacks `name`, names a
-            model id, or declares a skill outside the shape `_skill` holds it to.
+            model id, declares a prebuilt toolset that is not default-deny, or declares a skill outside
+            the shape `_skill` holds it to.
     """
     raw = yaml.safe_load(path.read_text('utf-8'))
     if not isinstance(raw, dict):
@@ -99,7 +102,7 @@ def load(path: pathlib.Path) -> AgentConfig:
         model=model,
         system=_optional_str(raw, 'system', path),
         description=_optional_str(raw, 'description', path),
-        tools=_mappings(raw, 'tools', path),
+        tools=[_tool(entry, path) for entry in _mappings(raw, 'tools', path)],
         skills=[_skill(entry, path) for entry in _mappings(raw, 'skills', path)],
         multiagent=_optional_mapping(raw, 'multiagent', path),
     )
@@ -134,6 +137,36 @@ def _mappings(raw: Mapping[str, object], key: str, path: pathlib.Path) -> list[d
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ConfigError(f'{path}: `{key}` is a list of mappings')
     return value
+
+
+def _tool(entry: dict[str, object], path: pathlib.Path) -> dict[str, object]:
+    """One `tools` entry; a prebuilt toolset is held to default-deny.
+
+    The API turns every tool of a prebuilt toolset on unless `default_config.enabled` says otherwise,
+    so the toolset has to switch its default off. Each `configs` entry states `enabled` too: one that
+    omits it inherits the default, and would read as switching its tool on while leaving it off.
+    """
+    kind = entry.get('type')
+    if not isinstance(kind, str) or not kind.startswith(_PREBUILT_TOOLSET_PREFIX):
+        return entry
+    default_config = entry.get('default_config')
+    if not isinstance(default_config, dict) or default_config.get('enabled') is not False:
+        raise ConfigError(
+            f'{path}: toolset {kind} is default-deny: set `default_config.enabled: false` and enable each tool it '
+            'runs by name in `configs`'
+        )
+    configs = entry.get('configs', [])
+    if not isinstance(configs, list) or not all(isinstance(item, dict) for item in configs):
+        raise ConfigError(f'{path}: toolset {kind}: `configs` is a list of mappings')
+    names: set[str] = set()
+    for item in typing.cast('list[dict[str, object]]', configs):
+        name = _required_str(item, 'name', path)
+        if name in names:
+            raise ConfigError(f'{path}: toolset {kind} configures `{name}` twice')
+        names.add(name)
+        if not isinstance(item.get('enabled'), bool):
+            raise ConfigError(f'{path}: toolset {kind}: `{name}` states `enabled: true` or `enabled: false`')
+    return entry
 
 
 def _skill(entry: Mapping[str, object], path: pathlib.Path) -> dict[str, object]:

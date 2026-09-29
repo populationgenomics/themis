@@ -11,9 +11,12 @@ that is you.
 
 - **The evidence services retrieve**: `variant`, `clinvar`, `vep`, `gnomad`, `gene_disease`, `transcript`, `splice`,
   `mavedb`, `cspec`, `literature`. The sandbox has no credentials and no egress. Filter what they return yourself.
-- **`web_search`/`web_fetch`** run outside the sandbox. Use them only for what no service holds, such as a registry
-  document or a society guideline. Take any value a service serves from the service. Web text grounds no scored code,
-  and you mark it unverifiable wherever you use it.
+- **`web_search`** runs outside the sandbox and returns titles, links and excerpts, never a whole document; nothing here
+  opens a link it returns. Use it to find what the services missed: a paper's PMID or DOI, which you then hand to the
+  `literature` service to read the paper, or the name and version of a document no service holds, such as a registry
+  entry or a society guideline, which goes on the deposit list with the question it would answer. Take any value a
+  service serves from the service. A search excerpt grounds no scored code, and you mark it unverifiable wherever you
+  use it.
 - **`themis.svcv4` computes every point.** You supply the judgement inputs and read its trail back. Never compute a
   total, band or class by hand. The exception is the `CLN_*`/`LOC_*` case codes: you reduce them from the case facts and
   price them with `observations.total`, showing the arithmetic.
@@ -203,7 +206,7 @@ evidence. The sweep:
 - `Validate` every quote before it enters the document.
 - `FetchPubmedArticles` for any PMID the store cannot serve; its `book_articles` are where GeneReviews chapters arrive.
 - A paper the store does not hold goes on the deposit list with the question it would answer. Never substitute a
-  `web_fetch` of the publisher's page. Say which candidates you left unread and why; a truncation the census reports is
+  web search result's text for it. Say which candidates you left unread and why; a truncation the census reports is
   a recall gap to report.
 
 ## The working document

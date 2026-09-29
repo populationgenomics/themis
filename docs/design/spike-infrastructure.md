@@ -222,7 +222,7 @@ our boundary** — egress for the agent's own bash/generated code is then govern
   sandbox-local proxy injects ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) §7). The **web app**
   writes the **control-plane / session rows** it owns (Analysis, membership, the per-session grant, the session-end
   trace/source projection), reads display rows, and takes **curator-initiated writes** — a paper upload is a normal
-  web-app→**GCS** write, not agent-authored content. Admitting any source (an upload, a `web_fetch` page, the corpus)
+  web-app→**GCS** write, not agent-authored content. Admitting any source (an upload, a web search result, the corpus)
   into an agent's context is a separate retrieval-trust question, orthogonal to which identity wrote the blob.
 - **Config + code execution:** the agent config — system prompt, toolset, model id — lives on the Agent object and is
   pushed at **deploy time via `ant`** (control plane, §6), not bootstrapped per-poll; it carries no service URLs or
