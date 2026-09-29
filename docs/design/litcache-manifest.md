@@ -401,11 +401,14 @@ external ids (`ExternalIds.bookid`) on the footing every external id there has: 
 crosswalk claimed — that is what keeps the crosswalk rebuildable from the manifests alone — so the accession is minted
 like the others rather than merely recorded.
 
-**What is deliberately not here: a migration, or a dual-read window.** A change confined to the record is met by a
-metadata refresh; a change to the conversions needs a full rebuild; neither is a migration. Every `metadata.pb` in the
-store is re-derivable from its source — PubMed's XML, Crossref's or OpenAlex's JSON — through the ladder that resolved
-it at ingest, so a change to the record is met by re-deriving the records, not by rewriting stored bytes or teaching
-readers a second decoding. Both are operator runs
+**An additive change needs only a refresh or a rebuild; a destructive one is an expand/contract change.** The compat
+gate holds `litcache.proto` and the two mirrors to additive evolution ([`proto.md`](proto.md#schema-evolution)). Every
+reader therefore already parses the records written before an additive change. What such a change can still need is the
+stored records brought up to it, because a field the envelope or a mirror gains is empty in every record written before
+it. A change confined to the record is met by a metadata refresh, and a change to the conversions needs a full rebuild.
+Every `metadata.pb` in the store is re-derivable from its source (PubMed's XML, Crossref's or OpenAlex's JSON) through
+the ladder that resolved it at ingest. So a record is brought up to a change by re-deriving it, not by rewriting stored
+bytes or teaching readers a second decoding. Both are operator runs
 ([`reingest-literature-seed-corpus.md`](../runbooks/reingest-literature-seed-corpus.md)), and which one a change needs
 turns on what else has to change:
 
@@ -413,20 +416,22 @@ turns on what else has to change:
   litfetch's DOI resolution and then OpenAlex for the rest — and overwrites `metadata.pb`. Manifests, conversions and
   `doc_id`s stay untouched: the record derives from nothing in the paper's directory and nothing there derives from it
   ([Path layout](#path-layout)), so it is the one artifact a committed paper can have re-derived. It is the path for a
-  change confined to the record — the envelope, say — and the only route to an own-index record for a paper first
-  resolved through Crossref or OpenAlex: the raw record was never kept, so no rewrite of the stored bytes could produce
-  it.
+  change confined to the record (a field the envelope or a mirror gains, say) and the only route to an own-index record
+  for a paper first resolved through Crossref or OpenAlex: the raw record was never kept, so no rewrite of the stored
+  bytes could produce it.
 - A *full rebuild* — the crosswalk table truncated, the `papers/` prefix cleared, the seed re-ingested on Dataflow — is
   the path when the conversions themselves must change: ingestion skips a paper whose manifest exists, and nothing
   regenerates a committed paper's sources or renderings in place.
 
-Neither leaves the readers a fallback to carry. What either leaves is a window — a destructive change to a stored
-artifact, allowed on the condition [`migrations.md`](migrations.md#how-it-runs) puts on a destructive migration: the
-environment holds no data worth keeping and no users to fail, and the doc names what breaks and until when. The window
-opens when the envelope reader deploys, since a pre-envelope blob may decode as an envelope without error and nothing
-can tell one from a valid envelope, and the refresh closes it. A read-side fallback is the cost of rewriting a corpus
-that has users; paying it here would leave a second decode path in every reader for a state that ceases to exist the
-moment the refresh completes.
+After an additive change, neither run leaves the readers a fallback to carry: the gate held every schema change on main
+to additive, so every record written from main parses under the current schema. A destructive change to a stored record,
+the kind the gate refuses, is different. [`migrations.md`](migrations.md#how-it-runs) lets a destructive change skip the
+expand/contract shape only in an environment that holds no data worth keeping and no users to fail, and a store whose
+corpus is kept is not such an environment. A destructive change here is therefore an expand/contract change, as
+[`proto.md`](proto.md#schema-evolution) sets out for every at-rest contract, and the step that rewrites every record
+before the old field is retired is a metadata refresh or a full rebuild. Changing what a field means in place is never
+open. Protobuf bytes carry field numbers and wire types, not names or meanings, so a record written before the change
+would decode without error into the new meaning.
 
 ## Reference / anchor types
 
@@ -467,14 +472,20 @@ staged in the build plan ([`../plans/literature-cache.md`](../plans/literature-c
 - **Materialising primary->secondary refs (req 4).** Left to render-time href matching; a `references` index on the
   rendering/revision is additive if the read path needs it.
 - **Renderings nesting.** Kept flat (top-level map, `from_source`/`from_revision` fields) rather than nested under their
-  `Source`/`Revision`. Structural nesting is more coherent but deepens the tree and hampers enumeration.
+  `Source`/`Revision`. Structural nesting is more coherent but deepens the tree and hampers enumeration. Every stored
+  manifest is written flat and the compat gate holds `litcache.proto` to additive changes, so moving the map is closed:
+  nesting could only arrive beside it, as new fields the writer fills alongside the flat ones, or through an
+  expand/contract change over the stored manifests.
 - **Fidelity preference over `(media_type, converter)`.** The canonical rendering (and the markdown-vs-pdf display
   choice) ranks: xml over pdf; among pdf routes, **llm-ocr over docling**. Where the order lives (read-path config,
   curator-overridable) and how model identity factors in (prefer a newer `model`?) are unspecified.
 - **`model` as a conditional-required field.** `model?` is optional in the schema but required iff
   `converter == llm-ocr`; the writer enforces it. Expressing the invariant structurally would mean splitting `Rendering`
   into a converter-discriminated union (cf. `Access`), which duplicates four common fields across variants for one
-  conditional field -- not worth it. Revisit if more converter-specific fields appear.
+  conditional field -- not worth it. Revisit if more converter-specific fields appear. The compat gate refuses moving
+  the fields `Rendering` already carries into the arms of a new union, so the split would be additive at most (a
+  per-converter message beside the common fields, holding only fields new with it); moving the released fields is an
+  expand/contract change over the stored manifests.
 - **A Bookshelf accession at the door.** Whether `MaybeIngestPapers` accepts `bookid:` beside `doi:`, `pmid:` and
   `pmcid:` is the door's question, held in
   [`literature-evidence-layer.md`](literature-evidence-layer.md#open-questions).

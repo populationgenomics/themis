@@ -5,7 +5,7 @@ a revision is read from, and how a curator's edit becomes a commit); [`document-
 renderer, the citation directives, and the reveal a citation raises);
 [`agent-output-rendering.md`](agent-output-rendering.md) (why agent text never becomes markup, and how the client draws
 a value that a tab's build does not know); [`sheaf.md`](sheaf.md) (the pre-receive hook every agent push passes);
-[`proto.md`](proto.md) (the option pattern, and when a schema starts to be bound by the compatibility gate);
+[`proto.md`](proto.md) (the option pattern, and the compatibility gate that binds a schema from its first commit);
 [`curation-surface.md`](curation-surface.md) (the SVCv4 capture the evidence-tree sketch lines up with).
 
 ## Overview
@@ -229,17 +229,27 @@ gives up the guarantee generation offers, an entry for every type, and a check g
 for a marked type with no registered component, so no payload type ships without its component.
 
 A payload type's schema lands in a change of its own, ahead of its component, and is reviewed as an interface
-([`review-policy.md`](review-policy.md)). Two checks then fix the order of the changes that follow. The pairing check
-fails a marked type with no component, so the contract change declares the message without the mark. The compatibility
-gate refuses a released message gaining the mark, so the mark has to arrive while the schema is still on the gate's
-pre-release list, the list of contracts the gate does not yet compare. A schema on that list can still be reshaped by a
-contract change.
+([`review-policy.md`](review-policy.md)). Two checks decide what that change carries. The compatibility gate compares
+every committed proto from the change that first commits it, and it refuses a released message gaining the widget mark
+or a guard, since a push hook built before that change would check the message's assets differently from a newer one
+(§"A guard protects everything beside it unless it says otherwise"). So the mark and the ownership options on the
+payload's fields land with the message, in the contract change; once it merges, no change can add them to that message.
+The pairing check then fails the marked type until a component is registered for it, so the contract change also
+registers a placeholder, the way a contract change for a service stubs the rpcs whose implementation comes later.
 
-| Change                                                                          | What it does to the schema             | On the pre-release list? |
-| ------------------------------------------------------------------------------- | -------------------------------------- | ------------------------ |
-| The contract change                                                             | declares the message, without the mark | yes                      |
-| The component change                                                            | adds the mark, beside the component    | yes                      |
-| A later change, before the type's first push on a deployment whose data is kept | removes the schema from the list       | no                       |
+The placeholder draws what the renderer draws for a type this build has no component for: the neutral box that names the
+asset's path and says the build does not draw the type (§"Drawability is checked where the file is, and tolerated where
+it is shown"). It still parses the payload and checks it against its rules, so an asset written against the new type
+during component work fails as it would under the finished component.
+
+| Change               | What it does to the schema                                       | What the registry maps the type to |
+| -------------------- | ---------------------------------------------------------------- | ---------------------------------- |
+| The contract change  | declares the message, with its widget mark and ownership options | the placeholder                    |
+| The component change | changes it additively, if at all                                 | the component                      |
+
+Because the gate holds the schema from the contract change on, whatever the component work learns about the payload
+arrives as an additive change, a new field or a new message beside the old. A reshape the gate would refuse has to be
+settled while the contract change is under review.
 
 From its first push on a deployment whose data is kept, a payload schema is persisted data. A pushed revision is never
 deleted ([`sheaf.md`](sheaf.md)), and `buf breaking` holds the schema's fields to additive changes

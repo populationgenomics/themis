@@ -5,12 +5,14 @@ import { ChecklistSchema } from "@/models/widgets";
 import { readPayload } from "@/widgets/asset";
 import type { FileAtCommit } from "@/workspace-copy/copy";
 import { ChecklistWidget } from "./checklist";
+import { EmbedPlaceholder, unregisteredTypeReason } from "./placeholder";
 import type { WidgetContext } from "./revision";
 
 // The widget types this build draws, each payload type mapped to the component that draws it. Written
 // by hand: behind each entry is a component somebody wrote, so the mapping is a decision, not a naming
 // convention (docs/design/document-widgets.md, "Declaring a widget type"). registry.test.ts fails a
-// message the `widget` option marks that has no entry here.
+// message the `widget` option marks that has no entry here; a type whose component is not written yet
+// is registered with `placeholder`.
 
 /** A payload type and how its asset is drawn. */
 export interface RegisteredWidget {
@@ -44,6 +46,24 @@ function widget<Desc extends DescMessage>(
           {...context}
           payload={payload}
           asset={asset}
+        />
+      );
+    },
+  };
+}
+
+/** A payload type registered before its component: its payload is read and validated as a widget's
+ *  is, and draws what a type with no entry draws. The component's change replaces the entry. */
+export function placeholder(schema: DescMessage): RegisteredWidget {
+  return {
+    schema,
+    read: (wrapped) => {
+      readPayload(wrapped, schema);
+      return (context) => (
+        <EmbedPlaceholder
+          key={context.path}
+          path={context.path}
+          reason={unregisteredTypeReason(schema.typeName)}
         />
       );
     },

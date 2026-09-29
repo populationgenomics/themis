@@ -10,10 +10,8 @@ service contract, both at once — is outside the gate: proto reserves neither n
 there is nothing in the schema to check it against, and the type-checkers carry it
 instead. At-rest contracts keep
 ``MESSAGE_NO_DELETE``: no type-checker sees their last reader go.
-Gates every committed proto — RPC and at-rest alike; a pre-release
-contract (no persisted data, no deployed consumer) is left out of the compared module
-until it stabilizes (see ``_PRE_RELEASE``), so it has no baseline to be incompatible
-with.
+Gates every committed proto, RPC and at-rest alike, from the change that first
+commits it.
 
 **Baseline.** The released line, stood in by the PR base branch. Pass it explicitly as
 ``--baseline-ref`` (CI supplies ``origin/<base>``; locally e.g. ``main``).
@@ -72,37 +70,16 @@ _MODULE_SCOPE = '<module>'
 # both sides resolve `buf/validate/validate.proto` to the same module.
 _MODULE_FILES = ('buf.yaml', 'buf.lock')
 
-# Pre-release contracts, held out of the compared module on both sides: no persisted data and
-# no deployed consumer, so a one-time reshape is intended. Each rejoins the gate once released —
-# except the copied upstream schema, whose field numbers are positional, so a pin bump rewrites it
-# wholesale for as long as we carry it. Paths are relative to _PROTO_DIR, and a renamed or deleted
-# contract keeps its old path listed until the baseline no longer carries it — a path here is never
-# compared, present or not. A listed path is unlinked from both sides, so nothing a *gated* proto
-# imports may be listed: the import would not resolve and the module would fail to build.
-_PRE_RELEASE = frozenset(
-    {
-        'clinvar_proto/clinvar.proto',
-        'themis/litcache/models/litcache.proto',
-        'themis/litcache/models/crossref.proto',
-        'themis/litcache/models/openalex.proto',
-        'themis/rpc/clinvar.proto',
-        'themis/rpc/cspec.proto',
-        'themis/rpc/gene_disease.proto',
-        'themis/rpc/gnomad.proto',
-        'themis/rpc/mavedb.proto',
-        'themis/rpc/splice.proto',
-        'themis/rpc/transcript.proto',
-        'themis/rpc/variant.proto',
-        'themis/rpc/vep.proto',
-    }
-)
-
 # buf breaking runner, pinned by digest (not a moving tag).
 _BUF_IMAGE = 'bufbuild/buf@sha256:c34c81ac26044490a10fb5009eb618640834b9048f38d4717538421c6a25e4d7'
 
 
 def _materialise(side: pathlib.Path, ref: str | None) -> None:
-    """Write the repo's proto module into ``side``, at ``ref`` (working tree if None)."""
+    """Write the repo's proto module into ``side``, at ``ref`` (working tree if None).
+
+    Raises:
+        SystemExit: If the module cannot be read at ``ref``.
+    """
     side.mkdir(parents=True, exist_ok=True)
     if ref is None:
         for name in _MODULE_FILES:
@@ -379,26 +356,30 @@ def _with_ownership(outcome: _Outcome, changes: Mapping[str, list[str]], baselin
 def compare(scratch: pathlib.Path, baseline_ref: str) -> _Outcome:
     """Diff the ``new`` module under ``scratch`` against the ``base`` one beside it.
 
-    Pre-release contracts are held out of both sides first: buf reports a deletion or
-    rename against the module carrying no path, so the carve-out is only expressible
-    on the input — a filter over findings has nothing to match such a finding on. The
-    ownership rule runs over what buf compared, and not at all when it compared nothing.
+    The ownership rule runs over what buf compared, and not at all when it compared nothing.
+
+    Args:
+        scratch: The directory holding the ``new`` and ``base`` modules.
+        baseline_ref: The ref ``base`` was read at, for the log.
 
     Raises:
         RuntimeError: If buf compared the module and then could not build it.
     """
-    for side in ('new', 'base'):
-        for relpath in _PRE_RELEASE:
-            # missing_ok: a side legitimately lacks the path when the contract is newer
-            # than the baseline, or was renamed or deleted and its old path still listed
-            (scratch / side / _PROTO_TREE / relpath).unlink(missing_ok=True)
+    compared = sorted((scratch / 'new' / _PROTO_TREE).rglob('*.proto'))
+    if not compared:
+        return _Outcome([], f'compat gate: no proto under {_PROTO_TREE}; the gate would pass without comparing')
     stdout, stderr, returncode = _run_buf(scratch)
     outcome = _outcome(stdout, stderr, returncode, baseline_ref)
     findings, build_failures = _findings_by_proto(stdout)
     if build_failures or (returncode != 0 and not findings):
         return outcome
     changes = ownership_changes(_descriptor_set(scratch, 'base'), _descriptor_set(scratch, 'new'))
-    return _with_ownership(outcome, changes, baseline_ref)
+    outcome = _with_ownership(outcome, changes, baseline_ref)
+    if outcome.failure is not None:
+        return outcome
+    return _Outcome(
+        [*outcome.lines, f'compat gate: {len(compared)} proto(s) vs {baseline_ref}: no incompatibility'], None
+    )
 
 
 def main() -> int:
@@ -415,13 +396,6 @@ def main() -> int:
 
     baseline.require_ref(args.baseline_ref)
 
-    protos = sorted(_PROTO_DIR.rglob('*.proto'))
-    if not protos:
-        raise SystemExit(f'no committed protos under {_PROTO_DIR}')
-    compared = [path for path in protos if str(path.relative_to(_PROTO_DIR)) not in _PRE_RELEASE]
-    if not compared:
-        raise SystemExit('every committed proto is pre-release; the gate would pass without comparing anything')
-
     with tempfile.TemporaryDirectory(dir=_REPO_ROOT, prefix='.buf-') as tmp:
         scratch = pathlib.Path(tmp)
         _materialise(scratch / 'new', None)
@@ -433,7 +407,6 @@ def main() -> int:
     if outcome.failure:
         sys.stdout.flush()  # stderr is unbuffered, so without this the raise outruns the log
         raise SystemExit(outcome.failure)
-    print(f'compat gate: {len(compared)} proto(s) vs {args.baseline_ref}: no incompatibility')
     return 0
 
 

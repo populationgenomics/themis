@@ -12,6 +12,7 @@ import {
   regularFileProblem,
 } from "@/widgets/asset";
 import type { FileAtCommit } from "@/workspace-copy/copy";
+import { EmbedPlaceholder, unregisteredTypeReason } from "./placeholder";
 import { type RegisteredWidget, WIDGETS } from "./registry";
 import type { WidgetContext, WidgetRevision } from "./revision";
 
@@ -45,10 +46,7 @@ export function drawAsset(
     const name = payloadTypeName(wrapped);
     const entry = widgets.get(name);
     if (entry === undefined) {
-      return {
-        kind: "placeholder",
-        reason: `the file holds ${name}, which is not a widget type this build draws`,
-      };
+      return { kind: "placeholder", reason: unregisteredTypeReason(name) };
     }
     return { kind: "drawn", draw: entry.read(wrapped, file) };
   } catch (error) {
@@ -160,27 +158,6 @@ function DrawnFile({
         current: drawnAt === revision.commit,
         onCitation,
       })}
-    </div>
-  );
-}
-
-export function EmbedPlaceholder({
-  path,
-  reason,
-}: {
-  path: string;
-  reason: string;
-}): React.ReactElement {
-  return (
-    <div
-      role="note"
-      className="my-[12px] rounded-[8px] border border-dashed border-line-dashed bg-surface-inset px-[13px] py-[10px] text-[12.5px] leading-[1.5] text-ink-muted"
-    >
-      <div className="font-medium text-ink-label">
-        Not drawn:{" "}
-        <span className="font-mono text-[12px]">{path || "::embed"}</span>
-      </div>
-      <div>{reason}.</div>
     </div>
   );
 }

@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package themis.rpc.other;
-
-message Bar {
-  string x = 1;
-}

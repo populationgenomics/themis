@@ -29,11 +29,6 @@ _CASES = pathlib.Path(__file__).parent / 'compat'
 _BASELINE = 'origin/main'
 _MISSING_IMPORT = 'import "buf/validate/validate.proto": file does not exist'
 
-# The pre-release scenario names the contract `_PRE_RELEASE` actually lists; when that
-# contract graduates, the scenario is describing a carve-out that no longer applies.
-_PRE_RELEASE_RELPATH = 'themis/litcache/models/litcache.proto'
-assert _PRE_RELEASE_RELPATH in buf_compat._PRE_RELEASE, 'update or drop the pre-release-renamed case'
-
 
 def _render(outcome: buf_compat._Outcome) -> str:
     """The gate's whole observable result: what it logs, then how it exits."""
@@ -67,7 +62,7 @@ def test_committed_protos_resolve_their_declared_deps() -> None:
         buf_compat._materialise(scratch / 'new', None)
         buf_compat._materialise(scratch / 'base', None)
         outcome = buf_compat.compare(scratch, _BASELINE)
-    assert outcome == ([], None)
+    assert outcome.failure is None, outcome.lines
 
 
 @pytest.mark.usefixtures('docker_daemon')

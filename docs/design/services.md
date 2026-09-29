@@ -148,9 +148,8 @@ runtime API cannot drift from the contract. That is why there is no contract tes
 forced contract, not a stand-in for one.
 
 Backward-compatibility is a separate gate. [`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) diffs each
-committed `.proto` against its base-branch baseline through a pinned `buf` Docker image, and fails on any incompatible
-delta over the contracts it compares, with no in-tool override. A pre-release contract — no persisted data, no deployed
-consumer — is held out of the comparison until it stabilises. It is the sole authored-data compat gate; see
+committed `.proto` against its base-branch baseline through a pinned `buf` Docker image, from the change that first
+commits it, and fails on any incompatible delta, with no in-tool override. It is the sole authored-data compat gate; see
 [`proto.md`](proto.md), "Schema evolution".
 
 ## Adapters: an abstract port + pluggable backends

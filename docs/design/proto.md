@@ -232,28 +232,28 @@ Two properties hold for every copy, because it does not behave like the hand-aut
 
 - **Never hand-edited**, like every other generated artifact here — it is the wheel's file byte for byte, rewritten by
   every regeneration.
-- **Field numbers are positional**, assigned by the generator in document order. A pin bump can therefore be a
-  coordinated wholesale rewrite of the file, not the additive evolution the [Schema evolution](#schema-evolution) rules
-  describe: numbers move, and no reservation can make them stable.
+- **Field numbers are positional.** xsd-former numbers each message's fields in document order, and it keeps no record
+  of the numbers an earlier release assigned. A new revision of the upstream's schema that inserts an element
+  mid-sequence therefore shifts the number of every field after it. No `reserved` statement in the copy can prevent
+  that, because every regeneration rewrites the copy whole.
 
-What that instability costs depends on what depends on the copy, and the two differ:
+The compat gate compares both copies, as it does every committed proto, so it refuses a pin bump that renumbers either
+of them. Any revision of ClinVar's or PubMed's schema that inserts an element mid-sequence is refused, and the wheel
+stays on its current pin until xsd-former carries a numbering ledger: a record of every released field number, carried
+forward into each regeneration, with the numbers and names of removed fields written out as `reserved`. The wheel is
+first-party, so building that ledger is ours to do. The refusal is right for each copy, for a different reason:
 
-- **ClinVar's message is never persisted and never round-tripped.** It carries an upstream payload in flight, inside one
-  rpc response, and both ends of that call ship together. Nothing reads a stored copy of it, so a renumbering breaks no
-  reader — which is why its copy sits on the pre-release exclusion list (`tools/schema/buf_compat.py`) permanently,
-  unbound by `buf breaking`.
+- **ClinVar's message is never persisted, but its reader does not ship with its writer.** It carries an upstream payload
+  in flight, inside one rpc response, and nothing reads a stored copy of it. The code that decodes that response in a
+  sandbox guest, though, runs with the wheel its image pins (the `guest` dependency group in
+  [`pyproject.toml`](../../pyproject.toml)), and a sandbox Job keeps its image for up to four hours while the evidence
+  service redeploys beneath it. A renumbered record sent to that guest decodes without error into the wrong fields, so a
+  renumbering bump breaks a reader already in flight, as it would for any other rpc.
 - **PubMed's messages are at rest**: litcache's `metadata.pb` is a `PaperMetadata` envelope whose `pubmed` field carries
   PubMed's own record, `PubmedArticle` or `PubmedBookArticle`
-  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so a renumbering would already
-  corrupt every stored record: the schema's stability was load-bearing before any rpc embedded it. Its copy is therefore
-  *inside* the compared module (it cannot be pre-release listed anyway: the released `literature.proto` imports it, and
-  listing unlinks a file from the build), and the compat gate refusing an incompatible pin bump is the store's own
-  constraint made visible. The wheel is first-party, so holding its releases additive is ours to do. The copy enters the
-  module at 0.3.0, whose `MedlineCitation` is renumbered relative to 0.1.0's. That one reshape is accepted: the dev
-  corpus's `metadata.pb` is re-serialised from source for it, and the gate binds from the copy's first release onward.
-
-Whether the embedded message is persisted is the one thing to re-check before any new use of this bucket: it decides
-which of the two regimes the copy lands in.
+  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so a renumbering would corrupt
+  every stored record: the schema's stability was load-bearing before any rpc embedded it, and the gate refusing an
+  incompatible pin bump is the store's own constraint made visible.
 
 ## Mirrored upstream schemas
 
@@ -315,21 +315,29 @@ delete it. One change suffices only where that skew costs nothing real — the c
 puts on a destructive migration: no users to fail, and the consuming doc naming what breaks and until when.
 `analysis-scenarios.md` §Storage is the worked instance, retiring `CreateAnalysisRequest.prompt` in one change: a tab
 still running the previous bundle fails its create until it reloads, which no migration clears. So there is no schema
-version, no migration, no version dispatch: a reader parses every artifact ever written, and binary proto's
-unknown-field retention means an older reader round-trips a newer writer's fields untouched.
+version and no version dispatch: a reader parses every artifact ever written, and binary proto's unknown-field retention
+means an older reader round-trips a newer writer's fields untouched.
 
 - **CI compat gate** (`buf breaking`, `schema-compat.yml`). Each committed `.proto` is diffed against its base-branch
   baseline under the `FILE` category — minus `FIELD_NO_DELETE`, plus the two rules that admit a deletion only when the
   number and the name are reserved — and **fails on any incompatible delta, with no in-tool override**.
   `RPC_SAME_IDEMPOTENCY_LEVEL` is ignored for the browser service alone, whose only consumer is the BFF's own generated
   client, shipped in the same deploy: a level change there reaches no caller that predates it (bucket 2 above). The gRPC
-  contracts keep the rule, where the level carries retry semantics a deployed client reads. Pre-release contracts (no
-  persisted data, no deployed consumer) are excluded until they stabilize (`tools/schema/buf_compat.py`).
+  contracts keep the rule, where the level carries retry semantics a deployed client reads. The gate compares every
+  committed contract from the change that first commits it, so once merged, a contract evolves additively like any other
+  (`tools/schema/buf_compat.py`).
 - **Statically-typed stubs.** protoc's Python output cannot be type-checked on its own, so a call to a method the
   contract no longer declares would fail at run time rather than at check time. The `protoc-gen-mypy_grpc` plug-in emits
   a `.pyi` beside each stub, which is what lets pyright catch it at the call site.
 - **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
   evolution stayed compatible.
+
+A change the gate refuses to an at-rest contract, such as a field whose type or meaning has to change, is made as an
+expand/contract change. The new form lands as a new field beside the old one, and readers accept either. Every stored
+artifact is then rewritten into the new field, and only after that is the old field retired, with its number and name
+reserved. A store whose records are immutable, as a sheaf repository's pushed revisions are, never reaches that last
+step, so its readers accept the old field for good. The litcache store takes this route, with a metadata refresh or a
+full rebuild as the rewrite ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 ### Retiring an RPC or a message
 
@@ -352,13 +360,13 @@ than the deletion itself: an implementation or a caller that outlived the declar
 
 Deleting a **message** stays gated outside the service trees, because nothing above would notice. The risk there is
 bytes already written rather than code still calling, and the type-checkers fall silent exactly when the last reader is
-deleted. `litcache.proto` is the obvious at-rest contract, and pre-release today, so it is out of the compared module
-anyway; it rejoins a gate that still holds. `themis/sheaf/models` is a second and is compared: the ref document a sheaf
-repository's whole state lives in, whose noncurrent generations are read long after they stop being current. The less
-obvious one is `themis/workbench/models`, which is bucket 2 on the wire but holds `AnalysisInputs` — the message
-`analyses.inputs` stores as bytes. It also declares the Workbench service's request and reply types, which by their
-nature belong under `themis/workbench/rpc`; while they sit alongside a persisted message, retiring a browser rpc leaves
-them behind rather than deleting them. An unused message costs a generated type; a deleted one costs the rows.
+deleted. `litcache.proto` is the obvious at-rest contract: the manifest and the bibliographic record of every stored
+paper. `themis/sheaf/models` is a second: the ref document a sheaf repository's whole state lives in, whose noncurrent
+generations are read long after they stop being current. The less obvious one is `themis/workbench/models`, which is
+bucket 2 on the wire but holds `AnalysisInputs` — the message `analyses.inputs` stores as bytes. It also declares the
+Workbench service's request and reply types, which by their nature belong under `themis/workbench/rpc`; while they sit
+alongside a persisted message, retiring a browser rpc leaves them behind rather than deleting them. An unused message
+costs a generated type; a deleted one costs the rows.
 
 None of this settles the *transition window*, which stays a reviewer's judgement: rolling deploys keep several
 generations live, so an rpc with no surviving caller in this repo may still have one in flight.

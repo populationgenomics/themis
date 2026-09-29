@@ -6,7 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "@/components/workbench/markdown";
 import { type Checklist, ChecklistSchema } from "@/models/widgets";
 import { drawAsset } from "./embed";
-import { WIDGETS } from "./registry";
+import { EmbedPlaceholder } from "./placeholder";
+import { placeholder, WIDGETS } from "./registry";
 import type { WidgetRevision } from "./revision";
 import { WidgetStatesProvider } from "./widget-state";
 
@@ -71,6 +72,44 @@ describe("an asset", () => {
     expect(reason(other)).toContain(
       "google.protobuf.Timestamp, which is not a widget type this build draws",
     );
+  });
+
+  test("of a type registered with a placeholder draws as a type no component draws", () => {
+    const file = { bytes: asset(VALID), mode: "100644" };
+    const unregistered = drawAsset(file, new Map());
+    if (unregistered.kind !== "placeholder") throw new Error("the asset drew");
+    const drawn = drawAsset(
+      file,
+      new Map([[ChecklistSchema.typeName, placeholder(ChecklistSchema)]]),
+    );
+    if (drawn.kind !== "drawn") throw new Error(drawn.reason);
+    const context = {
+      path: "assets/c.binpb",
+      drawnAt: COMMIT,
+      revision: REVISION,
+      current: true,
+      onCitation: () => {},
+    };
+    expect(renderToStaticMarkup(drawn.draw(context))).toBe(
+      renderToStaticMarkup(
+        <EmbedPlaceholder path={context.path} reason={unregistered.reason} />,
+      ),
+    );
+  });
+
+  test("of a type registered with a placeholder still has its payload checked", () => {
+    const duplicated = asset(
+      checklist([
+        { id: "a", label: "one" },
+        { id: "a", label: "two" },
+      ]),
+    );
+    const drawn = drawAsset(
+      { bytes: duplicated, mode: "100644" },
+      new Map([[ChecklistSchema.typeName, placeholder(ChecklistSchema)]]),
+    );
+    if (drawn.kind !== "placeholder") throw new Error("the asset drew");
+    expect(drawn.reason).toContain("every item needs an id");
   });
 
   test("whose payload does not parse draws a placeholder", () => {
