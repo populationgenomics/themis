@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package themis.rpc.sample;
+package themis.sample.models;
 
 message Foo {
   string a = 1;

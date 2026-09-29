@@ -336,7 +336,9 @@ unknown-field retention means an older reader round-trips a newer writer's field
 The gate above has nothing to check an rpc retirement against. A field retirement turns on a fact written in the schema
 — the reserved number and name — and proto reserves neither an rpc name nor a message name, so the rules forbidding
 those deletions refuse every one of them rather than the unsafe ones. They are ignored under the service trees in
-`buf.yaml`, where a message is an rpc's request or reply and dies with it. The models trees keep the message rule.
+`buf.yaml`, where a message is an rpc's request or reply and dies with it. Deleting a service's whole contract file is
+the same retirement made for every rpc and message in it at once, so the rule against deleting a file is ignored there
+too. The models trees keep both the message rule and the file rule.
 
 What covers the service side instead is the type-checkers, which see the condition that makes a deletion unsafe rather
 than the deletion itself: an implementation or a caller that outlived the declaration.

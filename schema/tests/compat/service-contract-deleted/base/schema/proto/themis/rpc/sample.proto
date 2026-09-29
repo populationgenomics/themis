@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package themis.rpc.sample;
+
+message FooRequest {
+  string a = 1;
+}
+
+message FooResponse {
+  string b = 1;
+}
+
+service Sample {
+  rpc Foo(FooRequest) returns (FooResponse);
+}
