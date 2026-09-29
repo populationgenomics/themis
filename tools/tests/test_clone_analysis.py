@@ -24,7 +24,7 @@ from themis import sheaf
 from themis.clients.sheaf import store as remote_mod
 from themis.sheaf import refdoc
 from themis.sheaf.tests import conftest as sheaf_conftest
-from themis.sheaf.wire import server
+from themis.sheaf.wire import protect, server
 from tools import clone_analysis, session_token, sheaf_remote
 
 ANALYSIS_ID = 'an_test'
@@ -86,7 +86,9 @@ def _stand_in(
         assert remote_mod.read_credentials(token_file).session_token == TOKEN
         if fail_with is not None:
             raise fail_with
-        with server.SheafGitServer.over_backend(backend, root, repos={served}) as instance:
+        with server.SheafGitServer.over_backend(
+            backend, root, repos={served}, protection=protect.Protection.unprotected()
+        ) as instance:
             yield instance
 
     monkeypatch.setattr(session_token, 'derive_session_token', derive)
