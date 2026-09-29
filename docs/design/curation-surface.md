@@ -471,8 +471,8 @@ partial.
   anchors). Assistance is the product's direction and is designed with the working document, not here.
 - **A CSV worksheet of open calls.** One row per call on an already-curated case cannot express a curation of a variant
   no reference has seen.
-- **A separate app and Cloud Run service.** Separation at the deployment layer duplicates the IAP backend, the deploy
-  and the identity verification for a seam the dependency shape already draws.
+- **A separate app and Cloud Run service.** Separation at the deployment layer duplicates the IAP gate, the deploy and
+  the identity verification for a seam the dependency shape already draws.
 - **Reuse Project membership for curator identity.** Ties who may curate to the workbench's Project model, in the one
   place the two surfaces have no reason to agree.
 - **Assessments carrying their own revision number, with no submission parent.** Makes a partial resubmission

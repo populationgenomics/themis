@@ -46,15 +46,13 @@ _TARGET_INPUT = {
     'gcp:secretmanager/secretIamMember:SecretIamMember': 'secretId',
     'gcp:serviceaccount/iAMMember:IAMMember': 'serviceAccountId',
     'gcp:compute/subnetworkIAMMember:SubnetworkIAMMember': 'subnetwork',
-    'gcp:iap/webBackendServiceIamMember:WebBackendServiceIamMember': 'webBackendService',
+    'gcp:iap/webCloudRunServiceIamMember:WebCloudRunServiceIamMember': 'cloudRunServiceName',
     'gcp:projects/iAMMember:IAMMember': 'project',
 }
 _SERVICE_ACCOUNT_TYPE = 'gcp:serviceaccount/account:Account'
 _SERVICE_IDENTITY_TYPE = 'gcp:projects/serviceIdentity:ServiceIdentity'
 _SERVICE_TYPE = 'gcp:cloudrunv2/service:Service'
 _JOB_TYPE = 'gcp:cloudrunv2/job:Job'
-_BACKEND_TYPE = 'gcp:compute/backendService:BackendService'
-_NEG_TYPE = 'gcp:compute/regionNetworkEndpointGroup:RegionNetworkEndpointGroup'
 
 
 class Binding(NamedTuple):
@@ -79,13 +77,6 @@ class Workload(NamedTuple):
     """The runtime SA's email."""
 
 
-class Fronting(NamedTuple):
-    """A load-balancer backend and the Cloud Run service it fronts."""
-
-    backend: str
-    service: str
-
-
 class Capture(NamedTuple):
     """What one mocked run of the program registered."""
 
@@ -94,7 +85,6 @@ class Capture(NamedTuple):
     resources: dict[str, mocks.MockMonitor.ResourceRegistration]
     bindings: list[Binding]
     workloads: list[Workload]
-    frontings: list[Fronting]
 
 
 class _Mocks(mocks.Mocks):
@@ -224,22 +214,6 @@ def _workloads(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> 
     return workloads
 
 
-def _frontings(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> list[Fronting]:
-    """Each backend service joined to the Cloud Run service its serverless NEG names."""
-    neg_services = {
-        registration.id: str(registration.state['cloudRun']['service'])
-        for urn, registration in resources.items()
-        if urn_type_chain(urn)[-1] == _NEG_TYPE
-    }
-    frontings = []
-    for urn, registration in resources.items():
-        if urn_type_chain(urn)[-1] != _BACKEND_TYPE:
-            continue
-        for backend in registration.state['backends']:
-            frontings.append(Fronting(str(registration.state['name']), neg_services[backend['group']]))
-    return frontings
-
-
 def capture_program() -> Capture:
     """Run the program once under mocks and return everything it registered.
 
@@ -268,4 +242,4 @@ def capture_program() -> Capture:
         asyncio.set_event_loop(None)
         loop.close()
     resources = monitor.resources
-    return Capture(config['gcp:project'], resources, _bindings(resources), _workloads(resources), _frontings(resources))
+    return Capture(config['gcp:project'], resources, _bindings(resources), _workloads(resources))

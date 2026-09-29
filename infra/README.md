@@ -12,7 +12,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `Pulumi.<stack>.yaml`                 | Per-environment config + `gcpkms` secrets provider.                                                                                                                                                    |
 | `__main__.py`                         | Entrypoint: read config, compose the modules, export outputs.                                                                                                                                          |
 | `themis_infra/baseline.py`            | Enabled GCP services + the shared Artifact Registry.                                                                                                                                                   |
-| `themis_infra/web.py`                 | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                                                     |
+| `themis_infra/web.py`                 | Cloud Run web app with IAP + external HTTPS LB; its runtime SA is the Managed-Agents client identity.                                                                                                  |
 | `themis_infra/auth.py`                | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                                                             |
 | `themis_infra/store.py`               | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                                                            |
 | `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (IAM-gated Cloud Run), its bucket of repositories, and its runtime SA, an object-user on that bucket.                                                                |
@@ -150,9 +150,9 @@ Per-environment, in `Pulumi.<stack>.yaml`. The `config.require*` calls at the to
 the program reads — a missing key fails `pulumi up`; `Pulumi.dev.yaml` is the worked example of every one. Two things
 that list cannot express:
 
-- `themis:iapBackendServiceId`, `themis:anthropicFederationRuleId` and the cost exporter's
-  `themis:anthropicCostExporterServiceAccountId` / `…FederationRuleId` name values the stack itself produces, or
-  registrations that can only follow them, so a fresh environment holds placeholders for them until its first `up`
+- `themis:anthropicFederationRuleId` and the cost exporter's `themis:anthropicCostExporterServiceAccountId` /
+  `…FederationRuleId` name values the stack itself produces, or registrations that can only follow them, so a fresh
+  environment holds placeholders for them until its first `up`
   ([`fresh-environment.md`](../docs/runbooks/fresh-environment.md) §3).
 
 The deployed image is a per-run input, not committed config: set `THEMIS_WEB_IMAGE` (env var) to deploy a specific image
@@ -176,15 +176,15 @@ shows no spurious diff — except on a first bring-up, when no live service exis
 Run `PROJECT=cpg-themis-prod infra/bootstrap/bootstrap.sh` first — it creates the state bucket and the KMS key the
 stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.yaml` and replace every value, including
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
-each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:iapBackendServiceId`,
-`themis:anthropicFederationRuleId` and the cost exporter's `themis:anthropicCostExporterServiceAccountId` /
-`…FederationRuleId` must not be copied at all — the real values only exist after the first `up`, so a copied one breaks
-loudly. Three are quiet instead, deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a
-copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one;
-`themis:cluDerivesSessionTokens`, because a copied `true` lets whoever can impersonate `themis-clu` act as any live
-session in an environment whose sessions may be real; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned
-to another environment's service account, so the convert worker deploys healthy and fails only when it first tries to
-transcribe. No program change; the full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:anthropicFederationRuleId` and
+the cost exporter's `themis:anthropicCostExporterServiceAccountId` / `…FederationRuleId` must not be copied at all — the
+real values only exist after the first `up`, so a copied one breaks loudly. Three are quiet instead, deploying clean
+onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a copied `true` creates a world-readable bucket in an
+environment that has no review workflow to justify one; `themis:cluDerivesSessionTokens`, because a copied `true` lets
+whoever can impersonate `themis-clu` act as any live session in an environment whose sessions may be real; and
+`themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's service account, so the convert
+worker deploys healthy and fails only when it first tries to transcribe. No program change; the full sequence is
+[`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

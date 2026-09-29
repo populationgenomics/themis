@@ -47,7 +47,7 @@ def test_views_partition_the_capabilities() -> None:
 
 
 def _capture_with(binding: capture.Binding) -> capture.Capture:
-    return capture.Capture(project='p', resources={}, bindings=[binding], workloads=[], frontings=[])
+    return capture.Capture(project='p', resources={}, bindings=[binding], workloads=[])
 
 
 def test_check_drawable_refuses_a_capability_no_view_draws() -> None:

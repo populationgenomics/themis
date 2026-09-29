@@ -779,7 +779,7 @@ class SubnetUser(_Capability):
 
 
 class IapAccessor(_Capability):
-    """May pass IAP to reach the web app — in a browser, or with an ID token for the IAP audience.
+    """May pass IAP to reach one IAP-enabled Cloud Run service — in a browser, or with a signed JWT.
 
     The coarse "may reach the app" gate. What the holder may do inside is the app's own roles, decided
     from its identity after IAP admits it.
@@ -790,17 +790,19 @@ class IapAccessor(_Capability):
         holder: str,
         *,
         member: pulumi.Input[str],
-        backend_service: pulumi.Input[str],
+        service: pulumi.Input[str],
         project: str,
+        location: str,
         prior: Prior | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         name = f'{holder}-passes-iap'
         super().__init__(name, opts)
-        gcp.iap.WebBackendServiceIamMember(
+        gcp.iap.WebCloudRunServiceIamMember(
             name,
             project=project,
-            web_backend_service=backend_service,
+            location=location,
+            cloud_run_service_name=service,
             role='roles/iap.httpsResourceAccessor',
             member=member,
             opts=self._binding(prior),

@@ -1,9 +1,9 @@
-"""The web service: Cloud Run behind an external HTTPS load balancer and IAP.
+"""The web service: Cloud Run with IAP, behind an external HTTPS load balancer.
 
-Provisions the public web surface for one environment — a Cloud Run service, the
-external Application Load Balancer that fronts it (serverless NEG, Google-managed
-TLS certificate, HTTP→HTTPS redirect), and IAP on the backend. Identical across
-environments; all per-environment values arrive as constructor arguments.
+Provisions the public web surface for one environment — a Cloud Run service with
+IAP enabled on it, and the external Application Load Balancer that fronts it
+(serverless NEG, Google-managed TLS certificate, HTTP→HTTPS redirect). Identical
+across environments; all per-environment values arrive as constructor arguments.
 
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
@@ -13,20 +13,14 @@ resolves, the managed certificate stays PROVISIONING.
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import pulumi
 import pulumi_gcp as gcp
 
 from themis_infra import grants, sql
 
-
-class _LoadBalancer(NamedTuple):
-    """The load balancer values `WebService` surfaces as outputs."""
-
-    ip_address: pulumi.Output[str]
-    backend_service_id: pulumi.Output[int]
-    backend_service_name: pulumi.Output[str]
+# The service's own name is also an input to its IAP-assertion audience, so it is a
+# literal rather than the resource's output, which the template cannot read.
+_SERVICE_NAME = 'themis-web'
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -34,7 +28,7 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
 
 
 class WebService(pulumi.ComponentResource):
-    """Cloud Run web service fronted by an external HTTPS LB with IAP.
+    """Cloud Run web service with IAP, fronted by an external HTTPS LB.
 
     Attributes:
         ip_address: The load balancer's reserved global IP. The environment's
@@ -49,13 +43,7 @@ class WebService(pulumi.ComponentResource):
         db_user: The web SA's Cloud SQL IAM DB-user login — `THEMIS_DB_USER`
             for the container, and the `${WEB_DB_USER}` the `analyses` and
             `session_context` write grants substitute.
-        backend_service_id: The IAP backend service's server-generated numeric id.
-            The app verifies IAP JWTs against the audience
-            `/projects/<number>/global/backendServices/<backend_service_id>`. The
-            backend fronts this service, so it cannot be a live input here; it is
-            exported and fed back as config
-            (`docs/runbooks/fresh-environment.md` §3).
-        backend_service_name: The IAP backend service's name — the resource an
+        service_name: The Cloud Run service's name — the IAP resource an
             `IapAccessor` grant is over. Who may reach the app is decided in the
             program, not here.
     """
@@ -82,7 +70,6 @@ class WebService(pulumi.ComponentResource):
         anthropic_service_account_id: str,
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
-        iap_backend_service_id: str,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:WebService', 'themis', None, opts)
@@ -136,12 +123,16 @@ class WebService(pulumi.ComponentResource):
             project=project,
             # Explicit, stable service name (referenced by the deploy/preview
             # workflows and the console) — not an auto-generated one.
-            name='themis-web',
+            name=_SERVICE_NAME,
             location=region,
             deletion_protection=False,
+            # IAP runs in front of the service on every ingress path, the load
+            # balancer's included; it cannot also be on the LB's backend service.
+            # Google-managed OAuth client (../../docs/design/spike-infrastructure.md §4).
+            iap_enabled=True,
             # Network gate: only the external LB (and internal traffic) may
             # reach the service — direct public requests to the run.app URL are
-            # rejected here, before IAM. Paired with the IAP-service-agent-only
+            # rejected here, before IAP and IAM. Paired with the IAP-service-agent-only
             # invoker below (the identity gate), IAP is the sole access path.
             ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
@@ -176,8 +167,11 @@ class WebService(pulumi.ComponentResource):
                             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
                             _env('THEMIS_SHEAF_URL', sheaf_url),
                             _env('THEMIS_SHEAF_BUCKET', sheaf_bucket),
+                            # The IAP-assertion audience the app verifies:
+                            # /projects/<number>/locations/<region>/services/<name>.
                             _env('THEMIS_PROJECT_NUMBER', project_number),
-                            _env('THEMIS_IAP_BACKEND_SERVICE_ID', iap_backend_service_id),
+                            _env('THEMIS_REGION', region),
+                            _env('THEMIS_WEB_SERVICE_NAME', _SERVICE_NAME),
                         ],
                         # Probes reach the container directly, not through the LB, so they carry no
                         # IAP assertion; the app's proxy allowlists this path.
@@ -221,16 +215,14 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
 
-        load_balancer = self._build_load_balancer(
+        self.service_name = self._service.name
+        self.ip_address = self._build_load_balancer(
             'themis',
             project=project,
             region=region,
             domain=domain,
             child=child,
         )
-        self.ip_address = load_balancer.ip_address
-        self.backend_service_id = load_balancer.backend_service_id
-        self.backend_service_name = load_balancer.backend_service_name
         self.url = pulumi.Output.format('https://{0}', domain)
         self.register_outputs(
             {
@@ -239,8 +231,7 @@ class WebService(pulumi.ComponentResource):
                 'service_account_email': self.service_account_email,
                 'service_account_unique_id': self.service_account_unique_id,
                 'db_user': self.db_user,
-                'backend_service_id': self.backend_service_id,
-                'backend_service_name': self.backend_service_name,
+                'service_name': self.service_name,
             }
         )
 
@@ -252,11 +243,11 @@ class WebService(pulumi.ComponentResource):
         region: str,
         domain: str,
         child: pulumi.ResourceOptions,
-    ) -> _LoadBalancer:
+    ) -> pulumi.Output[str]:
         """Build the external HTTPS load balancer chain.
 
         Returns:
-            The reserved global IP and the IAP backend service's generated id and name.
+            The reserved global IP.
         """
         # The environment's DNS A record (added out of band) points at this IP,
         # so it must stay constant across deploys. `protect` makes Pulumi refuse
@@ -287,8 +278,9 @@ class WebService(pulumi.ComponentResource):
             protocol='HTTPS',
             load_balancing_scheme='EXTERNAL_MANAGED',
             backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
-            # Google-managed OAuth client (../../docs/design/spike-infrastructure.md §4).
-            iap=gcp.compute.BackendServiceIapArgs(enabled=True),
+            # IAP is on the Cloud Run service and cannot be on both. Explicit: an
+            # omitted `iap` block leaves whatever the backend has live.
+            iap=gcp.compute.BackendServiceIapArgs(enabled=False),
             opts=child,
         )
 
@@ -317,11 +309,7 @@ class WebService(pulumi.ComponentResource):
         )
 
         _build_http_redirect(name, project, address, child)
-        return _LoadBalancer(
-            ip_address=address.address,
-            backend_service_id=backend.generated_id,
-            backend_service_name=backend.name,
-        )
+        return address.address
 
 
 def _build_http_redirect(

@@ -45,9 +45,9 @@ Each is stated once in [`spike-infrastructure.md`](spike-infrastructure.md) §8.
   endpoint of ours, and an LLM drives long chains of discrete tool calls less reliably than code against generated
   stubs. Code mode over internal services replaces it — see
   [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md).
-- **A webhook receiver on the BFF** — session-end deliveries would land on an IAP-exempt path of the web app, reached
-  through a second backend service with IAP disabled. Rejected: it puts an unauthenticated surface on the IAP-gated tier
-  to duplicate what the dispatcher already does.
+- **A webhook receiver on the BFF** — Anthropic cannot present an IAP credential, so session-end deliveries would need a
+  path of the web app that IAP does not gate. Rejected: it puts an unauthenticated surface on the IAP-gated tier to
+  duplicate what the dispatcher already does.
 
 ## Implementation state
 

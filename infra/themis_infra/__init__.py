@@ -2,8 +2,8 @@
 
 The Pulumi program is one `pulumi up` per environment. Its resources are grouped
 by concern into modules — `baseline` (enabled GCP services + the shared image
-registry), `web` (the Cloud Run web service behind an external HTTPS load
-balancer and IAP — its runtime SA is also the Managed-Agents client identity),
+registry), `web` (the Cloud Run web service with IAP, behind an external HTTPS
+load balancer — its runtime SA is also the Managed-Agents client identity),
 `storage` (the literature full-text store bucket), and `sql` (the Cloud SQL
 Postgres instance with IAM database auth) today; audit slots in alongside as it
 lands. The thin entrypoint (`../__main__.py`) reads stack config and composes

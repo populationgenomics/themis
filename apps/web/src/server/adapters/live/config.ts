@@ -43,11 +43,13 @@ export interface SheafConfig {
   sheafUrl: string;
 }
 
-/** IAP JWT audience inputs. The `aud` an IAP assertion carries is the backend
- *  service resource fronted by the load balancer, NOT the Cloud Run service. */
+/** IAP JWT audience inputs. IAP is enabled on the Cloud Run service itself, so
+ *  the `aud` its assertion carries names that service:
+ *  `/projects/<projectNumber>/locations/<region>/services/<serviceName>`. */
 export interface IapConfig {
   projectNumber: string;
-  backendServiceId: string;
+  region: string;
+  serviceName: string;
 }
 
 function required(env: EnvLike, name: string): string {
@@ -64,7 +66,8 @@ function required(env: EnvLike, name: string): string {
 export function loadIapConfig(env: EnvLike = process.env): IapConfig {
   return {
     projectNumber: required(env, "THEMIS_PROJECT_NUMBER"),
-    backendServiceId: required(env, "THEMIS_IAP_BACKEND_SERVICE_ID"),
+    region: required(env, "THEMIS_REGION"),
+    serviceName: required(env, "THEMIS_WEB_SERVICE_NAME"),
   };
 }
 

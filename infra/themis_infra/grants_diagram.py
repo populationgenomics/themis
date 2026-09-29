@@ -8,8 +8,8 @@ fails when a source lags the program or an SVG lags its source.
 
 Each graph has one edge per (holder, capability, target) — a capability's constituent roles collapse
 into it — and a principal is one node whether it holds grants or is what another principal impersonates.
-Every Cloud Run workload drawn carries a dotted `runs as` edge to its service account, and an IAP
-backend a dotted `fronts` edge to the service behind it, so reach can be followed across hops.
+Every Cloud Run workload drawn carries a dotted `runs as` edge to its service account, so reach can be
+followed across hops.
 """
 
 from __future__ import annotations
@@ -169,14 +169,12 @@ def _target(binding: capture.Binding, project: str) -> _Node:
     """The node a binding is over, labelled for the view it appears in."""
     target = binding.target
     match binding.capability:
-        case 'ServiceInvoker' | 'PublicService' | 'JobRunner' | 'SandboxSpawner':
+        case 'ServiceInvoker' | 'PublicService' | 'JobRunner' | 'SandboxSpawner' | 'IapAccessor':
             return _Node(_WORKLOAD, target)
         case 'AccountImpersonator' | 'FederatedImpersonator' | 'AccountUser' | 'SelfSigner':
             return _account_target(target)
         case 'TaskEnqueuer':
             return _Node(_RESOURCE, f'queue {target}')
-        case 'IapAccessor':
-            return _Node(_RESOURCE, f'IAP {target}')
         case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'PublicObjectReader':
             return _Node(_RESOURCE, f'bucket {target.removeprefix(f"{project}-")}')
         case 'SecretReader':
@@ -194,11 +192,6 @@ def _view_edges(program: capture.Capture, capabilities: frozenset[str]) -> set[_
         for b in program.bindings
         if b.capability in capabilities
     }
-    drawn = {node for edge in edges for node in (edge.source, edge.target)}
-    for fronting in program.frontings:
-        backend = _Node(_RESOURCE, f'IAP {fronting.backend}')
-        if backend in drawn:
-            edges.add(_Edge(backend, 'fronts', _Node(_WORKLOAD, fronting.service), dotted=True))
     drawn = {node for edge in edges for node in (edge.source, edge.target)}
     for workload in program.workloads:
         node = _Node(_WORKLOAD, workload.name)

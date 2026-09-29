@@ -110,11 +110,8 @@ slack_bot_token = config.require_secret('slackBotToken')
 cost_spike_alert_cents = config.require_int('costSpikeAlertCents')
 cost_spike_window_minutes = config.require_int('costSpikeWindowMinutes')
 cost_freshness_minutes = config.require_int('costFreshnessMinutes')
-# IAP-JWT audience inputs the web app verifies: the project's numeric id (a data-source
-# lookup) and the backend service's numeric id — this stack's own web_backend_service_id
-# output, fed back as config (docs/runbooks/fresh-environment.md §3).
+# The project's numeric id: part of the IAP-JWT audience the web app verifies.
 project_number = gcp.organizations.get_project(project_id=project).number
-iap_backend_service_id = config.require('iapBackendServiceId')
 # May impersonate the themis-clu account to call a backend service by hand. The group + roster live
 # in cpg-infrastructure-private; this is the principal only (no PII).
 clu_group = config.require('cluGroup')
@@ -449,7 +446,6 @@ site = web.WebService(
     anthropic_service_account_id=anthropic_service_account_id,
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
-    iap_backend_service_id=iap_backend_service_id,
     opts=pulumi.ResourceOptions(depends_on=[base, database, store_service, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
@@ -457,17 +453,17 @@ site = web.WebService(
 grants.IapAccessor(
     'themis-access-group',
     member=f'group:{iap_access_group}',
-    backend_service=site.backend_service_name,
+    service=site.service_name,
     project=project,
-    prior=grants.Prior('themis-iap-access', parent=site),
+    location=region,
     opts=pulumi.ResourceOptions(depends_on=[site]),
 )
 grants.IapAccessor(
     'themis-clu',
     member=automation_user.member,
-    backend_service=site.backend_service_name,
+    service=site.service_name,
     project=project,
-    prior=grants.Prior('themis-iap-access-clu', parent=site),
+    location=region,
     opts=pulumi.ResourceOptions(depends_on=[site]),
 )
 # The web BFF: derives each session's bearer at session create, resolves papers through the evidence
@@ -699,9 +695,6 @@ pulumi.export('web_sa_unique_id', site.service_account_unique_id)
 # The web SA's DB login — the ${WEB_DB_USER} the migrate step substitutes into the
 # analyses/session_context write grants.
 pulumi.export('web_db_user', site.db_user)
-# The IAP backend service's numeric id — set as themis:iapBackendServiceId after the first
-# deploy so the web app can verify the IAP-JWT audience.
-pulumi.export('web_backend_service_id', site.backend_service_id)
 pulumi.export('sql_connection_name', database.instance_connection_name)
 pulumi.export('sql_database', database.database_name)
 # The deploy SA's DB login — the identity the deploy.yml migrate step authenticates

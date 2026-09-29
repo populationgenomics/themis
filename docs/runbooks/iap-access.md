@@ -1,8 +1,9 @@
 # Runbook: IAP access
 
-Who can reach a Themis environment's web app is a coarse IAP gate: the load balancer's backend has IAP enabled, and a
-single **per-environment Google Group** is granted `roles/iap.httpsResourceAccessor` on it. Application roles and
-per-report authorization live in the app, not here.
+Who can reach a Themis environment's web app is a coarse IAP gate: the `themis-web` Cloud Run service has IAP enabled,
+and a single **per-environment Google Group** is granted `roles/iap.httpsResourceAccessor` on it. IAP on the service
+covers every path to it, the load balancer in front included, so the load balancer's backend has IAP off; the two cannot
+both be on. Application roles and per-report authorization live in the app, not here.
 
 ## The group principal
 
@@ -31,7 +32,7 @@ the principal).
 
 Reaching the app without a browser goes through the same account as every other deployed surface: a person or a script
 impersonates `themis-clu` and presents a token, rather than holding a credential of its own. The account is granted
-`roles/iap.httpsResourceAccessor` on the backend alongside the access group, so IAP admits it as it admits a person.
+`roles/iap.httpsResourceAccessor` on the service alongside the access group, so IAP admits it as it admits a person.
 
 Nothing has to be registered for it. IAP accepts two token types from a service account, and they differ in what the
 audience is:

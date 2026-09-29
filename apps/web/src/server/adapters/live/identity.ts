@@ -3,13 +3,13 @@ import { UnauthenticatedError } from "../../errors";
 import type { UserIdentity } from "../../identity";
 import { type IapConfig, loadIapConfig } from "./config";
 
-// App-layer IAP verification. The Cloud Run invoker is not restricted
-// to IAP, so the plaintext `x-goog-authenticated-user-email` (and
-// `x-serverless-authorization`) headers are forgeable and MUST NOT be trusted. The
-// only unforgeable identity is the signed IAP assertion — a per-request JWT IAP
-// mints. We verify its signature, issuer, and audience against IAP's published
-// keys and read the user email (and sub) from the VERIFIED claims. Fail CLOSED: a
-// request that cannot be verified is rejected, never treated as anonymous.
+// App-layer IAP verification. The plaintext `x-goog-authenticated-user-email` (and
+// `x-serverless-authorization`) headers are forgeable by anything that reaches the
+// container and MUST NOT be trusted. The only unforgeable identity is the signed IAP
+// assertion — a per-request JWT IAP mints. We verify its signature, issuer, and
+// audience against IAP's published keys and read the user email (and sub) from the
+// VERIFIED claims. Fail CLOSED: a request that cannot be verified is rejected, never
+// treated as anonymous.
 
 const IAP_ASSERTION_HEADER = "x-goog-iap-jwt-assertion";
 const IAP_ISSUER = "https://cloud.google.com/iap";
@@ -18,13 +18,17 @@ const IAP_ISSUER = "https://cloud.google.com/iap";
  *  claims. Every failure mode — absent, bad signature, wrong issuer/audience,
  *  expired, or no email claim — throws `UnauthenticatedError` (→ 401). */
 export class IapVerifier implements UserIdentity {
-  private readonly client = new OAuth2Client();
-  // The audience is the backend SERVICE resource IAP fronts on the load balancer,
-  // not the Cloud Run service id: `/projects/<n>/global/backendServices/<id>`.
+  // IAP is enabled on the Cloud Run service, so the audience names the service:
+  // `/projects/<n>/locations/<region>/services/<name>`.
   private readonly audience: string;
 
-  constructor(config: IapConfig) {
-    this.audience = `/projects/${config.projectNumber}/global/backendServices/${config.backendServiceId}`;
+  /** `client` fetches IAP's published keys and checks the signature; a test
+   *  passes one whose key source it controls. */
+  constructor(
+    config: IapConfig,
+    private readonly client: OAuth2Client = new OAuth2Client(),
+  ) {
+    this.audience = `/projects/${config.projectNumber}/locations/${config.region}/services/${config.serviceName}`;
   }
 
   async assertedEmail(headers: Headers): Promise<string> {
@@ -58,7 +62,8 @@ export class IapVerifier implements UserIdentity {
   }
 }
 
-/** Build the IAP verifier from env (the `THEMIS_IAP_*` audience inputs). Fails
+/** Build the IAP verifier from env (`THEMIS_PROJECT_NUMBER`, `THEMIS_REGION`,
+ *  `THEMIS_WEB_SERVICE_NAME`: the audience inputs). Fails
  *  loud on a missing input — a fail-closed misconfiguration, not a reason to skip
  *  verification. */
 export function createIdentity(

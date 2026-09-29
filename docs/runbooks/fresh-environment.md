@@ -85,11 +85,10 @@ declare it up front. The first `up` runs against placeholders; each real value i
 registered against one) and set, and a second `up` applies it. What each one feeds is inert or fails loudly until then —
 the table says which — and on a first bring-up neither costs anything: the edge is still serving the placeholder image.
 
-| Key                                                                                            | Real value                                                                                                                                                   | Inert until set                                                                                        |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `themis:iapBackendServiceId`                                                                   | `pulumi stack output web_backend_service_id`                                                                                                                 | The web app verifies the IAP-JWT audience against this id, so it refuses every assertion IAP hands it. |
-| `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                | The BFF cannot mint a Managed-Agents token.                                                            |
-| `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty.     |
+| Key                                                                                            | Real value                                                                                                                                                   | Inert until set                                                                                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                | The BFF cannot mint a Managed-Agents token.                                                        |
+| `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty. |
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
 remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
@@ -102,16 +101,15 @@ precede the first `up`. While either deploy id is a placeholder, the deploy's ag
 after the stack has applied, and the agent's declaration is applied by hand.
 
 ```sh
-pulumi config set themis:iapBackendServiceId "$(pulumi stack output web_backend_service_id)"
 pulumi config set themis:anthropicFederationRuleId fdrl_...   # from the Anthropic console
 pulumi config set themis:anthropicCostExporterServiceAccountId svac_...
 pulumi config set themis:anthropicCostExporterFederationRuleId fdrl_...
 pulumi up
 ```
 
-Never copy either value from another environment's `Pulumi.<stack>.yaml`. A stale `iapBackendServiceId` points the app
-at another environment's backend, so it refuses the traffic its own IAP admits — a failure that reads as a broken deploy
-rather than a wrong constant.
+Never copy these values from another environment's `Pulumi.<stack>.yaml`. A copied federation rule is pinned to another
+environment's service account, so the token exchange refuses it. The failure reads as a broken deploy rather than a
+wrong constant.
 
 ### Retiring a first-deploy image placeholder
 

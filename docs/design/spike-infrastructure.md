@@ -77,8 +77,8 @@ No DB password (IAM auth), no Anthropic key (WIF), no app session key (the app t
 stateless). IAP's own browser path likewise needs none — it uses a Google-managed OAuth client.
 
 Programmatic access carries no secret of its own. A person reaching the app without a browser impersonates the
-`themis-clu` account and mints a short-lived ID token ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)), so
-what gates it is group membership.
+`themis-clu` account and signs a short-lived JWT ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)), so what
+gates it is group membership.
 
 Self-hosted sandboxes (§8) add **two scoped stored secrets**: the `ANTHROPIC_ENVIRONMENT_KEY` the sandbox worker uses to
 claim its work queue, and the **webhook signing key** (`whsec_…`) that verifies the wake webhook letting the worker
