@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TabArea } from "./tab-area";
 import type { WorkspaceModelController } from "./use-workspace-model";
@@ -71,22 +72,24 @@ const crossWindowDrag: CrossWindowDrag = {
 
 function renderArea(win: Win): string {
   return renderToStaticMarkup(
-    <WorkspaceDataProvider
-      value={{
-        events: [],
-        workingDocument: null,
-        documentSignal: null,
-        documentError: false,
-      }}
-    >
-      <TabArea
-        win={win}
-        controller={controllerFor(stateWith(win))}
-        windowActions={windowActions}
-        crossWindowDrag={crossWindowDrag}
-        onCitation={noop}
-      />
-    </WorkspaceDataProvider>,
+    <QueryClientProvider client={new QueryClient()}>
+      <WorkspaceDataProvider
+        value={{
+          events: [],
+          workingDocument: { kind: "absent" },
+          documentSignal: null,
+          documentVersions: null,
+        }}
+      >
+        <TabArea
+          win={win}
+          controller={controllerFor(stateWith(win))}
+          windowActions={windowActions}
+          crossWindowDrag={crossWindowDrag}
+          onCitation={noop}
+        />
+      </WorkspaceDataProvider>
+    </QueryClientProvider>,
   );
 }
 

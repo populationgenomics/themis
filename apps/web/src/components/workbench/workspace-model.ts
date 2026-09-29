@@ -21,13 +21,16 @@ export type Tab<P = unknown> = {
 
 export const WORKING_DOC_TAB_ID = "doc:working";
 
-/** A view-only pin to a historical working-document version, held in the working-doc tab's payload.
- *  `analysisId` scopes the pin: readers ignore a pin naming another analysis, so a stale pin can never
- *  select a version of the wrong document. Absent/null follows the latest version. */
+/** A view-only pin to a historical working-document version, held in the working-doc tab's payload:
+ *  a commit on the branch's history in the browser's copy of the repository. `analysisId` scopes
+ *  the pin: readers ignore a pin naming another analysis, so a stale pin can never select a version
+ *  of the wrong document. Absent/null follows the branch's tip. */
 export interface DocumentPin {
   analysisId: string;
-  version: number;
+  commit: string;
 }
+
+const COMMIT_ID = /^[0-9a-f]{40}$/;
 
 /** The pin in a working-doc tab payload, or null when absent or malformed. Structural, not a cast:
  *  payloads cross the BroadcastChannel between windows that may run different bundle versions. */
@@ -35,25 +38,24 @@ export function readDocumentPin(payload: unknown): DocumentPin | null {
   if (typeof payload !== "object" || payload === null) return null;
   const pin = (payload as { pin?: unknown }).pin;
   if (typeof pin !== "object" || pin === null) return null;
-  const { analysisId, version } = pin as {
+  const { analysisId, commit } = pin as {
     analysisId?: unknown;
-    version?: unknown;
+    commit?: unknown;
   };
   if (typeof analysisId !== "string" || analysisId === "") return null;
-  if (typeof version !== "number" || !Number.isInteger(version) || version < 1)
-    return null;
-  return { analysisId, version };
+  if (typeof commit !== "string" || !COMMIT_ID.test(commit)) return null;
+  return { analysisId, commit };
 }
 
-/** The version a working-doc payload pins for `analysisId`, or null to follow the latest. Every
- *  reader must scope through here: versions overlap across analyses, so an unscoped read of a stale
- *  pin would select a version of the wrong document. */
-export function pinnedDocumentVersion(
+/** The commit a working-doc payload pins for `analysisId`, or null to follow the tip. Every reader
+ *  must scope through here: an unscoped read of a stale pin would select a commit of another
+ *  Analysis's repository. */
+export function pinnedDocumentCommit(
   payload: unknown,
   analysisId: string | null,
-): number | null {
+): string | null {
   const pin = readDocumentPin(payload);
-  return pin !== null && pin.analysisId === analysisId ? pin.version : null;
+  return pin !== null && pin.analysisId === analysisId ? pin.commit : null;
 }
 
 export type Edge = "left" | "right" | "top" | "bottom";

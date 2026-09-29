@@ -15,8 +15,6 @@ import {
   type Analysis,
   AnalysisInputsSchema,
   AnalysisSchema,
-  type DocumentResponse,
-  DocumentResponseSchema,
   type PollResponse,
   PollResponseSchema,
   type Project,
@@ -102,9 +100,6 @@ class FakeDataPlane implements AnalysisDataPlane {
   }
   async interruptAnalysis(analysis: Analysis): Promise<void> {
     this.interrupts.push(analysis.id);
-  }
-  async getDocument(): Promise<DocumentResponse> {
-    return create(DocumentResponseSchema, {});
   }
   async getAnalysis(analysisId: string): Promise<Analysis> {
     this.rowReads += 1;
@@ -205,13 +200,15 @@ function backend(extra: Record<string, string> = {}): {
 describe("AuthorizedBackend point access", () => {
   test("a member reaches an analysis in their Project", async () => {
     const { authz } = backend();
-    await expect(authz.getDocument("an_mine")).resolves.toBeDefined();
+    await expect(authz.getThread("an_mine", "sthr_1")).resolves.toBeDefined();
     await expect(authz.pollEvents("an_mine", NEVER)).resolves.toBeDefined();
   });
 
   test("a non-member gets not-found, not a distinguishable forbidden", async () => {
     const { authz } = backend();
-    const error = await authz.getDocument("an_theirs").catch((e: unknown) => e);
+    const error = await authz
+      .getThread("an_theirs", "sthr_1")
+      .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ResourceNotFoundError);
     // The refusal must not reveal which Project the analysis is in.
     expect((error as Error).message).not.toContain("proj_b");
@@ -226,10 +223,10 @@ describe("AuthorizedBackend point access", () => {
     // existence oracle for any id a caller cares to guess.
     const { authz } = backend({ an_corrupt_theirs: "proj_b" });
     const unknown = await authz
-      .getDocument("an_absent")
+      .getThread("an_absent", "sthr_1")
       .catch((e: unknown) => e);
     const corrupt = await authz
-      .getDocument("an_corrupt_theirs")
+      .getThread("an_corrupt_theirs", "sthr_1")
       .catch((e: unknown) => e);
     expect(corrupt).toBeInstanceOf(ResourceNotFoundError);
     expect((corrupt as Error).constructor).toBe((unknown as Error).constructor);
@@ -238,14 +235,14 @@ describe("AuthorizedBackend point access", () => {
 
   test("a member sees an unreadable row as the fault it is", async () => {
     const { authz } = backend({ an_corrupt_mine: "proj_a" });
-    await expect(authz.getDocument("an_corrupt_mine")).rejects.toBeInstanceOf(
-      UndecodableAnalysisError,
-    );
+    await expect(
+      authz.getThread("an_corrupt_mine", "sthr_1"),
+    ).rejects.toBeInstanceOf(UndecodableAnalysisError);
   });
 
   test("an unknown analysis is not-found, same as a non-member", async () => {
     const { authz } = backend();
-    await expect(authz.getDocument("an_absent")).rejects.toBeInstanceOf(
+    await expect(authz.getThread("an_absent", "sthr_1")).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
   });

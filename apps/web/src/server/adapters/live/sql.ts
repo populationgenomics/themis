@@ -17,9 +17,9 @@ import { getPool, type SqlConfig } from "../../pg";
 // process-wide pool (`server/pg.ts`).
 //
 // The create write is one transaction over two rows: the `analyses` row and the
-// `session_context` row `(token_hash, project_id, analysis_id)` the store resolves
-// a session bearer against. No working-document SQL — the document lives in GCS and
-// is read directly (see gcs.ts).
+// `session_context` row `(token_hash, project_id, analysis_id)` the auth service
+// resolves a session bearer against. No working-document SQL: the document is the
+// workspace repository's, which the browser reads from its own copy.
 
 const ANALYSIS_COLUMNS = "id, session_id, project_id, inputs, created_at";
 

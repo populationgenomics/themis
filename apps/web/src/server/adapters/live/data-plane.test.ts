@@ -6,13 +6,12 @@ import { isUnmanagedSessionError } from "../../errors";
 import type { AnthropicClient } from "./client";
 import { DataPlane } from "./data-plane";
 import type { KmsSessionTokenDeriver } from "./derive";
-import type { Gcs } from "./gcs";
 import type { Sql } from "./sql";
 
 // A run driven by another harness has no session here. The poll still has to answer, because the
-// working-document version rides on it and the document pane has no other source — but only for
-// that case: a platform session whose read fails is an outage, and an outage that rendered as a run
-// with nothing to say would be indistinguishable from a healthy one that has not started.
+// backend adds the workspace tip to its response and the document pane has no other source; but
+// only for that case: a platform session whose read fails is an outage, and an outage that rendered
+// as a run with nothing to say would be indistinguishable from a healthy one that has not started.
 
 function analysis(sessionId: string): Analysis {
   return create(AnalysisSchema, {
@@ -27,10 +26,6 @@ type Calls = { listEvents: number; steers: number; interrupts: number };
 function plane(
   calls: Calls,
   listEvents: () => unknown = () => ({ events: [] }),
-  document: { version: number; markdown: string } | null = {
-    version: 7,
-    markdown: "# doc",
-  },
 ) {
   const anthropic = {
     listEvents: async () => {
@@ -44,39 +39,21 @@ function plane(
       calls.interrupts += 1;
     },
   } as unknown as AnthropicClient;
-  const gcs = {
-    latestWorkingDocument: async () => document,
-  } as unknown as Gcs;
   return new DataPlane(
     anthropic,
     {} as unknown as KmsSessionTokenDeriver,
     {} as unknown as Sql,
-    gcs,
   );
 }
 
 describe("a run another harness drove", () => {
-  test("polls to an empty conversation and the document version it has produced", async () => {
+  test("polls to an empty conversation without asking the platform", async () => {
     const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
 
     const response = await plane(calls).pollEvents(analysis("pi_abc"));
 
     expect(calls.listEvents).toBe(0);
     expect(response.events).toEqual([]);
-    // The signal the document pane fetches on; without it the pane never asks for anything.
-    expect(response.workingDocumentVersion).toBe(7);
-  });
-
-  test("polls to no version at all before it has committed anything", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
-
-    const response = await plane(calls, undefined, null).pollEvents(
-      analysis("pi_abc"),
-    );
-
-    expect(calls.listEvents).toBe(0);
-    // Unset, not zero: the pane asks for nothing until the run has produced something.
-    expect(response.workingDocumentVersion).toBeUndefined();
   });
 
   test("refuses a steer and an interrupt rather than sending them nowhere", async () => {
@@ -111,7 +88,7 @@ describe("a run the platform holds", () => {
     const response = await plane(calls).pollEvents(analysis("sesn_01xyz"));
 
     expect(calls.listEvents).toBe(1);
-    expect(response.workingDocumentVersion).toBe(7);
+    expect(response.events).toEqual([]);
   });
 
   test("surfaces a failed read rather than an empty conversation", async () => {

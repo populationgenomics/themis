@@ -23,7 +23,13 @@ import {
 } from "../../errors";
 import type { WorkspaceRepository } from "../../ports";
 import { COLLABORATIVE_BRANCH } from "../../workspace";
-import { agentHistory, REFLOG_REF, type SeedPublish } from "./workspace-seed";
+import {
+  type AgentFile,
+  agentHistory,
+  agentPublish,
+  REFLOG_REF,
+  type SeedPublish,
+} from "./workspace-seed";
 
 // The offline workspace repository: sheaf's storage protocol over an in-memory store, one repository
 // per Analysis. It decides a publish as the sheaf service does (themis/services/sheaf/servicer.py,
@@ -87,6 +93,42 @@ export class FixtureWorkspace implements WorkspaceRepository {
       throw new Error(`workspace repository already seeded: ${analysisId}`);
     }
     this.unbuilt.set(analysisId, build);
+  }
+
+  /** Publish the agent's next commit on `analysisId`'s `branch`, writing `files` over whatever its
+   *  tip holds, a curator's commit included, as the agent's pull-then-push would. Creates the repository on its first publish. */
+  agentPublishes(
+    analysisId: string,
+    branch: string,
+    files: Readonly<Record<string, AgentFile>>,
+    at: Date,
+  ): void {
+    const current = this.repository(analysisId);
+    const oidOf = (ref: string) => {
+      const target = current?.document.refs[ref]?.target;
+      return target?.case === "oid" ? target.value : undefined;
+    };
+    const publish = agentPublish(
+      {
+        packs:
+          current?.document.packs.map((id) => {
+            const bytes = current.packs.get(id);
+            if (bytes === undefined)
+              throw new Error(`${analysisId}: no bytes for ${id}`);
+            return bytes;
+          }) ?? [],
+        branch,
+        tip: oidOf(branch),
+        reflog: oidOf(REFLOG_REF),
+      },
+      files,
+      at,
+    );
+    this.apply(
+      analysisId,
+      seedIntent(current?.generation ?? BigInt(0), publish),
+      [publish.pack],
+    );
   }
 
   async readRefDoc(

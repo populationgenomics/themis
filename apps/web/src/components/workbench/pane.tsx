@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/context-menu";
 import { DropdownMenu, type MenuItem } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { useCopyClearing } from "./clear-copy";
 import {
   type ContentKind,
   REGISTRY,
@@ -79,13 +80,18 @@ export function Pane({
   drag: StripDrag;
 }): React.ReactElement {
   const data = useWorkspaceData();
+  // One per pane: the working document drawn here and this pane's menu share its state.
+  const clearCopy = useCopyClearing(
+    data.documentSignal === null ? null : data.documentSignal.analysisId,
+  );
   const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
   const ctx: RenderContext | null = activeTab
     ? {
         events: data.events,
         workingDocument: data.workingDocument,
         documentSignal: data.documentSignal,
-        documentError: data.documentError,
+        documentVersions: data.documentVersions,
+        clearCopy,
         highlight: controller.state.highlights[activeTab.id],
         onCitation: (citation) => onCitation(win.id, pane.id, citation),
         patch: (payload) => controller.patchTab(activeTab.id, payload),
@@ -219,6 +225,7 @@ function paneMenuItems(
   controller: WorkspaceModelController,
   windowActions: WindowActions,
   activeTab: Tab | null,
+  ctx: RenderContext | null,
 ): MenuItem[] {
   const labels =
     controller.state.labels[labelKey(win.id, side)] ?? side === "b";
@@ -261,6 +268,10 @@ function paneMenuItems(
   }
   if (canMovePaneToWindow(win, controller.state.mainId))
     items.push(...paneMoveItems(pane, win, windowActions));
+  if (ctx !== null)
+    items.push(
+      ...(kindOf(activeTab).menuItems?.(activeTab.payload, ctx) ?? []),
+    );
   return items;
 }
 
@@ -298,6 +309,7 @@ function PaneHeader({
             controller,
             windowActions,
             activeTab,
+            ctx,
           )}
           ariaLabel="Pane actions"
           align="end"

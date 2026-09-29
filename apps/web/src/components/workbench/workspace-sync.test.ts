@@ -11,9 +11,12 @@ import {
 import {
   applyWorkspaceCommand,
   buildSnapshot,
-  documentFetchKey,
+  IncompatibleSnapshotError,
   mirrorWindowActions,
   mirrorWorkspace,
+  parseSnapshotSignal,
+  pinnedCommitOf,
+  type WorkingDocumentSignal,
   type WorkspaceCommand,
   type WorkspaceSnapshot,
   windowDestinations,
@@ -42,8 +45,11 @@ const WORKING_TAB: Tab = {
   payload: {},
 };
 
-function pinnedWorkingTab(analysisId: string, version: number): Tab {
-  return { ...WORKING_TAB, payload: { pin: { analysisId, version } } };
+const TIP = "9e27".padEnd(40, "0");
+const OLDER = "c41e".padEnd(40, "0");
+
+function pinnedWorkingTab(analysisId: string, commit: string): Tab {
+  return { ...WORKING_TAB, payload: { pin: { analysisId, commit } } };
 }
 
 function win(id: string, tabs: Tab[], activeTabId: string | null): Win {
@@ -63,29 +69,36 @@ function snapshotWith(windows: Win[]): WorkspaceSnapshot {
     labels: {},
     highlights: {},
     openPapers: [],
-    workingDocument: { version: 4, analysisId: "analysis-1" },
+    workingDocument: {
+      tip: { kind: "commit", commit: TIP },
+      analysisId: "analysis-1",
+      pollFailed: false,
+      unavailable: false,
+      damaged: false,
+    },
   };
 }
 
 describe("buildSnapshot", () => {
-  test("carries structure + the working-doc version + analysisId, never a body", () => {
+  test("carries structure + the working-doc tip + analysisId, never a body", () => {
     const state = {
       ...INITIAL_WORKSPACE_STATE,
       highlights: { "paper:x": "a quote" },
       openPapers: ["paper:x"],
     };
-    const snapshot = buildSnapshot(state, {
-      version: 7,
+    const signal = {
+      tip: { kind: "commit", commit: TIP },
       analysisId: "analysis-42",
-    });
+      pollFailed: false,
+      unavailable: false,
+      damaged: false,
+    } as const;
+    const snapshot = buildSnapshot(state, signal);
     expect(snapshot.windows).toBe(state.windows);
     expect(snapshot.highlights).toEqual({ "paper:x": "a quote" });
     expect(snapshot.openPapers).toEqual(["paper:x"]);
-    expect(snapshot.workingDocument).toEqual({
-      version: 7,
-      analysisId: "analysis-42",
-    });
-    // The refetch signal is version + analysisId only; the markdown body must not ride the channel. Pin
+    expect(snapshot.workingDocument).toEqual(signal);
+    // The refetch signal is tip + analysisId only; the markdown body must not ride the channel. Pin
     // that on the signal itself — a whole-snapshot substring check would instead trip on an unrelated
     // `hasMarkdown` field the moment a paper tab enters the fixture, testing the fixture, not the rule.
     expect(snapshot.workingDocument).not.toHaveProperty("markdown");
@@ -99,69 +112,48 @@ describe("buildSnapshot", () => {
   });
 });
 
-describe("documentFetchKey", () => {
-  test("keys the working-doc fetch on {analysisId, version}", () => {
+describe("pinnedCommitOf", () => {
+  test("is null when nothing is pinned: the window follows the tip", () => {
     const snapshot = snapshotWith([
       win("main", [WORKING_TAB], WORKING_DOC_TAB_ID),
     ]);
-    expect(documentFetchKey(snapshot)).toEqual({
-      analysisId: "analysis-1",
-      version: 4,
-    });
+    expect(pinnedCommitOf(snapshot)).toBeNull();
   });
 
-  test("is all-null when no document has been produced", () => {
-    const snapshot = { ...snapshotWith([]), workingDocument: null };
-    expect(documentFetchKey(snapshot)).toEqual({
-      analysisId: null,
-      version: null,
-    });
-  });
-
-  test("a version bump re-keys the fetch", () => {
-    const base = snapshotWith([]);
-    const bumped = {
-      ...base,
-      workingDocument: { version: 5, analysisId: "analysis-1" },
+  test("is null before the Poll answers", () => {
+    const snapshot = {
+      ...snapshotWith([
+        win(
+          "main",
+          [pinnedWorkingTab("analysis-1", OLDER)],
+          WORKING_DOC_TAB_ID,
+        ),
+      ]),
+      workingDocument: null,
     };
-    expect(documentFetchKey(base).version).not.toBe(
-      documentFetchKey(bumped).version,
-    );
-    expect(documentFetchKey(bumped)).toEqual({
-      analysisId: "analysis-1",
-      version: 5,
-    });
+    expect(pinnedCommitOf(snapshot)).toBeNull();
   });
 
-  test("a pin for the signal's analysis selects that version", () => {
+  test("a pin for the signal's analysis selects that commit", () => {
     const snapshot = snapshotWith([
-      win("main", [pinnedWorkingTab("analysis-1", 2)], WORKING_DOC_TAB_ID),
+      win("main", [pinnedWorkingTab("analysis-1", OLDER)], WORKING_DOC_TAB_ID),
     ]);
-    expect(documentFetchKey(snapshot)).toEqual({
-      analysisId: "analysis-1",
-      version: 2,
-    });
+    expect(pinnedCommitOf(snapshot)).toBe(OLDER);
   });
 
-  test("a pin naming another analysis is ignored — the latest wins", () => {
+  test("a pin naming another analysis is ignored — the tip wins", () => {
     const snapshot = snapshotWith([
-      win("main", [pinnedWorkingTab("analysis-9", 2)], WORKING_DOC_TAB_ID),
+      win("main", [pinnedWorkingTab("analysis-9", OLDER)], WORKING_DOC_TAB_ID),
     ]);
-    expect(documentFetchKey(snapshot)).toEqual({
-      analysisId: "analysis-1",
-      version: 4,
-    });
+    expect(pinnedCommitOf(snapshot)).toBeNull();
   });
 
   test("the pin follows the working-doc tab into a child window", () => {
     const snapshot = snapshotWith([
       win("main", [], null),
-      win("child", [pinnedWorkingTab("analysis-1", 1)], WORKING_DOC_TAB_ID),
+      win("child", [pinnedWorkingTab("analysis-1", OLDER)], WORKING_DOC_TAB_ID),
     ]);
-    expect(documentFetchKey(snapshot)).toEqual({
-      analysisId: "analysis-1",
-      version: 1,
-    });
+    expect(pinnedCommitOf(snapshot)).toBe(OLDER);
   });
 });
 
@@ -386,5 +378,40 @@ describe("windowDestinations / windowLabel", () => {
       { type: "moveTabToWindow", tabId: "paper:d1", toWinId: "main" },
       { type: "moveTabToWindow", tabId: "paper:d1", toWinId: null },
     ]);
+  });
+});
+
+describe("a snapshot's working-document signal", () => {
+  const current: WorkingDocumentSignal = {
+    analysisId: "an_1",
+    tip: { kind: "commit", commit: TIP },
+    pollFailed: false,
+    unavailable: true,
+    damaged: false,
+  };
+
+  test("of this build reads as it was sent, and none as none", () => {
+    expect(parseSnapshotSignal(structuredClone(current))).toEqual(current);
+    expect(
+      parseSnapshotSignal({ ...current, tip: { kind: "noCommit" } }),
+    ).toMatchObject({ tip: { kind: "noCommit" } });
+    expect(parseSnapshotSignal(null)).toBeNull();
+  });
+
+  test.each([
+    [
+      "an older build's string tip",
+      { analysisId: "an_1", tip: TIP, pollFailed: false },
+    ],
+    ["an older build's missing flags", { ...current, damaged: undefined }],
+    [
+      "a tip that is not a commit id",
+      { ...current, tip: { kind: "commit", commit: "HEAD" } },
+    ],
+    ["no object at all", "an_1"],
+  ])("from %s is refused as another build's", (_what, signal) => {
+    expect(() => parseSnapshotSignal(signal)).toThrow(
+      IncompatibleSnapshotError,
+    );
   });
 });

@@ -438,7 +438,6 @@ site = web.WebService(
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
     session_token_key_version=session_token_key_version,
-    working_document_bucket=store_service.working_document_bucket,
     evidence_url=evidence_service.url,
     fulltext_bucket=fulltext.name,
     sheaf_url=sheaf_service.url,
@@ -471,22 +470,14 @@ grants.IapAccessor(
     prior=grants.Prior('themis-iap-access-clu', parent=site),
     opts=pulumi.ResourceOptions(depends_on=[site]),
 )
-# The web BFF: derives each session's bearer at session create, reads the working document the version
-# selector shows, resolves papers through the evidence service and serves the resolved object from the
-# fulltext bucket itself.
+# The web BFF: derives each session's bearer at session create, resolves papers through the evidence
+# service and serves the resolved object from the fulltext bucket itself.
 web_member = grants.service_account(site.service_account_email)
 grants.SessionBearerDeriver(
     'themis-web',
     member=web_member,
     key=session_token_key.id,
     prior=grants.Prior('themis-web-mac-signer'),
-)
-grants.BucketObjectReader(
-    'themis-web',
-    member=web_member,
-    bucket=store_service.working_document_bucket,
-    target='working-documents',
-    prior=grants.Prior('themis-web-working-document-viewer'),
 )
 grants.ServiceInvoker(
     'themis-web',

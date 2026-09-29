@@ -1,22 +1,16 @@
 import { loadSqlConfig } from "../../pg";
 import type { AnalysisPorts, ProjectMembership } from "../../ports";
 import { AnthropicClient } from "./client";
-import {
-  loadAnthropicConfig,
-  loadGcsConfig,
-  loadKmsConfig,
-  loadSheafConfig,
-} from "./config";
+import { loadAnthropicConfig, loadKmsConfig, loadSheafConfig } from "./config";
 import { DataPlane } from "./data-plane";
 import { KmsSessionTokenDeriver } from "./derive";
-import { Gcs } from "./gcs";
 import { Membership } from "./membership";
 import { Sql } from "./sql";
 import { createWorkspace } from "./workspace";
 
 // The `THEMIS_BACKEND=live` composition: the raw `AnalysisDataPlane` over the
 // self-hosted data plane — Anthropic session control, KMS-derived bearer, Cloud SQL
-// persistence, GCS-direct working documents — and the workspace repository over the sheaf
+// persistence — and the workspace repository over the sheaf
 // service, which names each Analysis by a bearer the same deriver derives. Authorization is the AuthorizedBackend
 // decorator's job; this layer trusts the (user, project) its caller resolved.
 
@@ -40,7 +34,6 @@ export function createAnalysisPorts(): AnalysisPorts {
       new AnthropicClient(loadAnthropicConfig()),
       deriver,
       sharedSql(),
-      new Gcs(loadGcsConfig()),
     ),
     workspace: createWorkspace(loadSheafConfig(), deriver),
   };

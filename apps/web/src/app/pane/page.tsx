@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { useCopyClearedAnnouncements } from "@/components/workbench/clear-copy";
 import type { Citation } from "@/components/workbench/markdown";
 import { revealCitation } from "@/components/workbench/reveal";
 import { TabArea } from "@/components/workbench/tab-area";
@@ -10,25 +11,29 @@ import {
   type LiveSessions,
   removeDragSession,
 } from "@/components/workbench/tab-dnd";
+import { useWorkingDocument } from "@/components/workbench/working-document";
 import { WorkspaceDataProvider } from "@/components/workbench/workspace-context";
 import { WORKING_DOC_TAB_ID } from "@/components/workbench/workspace-model";
 import {
   CHANNEL_PARAM,
-  documentFetchKey,
+  IncompatibleSnapshotError,
   makeCrossWindowDrag,
   mirrorWindowActions,
   mirrorWorkspace,
+  parseSnapshotSignal,
+  pinnedCommitOf,
   WINDOW_PARAM,
+  type WorkingDocumentSignal,
   type WorkspaceCommand,
   type WorkspaceMessage,
   type WorkspaceSnapshot,
 } from "@/components/workbench/workspace-sync";
-import { useDocument } from "@/lib/queries";
 
 // A mirror window: the tab area of one window in the main workspace, and nothing else — no conversation
 // region (main-only). It renders from the broadcast snapshot and posts a command for every user action;
-// main stays authoritative. The working-document body does NOT ride the channel — this window fetches it
-// from the BFF keyed on the snapshot's {analysisId, version}, so a popped doc re-renders on republish.
+// main stays authoritative. The working-document body does NOT ride the channel — this window reads it
+// from the browser's copy of the repository keyed on the snapshot's {analysisId, tip}, through the
+// SharedWorker every window shares, so a popped doc re-renders on a publish.
 // A `main-closing` message closes this window; main detects this one going away by its window handle.
 
 export default function PanePage(): React.ReactElement {
@@ -44,6 +49,8 @@ function MirrorWindow(): React.ReactElement {
   const channelId = params.get(CHANNEL_PARAM);
   const winId = params.get(WINDOW_PARAM);
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+  // The window that opened this one runs another build, whose snapshots this build cannot read.
+  const [incompatible, setIncompatible] = useState(false);
   const channelRef = useRef<BroadcastChannel | null>(null);
   // Live cross-window drags this window learns of from other windows' broadcasts (never its own).
   const sessionsRef = useRef<LiveSessions>({});
@@ -54,8 +61,21 @@ function MirrorWindow(): React.ReactElement {
     channelRef.current = channel;
     channel.onmessage = (event: MessageEvent<WorkspaceMessage>) => {
       const message = event.data;
-      if (message.kind === "state") setSnapshot(message.snapshot);
-      else if (message.kind === "main-closing") window.close();
+      if (message.kind === "state") {
+        let workingDocument: WorkingDocumentSignal | null;
+        try {
+          workingDocument = parseSnapshotSignal(
+            message.snapshot.workingDocument,
+          );
+        } catch (error) {
+          if (!(error instanceof IncompatibleSnapshotError)) throw error;
+          console.error("a snapshot this window cannot read", error);
+          setIncompatible(true);
+          return;
+        }
+        setIncompatible(false);
+        setSnapshot({ ...message.snapshot, workingDocument });
+      } else if (message.kind === "main-closing") window.close();
       else if (message.kind === "drag-session")
         sessionsRef.current = addDragSession(
           sessionsRef.current,
@@ -79,19 +99,22 @@ function MirrorWindow(): React.ReactElement {
   }, [channelId, winId]);
 
   const win = snapshot?.windows.find((w) => w.id === winId) ?? null;
-  // The working-document body, fetched by this window from the BFF keyed on the broadcast version — the
-  // body never crosses the channel. Only when this window actually holds the working-doc tab: the
-  // version signal reaches every mirror, but a window popped out to hold a paper has nowhere to render
-  // it, so fetching (and re-fetching on each version bump) would be pure waste.
+  // The working-document body, read by this window from the copy keyed on the broadcast tip — the body
+  // never crosses the channel. Only when this window actually holds the working-doc tab: the tip
+  // reaches every mirror, but a window popped out to hold a paper has nowhere to render it, so reading
+  // (and re-reading on each publish) would be pure waste.
   const holdsWorkingDoc =
     win?.panes.some((p) => p.tabs.some((t) => t.id === WORKING_DOC_TAB_ID)) ??
     false;
-  const fetchKey =
-    snapshot && holdsWorkingDoc
-      ? documentFetchKey(snapshot)
-      : { analysisId: null, version: null };
-  const doc = useDocument(fetchKey.analysisId, fetchKey.version);
-  const workingDocument = doc.data?.document ?? null;
+  useCopyClearedAnnouncements(
+    snapshot === null || snapshot.workingDocument === null
+      ? null
+      : snapshot.workingDocument.analysisId,
+  );
+  const workingDocument = useWorkingDocument(
+    snapshot && holdsWorkingDoc ? snapshot.workingDocument : null,
+    snapshot ? pinnedCommitOf(snapshot) : null,
+  );
   // Close only once this window has appeared in a snapshot and then left it (main reparented/pruned it).
   // A first snapshot can predate the window's creation — it lacks this window too — so don't self-close
   // then; wait for the corrective broadcast that follows main's move-to-new-window dispatch.
@@ -104,6 +127,14 @@ function MirrorWindow(): React.ReactElement {
   if (!channelId || !winId)
     return (
       <PaneShell>{<Center text="Missing window parameters." />}</PaneShell>
+    );
+  if (incompatible)
+    return (
+      <PaneShell>
+        {
+          <Center text="This window and the workbench it was opened from are different versions. Reload the workbench, then open this window again." />
+        }
+      </PaneShell>
     );
   if (!snapshot || !win)
     return (
@@ -139,9 +170,9 @@ function MirrorWindow(): React.ReactElement {
       <WorkspaceDataProvider
         value={{
           events: [],
-          workingDocument,
+          workingDocument: workingDocument.document,
           documentSignal: snapshot.workingDocument,
-          documentError: doc.isError,
+          documentVersions: workingDocument.versions,
         }}
       >
         <TabArea

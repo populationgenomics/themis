@@ -48,7 +48,7 @@ function gitEnvironment(overrides: GitEnv): NodeJS.ProcessEnv {
 function runGit(
   gitDir: string,
   args: readonly string[],
-  input = "",
+  input: string | Uint8Array = "",
   env: GitEnv = {},
 ): Buffer {
   try {
@@ -78,6 +78,27 @@ function identity(who: { name: string; email: string }, at: Date): GitEnv {
     GIT_COMMITTER_EMAIL: who.email,
     GIT_COMMITTER_DATE: date,
   };
+}
+
+/** Whether `tip` holds a file at `filePath`. */
+function holdsFile(
+  git: Git,
+  tip: string | undefined,
+  filePath: string,
+): boolean {
+  if (tip === undefined) return false;
+  return git(["ls-tree", "--name-only", tip, "--", filePath]) === filePath;
+}
+
+/** An agent commit's title, naming the files it writes and the files it deletes. */
+function publishTitle(files: Readonly<Record<string, AgentFile>>): string {
+  const paths = Object.entries(files);
+  const written = paths.filter(([, file]) => file !== null).map(([p]) => p);
+  const deleted = paths.filter(([, file]) => file === null).map(([p]) => p);
+  return [
+    ...(written.length > 0 ? [`Write ${written.join(", ")}`] : []),
+    ...(deleted.length > 0 ? [`Delete ${deleted.join(", ")}`] : []),
+  ].join("; ");
 }
 
 function commitTree(
@@ -180,6 +201,110 @@ export function agentHistory(
       reflog = entry;
     }
     return publishes;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** What a repository holds before an agent's next publish: its packs, the tip of the branch the
+ *  publish moves and the reflog's, each absent before that ref's first publish. */
+export interface RepositoryState {
+  packs: readonly Uint8Array[];
+  branch: string;
+  tip: string | undefined;
+  reflog: string | undefined;
+}
+
+/** What an agent publish writes at a path: a regular file's content, content with the mode its
+ *  tree entry gets, or null to delete the file there. */
+export type AgentFile = string | { content: string; mode: string } | null;
+
+/** The agent's next publish on `state`: one commit on `state.branch`'s tip writing `files` over the
+ *  tip's tree, dated `at`, as a real agent's pull-then-push would leave it. Built in a scratch
+ *  repository holding `state`'s packs, so it builds on whatever landed last, a curator's commit
+ *  included.
+ *
+ *  Raises when `files` is empty, when it deletes a file the tip does not hold, or when `git` is
+ *  missing or fails. */
+export function agentPublish(
+  state: RepositoryState,
+  files: Readonly<Record<string, AgentFile>>,
+  at: Date,
+): SeedPublish {
+  if (Object.keys(files).length === 0) {
+    throw new Error("an agent publish writes at least one file");
+  }
+  const scratch = mkdtempSync(path.join(tmpdir(), "themis-fixture-workspace-"));
+  try {
+    const git: Git = (args, input, env) =>
+      runGit(scratch, args, input, env).toString("utf8").trim();
+    git(["init", "--bare", "--quiet", "--object-format=sha1", scratch]);
+    git(["hash-object", "-w", "-t", "tree", "--stdin"]);
+    for (const pack of state.packs) {
+      runGit(scratch, ["index-pack", "--stdin"], pack);
+    }
+    const index = { GIT_INDEX_FILE: path.join(scratch, "agent.index") };
+    if (state.tip !== undefined)
+      git(["read-tree", state.tip], undefined, index);
+    for (const [filePath, content] of Object.entries(files)) {
+      if (content === null) {
+        if (!holdsFile(git, state.tip, filePath)) {
+          throw new Error(
+            `the agent deletes ${filePath}, which the tip does not hold`,
+          );
+        }
+        // Mode 0 removes the entry; --force-remove would need a work tree.
+        git(
+          ["update-index", "--index-info"],
+          `0 ${"0".repeat(40)}\t${filePath}\n`,
+          index,
+        );
+        continue;
+      }
+      const { content: bytes, mode } =
+        typeof content === "string" ? { content, mode: "100644" } : content;
+      const blob = git(["hash-object", "-w", "--stdin"], bytes);
+      git(
+        ["update-index", "--add", "--cacheinfo", `${mode},${blob},${filePath}`],
+        undefined,
+        index,
+      );
+    }
+    const tree = git(["write-tree"], undefined, index);
+    const commit = commitTree(
+      git,
+      tree,
+      state.tip === undefined ? [] : [state.tip],
+      publishTitle(files),
+      identity(AGENT, at),
+    );
+    const previous =
+      state.reflog ??
+      commitTree(git, EMPTY_TREE, [], "sheaf: init", identity(SHEAF, at));
+    const entry = reflogEntry(
+      git,
+      previous,
+      state.branch,
+      state.tip,
+      commit,
+      at,
+    );
+    const pack = new Uint8Array(
+      runGit(
+        scratch,
+        ["pack-objects", "--revs", "--stdout", "--quiet"],
+        state.reflog === undefined
+          ? `${entry}\n`
+          : `${entry}\n^${state.reflog}\n`,
+      ),
+    );
+    return {
+      refUpdates: {
+        [state.branch]: { old: state.tip, new: commit },
+        [REFLOG_REF]: { old: state.reflog, new: entry },
+      },
+      pack,
+    };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

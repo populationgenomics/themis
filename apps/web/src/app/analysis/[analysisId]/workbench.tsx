@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect } from "react";
 import { AppBar } from "@/components/app-bar";
 import { BackLink } from "@/components/back-link";
 import { ReaderTime } from "@/components/reader-time";
 import { useGroupRef } from "@/components/ui/resizable";
+import { useCopyClearedAnnouncements } from "@/components/workbench/clear-copy";
 import { REGISTRY } from "@/components/workbench/content-kinds";
 import { ConversationDock } from "@/components/workbench/conversation-dock";
 import { ConversationPane } from "@/components/workbench/conversation-pane";
@@ -21,15 +22,19 @@ import {
   edgeToOrientation,
   TAB_AREA_PANEL_ID,
 } from "@/components/workbench/workbench-layout";
+import {
+  useWorkingDocument,
+  useWorkingDocumentSignal,
+} from "@/components/workbench/working-document";
 import { WorkspaceDataProvider } from "@/components/workbench/workspace-context";
 import {
   computeTarget,
   findTab,
-  pinnedDocumentVersion,
+  pinnedDocumentCommit,
   type Source,
   WORKING_DOC_TAB_ID,
 } from "@/components/workbench/workspace-model";
-import { useDocument, usePoll } from "@/lib/queries";
+import { usePoll } from "@/lib/queries";
 
 /** The Analysis as its page resolved it — identity fixed for the life of the page, so it arrives as
  *  props rather than through a query the browser repeats. */
@@ -130,27 +135,23 @@ export function Workbench({
   );
 
   const poll = usePoll(analysisId);
-  const workingDocumentVersion = poll.data?.workingDocumentVersion ?? null;
-  const pinnedVersion = pinnedDocumentVersion(
+  useCopyClearedAnnouncements(analysisId);
+  const pinnedCommit = pinnedDocumentCommit(
     findTab(workspace.state, WORKING_DOC_TAB_ID)?.payload,
     analysisId,
   );
-  const doc = useDocument(analysisId, pinnedVersion ?? workingDocumentVersion);
-  const workingDocument = doc.data?.document ?? null;
   const events = poll.data?.events ?? [];
   // The projection, not the fallback: a turn cannot be placed against a run that has
   // not loaded, and steering is disabled until it has.
   const steering = useSteering(analysisId, poll.data?.events);
 
-  // The working-document refetch signal every window shares: version + analysisId, never the body.
-  // Each window (main and children) fetches its own body keyed on this, so a popped doc re-renders when
-  // the agent republishes.
-  const workingDocumentSignal = useMemo(
-    () =>
-      workingDocumentVersion !== null
-        ? { analysisId, version: workingDocumentVersion }
-        : null,
-    [analysisId, workingDocumentVersion],
+  // The working-document signal every window shares: the branch's tip + analysisId, never the body.
+  // Each window (main and children) reads its own body from the browser's copy keyed on this, so a
+  // popped doc re-renders when the agent or a curator publishes.
+  const workingDocumentSignal = useWorkingDocumentSignal(analysisId, poll);
+  const workingDocument = useWorkingDocument(
+    workingDocumentSignal,
+    pinnedCommit,
   );
   const { windowActions, crossWindowDrag, focusWindow } = useWorkspaceWindow(
     workspace,
@@ -222,9 +223,9 @@ export function Workbench({
         <WorkspaceDataProvider
           value={{
             events,
-            workingDocument,
+            workingDocument: workingDocument.document,
             documentSignal: workingDocumentSignal,
-            documentError: doc.isError,
+            documentVersions: workingDocument.versions,
           }}
         >
           {(() => {

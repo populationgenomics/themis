@@ -69,11 +69,6 @@ export const workbenchService: ServiceImpl<typeof Workbench> = {
     return {};
   },
 
-  async getDocument(request, ctx) {
-    const { backend } = requireUserContext(ctx);
-    return backend.getDocument(request.analysisId, request.version);
-  },
-
   async readWorkspaceRefDoc(request, ctx) {
     const { backend } = requireUserContext(ctx);
     return backend.readWorkspaceRefDoc(request.analysisId, ctx.signal);

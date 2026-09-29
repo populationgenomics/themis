@@ -5,23 +5,20 @@ import { isManagedSession } from "@/lib/harness";
 import {
   type Analysis,
   AnalysisSchema,
-  type DocumentResponse,
-  DocumentResponseSchema,
   type PollResponse,
   PollResponseSchema,
   type ThreadResponse,
   ThreadResponseSchema,
 } from "@/models/workbench";
-import { ResourceNotFoundError, UnmanagedSessionError } from "../../errors";
+import { UnmanagedSessionError } from "../../errors";
 import { kickoffText } from "../../kickoff";
 import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
 import type { AnthropicClient } from "./client";
 import { hashBearer, type KmsSessionTokenDeriver } from "./derive";
-import type { Gcs } from "./gcs";
 import type { Sql } from "./sql";
 
 // The raw `AnalysisDataPlane` over the self-hosted data plane: Anthropic session control, a
-// KMS-derived bearer, Cloud SQL persistence, GCS-direct working documents. Authorization is the
+// KMS-derived bearer, Cloud SQL persistence. Authorization is the
 // AuthorizedBackend decorator's job; this layer trusts the (user, project) its caller resolved.
 
 /** Refuse a call that needs the platform's session for a run the platform does not hold. */
@@ -42,7 +39,6 @@ export class DataPlane implements AnalysisDataPlane {
     private readonly anthropic: AnthropicClient,
     private readonly deriver: KmsSessionTokenDeriver,
     private readonly sql: Sql,
-    private readonly gcs: Gcs,
   ) {}
 
   async createAnalysis(input: CreateAnalysisInput): Promise<Analysis> {
@@ -77,19 +73,14 @@ export class DataPlane implements AnalysisDataPlane {
   }
 
   async pollEvents(analysis: Analysis): Promise<PollResponse> {
-    // The version signal rides on this response, so a run with no session here still has to answer:
-    // skipping the read is what leaves the document pane something to fetch.
+    // The workspace tip rides on this response, so a run with no session here still has to answer:
+    // skipping the read is what leaves the document pane a tip to follow.
     const events = isManagedSession(analysis.sessionId)
       ? (await this.anthropic.listEvents(analysis.sessionId)).events
       : [];
-    const document = await this.gcs.latestWorkingDocument(analysis.id);
     // The full event list replaces the client's set by id each tick; the event log
     // has no since-cursor, so the whole log is re-projected each poll.
-    return create(PollResponseSchema, {
-      events,
-      // Absent when no document exists yet — proto3-JSON omits an unset optional.
-      workingDocumentVersion: document?.version,
-    });
+    return create(PollResponseSchema, { events });
   }
 
   async getThread(
@@ -113,26 +104,5 @@ export class DataPlane implements AnalysisDataPlane {
   async interruptAnalysis(analysis: Analysis): Promise<void> {
     refuseUnmanaged(analysis, NO_INTERRUPT);
     await this.anthropic.sendInterrupt(analysis.sessionId);
-  }
-
-  async getDocument(
-    analysisId: string,
-    version?: number,
-  ): Promise<DocumentResponse> {
-    const document =
-      version === undefined
-        ? await this.gcs.latestWorkingDocument(analysisId)
-        : await this.gcs.workingDocumentVersion(analysisId, version);
-    if (document === null) {
-      if (version !== undefined) {
-        throw new ResourceNotFoundError(
-          `no version ${version} for ${analysisId}`,
-        );
-      }
-      return create(DocumentResponseSchema, {}); // document unset ⇒ not produced
-    }
-    return create(DocumentResponseSchema, {
-      document: { version: document.version, markdown: document.markdown },
-    });
   }
 }

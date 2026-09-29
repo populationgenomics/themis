@@ -1,16 +1,18 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { api, paperContent } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Representation } from "@/models/literature";
-import type { WorkingDocument } from "@/models/workbench";
+import { COPY_CEILING_BYTES } from "@/workspace-copy/residency";
+import type { CopyClearing } from "./clear-copy";
 import { applyQuoteHighlight, clearQuoteHighlight } from "./highlight";
 import { type Citation, corpusFigureResolver, Markdown } from "./markdown";
 import { WarningChip } from "./warning-chip";
+import type { WorkingDocumentState } from "./working-document";
 
 // The content views for a tab, keyed on primitives (doc id, quote, name) rather than any tab-union
 // type, so both the F4 document pane and the F5 group render them unchanged. A paper's markdown/PDF
@@ -63,32 +65,137 @@ export function RepresentationToggle({
   );
 }
 
+/** The working document in the state the window reads it in. While `unavailable`, the latest Poll
+ *  could not read the workspace, or the Poll has failed since: whatever the state shows stays, under
+ *  a notice that it may be out of date. */
 export function WorkingDocumentView({
   document,
-  error,
+  unavailable,
+  clearing,
   onCitation,
 }: {
-  document: WorkingDocument | null;
-  /** True when the body fetch failed. */
-  error: boolean;
+  document: WorkingDocumentState;
+  unavailable: boolean;
+  /** Clearing the browser's copy of the Analysis; null until the Poll names one. */
+  clearing: CopyClearing | null;
   onCitation: (citation: Citation) => void;
 }): React.ReactElement {
-  if (error) {
-    return <Notice text="Couldn't load this document version." />;
-  }
-  if (document === null) {
+  if (clearing?.state.kind === "clearing")
+    return <Notice text="Clearing the cache and reloading…" />;
+  if (clearing?.state.kind === "failed")
     return (
-      <Notice text="The agent has not written the working document yet." />
+      <ClearCopyControl
+        clearing={clearing}
+        text={`The cache couldn't be cleared: ${clearing.state.message}`}
+      />
+    );
+  if (document.kind === "copyFailed") {
+    if (clearing === null)
+      throw new Error("a failed read of a copy names no Analysis to clear");
+    return (
+      <ClearCopyControl
+        clearing={clearing}
+        text="This workspace couldn't be loaded from your browser's cache. Clearing the cache and reloading usually fixes this."
+      />
     );
   }
+  const body = (
+    <WorkingDocumentBody document={document} onCitation={onCitation} />
+  );
+  // Neither of these shows anything the notice could call out of date.
+  if (
+    !unavailable ||
+    document.kind === "unavailable" ||
+    document.kind === "damaged"
+  )
+    return body;
   return (
-    <div className="tscroll flex-1 overflow-auto px-[28px] pt-[24px] pb-[30px]">
-      <div className="mb-[16px] font-mono text-[12px] text-ink-faint">
-        {DOCUMENT_PATH}
-      </div>
-      <Markdown text={document.markdown} onCitation={onCitation} />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <output className="flex shrink-0 items-start gap-[8px] border-b border-amber-quote-border bg-amber-quote-bg px-[20px] py-[9px] text-[12.5px] text-amber-quote-text">
+        <TriangleAlert className="mt-[1px] size-[14px] shrink-0" aria-hidden />
+        <span>
+          The workspace can't be reached right now. What you see may be out of
+          date.
+        </span>
+      </output>
+      {body}
     </div>
   );
+}
+
+/** Why the copy needs clearing, and the button that clears it. */
+function ClearCopyControl({
+  clearing,
+  text,
+}: {
+  clearing: CopyClearing;
+  text: string;
+}): React.ReactElement {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-[12px] px-[28px] text-center">
+      <span className="max-w-[420px] text-[13px] text-ink-faintest">
+        {text}
+      </span>
+      <button
+        type="button"
+        onClick={clearing.clear}
+        className="rounded-field border border-line-soft px-[10px] py-[4px] text-[12px] font-medium text-ink-faint hover:text-ink-primary"
+      >
+        Clear cache and reload
+      </button>
+      <span className="text-[11.5px] text-ink-faintest">
+        Only this browser's cached copy is cleared. Nothing saved is lost.
+      </span>
+    </div>
+  );
+}
+
+function WorkingDocumentBody({
+  document,
+  onCitation,
+}: {
+  document: WorkingDocumentState;
+  onCitation: (citation: Citation) => void;
+}): React.ReactElement {
+  switch (document.kind) {
+    case "failed":
+      return <Notice text="Couldn't load this document version." />;
+    case "copyFailed":
+      throw new Error("a failed read of the copy is drawn with its control");
+    case "loading":
+      return <Notice text="Loading the workspace…" />;
+    case "unavailable":
+      return (
+        <Notice text="The workspace can't be reached right now, so the working document can't be shown yet." />
+      );
+    case "damaged":
+      return (
+        <Notice text="This workspace is damaged, so its working document can't be shown." />
+      );
+    case "absent":
+      return (
+        <Notice text="The agent has not written the working document yet." />
+      );
+    case "noRepository":
+      return (
+        <Notice text="This Analysis has no workspace repository yet. The agent creates it with its first commit; an Analysis started before workspaces were repositories has none." />
+      );
+    case "tooLarge":
+      return (
+        <Notice
+          text={`This workspace is too large to open in the browser: one workspace may take up to ${COPY_CEILING_BYTES / (1024 * 1024)} MiB.`}
+        />
+      );
+    case "shown":
+      return (
+        <div className="tscroll flex-1 overflow-auto px-[28px] pt-[24px] pb-[30px]">
+          <div className="mb-[16px] font-mono text-[12px] text-ink-faint">
+            {DOCUMENT_PATH}
+          </div>
+          <Markdown text={document.markdown} onCitation={onCitation} />
+        </div>
+      );
+  }
 }
 
 export function PaperMarkdownView({

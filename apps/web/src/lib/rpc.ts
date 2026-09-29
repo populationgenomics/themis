@@ -4,9 +4,10 @@ import { createConnectTransport } from "@connectrpc/connect-web";
 import { Workbench } from "@/models/workbench";
 
 // The browser's Workbench client, built from the same service descriptor the BFF's handler serves.
-// Two callers, not the components directly: the TanStack Query hooks in lib/queries.ts (the
-// version-keyed, cache-shared reads), and the paper read seam in lib/api.ts (describePaper / locate,
-// which are one-shot and not cache-keyed). Whether the api.ts seam should itself route through
+// Two callers, not the components directly: the TanStack Query hooks in lib/queries.ts (the poll and
+// the calls it drives), and the paper read seam in lib/api.ts (describePaper / locate, which are
+// one-shot and not cache-keyed). The workspace-repository methods have a client of their own, in the
+// SharedWorker that holds the browser's copy (workspace-copy/worker.ts). Whether the api.ts seam should itself route through
 // lib/queries.ts hooks is an open shape question (see lib/api.ts) — until it's settled, both reach
 // this client.
 

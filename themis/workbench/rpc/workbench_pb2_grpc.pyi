@@ -66,9 +66,7 @@ class WorkbenchStub:
     ListAnalyses: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]
-    """One liveness tick: the whole projected event stream plus the working-document version signal and
-    the workspace branch's tip.
-    """
+    """One liveness tick: the whole projected event stream and the workspace branch's tip."""
     GetThread: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]
     """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
     projection the coordinator's stream is in. A read: it advances nothing.
@@ -81,8 +79,6 @@ class WorkbenchStub:
     """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
     and the session goes idle, ready for the curator's next turn.
     """
-    GetDocument: _grpc.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]
-    """The current working document as a produced|not-produced result, or a named historical version."""
     ReadWorkspaceRefDoc: _grpc.UnaryUnaryMultiCallable[_workbench_pb2_1.ReadWorkspaceRefDocRequest, _sheaf_pb2.RefDocSnapshot]
     """The Analysis's workspace repository's ref document and generation, which the browser's copy of
     the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
@@ -149,9 +145,7 @@ class WorkbenchAsyncStub(WorkbenchStub):
     ListAnalyses: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ListAnalysesRequest, _workbench_pb2.ListAnalysesResponse]  # type: ignore[assignment]
     """The Project's prior Analyses, newest first — what the session switcher browses."""
     Poll: _aio.UnaryUnaryMultiCallable[_workbench_pb2.PollRequest, _workbench_pb2.PollResponse]  # type: ignore[assignment]
-    """One liveness tick: the whole projected event stream plus the working-document version signal and
-    the workspace branch's tip.
-    """
+    """One liveness tick: the whole projected event stream and the workspace branch's tip."""
     GetThread: _aio.UnaryUnaryMultiCallable[_workbench_pb2.ThreadRequest, _workbench_pb2.ThreadResponse]  # type: ignore[assignment]
     """One spawned thread's own conversation — its instruction, narration and tool calls, in the same
     projection the coordinator's stream is in. A read: it advances nothing.
@@ -164,8 +158,6 @@ class WorkbenchAsyncStub(WorkbenchStub):
     """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
     and the session goes idle, ready for the curator's next turn.
     """
-    GetDocument: _aio.UnaryUnaryMultiCallable[_workbench_pb2.DocumentRequest, _workbench_pb2.DocumentResponse]  # type: ignore[assignment]
-    """The current working document as a produced|not-produced result, or a named historical version."""
     ReadWorkspaceRefDoc: _aio.UnaryUnaryMultiCallable[_workbench_pb2_1.ReadWorkspaceRefDocRequest, _sheaf_pb2.RefDocSnapshot]  # type: ignore[assignment]
     """The Analysis's workspace repository's ref document and generation, which the browser's copy of
     the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's
@@ -253,9 +245,7 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         request: _workbench_pb2.PollRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_workbench_pb2.PollResponse, _abc.Awaitable[_workbench_pb2.PollResponse]]:
-        """One liveness tick: the whole projected event stream plus the working-document version signal and
-        the workspace branch's tip.
-        """
+        """One liveness tick: the whole projected event stream and the workspace branch's tip."""
 
     @_abc_1.abstractmethod
     def GetThread(
@@ -286,14 +276,6 @@ class WorkbenchServicer(metaclass=_abc_1.ABCMeta):
         """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
         and the session goes idle, ready for the curator's next turn.
         """
-
-    @_abc_1.abstractmethod
-    def GetDocument(
-        self,
-        request: _workbench_pb2.DocumentRequest,
-        context: _ServicerContext,
-    ) -> _typing.Union[_workbench_pb2.DocumentResponse, _abc.Awaitable[_workbench_pb2.DocumentResponse]]:
-        """The current working document as a produced|not-produced result, or a named historical version."""
 
     @_abc_1.abstractmethod
     def ReadWorkspaceRefDoc(

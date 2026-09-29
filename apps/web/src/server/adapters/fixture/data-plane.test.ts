@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import { create, toJson } from "@bufbuild/protobuf";
 import {
   type Analysis,
@@ -9,11 +10,18 @@ import {
   type SubAgent,
   SubAgentStatus,
 } from "@/models/workbench";
+import { gitText, runGit, scratchDir } from "@/workspace-copy/git.test-support";
 import { ResourceNotFoundError } from "../../errors";
+import { COLLABORATIVE_BRANCH } from "../../workspace";
 import { FixtureDataPlane } from "./data-plane";
 import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
-import { FINAL_DOC_VERSION, SCRIPTED_STAGES } from "./timeline";
+import {
+  documentMarkdown,
+  FINAL_DOC_VERSION,
+  SCRIPTED_STAGES,
+} from "./timeline";
 import { FixtureWorkspace } from "./workspace";
+import { WORKING_DOCUMENT_PATH } from "./workspace-seed";
 
 // The offline run ships the cards a curator can expand, so every one of them has to
 // resolve; expanding one must not move the run it belongs to, since `GetThread` is a
@@ -24,6 +32,59 @@ const cardsOf = (events: readonly ConversationEvent[]): SubAgent[] =>
   events.flatMap((event) =>
     event.kind.case === "subAgent" ? event.kind.value : [],
   );
+
+/** A request that never goes away: these reads are not about cancellation. */
+const NEVER = new AbortController().signal;
+
+/** The collaborative branch's tip in `run`'s repository, or undefined before its first commit. */
+async function tipOf(
+  workspace: FixtureWorkspace,
+  run: Analysis,
+): Promise<string | undefined> {
+  const snapshot = await workspace.readRefDoc(run, NEVER);
+  const target = snapshot.document?.refs[COLLABORATIVE_BRANCH]?.target;
+  return target?.case === "oid" ? target.value : undefined;
+}
+
+/** The working document at `commit` in `run`'s repository, read by `git` from the packs its ref
+ *  document lists, as the browser's copy would read it. */
+async function documentAt(
+  workspace: FixtureWorkspace,
+  run: Analysis,
+  commit: string,
+): Promise<string> {
+  const scratch = scratchDir("fixture-document");
+  try {
+    const gitDir = path.join(scratch.dir, "repo.git");
+    runGit(gitDir, ["init", "--bare", "--quiet", gitDir]);
+    const { document } = await workspace.readRefDoc(run, NEVER);
+    if (document === undefined) throw new Error(`${run.id} has no repository`);
+    for (const packId of document.packs) {
+      const pack = await workspace.servePack(run, packId);
+      runGit(
+        gitDir,
+        ["index-pack", "--stdin"],
+        new Uint8Array(await pack.arrayBuffer()),
+      );
+    }
+    return gitText(gitDir, ["show", `${commit}:${WORKING_DOCUMENT_PATH}`]);
+  } finally {
+    scratch.remove();
+  }
+}
+
+/** Whether `run`'s branch holds the script's final document at its tip. */
+async function atFinalDocument(
+  workspace: FixtureWorkspace,
+  run: Analysis,
+): Promise<boolean> {
+  const tip = await tipOf(workspace, run);
+  if (tip === undefined) return false;
+  return (
+    (await documentAt(workspace, run, tip)) ===
+    documentMarkdown(run, FINAL_DOC_VERSION).trimEnd()
+  );
+}
 
 /** Every analysis the fixture seeds. */
 function everyRun(data: FixtureDataPlane): Promise<Analysis[]> {
@@ -124,7 +185,8 @@ describe("the fixture's spawned threads", () => {
     // The hold is a display seed, not a frozen analysis: a run spoken to resumes. The
     // spliced turn alone grows the stream, so growth on the next poll proves nothing —
     // the run has to keep releasing its own stages, all the way to the document.
-    const data = new FixtureDataPlane(new FixtureWorkspace());
+    const workspace = new FixtureWorkspace();
+    const data = new FixtureDataPlane(workspace);
     const asJson = (response: PollResponse) =>
       JSON.stringify(toJson(PollResponseSchema, response));
     let released = 0;
@@ -132,11 +194,11 @@ describe("the fixture's spawned threads", () => {
       const first = await data.pollEvents(run);
       const second = await data.pollEvents(run);
       // Held ⇔ polls change nothing — content, not length: a stage may only re-emit
-      // ids — short of the final document version. A finished run stalls too, but
-      // with the corrected revision out.
+      // ids — short of the final document. A finished run stalls too, but with the
+      // corrected revision out.
       const held =
         asJson(first) === asJson(second) &&
-        second.workingDocumentVersion !== FINAL_DOC_VERSION;
+        !(await atFinalDocument(workspace, run));
       if (!held) continue;
       released += 1;
       await data.steerAnalysis(run, "Say more about the frequency.");
@@ -145,91 +207,36 @@ describe("the fixture's spawned threads", () => {
       }
       const resumed = await data.pollEvents(run);
       expect(resumed.events.length).toBeGreaterThan(second.events.length);
-      expect(resumed.workingDocumentVersion).toBe(FINAL_DOC_VERSION);
+      expect(await atFinalDocument(workspace, run)).toBe(true);
     }
     expect(released).toBeGreaterThan(0);
   });
 });
 
-describe("the fixture's document versions", () => {
-  const inputs = () =>
-    create(AnalysisInputsSchema, {
-      scenario: { case: "freeForm", value: { prompt: "run the fixture" } },
-    });
-
-  async function freshRun(): Promise<{
-    data: FixtureDataPlane;
-    run: Analysis;
-  }> {
-    const data = new FixtureDataPlane(new FixtureWorkspace());
+describe("the fixture agent's workspace pushes", () => {
+  test("each document version the reveal releases is pushed as the branch's next tip, with its own body", async () => {
+    const workspace = new FixtureWorkspace();
+    const data = new FixtureDataPlane(workspace);
     const run = await data.createAnalysis({
-      inputs: inputs(),
       projectId: FIXTURE_PROJECT,
-      userEmail: "curator@example.org",
+      inputs: create(AnalysisInputsSchema, {
+        scenario: { case: "freeForm", value: { prompt: "Summarise PS3." } },
+      }),
+      userEmail: "user@localhost",
     });
-    return { data, run };
-  }
-
-  /** Poll until the reveal reaches `version`, bounded by the script's length. */
-  async function pollToVersion(
-    data: FixtureDataPlane,
-    run: Analysis,
-    version: number,
-  ): Promise<void> {
-    for (let tick = 0; tick < SCRIPTED_STAGES; tick += 1) {
-      const poll = await data.pollEvents(run);
-      if ((poll.workingDocumentVersion ?? 0) >= version) return;
+    const tips: string[] = [];
+    for (let tick = 0; tick < SCRIPTED_STAGES + 2; tick += 1) {
+      await data.pollEvents(run);
+      const tip = await tipOf(workspace, run);
+      if (tip !== undefined && tips.at(-1) !== tip) tips.push(tip);
     }
-    throw new Error(`the script never revealed version ${version}`);
-  }
-
-  test("before any reveal: unversioned is not-produced; a named version is not-found", async () => {
-    const { data, run } = await freshRun();
-    expect((await data.getDocument(run.id)).document).toBeUndefined();
-    await expect(data.getDocument(run.id, 1)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
+    const bodies = await Promise.all(
+      tips.map((tip) => documentAt(workspace, run, tip)),
     );
-  });
-
-  test("every revealed version stays fetchable, each with its own body", async () => {
-    const { data, run } = await freshRun();
-    await pollToVersion(data, run, FINAL_DOC_VERSION);
-    expect((await data.getDocument(run.id)).document?.version).toBe(
-      FINAL_DOC_VERSION,
+    expect(bodies).toEqual(
+      Array.from({ length: FINAL_DOC_VERSION }, (_, i) =>
+        documentMarkdown(run, i + 1).trimEnd(),
+      ),
     );
-    const bodies = new Set<string>();
-    for (let version = 1; version <= FINAL_DOC_VERSION; version += 1) {
-      const res = await data.getDocument(run.id, version);
-      expect(res.document?.version).toBe(version);
-      expect(res.document?.markdown).toBeTruthy();
-      bodies.add(res.document?.markdown ?? "");
-    }
-    expect(bodies.size).toBe(FINAL_DOC_VERSION);
-  });
-
-  test("mid-run, the revealed draft serves while the revision is still not-found", async () => {
-    const { data, run } = await freshRun();
-    await pollToVersion(data, run, 1);
-    expect((await data.getDocument(run.id, 1)).document?.version).toBe(1);
-    expect((await data.getDocument(run.id)).document?.version).toBe(1);
-    await expect(
-      data.getDocument(run.id, FINAL_DOC_VERSION),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
-  });
-
-  test.each([0, -1])("version %i is not-found", async (version) => {
-    const { data, run } = await freshRun();
-    await pollToVersion(data, run, FINAL_DOC_VERSION);
-    await expect(data.getDocument(run.id, version)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
-  });
-
-  test("a version beyond the reveal is not-found", async () => {
-    const { data, run } = await freshRun();
-    await pollToVersion(data, run, FINAL_DOC_VERSION);
-    await expect(
-      data.getDocument(run.id, FINAL_DOC_VERSION + 1),
-    ).rejects.toBeInstanceOf(ResourceNotFoundError);
   });
 });

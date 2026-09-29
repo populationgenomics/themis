@@ -6,8 +6,6 @@ import {
   type AnalysisInputs,
   AnalysisInputsSchema,
   AnalysisSchema,
-  type DocumentResponse,
-  DocumentResponseSchema,
   type PollResponse,
   PollResponseSchema,
   type ThreadResponse,
@@ -19,6 +17,7 @@ import {
   UnmanagedSessionError,
 } from "../../errors";
 import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
+import { COLLABORATIVE_BRANCH } from "../../workspace";
 import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
 import {
   afterPoll,
@@ -36,6 +35,7 @@ import {
   timelineAt,
 } from "./timeline";
 import type { FixtureWorkspace } from "./workspace";
+import { WORKING_DOCUMENT_PATH } from "./workspace-seed";
 
 interface Entry {
   analysis: Analysis;
@@ -43,9 +43,11 @@ interface Entry {
   // a curator turn splices two more into the script at the frontier it arrived at.
   run: RunState;
   // Monotonic: the highest working-document version the poll reveal has released.
-  // 0 before the run's first write; read by `getDocument` so the document pane
-  // reflects the reveal.
+  // 0 before the run's first write.
   revealedDocVersion: number;
+  // The highest version the scripted agent has pushed to the workspace repository, which the
+  // browser's copy reads the document from: the poll pushes each version as the reveal releases it.
+  publishedDocVersion: number;
 }
 
 /** Where a seeded run's reveal starts, and whether a poll advances it. A number holds
@@ -190,7 +192,7 @@ export class FixtureDataPlane implements AnalysisDataPlane {
   /** Seeds the prior analyses. A finished run is seeded with the workspace repository its agent
    *  would have left, one publish per document version; every other run has published nothing, so
    *  its repository does not exist yet. */
-  constructor(workspace: FixtureWorkspace) {
+  constructor(private readonly workspace: FixtureWorkspace) {
     const startup = Date.now();
     for (const seed of SEEDS) {
       const createdAt = new Date(startup - seed.agedHours * HOUR_MS);
@@ -203,6 +205,7 @@ export class FixtureDataPlane implements AnalysisDataPlane {
       if (seed.reveal === "finished") {
         entry.run = { ...entry.run, revealed: SCRIPTED_STAGES };
         entry.revealedDocVersion = FINAL_DOC_VERSION;
+        entry.publishedDocVersion = FINAL_DOC_VERSION;
         const documents = Array.from({ length: FINAL_DOC_VERSION }, (_, i) =>
           documentMarkdown(entry.analysis, i + 1),
         );
@@ -235,6 +238,7 @@ export class FixtureDataPlane implements AnalysisDataPlane {
       analysis,
       run: initialRunState(),
       revealedDocVersion: 0,
+      publishedDocVersion: 0,
     };
     this.entries.set(analysis.id, entry);
     return entry;
@@ -269,22 +273,32 @@ export class FixtureDataPlane implements AnalysisDataPlane {
     if (!isManagedSession(analysis.sessionId)) {
       // No session here to read, and the document keeps advancing — the live adapter's answer.
       entry.revealedDocVersion = FINAL_DOC_VERSION;
-      return create(PollResponseSchema, {
-        events: [],
-        workingDocumentVersion: entry.revealedDocVersion,
-      });
+      this.publishRevealed(entry);
+      return create(PollResponseSchema, { events: [] });
     }
     entry.run = afterPoll(entry.run);
     const tick = timelineAt(entry.analysis, entry.run);
     if (tick.documentVersion > entry.revealedDocVersion) {
       entry.revealedDocVersion = tick.documentVersion;
     }
-    return create(PollResponseSchema, {
-      events: tick.events,
-      // Absent, not zero: an unset optional int32 omits from proto3-JSON.
-      workingDocumentVersion:
-        entry.revealedDocVersion === 0 ? undefined : entry.revealedDocVersion,
-    });
+    this.publishRevealed(entry);
+    return create(PollResponseSchema, { events: tick.events });
+  }
+
+  /** Push each document version the reveal has released and the agent has not pushed yet, one
+   *  publish per version, dated a minute apart from the run's creation as a seeded history is. */
+  private publishRevealed(entry: Entry): void {
+    const created = createdMs(entry.analysis);
+    while (entry.publishedDocVersion < entry.revealedDocVersion) {
+      const version = entry.publishedDocVersion + 1;
+      this.workspace.agentPublishes(
+        entry.analysis.id,
+        COLLABORATIVE_BRANCH,
+        { [WORKING_DOCUMENT_PATH]: documentMarkdown(entry.analysis, version) },
+        new Date(created + (version - 1) * 60_000),
+      );
+      entry.publishedDocVersion = version;
+    }
   }
 
   /** A spawned thread's body at the run's current reveal. A read: it advances nothing,
@@ -329,26 +343,6 @@ export class FixtureDataPlane implements AnalysisDataPlane {
     // A settled run no-ops inside `interrupted`, as the live API treats an idle
     // session; racing a completing step is safe on either backend.
     entry.run = interrupted(entry.run);
-  }
-
-  async getDocument(
-    analysisId: string,
-    version?: number,
-  ): Promise<DocumentResponse> {
-    const entry = this.require(analysisId);
-    if (version === undefined && entry.revealedDocVersion === 0) {
-      return create(DocumentResponseSchema, {}); // document unset ⇒ not produced
-    }
-    const wanted = version ?? entry.revealedDocVersion;
-    if (wanted < 1 || wanted > entry.revealedDocVersion) {
-      throw new ResourceNotFoundError(`no version ${wanted} for ${analysisId}`);
-    }
-    return create(DocumentResponseSchema, {
-      document: {
-        version: wanted,
-        markdown: documentMarkdown(entry.analysis, wanted),
-      },
-    });
   }
 }
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { Code, ConnectError } from "@connectrpc/connect";
 import {
   keepPreviousData,
+  type QueryClient,
   type UseQueryResult,
   useMutation,
   useQuery,
@@ -11,20 +11,22 @@ import {
 import { workbench } from "@/lib/rpc";
 import {
   type AnalysisInputs,
-  type DocumentResponse,
   type PollResponse,
   SubAgentStatus,
   type ThreadResponse,
 } from "@/models/workbench";
+import { workspaceCopy } from "@/workspace-copy/client";
+import type { RecordedTip } from "@/workspace-copy/copy";
 
-// TanStack Query wiring over the generated Workbench client (`@/lib/rpc`) for what the browser
-// must keep asking for: the liveness poll and the working document it signals. Stored state that
-// is fixed for the life of a page (Projects, a Project's Analyses, an Analysis's identity) is read
-// by that page's server component instead — see docs/design/workbench-navigation.md.
+// TanStack Query wiring for what the browser must keep asking for: the liveness poll over the
+// generated Workbench client (`@/lib/rpc`), and the working document it signals, read from the
+// browser's copy of the workspace repository (`@/workspace-copy/client`). Stored state that is fixed
+// for the life of a page (Projects, a Project's Analyses, an Analysis's identity) is read by that
+// page's server component instead — see docs/design/workbench-navigation.md.
 //
 // The poll drives the workbench: one ~2.5s tick returns the FULL projected event list each time
-// (replace-by-id, never append), plus the working-document version signal. The document refetches
-// only when that version changes.
+// (replace-by-id, never append), plus the workspace branch's tip. The copy is brought up to date,
+// and the document read again, only when that tip moves.
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -98,33 +100,82 @@ export function useInterrupt(analysisId: string) {
   });
 }
 
-/** The working-document body authority, fetching exactly `version` — the poll's latest
- *  when following the current document, an older one when the working-doc tab pins it.
- *  Disabled until a version exists. */
-export function useDocument(
-  id: string | null,
-  version: number | null,
-): UseQueryResult<DocumentResponse> {
+/** The failures of the browser's copy that trying again can clear: a relay call that failed, a
+ *  download, a hydration the document kept moving under, a worker that stopped answering and is
+ *  started again, a copy another build's worker evicted. Every other — a workspace over the copy's
+ *  ceiling, a damaged repository, a document that is not UTF-8 — is definitive. */
+const RETRYABLE_COPY_FAILURES = new Set([
+  "ConnectError",
+  "DownloadError",
+  "HydrationError",
+  "CopyWorkerLostError",
+  "CommitNotInCopyError",
+]);
+
+/** Whether a read of the copy that failed `failureCount` times with `error` is tried again. */
+export function retryCopy(failureCount: number, error: Error): boolean {
+  return RETRYABLE_COPY_FAILURES.has(error.name) && failureCount < 3;
+}
+
+/** Drop every read of `analysisId`'s copy this window holds, so each shown one reads the copy
+ *  again: after the copy was cleared, which hydrates it from nothing on that read. */
+export function resetWorkspaceReads(
+  queryClient: QueryClient,
+  analysisId: string,
+): Promise<void> {
+  return Promise.all([
+    queryClient.resetQueries({ queryKey: ["workspace-document", analysisId] }),
+    queryClient.resetQueries({ queryKey: ["workspace-history", analysisId] }),
+  ]).then(() => undefined);
+}
+
+/** The working document at `commit`, read from the browser's copy of the Analysis's workspace
+ *  repository once the copy holds `tip`: the Poll's tip when following the branch, an earlier
+ *  commit when the working-doc tab pins one. Null data is a commit with no working document. */
+export function useWorkspaceDocument(
+  key: { analysisId: string; tip: string; commit: string } | null,
+): UseQueryResult<string | null> {
   return useQuery({
-    queryKey: ["document", id, version],
-    queryFn: () => {
-      if (id === null || version === null) {
+    queryKey: ["workspace-document", key?.analysisId, key?.commit],
+    queryFn: async () => {
+      if (key === null) {
         throw new Error(
-          "useDocument query ran with a null analysis id or version",
+          "useWorkspaceDocument query ran with no commit to read",
         );
       }
-      return workbench.getDocument({ analysisId: id, version });
+      await workspaceCopy.sync(key.analysisId, key.tip);
+      return workspaceCopy.readDocument(key.analysisId, key.commit);
     },
-    enabled: id !== null && version !== null,
-    // A version's body is immutable (the store is append-only), so a cached entry never goes stale.
+    enabled: key !== null,
+    // A commit never changes, so a document read at one never goes stale.
     staleTime: Number.POSITIVE_INFINITY,
-    // A not-found version is definitive, not transient — retrying only prolongs the placeholder
-    // body under the new version's label before the error surfaces.
-    retry: (failureCount, error) =>
-      ConnectError.from(error).code !== Code.NotFound && failureCount < 3,
+    retry: retryCopy,
     // Keep the previous version's body on screen across a same-analysis version switch; never
     // carry a body across an analysis switch.
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[1] === id ? previous : undefined,
+      previousQuery?.queryKey[1] === key?.analysisId ? previous : undefined,
+  });
+}
+
+/** Each tip the reflog recorded for the collaborative branch, newest first, once the copy holds
+ *  `tip`: what the version picker lists. */
+export function useWorkspaceHistory(
+  key: { analysisId: string; tip: string } | null,
+): UseQueryResult<RecordedTip[]> {
+  return useQuery({
+    queryKey: ["workspace-history", key?.analysisId, key?.tip],
+    queryFn: async () => {
+      if (key === null) {
+        throw new Error("useWorkspaceHistory query ran with no tip");
+      }
+      await workspaceCopy.sync(key.analysisId, key.tip);
+      return workspaceCopy.history(key.analysisId, key.tip);
+    },
+    enabled: key !== null,
+    // The history at a tip is fixed: the reflog only grows, and a new tip re-keys the query.
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: retryCopy,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === key?.analysisId ? previous : undefined,
   });
 }

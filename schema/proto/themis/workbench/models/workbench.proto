@@ -237,10 +237,12 @@ message PollRequest {
 // There is no since-cursor to pass — the upstream event log offers none.
 message PollResponse {
   repeated ConversationEvent events = 1;
-  optional int32 working_document_version = 2 [(buf.validate.field).int32.gte = 1];  // absent until a working document is produced, then its version
   // The workspace repository's collaborative branch, read from its ref document on every tick. Which
   // branch is the collaborative one is open (docs/design/workbench-workspace.md, Open questions).
   WorkspaceTip workspace_tip = 3 [(buf.validate.field).required = true];
+
+  reserved 2;
+  reserved "working_document_version";
 }
 
 // Where a Poll found the workspace's collaborative branch. Exactly one member is set: read the state

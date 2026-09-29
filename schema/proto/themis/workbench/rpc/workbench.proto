@@ -78,8 +78,7 @@ service Workbench {
   // The Project's prior Analyses, newest first — what the session switcher browses.
   rpc ListAnalyses(themis.workbench.models.workbench.ListAnalysesRequest) returns (themis.workbench.models.workbench.ListAnalysesResponse);
 
-  // One liveness tick: the whole projected event stream plus the working-document version signal and
-  // the workspace branch's tip.
+  // One liveness tick: the whole projected event stream and the workspace branch's tip.
   rpc Poll(themis.workbench.models.workbench.PollRequest) returns (themis.workbench.models.workbench.PollResponse);
 
   // One spawned thread's own conversation — its instruction, narration and tool calls, in the same
@@ -93,9 +92,6 @@ service Workbench {
   // Halt a running Analysis's current step: the in-flight tool call is closed with an error result
   // and the session goes idle, ready for the curator's next turn.
   rpc Interrupt(themis.workbench.models.workbench.InterruptRequest) returns (themis.workbench.models.workbench.InterruptResponse);
-
-  // The current working document as a produced|not-produced result, or a named historical version.
-  rpc GetDocument(themis.workbench.models.workbench.DocumentRequest) returns (themis.workbench.models.workbench.DocumentResponse);
 
   // The Analysis's workspace repository's ref document and generation, which the browser's copy of
   // the repository hydrates from (docs/design/workbench-workspace.md). Relays the sheaf service's

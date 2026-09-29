@@ -4,7 +4,7 @@ import {
   computeTarget,
   INITIAL_WORKSPACE_STATE,
   labelKey,
-  pinnedDocumentVersion,
+  pinnedDocumentCommit,
   readDocumentPin,
   workspaceModelReducer as reduce,
   type Source,
@@ -944,11 +944,13 @@ describe("patchTab safety (failed-reveal rollback)", () => {
   });
 });
 
+const COMMIT = "c41e".padEnd(40, "0");
+
 describe("readDocumentPin", () => {
   test("a valid pin round-trips", () => {
     expect(
-      readDocumentPin({ pin: { analysisId: "an-1", version: 3 } }),
-    ).toEqual({ analysisId: "an-1", version: 3 });
+      readDocumentPin({ pin: { analysisId: "an-1", commit: COMMIT } }),
+    ).toEqual({ analysisId: "an-1", commit: COMMIT });
   });
 
   test.each([
@@ -956,33 +958,39 @@ describe("readDocumentPin", () => {
     ["a null payload", null],
     ["a non-object payload", "pin"],
     ["a payload without a pin", {}],
-    ["a null pin (follow latest)", { pin: null }],
+    ["a null pin (follow the tip)", { pin: null }],
     ["a non-object pin", { pin: 3 }],
-    ["a pin missing its analysisId", { pin: { version: 3 } }],
-    ["a pin with an empty analysisId", { pin: { analysisId: "", version: 3 } }],
-    ["a pin missing its version", { pin: { analysisId: "an-1" } }],
+    ["a pin missing its analysisId", { pin: { commit: COMMIT } }],
     [
-      "a pin with a non-integer version",
-      { pin: { analysisId: "an-1", version: 1.5 } },
+      "a pin with an empty analysisId",
+      { pin: { analysisId: "", commit: COMMIT } },
     ],
-    ["a pin with a zero version", { pin: { analysisId: "an-1", version: 0 } }],
+    ["a pin missing its commit", { pin: { analysisId: "an-1" } }],
+    [
+      "a pin naming an abbreviated commit",
+      { pin: { analysisId: "an-1", commit: "c41e" } },
+    ],
+    [
+      "a pin naming a version number",
+      { pin: { analysisId: "an-1", version: 3 } },
+    ],
   ])("%s reads as null", (_name, payload) => {
     expect(readDocumentPin(payload)).toBeNull();
   });
 });
 
-describe("pinnedDocumentVersion", () => {
-  const payload = { pin: { analysisId: "an-1", version: 2 } };
+describe("pinnedDocumentCommit", () => {
+  const payload = { pin: { analysisId: "an-1", commit: COMMIT } };
 
-  test("a pin for the given analysis selects its version", () => {
-    expect(pinnedDocumentVersion(payload, "an-1")).toBe(2);
+  test("a pin for the given analysis selects its commit", () => {
+    expect(pinnedDocumentCommit(payload, "an-1")).toBe(COMMIT);
   });
 
   test.each([
     ["a pin naming another analysis", payload, "an-2"],
     ["no analysis open", payload, null],
     ["an unpinned payload", {}, "an-1"],
-  ])("%s follows the latest (null)", (_name, p, analysisId) => {
-    expect(pinnedDocumentVersion(p, analysisId)).toBeNull();
+  ])("%s follows the tip (null)", (_name, p, analysisId) => {
+    expect(pinnedDocumentCommit(p, analysisId)).toBeNull();
   });
 });

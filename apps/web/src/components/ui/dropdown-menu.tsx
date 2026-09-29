@@ -14,6 +14,8 @@ export interface MenuItem {
   key: string;
   label: ReactNode;
   onSelect: () => void;
+  /** A line under the label saying what the item does. */
+  description?: ReactNode;
   /** Present makes the item a single-select radio; the check marks the active one. */
   selected?: boolean;
 }
@@ -192,7 +194,14 @@ function MenuItemButton({
   );
   const content = (
     <>
-      <span className="min-w-0 flex-1">{item.label}</span>
+      <span className="min-w-0 flex-1">
+        {item.label}
+        {item.description !== undefined && (
+          <span className="block w-[260px] whitespace-normal text-[11.5px] text-ink-faintest">
+            {item.description}
+          </span>
+        )}
+      </span>
       {item.selected && (
         <Check className="size-3.5 shrink-0 text-teal-fg" aria-hidden />
       )}

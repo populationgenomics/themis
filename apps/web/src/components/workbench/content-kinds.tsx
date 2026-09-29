@@ -2,9 +2,11 @@
 
 import { File, FileText, Loader2, Paperclip } from "lucide-react";
 import type { ReactNode } from "react";
+import type { MenuItem } from "@/components/ui/dropdown-menu";
 import { api, paperContent } from "@/lib/api";
 import { Representation } from "@/models/literature";
-import type { ConversationEvent, WorkingDocument } from "@/models/workbench";
+import type { ConversationEvent } from "@/models/workbench";
+import type { CopyClearing } from "./clear-copy";
 import type { Citation } from "./markdown";
 import {
   PaperMarkdownView,
@@ -14,10 +16,11 @@ import {
   WorkingDocumentView,
 } from "./tab-views";
 import { VersionDropdown } from "./version-dropdown";
+import type { DocumentVersion, WorkingDocumentState } from "./working-document";
 import {
   type DocumentPin,
   type OpenTabOpts,
-  pinnedDocumentVersion,
+  pinnedDocumentCommit,
   type Source,
   type Tab,
   WORKING_DOC_TAB_ID,
@@ -36,11 +39,14 @@ import type { WorkingDocumentSignal } from "./workspace-sync";
  *  broadcast snapshot in a popped window, so the self-fetching kinds render identically in either. */
 export interface RenderContext {
   events: ConversationEvent[];
-  workingDocument: WorkingDocument | null;
-  /** The poll's latest working-document version — never the pinned one; null until produced. */
+  /** The working document at the commit the window renders. */
+  workingDocument: WorkingDocumentState;
+  /** The workspace branch's tip — never the pinned commit; null until the Poll answers. */
   documentSignal: WorkingDocumentSignal | null;
-  /** True when the working-document body fetch failed (e.g. a pinned version the BFF cannot serve). */
-  documentError: boolean;
+  /** The versions the picker lists, newest first; null until the copy has been read. */
+  documentVersions: DocumentVersion[] | null;
+  /** Clearing the browser's copy of the Analysis; null until the Poll names one. */
+  clearCopy: CopyClearing | null;
   /** The active paper's highlight quote, or undefined. */
   highlight: string | undefined;
   /** Reveal a citation beside its source pane (the pane binds its own ids into the `Source`). */
@@ -65,6 +71,8 @@ export interface ContentKind<P, Args = void> {
   label(payload: P): string;
   render(payload: P, ctx: RenderContext): ReactNode;
   headerAccessory?(payload: P, ctx: RenderContext): ReactNode;
+  /** Items the pane's menu adds for this kind while its tab is active. */
+  menuItems?(payload: P, ctx: RenderContext): MenuItem[];
 }
 
 const ICON_CLASS = "size-[16px]";
@@ -114,25 +122,49 @@ const workingDoc: ContentKind<WorkingDocPayload> = {
   render: (_payload, ctx) => (
     <WorkingDocumentView
       document={ctx.workingDocument}
-      error={ctx.documentError}
+      unavailable={ctx.documentSignal?.unavailable === true}
+      clearing={ctx.clearCopy}
       onCitation={ctx.onCitation}
     />
   ),
+  // Not over a damaged workspace: the damage is in the repository, which clearing leaves as it is.
+  menuItems: (_payload, ctx) =>
+    ctx.clearCopy === null ||
+    ctx.clearCopy.state.kind === "clearing" ||
+    ctx.workingDocument.kind === "damaged"
+      ? []
+      : [
+          {
+            key: "clear-copy",
+            label: "Clear cache and reload",
+            description:
+              "Clears this workspace from your browser's cache and loads it fresh. Everything saved stays as it is.",
+            onSelect: ctx.clearCopy.clear,
+          },
+        ],
   headerAccessory: (payload, ctx) => {
-    if (ctx.documentSignal === null) return null;
-    const { analysisId, version: latest } = ctx.documentSignal;
-    const pinned = pinnedDocumentVersion(payload, analysisId);
+    const signal = ctx.documentSignal;
+    if (
+      signal?.tip?.kind !== "commit" ||
+      signal.damaged ||
+      ctx.documentVersions === null
+    ) {
+      return null;
+    }
+    const { analysisId } = signal;
+    const tip = signal.tip.commit;
+    const pinned = pinnedDocumentCommit(payload, analysisId);
     return (
       <>
         <span className="text-[11.5px] text-ink-faintest">
           {pinned === null ? "Saved" : "Earlier version"}
         </span>
         <VersionDropdown
-          latest={latest}
-          selected={pinned ?? latest}
-          onSelect={(version) =>
+          versions={ctx.documentVersions}
+          selected={pinned ?? tip}
+          onSelect={(commit) =>
             ctx.patch({
-              pin: version === null ? null : { analysisId, version },
+              pin: commit === null ? null : { analysisId, commit },
             })
           }
         />

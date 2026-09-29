@@ -79,11 +79,6 @@ class WorkbenchStub:
                 request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.SerializeToString,
                 response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.FromString,
                 _registered_method=True)
-        self.GetDocument = channel.unary_unary(
-                '/themis.workbench.rpc.Workbench/GetDocument',
-                request_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
-                response_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
-                _registered_method=True)
         self.ReadWorkspaceRefDoc = channel.unary_unary(
                 '/themis.workbench.rpc.Workbench/ReadWorkspaceRefDoc',
                 request_serializer=themis_dot_workbench_dot_rpc_dot_workbench__pb2.ReadWorkspaceRefDocRequest.SerializeToString,
@@ -145,8 +140,7 @@ class WorkbenchServicer:
         raise NotImplementedError('Method not implemented!')
 
     def Poll(self, request, context):
-        """One liveness tick: the whole projected event stream plus the working-document version signal and
-        the workspace branch's tip.
+        """One liveness tick: the whole projected event stream and the workspace branch's tip.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -171,13 +165,6 @@ class WorkbenchServicer:
     def Interrupt(self, request, context):
         """Halt a running Analysis's current step: the in-flight tool call is closed with an error result
         and the session goes idle, ready for the curator's next turn.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetDocument(self, request, context):
-        """The current working document as a produced|not-produced result, or a named historical version.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -282,11 +269,6 @@ def add_WorkbenchServicer_to_server(servicer, server):
                     servicer.Interrupt,
                     request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.FromString,
                     response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.SerializeToString,
-            ),
-            'GetDocument': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetDocument,
-                    request_deserializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.FromString,
-                    response_serializer=themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.SerializeToString,
             ),
             'ReadWorkspaceRefDoc': grpc.unary_unary_rpc_method_handler(
                     servicer.ReadWorkspaceRefDoc,
@@ -510,33 +492,6 @@ class Workbench:
             '/themis.workbench.rpc.Workbench/Interrupt',
             themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptRequest.SerializeToString,
             themis_dot_workbench_dot_models_dot_workbench__pb2.InterruptResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetDocument(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/themis.workbench.rpc.Workbench/GetDocument',
-            themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentRequest.SerializeToString,
-            themis_dot_workbench_dot_models_dot_workbench__pb2.DocumentResponse.FromString,
             options,
             channel_credentials,
             insecure,

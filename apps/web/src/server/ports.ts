@@ -12,7 +12,6 @@ import type {
 import type {
   Analysis,
   AnalysisInputs,
-  DocumentResponse,
   PollResponse,
   Project,
   ThreadResponse,
@@ -80,10 +79,6 @@ export interface AnalysisDataPlane {
    *  caller may race a step completing. Takes the analysis row for the reason
    *  `steerAnalysis` does. */
   interruptAnalysis(analysis: Analysis): Promise<void>;
-
-  /** The current working document as a produced|not-produced result, or a named
-   *  historical `version`. */
-  getDocument(analysisId: string, version?: number): Promise<DocumentResponse>;
 
   /** One analysis by id — the row every point access authorizes against, since it
    *  carries the owning Project. Raises `ResourceNotFoundError` when the analysis is

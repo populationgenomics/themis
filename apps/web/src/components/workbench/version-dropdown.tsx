@@ -2,40 +2,71 @@
 
 import { ChevronDown } from "lucide-react";
 import { DropdownMenu, type MenuItem } from "@/components/ui/dropdown-menu";
+import { absoluteTime } from "@/lib/format";
+import type { DocumentVersion } from "./working-document";
 
-// The working-document version picker: one row per saved version, latest first.
+// The working-document version picker: one row per tip the reflog recorded for the branch, newest
+// first, each timed by the publish that made it the tip.
 
-/** The picker's rows, latest first. `version` is what selecting the row means: null for the latest
- *  (follow the current document), the version itself for an older one (pin it). */
+/** The picker's rows, newest first. `commit` is what selecting the row means: null for the tip
+ *  (follow the branch), the commit itself for an older version (pin it). */
 export function versionMenuItems(
-  latest: number,
-  selected: number,
-): { key: string; label: string; selected: boolean; version: number | null }[] {
-  return Array.from({ length: latest }, (_, i) => latest - i).map((v) => ({
-    key: `v${v}`,
-    label: `v${v}`,
-    selected: v === selected,
-    version: v === latest ? null : v,
+  versions: readonly DocumentVersion[],
+  selected: string,
+): {
+  key: string;
+  label: string;
+  time: string;
+  selected: boolean;
+  commit: string | null;
+}[] {
+  return versions.map((version, index) => ({
+    key: version.commit,
+    label: `v${version.number}`,
+    time: absoluteTime(
+      new Date(version.timestamp * 1000).toISOString(),
+      "reader",
+    ),
+    selected: version.commit === selected,
+    commit: index === 0 ? null : version.commit,
   }));
 }
 
+/** The trigger's label for the commit shown: its version number, or its abbreviated id while the
+ *  picker's versions do not name it. */
+export function versionLabel(
+  versions: readonly DocumentVersion[],
+  selected: string,
+): string {
+  const version = versions.find((v) => v.commit === selected);
+  return version === undefined ? selected.slice(0, 7) : `v${version.number}`;
+}
+
 export function VersionDropdown({
-  latest,
+  versions,
   selected,
   onSelect,
 }: {
-  latest: number;
-  /** The version currently shown (defaults to `latest`). */
-  selected: number;
+  /** Newest first. */
+  versions: readonly DocumentVersion[];
+  /** The commit currently shown. */
+  selected: string;
   /** Receives the selected row's meaning — see `versionMenuItems`. */
-  onSelect: (version: number | null) => void;
+  onSelect: (commit: string | null) => void;
 }): React.ReactElement {
-  const items: MenuItem[] = versionMenuItems(latest, selected).map((item) => ({
-    key: item.key,
-    label: item.label,
-    selected: item.selected,
-    onSelect: () => onSelect(item.version),
-  }));
+  const items: MenuItem[] = versionMenuItems(versions, selected).map(
+    (item) => ({
+      key: item.key,
+      label: (
+        <span className="flex items-baseline gap-[10px]">
+          <span>{item.label}</span>
+          <span className="text-ink-faintest">{item.time}</span>
+        </span>
+      ),
+      selected: item.selected,
+      onSelect: () => onSelect(item.commit),
+    }),
+  );
 
   return (
     <DropdownMenu
@@ -45,7 +76,7 @@ export function VersionDropdown({
       menuClassName="tscroll max-h-[320px] overflow-auto"
       items={items}
     >
-      v{selected}
+      {versionLabel(versions, selected)}
       <ChevronDown className="size-[10px] text-ink-faintest" aria-hidden />
     </DropdownMenu>
   );

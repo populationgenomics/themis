@@ -7,7 +7,6 @@ import type {
 import type {
   Analysis,
   AnalysisInputs,
-  DocumentResponse,
   PollResponse,
   Project,
   ThreadResponse,
@@ -152,14 +151,6 @@ export class AuthorizedBackend {
     return this.data.interruptAnalysis(
       await this.authorizedAnalysis(analysisId),
     );
-  }
-
-  async getDocument(
-    analysisId: string,
-    version?: number,
-  ): Promise<DocumentResponse> {
-    await this.authorizedAnalysis(analysisId);
-    return this.data.getDocument(analysisId, version);
   }
 
   /** The workspace repository's ref document, for the browser's copy of it. */

@@ -2,9 +2,8 @@
 // schema/proto/themis/workbench/. App code imports the message types, their schemas, and the
 // `Workbench` service descriptor from here rather than the generated paths. The BFF's Connect
 // handler and the browser's client are built from that one descriptor, so neither side hand-writes
-// the wire contract or its codec. The oneof `ConversationEvent.kind` and the
-// `DocumentResponse.document` presence carry the variant invariants structurally — there is no
-// hand-written validator or projection layer.
+// the wire contract or its codec. The oneof `ConversationEvent.kind` carries the variant invariants
+// structurally — there is no hand-written validator or projection layer.
 
 export * from "@/gen/themis/workbench/models/workbench_pb";
 export { Workbench } from "@/gen/themis/workbench/rpc/workbench_pb";

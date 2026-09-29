@@ -26,11 +26,6 @@ export interface KmsConfig {
   sessionTokenKeyVersion: string;
 }
 
-/** The bucket holding `<analysis_id>/versions/<n>` working-document snapshots. */
-export interface GcsConfig {
-  workingDocumentBucket: string;
-}
-
 /** The evidence gRPC service the BFF resolves papers through. `evidenceUrl` is both
  *  the transport base URL and the audience the ID-token interceptor mints for
  *  (Cloud Run IAM authenticates an ID token whose `aud` is the service URL). */
@@ -101,16 +96,6 @@ export function loadAnthropicConfig(
 export function loadKmsConfig(env: EnvLike = process.env): KmsConfig {
   return {
     sessionTokenKeyVersion: required(env, "THEMIS_SESSION_TOKEN_KEY_VERSION"),
-  };
-}
-
-/** Read + validate the working-document bucket. */
-export function loadGcsConfig(env: EnvLike = process.env): GcsConfig {
-  return {
-    workingDocumentBucket: required(
-      env,
-      "THEMIS_STORE_WORKING_DOCUMENT_BUCKET",
-    ),
   };
 }
 

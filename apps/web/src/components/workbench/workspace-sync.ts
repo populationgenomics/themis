@@ -5,7 +5,7 @@ import {
   type ConversationState,
   findTab,
   type PaneSide,
-  pinnedDocumentVersion,
+  pinnedDocumentCommit,
   type Source,
   type Win,
   WORKING_DOC_TAB_ID,
@@ -17,18 +17,90 @@ import {
 // change (and on a child's request); a child renders its window from the snapshot and posts a command
 // for every user action; main applies and re-broadcasts — no split-brain. Only structure and small
 // signals cross the channel: never paper bytes, never the conversation transcript (main-only), and for
-// the working document only its version + analysisId — each window fetches the body from the BFF keyed
-// on that version. See docs/design/document-pane.md §"Windows: one source of truth, N thin mirrors".
+// the working document only its branch tip + analysisId — each window reads the body from the
+// browser's copy of the repository keyed on that commit. See docs/design/document-pane.md §"Windows:
+// one source of truth, N thin mirrors".
 
 /** Query params the opener passes to the /pane route: the BroadcastChannel id and the mirrored window. */
 export const CHANNEL_PARAM = "ch";
 export const WINDOW_PARAM = "win";
 
-/** The working-document refetch signal — its version + analysisId, never its body. A version bump tells
- *  every window to re-fetch, so a popped working doc re-renders when the agent republishes. */
+/** Where a Poll found the workspace's collaborative branch: at a commit, or with no commit yet. */
+export type ReadTip = { kind: "commit"; commit: string } | { kind: "noCommit" };
+
+/** The working-document refetch signal — the workspace branch's tip + analysisId, never the body. A
+ *  moved tip tells every window to read again, so a popped working doc re-renders when the agent or
+ *  a curator publishes. */
 export interface WorkingDocumentSignal {
-  version: number;
+  /** The tip the latest Poll that read one found; null when none has: the Poll never answered
+   *  (`pollFailed`), or no tick so far could read the ref document. */
+  tip: ReadTip | null;
   analysisId: string;
+  pollFailed: boolean;
+  /** The latest tick could not read the ref document, or the Poll has failed since its last answer.
+   *  The window keeps what it shows at `tip`, and says it may be out of date. */
+  unavailable: boolean;
+  /** The latest answered tick found the ref document does not parse. The window shows the workspace
+   *  as damaged in place of what it showed. */
+  damaged: boolean;
+}
+
+/** A snapshot from a window whose signal this build cannot read: the two windows run different
+ *  builds of the workbench. */
+export class IncompatibleSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IncompatibleSnapshotError";
+  }
+}
+
+const COMMIT_ID = /^[0-9a-f]{40}$/;
+
+/** The working-document signal of a snapshot another window broadcast, checked field by field: the
+ *  channel carries whatever that window's build posted. Raises `IncompatibleSnapshotError` on any
+ *  other shape. */
+export function parseSnapshotSignal(
+  value: unknown,
+): WorkingDocumentSignal | null {
+  if (value === null) return null;
+  const refuse = (what: string): never => {
+    throw new IncompatibleSnapshotError(
+      `the working-document signal ${what}: ${JSON.stringify(value)}`,
+    );
+  };
+  if (typeof value !== "object" || Array.isArray(value))
+    return refuse("is not an object");
+  const signal = value as Record<string, unknown>;
+  if (typeof signal.analysisId !== "string") refuse("names no Analysis");
+  for (const flag of ["pollFailed", "unavailable", "damaged"] as const) {
+    if (typeof signal[flag] !== "boolean") refuse(`has no ${flag} flag`);
+  }
+  return {
+    analysisId: signal.analysisId as string,
+    tip: parseReadTip(signal.tip, refuse),
+    pollFailed: signal.pollFailed as boolean,
+    unavailable: signal.unavailable as boolean,
+    damaged: signal.damaged as boolean,
+  };
+}
+
+function parseReadTip(
+  value: unknown,
+  refuse: (what: string) => never,
+): ReadTip | null {
+  if (value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value))
+    return refuse("has a tip that is not a tip state");
+  const tip = value as Record<string, unknown>;
+  if (tip.kind === "noCommit") return { kind: "noCommit" };
+  if (
+    tip.kind === "commit" &&
+    typeof tip.commit === "string" &&
+    COMMIT_ID.test(tip.commit)
+  ) {
+    return { kind: "commit", commit: tip.commit };
+  }
+  return refuse("has a tip that is not a tip state");
 }
 
 /** The whole mirrored workspace: structure (windows/panes/tabs) plus small signals. No conversation
@@ -40,6 +112,7 @@ export interface WorkspaceSnapshot {
   labels: Record<string, boolean>;
   highlights: Record<string, string>;
   openPapers: string[];
+  /** Null until main's first Poll answers. */
   workingDocument: WorkingDocumentSignal | null;
 }
 
@@ -119,21 +192,22 @@ export function buildSnapshot(
   };
 }
 
-/** The `{analysisId, version}` a window fetches the working-document body with (both null when no
- *  document has been produced). Follows the signal's latest version, unless the working-doc tab's
- *  payload pins an earlier one for the same analysis. A version bump (or pin change) re-keys the
- *  query, so a mirror re-fetches on republish and on switching versions. */
-export function documentFetchKey(snapshot: WorkspaceSnapshot): {
-  analysisId: string | null;
-  version: number | null;
-} {
+/** The commit the working-doc tab pins for the signal's Analysis, or null to follow the tip. */
+export function pinnedCommitOf(snapshot: WorkspaceSnapshot): string | null {
   const wd = snapshot.workingDocument;
-  if (!wd) return { analysisId: null, version: null };
-  const pinned = pinnedDocumentVersion(
+  if (wd === null) return null;
+  return pinnedDocumentCommit(
     findTab(snapshotState(snapshot), WORKING_DOC_TAB_ID)?.payload,
     wd.analysisId,
   );
-  return { analysisId: wd.analysisId, version: pinned ?? wd.version };
+}
+
+/** What a window reads the working document with: the tip the copy is brought up to, and the
+ *  commit to render — the tip, or the one the working-doc tab pins. */
+export interface DocumentFetchKey {
+  analysisId: string;
+  tip: string;
+  commit: string;
 }
 
 /** Apply a command from a mirror to the authoritative controller (main). The new-window case

@@ -155,7 +155,7 @@ describe("the served surface", () => {
     expect(body?.code).toBe("not_found");
   });
 
-  test("an analysis round-trips create → poll → document", async () => {
+  test("an analysis round-trips create → poll", async () => {
     const created = await call("CreateAnalysis", {
       inputs: {
         variantClassification: {
@@ -171,11 +171,6 @@ describe("the served surface", () => {
     expect(id).toBeTruthy();
 
     expect((await call("Poll", { analysisId: id })).status).toBe(200);
-
-    const document = await call("GetDocument", { analysisId: id });
-    expect(document.status).toBe(200);
-    // Not-produced is a represented absence: the field is unset, not an empty document.
-    expect(document.body?.document).toBeUndefined();
   });
 
   test("a curator's turn joins the run it was sent to", async () => {
@@ -592,20 +587,21 @@ describe("the request boundary", () => {
   });
 
   test("a field the schema does not declare is rejected", async () => {
-    // connect-es ignores unknown JSON fields by default; a misspelled `version` would
-    // then quietly return the current document instead of the named one.
-    const { status, body } = await call("GetDocument", {
+    // connect-es ignores unknown JSON fields by default; this request would then reach the
+    // method, which answers an unknown analysis as not-found.
+    const { status, body } = await call("GetThread", {
       analysisId: "an_1",
-      versoin: 2,
+      threadId: "sthr_1",
+      bogus: 1,
     });
     expect(status).toBe(400);
     expect(body?.code).toBe("invalid_argument");
   });
 
-  test("a version below the declared minimum is rejected", async () => {
-    const { status, body } = await call("GetDocument", {
+  test("a value below its declared bound is rejected", async () => {
+    const { status, body } = await call("GetThread", {
       analysisId: "an_1",
-      version: 0,
+      threadId: "",
     });
     expect(status).toBe(400);
     expect(body?.code).toBe("invalid_argument");
