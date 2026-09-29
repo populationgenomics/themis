@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { KeyManagementServiceClient } from "@google-cloud/kms";
 import { CRC32C } from "@google-cloud/storage";
+import { clientSpan } from "../../tracing/spans";
 import type { KmsConfig } from "./config";
 
 // Derive a session's per-session bearer by MAC-signing its id, byte-identical to
@@ -49,11 +50,16 @@ export class KmsSessionTokenDeriver {
 
   async deriveBearer(sessionId: string): Promise<string> {
     const data = Buffer.from(sessionId, "utf8");
-    const [response] = await this.kms().macSign({
-      name: this.config.sessionTokenKeyVersion,
-      data,
-      dataCrc32c: { value: crc32c(data) },
-    });
+    const [response] = await clientSpan(
+      "kms.macSign",
+      { "kms.key_version": this.config.sessionTokenKeyVersion },
+      () =>
+        this.kms().macSign({
+          name: this.config.sessionTokenKeyVersion,
+          data,
+          dataCrc32c: { value: crc32c(data) },
+        }),
+    );
     const mac = response.mac;
     if (mac === undefined || mac === null || typeof mac === "string") {
       throw new Error(

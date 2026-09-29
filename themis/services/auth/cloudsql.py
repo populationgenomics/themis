@@ -6,7 +6,8 @@ infra/themis_infra/sql.py). Importing this module pulls the connector, pg8000 an
 SQLAlchemy, so it is imported only when the ``cloudsql`` backend is selected.
 
 Connections are pooled (``sql_pool.cloud_sql_engine``); answers are not. Every resolve runs the
-query, so a deleted row stops resolving on the next call.
+query, so a deleted row stops resolving on the next call. A resolve's query is a span, a child of the
+rpc's; a dial the checkout has to make is the pool's ``cloudsql.connect`` span, a child of the query's.
 """
 
 from __future__ import annotations
@@ -17,12 +18,14 @@ from typing import override
 
 import sqlalchemy
 import sqlalchemy.exc
+from opentelemetry import trace
 
 from themis.common import sql, sql_pool
 from themis.rpc import auth_pb2
 from themis.services.auth import backend as auth_backend
 
 _logger = logging.getLogger(__name__)
+_TRACER = trace.get_tracer(__name__)
 
 _QUERY = 'SELECT project_id, analysis_id FROM session_context WHERE token_hash = %s'
 
@@ -64,7 +67,8 @@ class CloudSqlBackend(auth_backend.SessionBackend):
 
     @override
     async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
-        # pg8000 is a blocking driver; offload so the query doesn't stall the event loop.
+        # pg8000 is a blocking driver; offload so the query doesn't stall the event loop. `to_thread` rather
+        # than `run_in_executor`: it carries the rpc's context, so the spans below are children of its span.
         row = await asyncio.to_thread(self._resolve_blocking, auth_backend.hash_token(session_token))
         if row is None:
             raise auth_backend.UnresolvedError
@@ -88,7 +92,12 @@ class CloudSqlBackend(auth_backend.SessionBackend):
             return self._query(token_hash)
 
     def _query(self, token_hash: str) -> sql.Row | None:
-        with self._engine.connect() as conn:
+        with (
+            _TRACER.start_as_current_span(
+                'cloudsql.query', attributes={'db.system.name': 'postgresql', 'db.query.text': _QUERY}
+            ),
+            self._engine.connect() as conn,
+        ):
             return conn.exec_driver_sql(_QUERY, (token_hash,)).fetchone()
 
     def close(self) -> None:

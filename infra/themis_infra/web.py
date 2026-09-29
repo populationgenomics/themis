@@ -70,6 +70,7 @@ class WebService(pulumi.ComponentResource):
         anthropic_service_account_id: str,
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
+        trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:WebService', 'themis', None, opts)
@@ -117,6 +118,9 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
         self.db_user = db_user.name
+        grants.TraceWriter(
+            'themis-web', member=grants.service_account(service_account.email), project=project, opts=child
+        )
 
         self._service = gcp.cloudrunv2.Service(
             'themis-service',
@@ -172,6 +176,7 @@ class WebService(pulumi.ComponentResource):
                             _env('THEMIS_PROJECT_NUMBER', project_number),
                             _env('THEMIS_REGION', region),
                             _env('THEMIS_WEB_SERVICE_NAME', _SERVICE_NAME),
+                            _env('THEMIS_TRACE_SAMPLE_RATIO', str(trace_sample_ratio)),
                         ],
                         # Probes reach the container directly, not through the LB, so they carry no
                         # IAP assertion; the app's proxy allowlists this path.

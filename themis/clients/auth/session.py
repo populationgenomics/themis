@@ -4,7 +4,8 @@ An rpc whose answer depends on the caller's session — the Project's scope, a d
 Analysis that spend is attributed to — resolves the ``x-themis-session-token`` metadata to a
 ``SessionContext`` through auth before it does the caller's work (sandbox-rpc-exposure.md).
 ``session_resolver`` builds the resolver over the generated auth stub (presenting the SA ID token
-via ``themis.clients.id_token``); ``require_session`` is the servicer guard that reads the metadata,
+via ``themis.clients.id_token``, and carrying the caller's trace context: ``themis/telemetry/tracing.py``);
+``require_session`` is the servicer guard that reads the metadata,
 resolves it, and aborts the RPC on a missing or unresolvable token — it never returns ``None``, so
 such an rpc cannot proceed without a binding. A server behind the auth interceptor needs no guard: the
 interceptor resolves the claim's session into the call's ``AuthContext`` before any handler runs.
@@ -19,6 +20,7 @@ from collections.abc import Awaitable, Callable
 import grpc
 import grpc.aio
 from google.protobuf import json_format
+from opentelemetry.instrumentation import grpc as grpc_instrumentation
 
 from themis.clients import id_token
 from themis.rpc import auth_pb2, auth_pb2_grpc
@@ -35,12 +37,17 @@ class UnresolvedSessionError(Exception):
 def session_resolver(auth_url: str) -> SessionResolver:
     """Build a ``SessionResolver`` calling the auth service at ``auth_url``.
 
-    The channel presents the runtime SA's ID token (audience = ``auth_url``). A
+    The channel presents the runtime SA's ID token (audience = ``auth_url``), and opens a client span
+    around each call whose context it propagates in the call's metadata. A
     ``PERMISSION_DENIED`` (the auth service's verdict on an unresolvable token) becomes
     ``UnresolvedSessionError``; any other gRPC failure — an outage, timeout, or IAM
     misconfiguration — propagates so it surfaces loudly rather than as a bad token.
     """
-    channel = grpc.aio.secure_channel(grpc_target(auth_url), id_token.channel_credentials(auth_url))
+    channel = grpc.aio.secure_channel(
+        grpc_target(auth_url),
+        id_token.channel_credentials(auth_url),
+        interceptors=grpc_instrumentation.aio_client_interceptors(),
+    )
     return _session_resolver_over_stub(auth_pb2_grpc.AuthStub(channel))
 
 

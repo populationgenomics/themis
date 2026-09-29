@@ -24,6 +24,7 @@ import type {
   ContentSelector,
   LiteraturePort,
 } from "../../ports";
+import { tracingInterceptor } from "../../tracing/connect";
 import { loadEvidenceConfig } from "./config";
 import { createContent } from "./content";
 import { idTokenInterceptor } from "./id-token";
@@ -161,7 +162,7 @@ export function createLiterature(
   const config = loadEvidenceConfig();
   const transport = createGrpcTransport({
     baseUrl: config.evidenceUrl,
-    interceptors: [idTokenInterceptor(config.evidenceUrl)],
+    interceptors: [tracingInterceptor, idTokenInterceptor(config.evidenceUrl)],
   });
   return new LiveLiterature(
     createClient(Literature, transport),

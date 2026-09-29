@@ -3827,10 +3827,17 @@ agents = [
 ]
 auth = [
     { name = "cloud-sql-python-connector" },
+    { name = "google-auth" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "requests" },
     { name = "sqlalchemy" },
 ]
 classifier-eval = [
@@ -3924,6 +3931,8 @@ evidence = [
     { name = "grpcio-health-checking" },
     { name = "httpx2" },
     { name = "lxml" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto" },
@@ -3941,6 +3950,8 @@ hello = [
     { name = "google-auth" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -3976,6 +3987,7 @@ lint = [
     { name = "matplotlib" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
@@ -4032,6 +4044,8 @@ sandbox-worker = [
     { name = "clinvar-proto" },
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "postern", extra = ["grpc"] },
     { name = "protobuf" },
     { name = "protovalidate" },
@@ -4051,11 +4065,14 @@ screenshot = [
 session = [
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
 sheaf = [
     { name = "google-cloud-storage" },
+    { name = "opentelemetry-api" },
     { name = "protobuf" },
 ]
 sheaf-service = [
@@ -4063,11 +4080,17 @@ sheaf-service = [
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "protobuf" },
     { name = "requests" },
 ]
 sql-pool = [
     { name = "cloud-sql-python-connector" },
+    { name = "opentelemetry-api" },
     { name = "pg8000" },
     { name = "sqlalchemy" },
 ]
@@ -4076,6 +4099,8 @@ store = [
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -4113,6 +4138,7 @@ test = [
     { name = "matplotlib" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
@@ -4139,8 +4165,19 @@ tools-sheaf = [
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "requests" },
+]
+tracing = [
+    { name = "google-auth" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "requests" },
 ]
 
@@ -4153,10 +4190,17 @@ agents = [
 ]
 auth = [
     { name = "cloud-sql-python-connector" },
+    { name = "google-auth" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "requests" },
     { name = "sqlalchemy" },
 ]
 classifier-eval = [
@@ -4250,6 +4294,8 @@ evidence = [
     { name = "grpcio-health-checking" },
     { name = "httpx2" },
     { name = "lxml" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
@@ -4267,6 +4313,8 @@ hello = [
     { name = "google-auth" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -4302,6 +4350,7 @@ lint = [
     { name = "matplotlib" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
@@ -4356,6 +4405,8 @@ sandbox-worker = [
     { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
@@ -4371,11 +4422,14 @@ screenshot = [{ name = "google-cloud-storage" }]
 session = [
     { name = "google-auth" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
 sheaf = [
     { name = "google-cloud-storage" },
+    { name = "opentelemetry-api" },
     { name = "protobuf" },
 ]
 sheaf-service = [
@@ -4383,11 +4437,17 @@ sheaf-service = [
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "protobuf" },
     { name = "requests" },
 ]
 sql-pool = [
     { name = "cloud-sql-python-connector" },
+    { name = "opentelemetry-api" },
     { name = "pg8000" },
     { name = "sqlalchemy" },
 ]
@@ -4396,6 +4456,8 @@ store = [
     { name = "google-cloud-storage" },
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "protobuf" },
     { name = "requests" },
 ]
@@ -4433,6 +4495,7 @@ test = [
     { name = "matplotlib" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
@@ -4459,8 +4522,19 @@ tools-sheaf = [
     { name = "google-cloud-storage" },
     { name = "google-crc32c" },
     { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "requests" },
+]
+tracing = [
+    { name = "google-auth" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-instrumentation-grpc" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
     { name = "requests" },
 ]
 

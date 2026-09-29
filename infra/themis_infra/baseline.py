@@ -37,6 +37,8 @@ _REQUIRED_SERVICES = (
     'logging.googleapis.com',
     'monitoring.googleapis.com',
     'telemetry.googleapis.com',
+    # Where the Telemetry API writes spans, and what the Trace Explorer reads them through.
+    'cloudtrace.googleapis.com',
 )
 
 # What `_Required` holds admin-activity audit logs for; no reason to keep the rest for less.

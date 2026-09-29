@@ -12,6 +12,7 @@ bucket-level access, under which ACLs are inert.
 
 from __future__ import annotations
 
+import collections
 import importlib.resources
 import inspect
 import pathlib
@@ -39,6 +40,15 @@ def test_every_binding_is_a_capability(program: capture.Capture) -> None:
     grant_classes = _grant_classes()
     loose = [b.urn for b in program.bindings if b.capability not in grant_classes]
     assert not loose, 'IAM bindings outside a grants.* capability:\n' + '\n'.join(loose)
+
+
+def test_no_two_bindings_grant_one_role_to_one_member_on_one_target(program: capture.Capture) -> None:
+    # A member binding is not authoritative: of two granting the same thing, deleting either revokes it while
+    # the other still records it as held. Two capabilities sharing a role (`serviceUsageConsumer`) cannot both
+    # go to one holder.
+    grants_of = collections.Counter((b.type_, b.target, b.role, b.member) for b in program.bindings)
+    duplicated = sorted(grant for grant, count in grants_of.items() if count > 1)
+    assert not duplicated, 'one grant made by several bindings:\n' + '\n'.join(map(str, duplicated))
 
 
 def _provider_type_tokens() -> set[str]:

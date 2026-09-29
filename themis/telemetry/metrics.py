@@ -17,18 +17,14 @@ import datetime
 from collections.abc import Iterable, Mapping
 from typing import override
 
-import google.auth
 import google.auth.credentials
-import google.auth.transport.grpc
-import google.auth.transport.requests
-import grpc
 from opentelemetry.exporter.otlp.proto.grpc import metric_exporter as otlp_grpc
-from opentelemetry.resourcedetector import gcp_resource_detector
 from opentelemetry.sdk import resources
 from opentelemetry.sdk.metrics import export as metrics_export
 
-# Resource attribute keys: OpenTelemetry's semantic conventions, plus `gcp.project_id`, the project a point
-# is written to.
+from themis.telemetry import telemetry_api
+
+# Resource attribute keys: OpenTelemetry's semantic conventions.
 CLOUD_REGION = 'cloud.region'
 CLOUD_AVAILABILITY_ZONE = 'cloud.availability_zone'
 SERVICE_NAME = 'service.name'
@@ -37,10 +33,6 @@ FAAS_NAME = 'faas.name'
 FAAS_INSTANCE = 'faas.instance'
 K8S_POD_NAME = 'k8s.pod.name'
 HOST_ID = 'host.id'
-GCP_PROJECT_ID = 'gcp.project_id'
-
-_ENDPOINT = 'https://telemetry.googleapis.com:443'
-_SCOPES = ('https://www.googleapis.com/auth/cloud-platform',)
 
 # The API's fallback chains for the two labels it drops a point without, in its order.
 _LOCATION_ATTRIBUTES = ('location', CLOUD_AVAILABILITY_ZONE, CLOUD_REGION)
@@ -53,24 +45,6 @@ class ResourceError(ValueError):
 
 class ExportError(RuntimeError):
     """The Telemetry API did not accept an export."""
-
-
-def application_default_credentials() -> tuple[google.auth.credentials.Credentials, str]:
-    """Application Default Credentials, and the project they resolve.
-
-    Raises:
-        google.auth.exceptions.DefaultCredentialsError: No credentials are configured.
-        ValueError: The credentials name no project.
-    """
-    credentials, project = google.auth.default(scopes=_SCOPES)
-    if not project:
-        raise ValueError('precondition failed: Application Default Credentials name no project')
-    return credentials, project
-
-
-def google_cloud_detectors() -> tuple[resources.ResourceDetector, ...]:
-    """The detectors that read a Cloud Run service's region, instance and name off its environment."""
-    return (gcp_resource_detector.GoogleCloudResourceDetector(),)
 
 
 def workload_resource(
@@ -88,7 +62,7 @@ def workload_resource(
         attributes: Explicit attributes, taking precedence over what `detectors` find. A Cloud Run Job
             passes its region and a stable `service.instance.id` here: a new process per execution
             would otherwise start a new series every run.
-        detectors: Resource detectors to run, `google_cloud_detectors()` on a Cloud Run service.
+        detectors: Resource detectors to run, `telemetry_api.google_cloud_detectors()` on a Cloud Run service.
 
     Raises:
         ResourceError: Nothing in the result yields a location or an instance.
@@ -97,7 +71,7 @@ def workload_resource(
     for detector in detectors:
         detected = detected.merge(detector.detect())
     explicit = {
-        GCP_PROJECT_ID: project,
+        telemetry_api.GCP_PROJECT_ID: project,
         SERVICE_NAME: service_name,
         **(attributes or {}),
     }
@@ -117,15 +91,13 @@ def telemetry_api_exporter(
     """An OTLP/gRPC exporter to the Telemetry API, `credentials` attached to every call.
 
     Args:
-        credentials: Google credentials, normally `application_default_credentials()`.
+        credentials: Google credentials, normally `telemetry_api.application_default_credentials()`.
         timeout: How long one export may take, retries of transient failures included.
     """
-    plugin = google.auth.transport.grpc.AuthMetadataPlugin(credentials, google.auth.transport.requests.Request())
-    channel_credentials = grpc.composite_channel_credentials(
-        grpc.ssl_channel_credentials(), grpc.metadata_call_credentials(plugin)
-    )
     return otlp_grpc.OTLPMetricExporter(
-        endpoint=_ENDPOINT, credentials=channel_credentials, timeout=timeout.total_seconds()
+        endpoint=telemetry_api.ENDPOINT,
+        credentials=telemetry_api.channel_credentials(credentials),
+        timeout=timeout.total_seconds(),
     )
 
 

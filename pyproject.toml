@@ -67,12 +67,14 @@ dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
 # infra/sql.py), shared by the auth service's cloudsql backend and the migrate runner.
 cloudsql = ["cloud-sql-python-connector", "pg8000"]
 # Pooled Cloud SQL connections (themis/common/sql_pool.py) for a service that queries per
-# request: SQLAlchemy's pool over the cloudsql client.
-sql_pool = ["sqlalchemy", { include-group = "cloudsql" }]
+# request: SQLAlchemy's pool over the cloudsql client. opentelemetry-api is the span around each
+# dial, a no-op where no tracer provider is installed.
+sql_pool = ["sqlalchemy", "opentelemetry-api", { include-group = "cloudsql" }]
 # auth service (themis/services/auth): the grpc.aio server + generated stubs + the Cloud
 # SQL backend. grpcio is the runtime; grpcio-health-checking serves grpc.health.v1;
-# protobuf backs the generated messages (json_format seeds the fixture backend).
-auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sql_pool" }]
+# protobuf backs the generated messages (json_format seeds the fixture backend); the
+# tracing group carries its spans to Cloud Trace.
+auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sql_pool" }, { include-group = "tracing" }]
 # migration runner (themis/migrate): applies the committed SQL migrations at deploy.
 migrate = [{ include-group = "cloudsql" }]
 # curation operator tooling (themis/curation/vocabulary_backfill.py): rewrites the stored
@@ -80,8 +82,10 @@ migrate = [{ include-group = "cloudsql" }]
 curation = ["protobuf", { include-group = "cloudsql" }]
 # service-to-service client (themis/clients): grpcio is the channel + generated stub;
 # google-auth mints the caller SA's ID token from the metadata server and requests is its
-# HTTP transport; protobuf backs the generated messages.
-session = ["grpcio", "google-auth", "requests", "protobuf"]
+# HTTP transport; protobuf backs the generated messages. opentelemetry-instrumentation-grpc is
+# the client interceptor that carries the caller's trace context on each call, and the gate's
+# own span is opentelemetry-api's: both are no-ops in a process that installs no tracer provider.
+session = ["grpcio", "google-auth", "requests", "protobuf", "opentelemetry-api", "opentelemetry-instrumentation-grpc"]
 # store service (themis/services/store): the grpc.aio server + generated stubs + the GCS
 # backend (google-cloud-storage) for the working document and workspace archive. Includes the
 # session client — every request is authorized through auth before it touches storage.
@@ -93,8 +97,9 @@ hello = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sess
 # sheaf service (themis/services/sheaf): sheaf's storage protocol served over gRPC for the
 # repository the session names. grpc.aio server + generated stubs over the sheaf library (the
 # GCS backend and the ref document's encoding); includes the session client — every request is
-# authorized through auth before it touches the bucket.
-sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sheaf" }, { include-group = "session" }]
+# authorized through auth before it touches the bucket. The tracing group carries its spans to
+# Cloud Trace.
+sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sheaf" }, { include-group = "session" }, { include-group = "tracing" }]
 # evidence service (themis/services/evidence): one image serving every data-plane evidence interface —
 # literature (litcache resolution + quote location) and the database-backed interfaces SVCv4 classification reaches.
 # grpc.aio server + generated stubs. Includes the session client: every interface authorizes through
@@ -152,6 +157,10 @@ cost_exporter = ["anthropic", "google-auth", "requests", "matplotlib", "slack-sd
 # Credentials the channel carries, and requests as the transport those credentials refresh over (grpc comes with the
 # exporter). Each is Apache-2.0.
 telemetry = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-resourcedetector-gcp", "google-auth", "requests"]
+# trace pipeline (themis/telemetry/tracing.py) for a grpc.aio service: the metrics pipeline's exporter, credentials and
+# resource detector carry spans to Cloud Trace as well, and opentelemetry-instrumentation-grpc supplies the server
+# interceptor that continues an incoming call's trace. Apache-2.0.
+tracing = ["opentelemetry-instrumentation-grpc", { include-group = "telemetry" }]
 # dispatcher service (themis/services/dispatcher): the webhook receiver that drains the work queue
 # and spawns sandboxes. aiohttp is the HMAC-webhook server + the Cloud Run Admin API client; anthropic
 # is the SDK the work queue is driven through; google-cloud-kms derives the per-session token
@@ -162,8 +171,9 @@ dispatcher = ["aiohttp", "anthropic", "google-cloud-kms", "google-crc32c", "goog
 # compare-and-swap ref document. google-cloud-storage is the GCS backend, whose
 # `ifGenerationMatch` on the ref document is the whole concurrency control; protobuf is the ref
 # document's own at-rest encoding, listed rather than taken transitively as the storage client's.
+# opentelemetry-api is the span around each GCS request, a no-op where no tracer provider is installed.
 # Its remaining requirement is not a wheel at all: sheaf shells out to a stock `git` binary.
-sheaf = ["google-cloud-storage", "protobuf"]
+sheaf = ["google-cloud-storage", "protobuf", "opentelemetry-api"]
 # sandbox worker (themis/services/sandbox_worker): the trusted EnvironmentWorker loop over postern.
 # postern[grpc] is the bubblewrap sandbox + the gRPC hatch; anthropic is the managed-agents SDK the
 # worker loop runs; anyio off-loads the synchronous Sandbox.run_python. Includes the session client for

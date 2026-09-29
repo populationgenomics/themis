@@ -1,5 +1,7 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
+import type { Attributes } from "@opentelemetry/api";
+import type { PoolClient } from "pg";
 import {
   type Analysis,
   type AnalysisInputs,
@@ -12,6 +14,7 @@ import {
   UndecodableAnalysisError,
 } from "../../errors";
 import { getPool, type SqlConfig } from "../../pg";
+import { clientSpan } from "../../tracing/spans";
 
 // Cloud SQL (Postgres) persistence for the analysis-session lifecycle, over the shared
 // process-wide pool (`server/pg.ts`).
@@ -20,6 +23,10 @@ import { getPool, type SqlConfig } from "../../pg";
 // `session_context` row `(token_hash, project_id, analysis_id)` the auth service
 // resolves a session bearer against. No working-document SQL: the document is the
 // workspace repository's, which the browser reads from its own copy.
+//
+// Each read, and the create's transaction, is a span named for the method, with the connection it runs
+// on acquired in a `pg.connect` span of its own: the pool hands back an idle connection, or opens one
+// through the Cloud SQL connector.
 
 const ANALYSIS_COLUMNS = "id, session_id, project_id, inputs, created_at";
 
@@ -49,10 +56,43 @@ export class Sql {
     return getPool(this.config);
   }
 
-  private async query<R>(text: string, values: unknown[] = []): Promise<R[]> {
-    const pool = await this.pool();
-    const result = await pool.query(text, values);
-    return result.rows as R[];
+  private attributes(): Attributes {
+    return {
+      "db.system.name": "postgresql",
+      "db.namespace": this.config.database,
+    };
+  }
+
+  private async connection(): Promise<PoolClient> {
+    return clientSpan("pg.connect", this.attributes(), async () =>
+      (await this.pool()).connect(),
+    );
+  }
+
+  /** Run one statement on a pooled connection, as a span named for `operation`. A connection a statement
+   *  failed on is discarded rather than returned to the pool, as `Pool.query` does. */
+  private async query<R>(
+    operation: string,
+    text: string,
+    values: unknown[] = [],
+  ): Promise<R[]> {
+    return clientSpan(
+      `pg.${operation}`,
+      { ...this.attributes(), "db.query.text": text },
+      async () => {
+        const client = await this.connection();
+        let failure: Error | undefined;
+        try {
+          const result = await client.query(text, values);
+          return result.rows as R[];
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+          throw error;
+        } finally {
+          client.release(failure);
+        }
+      },
+    );
   }
 
   /** Insert the analysis and its session-context grant in one transaction, so a
@@ -61,8 +101,15 @@ export class Sql {
    *  Returns the stored `created_at`: the column is database-assigned, so the
    *  create response and every later read of the row carry the same instant. */
   async insertAnalysis(input: InsertAnalysisInput): Promise<Date> {
-    const pool = await this.pool();
-    const client = await pool.connect();
+    return clientSpan("pg.insertAnalysis", this.attributes(), () =>
+      this.insertAnalysisInTransaction(input),
+    );
+  }
+
+  private async insertAnalysisInTransaction(
+    input: InsertAnalysisInput,
+  ): Promise<Date> {
+    const client = await this.connection();
     try {
       await client.query("BEGIN");
       const inserted = await client.query<{ created_at: Date }>(
@@ -103,6 +150,7 @@ export class Sql {
    *  malformed model. */
   async getAnalysis(id: string): Promise<Analysis> {
     const rows = await this.query<AnalysisRow>(
+      "getAnalysis",
       `SELECT ${ANALYSIS_COLUMNS} FROM analyses WHERE id = $1`,
       [id],
     );
@@ -119,6 +167,7 @@ export class Sql {
   async listAnalysesIn(projectIds: readonly string[]): Promise<Analysis[]> {
     if (projectIds.length === 0) return [];
     const rows = await this.query<AnalysisRow>(
+      "listAnalysesIn",
       `SELECT ${ANALYSIS_COLUMNS} FROM analyses
        WHERE project_id = ANY($1::text[]) ORDER BY created_at DESC`,
       [projectIds],
@@ -133,6 +182,7 @@ export class Sql {
   /** Whether the user is a member of the Project. */
   async isMember(userEmail: string, projectId: string): Promise<boolean> {
     const rows = await this.query<{ one: number }>(
+      "isMember",
       `SELECT 1 AS one FROM project_members
        WHERE user_email = $1 AND project_id = $2`,
       [userEmail, projectId],
@@ -144,6 +194,7 @@ export class Sql {
    *  registry. */
   async projectsOf(userEmail: string): Promise<{ id: string; name: string }[]> {
     return this.query<{ id: string; name: string }>(
+      "projectsOf",
       `SELECT p.id, p.name FROM projects p
        JOIN project_members m ON m.project_id = p.id
        WHERE m.user_email = $1

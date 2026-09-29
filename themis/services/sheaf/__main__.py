@@ -8,8 +8,10 @@ root under the repository's name, signing pack URLs as the service account ``THE
 names; or ``local`` over the directory ``THEMIS_SHEAF_LOCAL_ROOT`` names, which signs nothing.
 The three ceilings — ``THEMIS_SHEAF_MAX_PUBLISH_BYTES``, ``THEMIS_SHEAF_MAX_REFS``,
 ``THEMIS_SHEAF_MAX_DOCUMENT_BYTES`` — and a signed pack URL's lifetime,
-``THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS``, are positive integers. ``PORT`` is the Cloud Run convention;
-a ``grpc.health.v1`` health service reports SERVING alongside.
+``THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS``, are positive integers. The ``gcs`` backend is traced, at the
+ratio ``THEMIS_TRACE_SAMPLE_RATIO`` names (``themis/telemetry/tracing.py``); the ``local`` backend never
+reads it and reaches no cloud. ``PORT`` is the Cloud Run convention; a ``grpc.health.v1`` health service
+reports SERVING alongside.
 
 The server is built through ``interceptor.gated_server`` and no other way, so every rpc is behind the
 auth interceptor (rpc-authorization.md).
@@ -26,10 +28,13 @@ from themis import sheaf
 from themis.clients.auth import interceptor as interceptor_mod
 from themis.rpc import sheaf_pb2_grpc
 from themis.services.sheaf import servicer as servicer_mod
+from themis.telemetry import tracing
 
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_SHEAF_FIXTURE_CONTEXTS'
 _FIXTURE_CALLERS_VAR = 'THEMIS_SHEAF_FIXTURE_CALLERS'
 _BACKEND_VAR = 'THEMIS_SHEAF_BACKEND'
+# The Cloud Run service's name, the one Cloud Trace lists the spans under.
+SERVICE_NAME = 'themis-sheaf'
 _LIMIT_VARS = {
     'max_publish_bytes': 'THEMIS_SHEAF_MAX_PUBLISH_BYTES',
     'max_refs': 'THEMIS_SHEAF_MAX_REFS',
@@ -73,6 +78,12 @@ def _gcs_backend_from_env() -> sheaf.Backend:
     return gcs.GcsBackend(storage.Client().bucket(bucket), signer=signer)
 
 
+def install_tracing() -> None:
+    """Install the trace pipeline for the ``gcs`` backend; the ``local`` backend runs untraced."""
+    if os.environ.get(_BACKEND_VAR) == 'gcs':
+        tracing.install_from_env(SERVICE_NAME)
+
+
 def build_limits() -> servicer_mod.Limits:
     values = {}
     for field, var in _LIMIT_VARS.items():
@@ -91,8 +102,10 @@ def build_limits() -> servicer_mod.Limits:
 
 
 async def _serve() -> None:
-    server = interceptor_mod.gated_server(build_authorizer())
-    servicer = servicer_mod.Servicer(build_backend(), build_limits())
+    authorizer, backend, limits = build_authorizer(), build_backend(), build_limits()
+    install_tracing()
+    server = interceptor_mod.gated_server(authorizer, observers=[tracing.server_interceptor()])
+    servicer = servicer_mod.Servicer(backend, limits)
     sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
     # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
     health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]

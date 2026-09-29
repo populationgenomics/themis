@@ -5,6 +5,9 @@ a warm connection costs a few milliseconds. `cloud_sql_engine` keeps connections
 pool tuned for Cloud Run, and dials through `sql.iam_connect`. Opening a connection is not bounded in
 time: the connector dials without a timeout, and pg8000's applies only to sockets it opens itself.
 
+Each dial is a `cloudsql.connect` span, a child of whatever span is current (opentelemetry-api's, a
+no-op where no tracer provider is installed).
+
 Kept apart from `sql` so that only the services that pool pull in SQLAlchemy (the `sql_pool`
 dependency group).
 """
@@ -22,10 +25,12 @@ import sqlalchemy.engine
 import sqlalchemy.event
 import sqlalchemy.pool
 from google.cloud.sql import connector
+from opentelemetry import trace
 
 from themis.common import sql
 
 _logger = logging.getLogger(__name__)
+_TRACER = trace.get_tracer(__name__)
 
 # `pooled_engine`'s settings; the values in Cloud SQL's connection guide
 # (https://docs.cloud.google.com/sql/docs/postgres/manage-connections) unless stated.
@@ -81,7 +86,9 @@ def cloud_sql_engine(
     """
 
     def dial() -> sql.Connection:
-        return sql.iam_connect(dialer, connection_name=connection_name, database=database, db_user=db_user)
+        attributes = {'db.system.name': 'postgresql', 'db.namespace': database}
+        with _TRACER.start_as_current_span('cloudsql.connect', attributes=attributes):
+            return sql.iam_connect(dialer, connection_name=connection_name, database=database, db_user=db_user)
 
     return pooled_engine(dial, pool_size=pool_size, recycle_s=recycle_s)
 

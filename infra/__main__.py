@@ -118,6 +118,11 @@ clu_group = config.require('cluGroup')
 # Whether themis-clu may derive the bearer of any live session (grants.SessionBearerDeriver). Required,
 # not defaulted: a stack must decide, so no environment hands a human that reach by omission.
 clu_derives_session_tokens = config.require_bool('cluDerivesSessionTokens')
+# The fraction of requests the web tier and the services behind it trace to Cloud Trace, one decision per
+# trace (themis/telemetry/tracing.py). Required, not defaulted: tracing is billed per span, so a stack decides.
+trace_sample_ratio = config.require_float('traceSampleRatio')
+if not 0 <= trace_sample_ratio <= 1:
+    raise ValueError(f'themis:traceSampleRatio must be from 0 to 1, got {trace_sample_ratio}')
 
 
 def _image(env_var: str, live: Callable[[], str]) -> str:
@@ -187,6 +192,7 @@ auth_service = auth.AuthService(
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
+    trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 # The internal services attach here (Direct VPC egress) to reach the internal-ingress auth service (§7).
@@ -223,6 +229,7 @@ sheaf_service = sheaf.SheafService(
     vpc_subnetwork=services_net.subnetwork.id,
     # The workbench downloads repository packs cross-origin by URLs the sheaf service signs.
     cors_origins=[f'https://{domain}'],
+    trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
 # The litcache corpus the literature interface resolves papers in and the BFF serves objects from.
@@ -446,6 +453,7 @@ site = web.WebService(
     anthropic_service_account_id=anthropic_service_account_id,
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
+    trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[base, database, store_service, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account

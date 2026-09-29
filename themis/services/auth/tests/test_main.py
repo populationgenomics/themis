@@ -10,6 +10,7 @@ from google.cloud.sql import connector
 
 from themis.services.auth import __main__ as main_mod
 from themis.services.auth import backend as auth_backend
+from themis.telemetry import tracing
 
 
 def test_fixture_backend_resolves_seeded_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,3 +105,17 @@ def test_malformed_binding_shape_exits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_FIXTURE_BINDINGS', json.dumps({'tok-abc': {'project_id': 'p1'}}))
     with pytest.raises(SystemExit):
         main_mod.build_backend()
+
+
+def test_the_fixture_backend_is_never_traced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Offline, the ratio is never read: its absence is no error, and nothing reaches Google Cloud.
+    monkeypatch.setenv('THEMIS_BACKEND', 'fixture')
+    monkeypatch.delenv(tracing.SAMPLE_RATIO_VAR, raising=False)
+    main_mod.install_tracing()
+
+
+def test_the_cloudsql_backend_requires_a_sample_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THEMIS_BACKEND', 'cloudsql')
+    monkeypatch.delenv(tracing.SAMPLE_RATIO_VAR, raising=False)
+    with pytest.raises(SystemExit, match=tracing.SAMPLE_RATIO_VAR):
+        main_mod.install_tracing()

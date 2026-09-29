@@ -22,6 +22,9 @@ config:
   # Whether themis-clu may derive the bearer of any live session (docs/runbooks/hand-driving-a-service.md).
   # Opt-in per stack; dev's sessions are synthetic.
   themis:cluDerivesSessionTokens: "true"
+  # The fraction of requests traced to Cloud Trace (docs/runbooks/reading-a-request-trace.md). Every request on
+  # dev: its traffic is a handful of people.
+  themis:traceSampleRatio: "1.0"
   # The project's only public-read bucket, for PR review images. Opt-in per stack:
   # an environment that doesn't review code has no reason to expose one.
   themis:enablePrScreenshotBucket: "true"

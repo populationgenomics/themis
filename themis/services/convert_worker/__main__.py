@@ -32,7 +32,7 @@ from themis.litcache import anthropic_ocr, ocr
 from themis.litcache import produce as produce_mod
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import names, request_tokens
+from themis.telemetry import names, request_tokens, telemetry_api
 
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
@@ -100,9 +100,9 @@ def _meter_provider() -> sdk_metrics.MeterProvider:
     name off `K_SERVICE`; a revision the detector cannot place fails its startup probe here rather than
     have every point it writes dropped.
     """
-    credentials, project = telemetry_metrics.application_default_credentials()
+    credentials, project = telemetry_api.application_default_credentials()
     resource = telemetry_metrics.workload_resource(
-        project=project, service_name=_SERVICE_NAME, detectors=telemetry_metrics.google_cloud_detectors()
+        project=project, service_name=_SERVICE_NAME, detectors=telemetry_api.google_cloud_detectors()
     )
     reader = metrics_export.PeriodicExportingMetricReader(
         telemetry_metrics.telemetry_api_exporter(credentials, timeout=_EXPORT_TIMEOUT),

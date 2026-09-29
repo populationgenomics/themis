@@ -13,6 +13,7 @@ from themis.services import sheaf as sheaf_service
 from themis.services.sheaf import __main__ as main_mod
 from themis.services.sheaf import servicer as servicer_mod
 from themis.sheaf.backends import gcs
+from themis.telemetry import tracing
 from themis.testing import gate
 
 _LIMIT_ENV = {
@@ -135,3 +136,17 @@ def test_gcs_backend_keys_repositories_at_the_bucket_root(monkeypatch: pytest.Mo
     assert backend.prefix == ''  # the bucket holds sheaf repositories and nothing else
     assert isinstance(backend.signer, gcs.IamSigner)
     assert backend.signer.signer_email == 'themis-sheaf@example.iam.gserviceaccount.com'
+
+
+def test_the_local_backend_is_never_traced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Offline, the ratio is never read: its absence is no error, and nothing reaches Google Cloud.
+    monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'local')
+    monkeypatch.delenv(tracing.SAMPLE_RATIO_VAR, raising=False)
+    main_mod.install_tracing()
+
+
+def test_the_gcs_backend_requires_a_sample_ratio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'gcs')
+    monkeypatch.delenv(tracing.SAMPLE_RATIO_VAR, raising=False)
+    with pytest.raises(SystemExit, match=tracing.SAMPLE_RATIO_VAR):
+        main_mod.install_tracing()

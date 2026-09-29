@@ -16,7 +16,7 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk import resources
 from opentelemetry.sdk.metrics import export as metrics_export
 
-from themis.telemetry import metrics
+from themis.telemetry import metrics, telemetry_api
 
 _TIMEOUT = datetime.timedelta(seconds=5)
 
@@ -52,7 +52,7 @@ def test_a_job_places_itself_with_explicit_region_and_a_stable_instance() -> Non
         detectors=[_Detector({})],
     )
 
-    assert resource.attributes[metrics.GCP_PROJECT_ID] == 'themis-test'
+    assert resource.attributes[telemetry_api.GCP_PROJECT_ID] == 'themis-test'
     assert resource.attributes[metrics.SERVICE_NAME] == 'themis-cost-exporter'
     assert resource.attributes[metrics.CLOUD_REGION] == 'australia-southeast1'
     assert resource.attributes[metrics.SERVICE_INSTANCE_ID] == 'w'

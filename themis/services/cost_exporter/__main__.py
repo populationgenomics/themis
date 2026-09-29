@@ -25,7 +25,7 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from themis.clients import anthropic_wif
 from themis.services.cost_exporter import env, export, gauges, sessions
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import names
+from themis.telemetry import names, telemetry_api
 
 # The series' `job` label; the Cloud Run Job's name.
 _SERVICE_NAME = 'themis-cost-exporter'
@@ -75,7 +75,7 @@ def settings_from(environ: Mapping[str, str]) -> Settings:
 
 
 def _meter_provider(settings: Settings) -> tuple[sdk_metrics.MeterProvider, telemetry_metrics.OneShotReader]:
-    google_credentials, _ = telemetry_metrics.application_default_credentials()
+    google_credentials, _ = telemetry_api.application_default_credentials()
     resource = telemetry_metrics.workload_resource(
         project=settings.project,
         service_name=_SERVICE_NAME,

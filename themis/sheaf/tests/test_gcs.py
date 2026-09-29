@@ -18,6 +18,8 @@ import subprocess
 from concurrent import futures
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis import sheaf
 from themis.sheaf.backends import gcs
@@ -148,3 +150,29 @@ def test_clone_and_push_against_gcs(
 
     assert writer.read_log(ref=REF, path=LOG) == ['{"code":"PM2"}']
     assert len(sheaf.Store(gcs_backend, REPO).read().packs) == 2
+
+
+def test_each_request_is_a_span_of_the_operation_it_serves(
+    gcs_backend: gcs.GcsBackend, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    gcs_backend.cas_mutable('refs', b'doc', None)
+    gcs_backend.put_immutable('packs/p', b'PACK')
+    recorded_spans.clear()
+
+    with trace.get_tracer(__name__).start_as_current_span('rpc'):
+        gcs_backend.get_mutable('refs')
+        gcs_backend.put_immutable('packs/p', b'PACK')
+
+    spans = recorded_spans.get_finished_spans()
+    (rpc,) = [s for s in spans if s.name == 'rpc']
+    assert rpc.context is not None
+    requests = [s for s in spans if s is not rpc]
+    assert [s.name for s in requests] == ['gcs.get_blob', 'gcs.download', 'gcs.upload']
+    assert all(s.parent is not None and s.parent.span_id == rpc.context.span_id for s in requests)
+    assert all(s.kind is trace.SpanKind.CLIENT for s in requests)
+    assert all(s.attributes is not None and s.attributes['gcs.bucket'] == gcs_backend.bucket.name for s in requests)
+    # A create that finds the object already there is the outcome asked for, not a failed request.
+    (upload,) = [s for s in requests if s.name == 'gcs.upload']
+    assert upload.status.is_unset
+    assert upload.attributes is not None
+    assert upload.attributes['gcs.already_present'] is True

@@ -2,8 +2,10 @@
 
 ``THEMIS_BACKEND`` selects the adapter (required — no silent default): ``cloudsql`` (the
 deployed backend, reading the ``session_context`` table via the Cloud SQL connector) or
-``fixture`` (offline runs, seeded from ``THEMIS_FIXTURE_BINDINGS``). ``PORT`` is the Cloud
-Run convention. A ``grpc.health.v1`` health service reports SERVING alongside.
+``fixture`` (offline runs, seeded from ``THEMIS_FIXTURE_BINDINGS``). The ``cloudsql`` backend is
+traced, at the ratio ``THEMIS_TRACE_SAMPLE_RATIO`` names (``themis/telemetry/tracing.py``); the fixture
+backend never reads it and reaches no cloud. ``PORT`` is the Cloud Run convention. A
+``grpc.health.v1`` health service reports SERVING alongside.
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from themis.rpc import auth_pb2, auth_pb2_grpc
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
+from themis.telemetry import tracing
+
+# The Cloud Run service's name, the one Cloud Trace lists the spans under.
+SERVICE_NAME = 'themis-auth'
 
 
 def build_backend() -> auth_backend.SessionBackend:
@@ -30,6 +36,12 @@ def build_backend() -> auth_backend.SessionBackend:
     if backend == 'fixture':
         return _fixture_backend_from_env()
     raise SystemExit(f'unsupported THEMIS_BACKEND {backend!r} (expected "cloudsql" or "fixture")')
+
+
+def install_tracing() -> None:
+    """Install the trace pipeline for the ``cloudsql`` backend; any other backend runs untraced."""
+    if os.environ.get('THEMIS_BACKEND') == 'cloudsql':
+        tracing.install_from_env(SERVICE_NAME)
 
 
 def _require(name: str) -> str:
@@ -95,8 +107,10 @@ def _parse_binding(token: str, binding: object) -> auth_pb2.SessionContext:
 
 
 async def _serve() -> None:
-    server = grpc.aio.server()
-    auth_pb2_grpc.add_AuthServicer_to_server(servicer_mod.Servicer(build_backend()), server)
+    backend = build_backend()
+    install_tracing()
+    server = grpc.aio.server(interceptors=[tracing.server_interceptor()])
+    auth_pb2_grpc.add_AuthServicer_to_server(servicer_mod.Servicer(backend), server)
     # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
     health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
     await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)

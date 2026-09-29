@@ -43,6 +43,7 @@ from typing import override
 
 import grpc
 import grpc.aio
+from opentelemetry import trace
 
 from themis.clients.auth import caller as caller_mod
 from themis.clients.auth import claim as claim_mod
@@ -52,6 +53,8 @@ from themis.clients.auth import session as session_mod
 from themis.rpc import auth_pb2, sandbox_options_pb2
 
 _HEALTH_SERVICE = '/grpc.health.v1.Health/'
+
+_TRACER = trace.get_tracer(__name__)
 
 # A grpc.aio handler's behaviour, per shape: the stubs type handlers for the sync API, so the aio
 # shapes are named here and cast to.
@@ -120,9 +123,22 @@ class AuthInterceptor(grpc.aio.ServerInterceptor):
         return _gated(handler, rule, self._authorizer)
 
 
-def gated_server(authorizer: Authorizer, *, interceptors: Sequence[grpc.aio.ServerInterceptor] = ()) -> grpc.aio.Server:
-    """A ``grpc.aio`` server with the auth interceptor installed ahead of any other."""
-    return grpc.aio.server(interceptors=[AuthInterceptor(authorizer), *interceptors])
+def gated_server(
+    authorizer: Authorizer,
+    *,
+    observers: Sequence[grpc.aio.ServerInterceptor] = (),
+    interceptors: Sequence[grpc.aio.ServerInterceptor] = (),
+) -> grpc.aio.Server:
+    """A ``grpc.aio`` server with the auth interceptor installed ahead of any interceptor that acts on a call.
+
+    Args:
+        authorizer: What the auth interceptor resolves each call through.
+        observers: Interceptors outside the gate, which record each call and change none: the tracing
+            interceptor, whose server span has to cover the gate's own caller verification and session
+            resolution. An observer sees every call, the gate's denials included.
+        interceptors: Interceptors behind the gate, which see only the calls it admits.
+    """
+    return grpc.aio.server(interceptors=[*observers, AuthInterceptor(authorizer), *interceptors])
 
 
 AUTHORIZER_VAR = 'THEMIS_AUTHORIZER_BACKEND'
@@ -170,7 +186,8 @@ def authorizer_from_env(*, fixture_contexts_var: str, fixture_callers_var: str) 
 
 
 async def _build_context(context: grpc.aio.ServicerContext, authorizer: Authorizer) -> context_mod.AuthContext:
-    caller = await authorizer.verify_caller(context)
+    with _TRACER.start_as_current_span('auth.verify_caller'):
+        caller = await authorizer.verify_caller(context)
     if caller is None:
         raise StatusError(grpc.StatusCode.UNAUTHENTICATED, 'the caller presented no ID token this service can verify')
     try:
@@ -238,9 +255,16 @@ def _denied[TRequest, TResponse](
         del request
         await _abort(context, denial)
 
+    async def deny_stream(
+        request: object, context: grpc.aio.ServicerContext[TRequest, TResponse]
+    ) -> AsyncIterator[TResponse]:
+        # An async generator, since an observer wrapping it iterates it; it aborts before its first item.
+        del request
+        await _abort(context, denial)
+        yield  # unreachable: `_abort` raises
+
     if handler.response_streaming:
-        # A coroutine, not a generator: grpc.aio runs either for a stream-out rpc, and this one never yields.
-        return grpc.unary_stream_rpc_method_handler(deny, deserializer, serializer)
+        return grpc.unary_stream_rpc_method_handler(deny_stream, deserializer, serializer)
     if handler.request_streaming:
         return grpc.stream_unary_rpc_method_handler(deny, deserializer, serializer)
     return grpc.unary_unary_rpc_method_handler(deny, deserializer, serializer)

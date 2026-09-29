@@ -9,7 +9,8 @@ caller, and default-deny refuses any other. What the service needs of its host, 
 The three ceilings the servicer enforces, and how long a pack URL it signs lives, are this module's
 constants — deployment configuration — and the memory limit and per-instance concurrency are sized
 against the publish ceiling. The runtime SA signs those URLs through IAM `signBlob` as itself, so it
-holds `SelfSigner` on its own account.
+holds `SelfSigner` on its own account. The service writes its spans to Cloud Trace at the stack's
+sample ratio.
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ class SheafService(pulumi.ComponentResource):
         vpc_network: pulumi.Input[str],
         vpc_subnetwork: pulumi.Input[str],
         cors_origins: list[str],
+        trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         """Provision the repository bucket, the runtime SA and the service.
@@ -124,6 +126,9 @@ class SheafService(pulumi.ComponentResource):
             target='repositories',
             opts=child,
         )
+        grants.TraceWriter(
+            'themis-sheaf', member=grants.service_account(service_account.email), project=project, opts=child
+        )
 
         grants.SelfSigner('themis-sheaf', account=service_account, opts=child)
 
@@ -177,6 +182,7 @@ class SheafService(pulumi.ComponentResource):
                             _env('THEMIS_SHEAF_MAX_DOCUMENT_BYTES', str(_MAX_DOCUMENT_BYTES)),
                             _env('THEMIS_SHEAF_SIGNING_ACCOUNT', service_account.email),
                             _env('THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS', str(_PACK_URL_LIFETIME_SECONDS)),
+                            _env('THEMIS_TRACE_SAMPLE_RATIO', str(trace_sample_ratio)),
                         ],
                         # Serve gRPC: a named `h2c` port makes Cloud Run speak HTTP/2 cleartext to the
                         # container (TLS terminated at the ingress), and the startup probe checks the

@@ -5,7 +5,8 @@ internal-ingress Cloud Run service, and the SA's Cloud SQL IAM DB-user login. Th
 container runs the `cloudsql` backend, reaching `session_context` through the
 connector; that table's `SELECT` grant is applied by the migration (keyed on this
 login), not here. Ingress is internal-only with no invoker binding yet — the store
-that calls it does not exist; its `run.invoker` attaches when it lands.
+that calls it does not exist; its `run.invoker` attaches when it lands. The service writes its
+spans to Cloud Trace at the stack's sample ratio.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ class AuthService(pulumi.ComponentResource):
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
+        trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:AuthService', 'themis', None, opts)
@@ -71,6 +73,9 @@ class AuthService(pulumi.ComponentResource):
             opts=child,
         )
         self.db_user = db_user.name
+        grants.TraceWriter(
+            'themis-auth', member=grants.service_account(service_account.email), project=project, opts=child
+        )
 
         service = gcp.cloudrunv2.Service(
             'themis-service',
@@ -101,6 +106,9 @@ class AuthService(pulumi.ComponentResource):
                                 name='THEMIS_SQL_DATABASE', value=sql_database
                             ),
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_DB_USER', value=db_user.name),
+                            gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+                                name='THEMIS_TRACE_SAMPLE_RATIO', value=str(trace_sample_ratio)
+                            ),
                         ],
                         # Serve gRPC: a named `h2c` port makes Cloud Run speak HTTP/2 cleartext
                         # to the container (TLS terminated at the ingress), and the startup probe

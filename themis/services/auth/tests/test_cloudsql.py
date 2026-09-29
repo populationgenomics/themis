@@ -19,6 +19,9 @@ import pg8000.dbapi
 import pytest
 import sqlalchemy.exc
 import testcontainers.postgres
+from opentelemetry import trace
+from opentelemetry.sdk import trace as sdk_trace
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.common import sql, sql_pool
 from themis.services.auth import backend as auth_backend
@@ -27,6 +30,7 @@ from themis.services.auth import cloudsql
 _POOLED_APP = 'auth-pool-under-test'
 _SETTLE_TIMEOUT_S = 10
 _SHORT_TIMEOUT_S = 0.5
+_TRACER = trace.get_tracer(__name__)
 
 
 @pytest.fixture(scope='module')
@@ -349,3 +353,54 @@ def test_a_silent_socket_does_not_discard_the_other_connections(admin: _Admin, d
         assert dial.opened == 2, 'the connection that stayed idle was reused, not recycled'
     finally:
         pooled.dispose()
+
+
+class _ContainerConnector:
+    """Stands in for the Cloud SQL connector: whatever instance `connect` names, it dials the throwaway Postgres."""
+
+    def __init__(self, postgres: testcontainers.postgres.PostgresContainer) -> None:
+        self._postgres = postgres
+
+    def connect(self, instance_connection_string: str, driver: str, **kwargs: object) -> pg8000.dbapi.Connection:
+        del instance_connection_string, driver, kwargs
+        return _dial(self._postgres, _POOLED_APP)
+
+
+def _parent_id(span: sdk_trace.ReadableSpan) -> int | None:
+    return None if span.parent is None else span.parent.span_id
+
+
+def test_a_resolve_is_a_query_span_and_a_dial_is_its_connect_child(
+    admin: _Admin,
+    postgres: testcontainers.postgres.PostgresContainer,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    del admin  # depended on so the table exists first and the pool's connections are reaped after
+    backend = cloudsql.CloudSqlBackend(
+        sql_pool.cloud_sql_engine(
+            _ContainerConnector(postgres),  # pyright: ignore[reportArgumentType]
+            connection_name='proj:region:instance',
+            database='themis',
+            db_user='themis-auth@proj.iam',
+            pool_size=cloudsql.POOL_SIZE,
+            recycle_s=cloudsql.POOL_RECYCLE_S,
+        )
+    )
+    try:
+        with _TRACER.start_as_current_span('rpc') as rpc:
+            assert asyncio.run(_resolve_project(backend)) == 'proj-1'
+            assert asyncio.run(_resolve_project(backend)) == 'proj-1'
+    finally:
+        backend.close()
+
+    spans = recorded_spans.get_finished_spans()
+    queries = [s for s in spans if s.name == 'cloudsql.query']
+    # Only the first checkout dials: the second resolve runs on the warm connection.
+    (connect,) = [s for s in spans if s.name == 'cloudsql.connect']
+    assert len(queries) == 2
+    # The query runs on a worker thread; its span is still the rpc's child, not a trace of its own.
+    assert [_parent_id(q) for q in queries] == [rpc.get_span_context().span_id] * 2
+    assert queries[0].context is not None
+    assert _parent_id(connect) == queries[0].context.span_id
+    assert connect.attributes is not None
+    assert connect.attributes['db.namespace'] == 'themis'

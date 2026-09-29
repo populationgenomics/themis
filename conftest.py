@@ -1,9 +1,12 @@
-"""Shared pytest fixtures for container-backed tests.
+"""Shared pytest fixtures: container-backed tests, and the spans a test records.
 
 One home for finding the Docker daemon, the probe that gates on reaching it, and the
 fake-gcs-server wiring, so tests across themis don't each re-derive the daemon check or stand up
 their own emulator. Testcontainers is imported lazily inside the fixture that needs it, so this
 module stays cheap for tests that don't.
+
+`recorded_spans` is the other shared fixture: OpenTelemetry's tracer provider is process-global and
+can be installed once, so the one in-memory recorder every span test reads is installed here.
 """
 
 from __future__ import annotations
@@ -20,6 +23,11 @@ import pytest
 import requests
 from google.auth import credentials
 from google.cloud import storage
+from opentelemetry import trace
+from opentelemetry.sdk import trace as sdk_trace
+from opentelemetry.sdk.trace import export as trace_export
+from opentelemetry.sdk.trace import sampling
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.testing import docker_env
 
@@ -128,3 +136,25 @@ def gcs_bucket(gcs_client: storage.Client) -> storage.Bucket:
     bucket = gcs_client.bucket(f'themis-test-{uuid.uuid4().hex}')
     bucket.create()
     return bucket
+
+
+@pytest.fixture(scope='session')
+def _span_recorder() -> in_memory_span_exporter.InMemorySpanExporter:
+    """The process's tracer provider: every span recorded, in memory."""
+    if not isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
+        raise RuntimeError('a tracer provider was installed before the span recorder; a test installed a real one')
+    exporter = in_memory_span_exporter.InMemorySpanExporter()
+    provider = sdk_trace.TracerProvider(sampler=sampling.ALWAYS_ON)
+    provider.add_span_processor(trace_export.SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
+
+
+@pytest.fixture
+def recorded_spans(
+    _span_recorder: in_memory_span_exporter.InMemorySpanExporter,
+) -> Iterator[in_memory_span_exporter.InMemorySpanExporter]:
+    """The spans the test ends, and only those: `get_finished_spans()` reads them."""
+    _span_recorder.clear()
+    yield _span_recorder
+    _span_recorder.clear()

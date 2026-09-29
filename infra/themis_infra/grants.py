@@ -51,9 +51,15 @@ _PUBLIC_OBJECT_READ_ROLE = 'roles/storage.legacyObjectReader'
 
 # `metricsWriter` is `monitoring.timeSeries.create`; `serviceUsageConsumer` is the quota use the API requires of
 # every caller, and carries `monitoring.timeSeries.list` besides.
+_SERVICE_USAGE_CONSUMER = ('service-usage-consumer', 'roles/serviceusage.serviceUsageConsumer')
 _TELEMETRY_WRITE_ROLES: tuple[tuple[str, str], ...] = (
     ('telemetry-metrics-writer', 'roles/telemetry.metricsWriter'),
-    ('service-usage-consumer', 'roles/serviceusage.serviceUsageConsumer'),
+    _SERVICE_USAGE_CONSUMER,
+)
+# `tracesWriter` is `telemetry.traces.write`; the quota role is the one the metrics writer needs, for the same API.
+_TRACE_WRITE_ROLES: tuple[tuple[str, str], ...] = (
+    ('telemetry-traces-writer', 'roles/telemetry.tracesWriter'),
+    _SERVICE_USAGE_CONSUMER,
 )
 
 ObjectReadWriteRole = Literal['roles/storage.objectAdmin', 'roles/storage.objectUser']
@@ -685,6 +691,39 @@ class TelemetryWriter(_Capability):
                 role=role,
                 member=member,
                 opts=self._binding(None if prior is None else Prior(f'{prior.name}-{slug}', prior.parent)),
+            )
+        self.register_outputs({})
+
+
+class TraceWriter(_Capability):
+    """May write spans into any trace in the project through the Telemetry API, list its time series, and use its quota.
+
+    Project-wide, since `tracesWriter` has no narrower scope: the holder may add spans to any trace in the project,
+    its own or another service's, but reads none. The API admits a caller only with `serviceUsageConsumer` on the
+    project it bills the call's quota to, which carries `monitoring.timeSeries.list` too, as for `TelemetryWriter`.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        project: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        """Grant `member` the two Telemetry API roles for traces on the project.
+
+        Args:
+            holder: A slug for the holder, for resource names: `<holder>-telemetry-traces-writer`,
+                `<holder>-service-usage-consumer`.
+            member: The holder's IAM member string.
+            project: The GCP project the spans are written to.
+            opts: Resource options (dependency wiring).
+        """
+        super().__init__(f'{holder}-writes-traces', opts)
+        for slug, role in _TRACE_WRITE_ROLES:
+            gcp.projects.IAMMember(
+                f'{holder}-{slug}', project=project, role=role, member=member, opts=self._binding(None)
             )
         self.register_outputs({})
 

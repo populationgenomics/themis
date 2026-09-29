@@ -6,10 +6,15 @@ Object versioning on the bucket makes every superseded ref document a retained n
 generation — the durable reflog, at no cost in code. A download URL is signed V4 through IAM
 Credentials `signBlob` as a named service account, so no key file is ever held. Design:
 `docs/design/sheaf.md`.
+
+Each request to GCS is a client span, a child of whatever span is current (the rpc's, in the sheaf
+service), and so is each download URL's signature, one IAM `signBlob` call under an `IamSigner`. A
+listing is the exception: the client fetches its pages lazily, as the caller iterates.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import threading
 from collections.abc import Iterator
@@ -21,6 +26,7 @@ from google.auth import credentials as auth_credentials
 from google.auth import iam
 from google.auth.transport import requests as auth_requests
 from google.cloud import storage
+from opentelemetry import trace
 
 from themis.sheaf import backend, errors
 
@@ -34,6 +40,8 @@ _CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
 # Signed URLs are path-style on this origin (`<endpoint>/<bucket>/<object>`), whatever endpoint the client
 # talks to: the workbench's content security policy admits the sheaf bucket's path here and nothing else.
 SIGNED_URL_ENDPOINT = 'https://storage.googleapis.com'
+
+_TRACER = trace.get_tracer(__name__)
 
 
 def _generation_of(blob: storage.Blob) -> backend.Generation:
@@ -121,13 +129,27 @@ class GcsBackend(backend.Backend):
             signer: The identity download URLs are signed as — in a deployment, an `IamSigner` — or
                 None where nothing signs, and then `sign_immutable` refuses. A signed URL reads with
                 the signer's own permission, so it should be the account the client's credentials are.
+
+        Raises:
+            ValueError: The bucket handle carries no name, so no request could address it.
         """
+        if bucket.name is None:
+            raise ValueError('precondition failed: the bucket handle carries no name')
         self.bucket = bucket
+        self._bucket_name: str = bucket.name
         self.prefix = prefix.strip('/')
         self.signer = signer
 
     def _key(self, key: str) -> str:
         return f'{self.prefix}/{key}' if self.prefix else key
+
+    def _request(self, operation: str, blob_name: str) -> contextlib.AbstractContextManager[trace.Span]:
+        """A client span around one request to GCS, named for its operation."""
+        return _TRACER.start_as_current_span(
+            f'gcs.{operation}',
+            kind=trace.SpanKind.CLIENT,
+            attributes={'gcs.bucket': self._bucket_name, 'gcs.object': blob_name},
+        )
 
     @override
     def get_mutable(self, key: str) -> backend.StoredBlob:
@@ -137,8 +159,10 @@ class GcsBackend(backend.Backend):
             NotFound: If the object does not exist.
             SheafError: If the client reports no generation for it.
         """
+        full = self._key(key)
         for _ in range(_READ_ATTEMPTS):
-            blob = self.bucket.get_blob(self._key(key))
+            with self._request('get_blob', full):
+                blob = self.bucket.get_blob(full)
             if blob is None:
                 raise errors.NotFound(key)
             generation = _generation_of(blob)
@@ -146,7 +170,8 @@ class GcsBackend(backend.Backend):
             # even if another writer lands mid-read. On an unversioned bucket that overwrite makes
             # the pinned generation unfetchable, so the read starts over.
             try:
-                data = blob.download_as_bytes(if_generation_match=generation)
+                with self._request('download', full):
+                    data = blob.download_as_bytes(if_generation_match=generation)
             except (api_exceptions.NotFound, api_exceptions.PreconditionFailed):
                 continue
             return backend.StoredBlob(data=data, generation=generation)
@@ -161,14 +186,16 @@ class GcsBackend(backend.Backend):
                 None.
             SheafError: If the client reports no generation for the object it just wrote.
         """
-        blob = self.bucket.blob(self._key(key))
+        full = self._key(key)
+        blob = self.bucket.blob(full)
         precondition = MUST_NOT_EXIST if expected is None else expected
         try:
-            blob.upload_from_string(
-                data,
-                content_type='application/x-protobuf',
-                if_generation_match=precondition,
-            )
+            with self._request('upload', full):
+                blob.upload_from_string(
+                    data,
+                    content_type='application/x-protobuf',
+                    if_generation_match=precondition,
+                )
         except api_exceptions.PreconditionFailed as exc:
             raise errors.PreconditionFailed(f'{key}: generation {expected} is stale') from exc
         return _generation_of(blob)
@@ -183,17 +210,17 @@ class GcsBackend(backend.Backend):
             SheafError: If the client reports no generation for a listed version.
         """
         full = self._key(key)
-        versions = [
-            (b, _generation_of(b)) for b in self.bucket.list_blobs(prefix=full, versions=True) if b.name == full
-        ]
+        with self._request('list_versions', full):
+            versions = [
+                (b, _generation_of(b)) for b in self.bucket.list_blobs(prefix=full, versions=True) if b.name == full
+            ]
         versions.sort(key=lambda pair: pair[1], reverse=True)
-        return [
-            backend.StoredBlob(
-                data=blob.download_as_bytes(if_generation_match=generation),
-                generation=generation,
-            )
-            for blob, generation in versions
-        ]
+        history = []
+        for blob, generation in versions:
+            with self._request('download', full):
+                data = blob.download_as_bytes(if_generation_match=generation)
+            history.append(backend.StoredBlob(data=data, generation=generation))
+        return history
 
     @override
     def put_immutable(self, key: str, data: bytes) -> None:
@@ -203,12 +230,15 @@ class GcsBackend(backend.Backend):
         object, which content addressing makes identical. One request, and the precondition puts the
         upload under the client's default retry policy.
         """
-        try:
-            self.bucket.blob(self._key(key)).upload_from_string(
-                data, content_type='application/x-git-packed-objects', if_generation_match=0
-            )
-        except api_exceptions.PreconditionFailed:
-            return
+        full = self._key(key)
+        with self._request('upload', full) as span:
+            try:
+                self.bucket.blob(full).upload_from_string(
+                    data, content_type='application/x-git-packed-objects', if_generation_match=0
+                )
+            except api_exceptions.PreconditionFailed:
+                # Not a failed request in the trace: the object is already there, which is the outcome asked for.
+                span.set_attribute('gcs.already_present', True)
 
     @override
     def get_immutable(self, key: str) -> bytes:
@@ -217,9 +247,11 @@ class GcsBackend(backend.Backend):
         Raises:
             NotFound: If the object is absent.
         """
-        blob = self.bucket.blob(self._key(key))
+        full = self._key(key)
+        blob = self.bucket.blob(full)
         try:
-            return blob.download_as_bytes()
+            with self._request('download', full):
+                return blob.download_as_bytes()
         except api_exceptions.NotFound as exc:
             raise errors.NotFound(key) from exc
 
@@ -243,12 +275,14 @@ class GcsBackend(backend.Backend):
         # Taken before signing and floored to the second, as the URL's own X-Goog-Date is, so this expiry is never
         # after the URL's.
         issued = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
-        url = self.bucket.blob(self._key(key)).generate_signed_url(
-            version='v4',
-            expiration=lifetime,
-            method='GET',
-            api_access_endpoint=SIGNED_URL_ENDPOINT,
-            virtual_hosted_style=False,
-            credentials=self.signer,
-        )
+        full = self._key(key)
+        with self._request('sign_url', full):
+            url = self.bucket.blob(full).generate_signed_url(
+                version='v4',
+                expiration=lifetime,
+                method='GET',
+                api_access_endpoint=SIGNED_URL_ENDPOINT,
+                virtual_hosted_style=False,
+                credentials=self.signer,
+            )
         return backend.SignedUrl(url=url, expire_time=issued + lifetime)

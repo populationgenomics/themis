@@ -31,6 +31,7 @@ import {
   type WorkspacePublishFailure,
 } from "../../errors";
 import type { WorkspaceRepository } from "../../ports";
+import { tracingInterceptor } from "../../tracing/connect";
 import type { SheafConfig } from "./config";
 import { idTokenInterceptor } from "./id-token";
 
@@ -237,7 +238,7 @@ export function createWorkspace(
 ): WorkspaceRepository {
   const transport = createGrpcTransport({
     baseUrl: config.sheafUrl,
-    interceptors: [idTokenInterceptor(config.sheafUrl)],
+    interceptors: [tracingInterceptor, idTokenInterceptor(config.sheafUrl)],
   });
   return new LiveWorkspace(
     createClient(Sheaf, transport),

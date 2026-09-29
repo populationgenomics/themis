@@ -32,6 +32,7 @@ COPY themis/rpc ./themis/rpc
 COPY themis/clients ./themis/clients
 # The sheaf library whole: the store, the ref document's stubs under models/, and both backends.
 COPY themis/sheaf ./themis/sheaf
+COPY themis/telemetry ./themis/telemetry
 COPY themis/services/sheaf ./themis/services/sheaf
 # Import the entrypoint at build time, so a module the COPY set misses fails the build.
 RUN python -c 'import themis.services.sheaf.__main__'

@@ -14,6 +14,8 @@ from typing import override
 import pytest
 from google.auth import credentials as auth_credentials
 from google.cloud import storage
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis import sheaf
 from themis.sheaf.backends import gcs
@@ -69,6 +71,17 @@ def test_a_signed_url_is_a_v4_signature_by_the_signer_for_the_lifetime_asked() -
     issued = datetime.datetime.strptime(query['X-Goog-Date'][0], '%Y%m%dT%H%M%SZ').replace(tzinfo=datetime.UTC)
     # The reported expiry is never after the one GCS enforces, the URL's date plus its lifetime.
     assert before + _LIFETIME <= signed.expire_time <= issued + _LIFETIME
+
+
+def test_a_signature_is_a_client_span_of_the_object_it_signs(
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    _backend(_FixedSignature()).sign_immutable(_KEY, _LIFETIME)
+
+    (span,) = recorded_spans.get_finished_spans()
+    assert span.name == 'gcs.sign_url'
+    assert span.kind is trace.SpanKind.CLIENT
+    assert span.attributes == {'gcs.bucket': _BUCKET, 'gcs.object': _KEY}
 
 
 def test_a_backend_built_without_a_signer_refuses() -> None:
