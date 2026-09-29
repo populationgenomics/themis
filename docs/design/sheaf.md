@@ -138,10 +138,10 @@ order, so a truncation loses HEAD before it loses the manifest, and a message fi
 detected and not inferred. The proto reserves every number above HEAD's, so the document cannot gain a field and the
 argument cannot quietly stop holding.
 
-The storage seam is narrow on purpose: read and conditionally write one mutable key, and put, get and list
-content-addressed objects — there is no delete, because nothing deletes. That is small enough to implement over a local
-directory, which is how the concurrency protocol is tested with no network and no credentials. A bug in the protocol
-then shows up as a protocol bug, not as a cloud-client bug.
+The storage seam is narrow on purpose: read and conditionally write one mutable key; put, get and list content-addressed
+objects, and sign a URL that reads one — there is no delete, because nothing deletes. That is small enough to implement
+over a local directory, which is how the concurrency protocol is tested with no network and no credentials. A bug in the
+protocol then shows up as a protocol bug, not as a cloud-client bug.
 
 ### HEAD is in the document, not in the refs
 

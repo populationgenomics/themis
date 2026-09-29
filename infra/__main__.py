@@ -216,7 +216,7 @@ hello_service = hello.HelloService(
     vpc_subnetwork=services_net.subnetwork.id,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
-# The workspace repository's storage protocol, over the store's workspace bucket (sheaf-service.md).
+# The workspace repository's storage protocol, over a bucket of repositories of its own (sheaf-service.md).
 sheaf_service = sheaf.SheafService(
     project=project,
     region=region,
@@ -224,8 +224,9 @@ sheaf_service = sheaf.SheafService(
     auth_url=auth_service.url,
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
-    workspace_bucket=store_service.workspace_bucket,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net, store_service]),
+    # The workbench downloads repository packs cross-origin by URLs the sheaf service signs.
+    cors_origins=[f'https://{domain}'],
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
 )
 # The litcache corpus the literature interface resolves papers in and the BFF serves objects from.
 fulltext = storage.fulltext_bucket(
@@ -440,6 +441,8 @@ site = web.WebService(
     working_document_bucket=store_service.working_document_bucket,
     evidence_url=evidence_service.url,
     fulltext_bucket=fulltext.name,
+    sheaf_url=sheaf_service.url,
+    sheaf_bucket=sheaf_service.repository_bucket,
     anthropic_environment_id=anthropic_environment_id,
     anthropic_agent_id=anthropic_agent_id,
     anthropic_federation_rule_id=anthropic_federation_rule_id,
@@ -448,7 +451,7 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     iap_backend_service_id=iap_backend_service_id,
-    opts=pulumi.ResourceOptions(depends_on=[base, database, store_service]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, store_service, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
 # anything programmatic impersonates.
@@ -500,6 +503,16 @@ grants.BucketObjectReader(
     bucket=fulltext.name,
     target='fulltext',
     prior=grants.Prior('themis-web-fulltext-object-viewer'),
+)
+# The BFF relays the workbench's copy of the workspace: ReadRefDoc, SignPackUrls and Publish, each through a
+# session it derives for the Analysis (workbench-workspace.md).
+grants.ServiceInvoker(
+    'themis-web',
+    member=web_member,
+    service=sheaf_service.service_name,
+    project=project,
+    location=region,
+    target='sheaf',
 )
 # themis-clu, by hand: the corpus, the sheaf protocol, and — where the stack allows it — any live
 # session. The convert worker has no binding because nothing has needed to drive a conversion by hand,
@@ -584,7 +597,7 @@ sandbox_job = sandbox.SandboxJob(
 # The job SA invokes the services the worker reaches: the store it checkpoints the working document to, the sheaf
 # service its mirror of the Analysis repository hydrates from and publishes to, and the hatch's forward targets.
 # Every one is session-scoped, so the binding is inert without the worker-held session token (§7); the job holds
-# nothing on the workspace bucket.
+# nothing on the sheaf bucket.
 for label, invoke_target in (
     ('store', store_service.service_name),
     ('sheaf', sheaf_service.service_name),
@@ -713,6 +726,7 @@ pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('sheaf_url', sheaf_service.url)
 pulumi.export('sheaf_sa_email', sheaf_service.service_account_email)
+pulumi.export('sheaf_repository_bucket', sheaf_service.repository_bucket)
 pulumi.export('resources_bucket', resources.name)
 pulumi.export('gene_disease_refresh_job_name', gene_disease_refresh_job.name)
 # The auth SA's DB login — the ${AUTH_DB_USER} the migrate step substitutes into the

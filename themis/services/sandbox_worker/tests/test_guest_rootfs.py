@@ -32,7 +32,7 @@ import tomllib
 
 import pytest
 
-from themis.services.sandbox_worker import _generated, worker
+from themis.services.sandbox_worker import _generated, git_hatches, worker
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / 'Dockerfile'
@@ -48,6 +48,7 @@ _GLOB_CHARACTERS = '*?['
 _GUEST_CONTRACT = _REPO_ROOT / 'themis' / 'services' / 'sandbox_worker' / 'guest_contract'
 _PROTO_ROOT = '/usr/local/share/themis/proto/'
 _COPY = re.compile(r'^[ \t]*(?i:COPY|ADD)[ \t]+(?P<argv>.+)$', re.MULTILINE)
+_SYSTEM_IDENTITY = re.compile(r"git config --system user\.(name|email) '([^']*)'")
 _RUN = re.compile(r'^[ \t]*(?i:RUN)[ \t]+(?P<argv>.+)$', re.MULTILINE)
 _FROM = re.compile(r'^[ \t]*(?i:FROM)[ \t]+\S+(?:[ \t]+(?i:AS)[ \t]+(?P<stage>\S+))?[ \t]*$', re.MULTILINE)
 
@@ -377,6 +378,10 @@ def test_the_guest_stage_writes_the_gitconfig_the_profile_binds() -> None:
     configured = [run for run in runs if 'git config --system protocol.ext.allow always' in run]
     assert configured, 'the guest stage does not allow the ext:: transport its clone runs over'
     assert any('user.name' in run and 'user.email' in run for run in configured), 'no identity for the agent'
+    # The hook takes new commits and tags under this one identity only, so the agent's own must be it.
+    identities = {(key, value) for run in configured for key, value in _SYSTEM_IDENTITY.findall(run)}
+    expected = {('name', git_hatches.AGENT_IDENTITY.name), ('email', git_hatches.AGENT_IDENTITY.email)}
+    assert identities == expected, f'the guest commits as {identities}; the hook admits {git_hatches.AGENT_IDENTITY}'
     bound = dict(worker._build_profile(None).ro_binds)
     assert bound[worker._GUEST_ROOTFS + worker._GUEST_GITCONFIG] == worker._GUEST_GITCONFIG
     assert worker._GUEST_GITCONFIG == '/etc/gitconfig'  # where `git config --system` writes

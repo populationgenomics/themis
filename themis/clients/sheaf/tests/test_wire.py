@@ -220,7 +220,9 @@ def test_a_publish_the_service_refuses_reaches_the_pusher_as_a_refusal(
     backend: sheaf.LocalBackend, token_file: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
     """What the service refuses on the intent alone is a message to the pusher, not a traceback."""
-    limits = servicer_mod.Limits(max_publish_bytes=1, max_refs=64, max_document_bytes=1 << 16)
+    limits = servicer_mod.Limits(
+        max_publish_bytes=1, max_refs=64, max_document_bytes=1 << 16, pack_url_lifetime_seconds=300
+    )
     with (
         conftest.serving(backend, limits) as target,
         remote_mod.RemoteStore(target, token_file, repo=REPO) as remote,

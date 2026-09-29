@@ -19,6 +19,7 @@ _LIMIT_ENV = {
     'THEMIS_SHEAF_MAX_PUBLISH_BYTES': '1048576',
     'THEMIS_SHEAF_MAX_REFS': '256',
     'THEMIS_SHEAF_MAX_DOCUMENT_BYTES': '65536',
+    'THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS': '300',
 }
 
 
@@ -77,8 +78,8 @@ def test_local_backend_is_rooted_where_told(monkeypatch: pytest.MonkeyPatch, tmp
 
 def test_gcs_backend_requires_its_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'gcs')
-    monkeypatch.delenv('THEMIS_WORKSPACE_BUCKET', raising=False)
-    with pytest.raises(SystemExit, match='THEMIS_WORKSPACE_BUCKET'):
+    monkeypatch.delenv('THEMIS_SHEAF_BUCKET', raising=False)
+    with pytest.raises(SystemExit, match='THEMIS_SHEAF_BUCKET'):
         main_mod.build_backend()
 
 
@@ -86,7 +87,7 @@ def test_limits_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -
     for var, value in _LIMIT_ENV.items():
         monkeypatch.setenv(var, value)
     assert main_mod.build_limits() == servicer_mod.Limits(
-        max_publish_bytes=1048576, max_refs=256, max_document_bytes=65536
+        max_publish_bytes=1048576, max_refs=256, max_document_bytes=65536, pack_url_lifetime_seconds=300
     )
 
 
@@ -108,10 +109,29 @@ def test_a_limit_that_is_not_a_positive_integer_is_refused(monkeypatch: pytest.M
         main_mod.build_limits()
 
 
-def test_gcs_backend_keys_repositories_under_the_workspaces_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_url_lifetime_past_what_a_v4_signature_carries_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var, value in _LIMIT_ENV.items():
+        monkeypatch.setenv(var, value)
+    monkeypatch.setenv('THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS', str(7 * 24 * 60 * 60 + 1))
+    with pytest.raises(SystemExit, match='pack_url_lifetime_seconds'):
+        main_mod.build_limits()
+
+
+def test_gcs_backend_requires_the_account_it_signs_as(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'gcs')
-    monkeypatch.setenv('THEMIS_WORKSPACE_BUCKET', 'a-bucket')
+    monkeypatch.setenv('THEMIS_SHEAF_BUCKET', 'a-bucket')
+    monkeypatch.delenv('THEMIS_SHEAF_SIGNING_ACCOUNT', raising=False)
+    with pytest.raises(SystemExit, match='THEMIS_SHEAF_SIGNING_ACCOUNT'):
+        main_mod.build_backend()
+
+
+def test_gcs_backend_keys_repositories_at_the_bucket_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('THEMIS_SHEAF_BACKEND', 'gcs')
+    monkeypatch.setenv('THEMIS_SHEAF_BUCKET', 'a-bucket')
+    monkeypatch.setenv('THEMIS_SHEAF_SIGNING_ACCOUNT', 'themis-sheaf@example.iam.gserviceaccount.com')
     monkeypatch.setenv('STORAGE_EMULATOR_HOST', 'http://127.0.0.1:1')  # a client that never authenticates
     backend = main_mod.build_backend()
     assert isinstance(backend, gcs.GcsBackend)
-    assert backend.prefix == main_mod.WORKSPACES_PREFIX == 'workspaces'
+    assert backend.prefix == ''  # the bucket holds sheaf repositories and nothing else
+    assert isinstance(backend.signer, gcs.IamSigner)
+    assert backend.signer.signer_email == 'themis-sheaf@example.iam.gserviceaccount.com'

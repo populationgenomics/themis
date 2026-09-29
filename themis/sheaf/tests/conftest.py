@@ -75,11 +75,14 @@ def _hermetic_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     }
 
 
-def run_git(*args: str, cwd: str | os.PathLike[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_git(
+    *args: str, cwd: str | os.PathLike[str], check: bool = True, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run git as a client would, capturing output."""
     return subprocess.run(
         ['git', *GIT_IDENTITY, *args],
         cwd=cwd,
+        input=stdin,
         capture_output=True,
         text=True,
         check=check,
@@ -360,7 +363,7 @@ def backend(tmp_path: pathlib.Path) -> sheaf.LocalBackend:
 @pytest.fixture
 def gcs_backend(gcs_bucket: storage.Bucket) -> gcs.GcsBackend:
     """The real GCS backend, against the emulator."""
-    return gcs.GcsBackend(gcs_bucket)
+    return gcs.GcsBackend(gcs_bucket, signer=None)
 
 
 @pytest.fixture(params=['local', 'gcs'])

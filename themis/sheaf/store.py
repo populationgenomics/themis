@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+import datetime
 import enum
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
+from concurrent import futures
 from typing import override
 
 from themis.sheaf import backend as backend_mod
@@ -76,6 +78,16 @@ class Intent:
     # so it must name one: nothing on a push tells the server which ref the client considers primary,
     # and a mirror left to guess re-guesses on every hydrate.
     head: refdoc.Target | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SignedPack:
+    """Where to download one pack, and how large it is, before a byte of it is read."""
+
+    ident: str
+    size: int
+    url: str
+    expire_time: datetime.datetime
 
 
 def pack_id(data: bytes) -> str:
@@ -394,6 +406,30 @@ class Store(Repository):
                 dropped a generation would misreport what the refs were.
         """
         return [self._decode(blob.data) for blob in self.backend.history_mutable(self.ref_key)]
+
+    def sign_packs(self, idents: Sequence[str], lifetime: datetime.timedelta, *, concurrency: int) -> list[SignedPack]:
+        """Signed download URLs for stored packs, with their sizes, in the order named.
+
+        Whether the document names each pack is the caller's to decide; this only requires that it is
+        stored. Every size comes from one listing of the pack prefix, and the signatures — one backend
+        round trip each — run `concurrency` at a time. Each URL's expiry is the backend's for that URL.
+
+        Raises:
+            InvalidPackId: If an id is not a pack id, so not a key this store forms.
+            PacksAbsent: If a pack is not stored; it carries every absent id.
+            SigningUnsupported: If the backend cannot sign a URL.
+        """
+        keys = [self.pack_key(refdoc.validate_pack_id(ident)) for ident in idents]
+        sizes = {info.key: info.size for info in self.backend.list_immutable(self.pack_prefix)}
+        absent = [ident for ident, key in zip(idents, keys, strict=True) if key not in sizes]
+        if absent:
+            raise errors.PacksAbsent(absent)
+        with futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            signed = list(pool.map(lambda key: self.backend.sign_immutable(key, lifetime), keys))
+        return [
+            SignedPack(ident=ident, size=sizes[key], url=url.url, expire_time=url.expire_time)
+            for ident, key, url in zip(idents, keys, signed, strict=True)
+        ]
 
     def put_pack(self, data: bytes) -> str:
         """Upload one packfile under its content id and return that id.

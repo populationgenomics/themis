@@ -268,7 +268,7 @@ class SandboxJob(pulumi.ComponentResource):
 
     The Analysis repository the agent works in is a sheaf repository, mirrored inside the worker
     (sheaf-changeover.md) and reached only through the sheaf service, which scopes every call by the session
-    token the worker presents: the job holds no credential on the workspace bucket and makes no auth call.
+    token the worker presents: the job holds no credential on the sheaf bucket and makes no auth call.
 
     Attributes:
         service_account_email: The job's runtime SA — ``run.invoker`` on the store it checkpoints the working

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+import datetime
 from collections.abc import Iterator
 
 # An opaque version token for a mutable key. Compare it for equality and hand it back; it is
@@ -29,6 +30,14 @@ class ObjectInfo:
 
     key: str
     size: int
+
+
+@dataclasses.dataclass(frozen=True)
+class SignedUrl:
+    """A URL that reads one immutable object, for anyone holding it, until `expire_time`."""
+
+    url: str
+    expire_time: datetime.datetime
 
 
 class Backend(abc.ABC):
@@ -98,3 +107,16 @@ class Backend(abc.ABC):
     @abc.abstractmethod
     def list_immutable(self, prefix: str) -> Iterator[ObjectInfo]:
         """Enumerate immutable objects under `prefix`."""
+
+    @abc.abstractmethod
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> SignedUrl:
+        """Issue a URL that GETs the immutable object at `key` for `lifetime`, as this backend's own credential.
+
+        The URL is a bearer capability: whoever holds it reads the object until it expires. Whether
+        the object exists is not checked; a URL for an absent key answers not-found when fetched.
+        `expire_time` never falls after the moment the URL stops working, so a caller that re-signs
+        by it is never late.
+
+        Raises:
+            SigningUnsupported: If this backend has no URL to issue or no identity to sign as.
+        """

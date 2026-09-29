@@ -3,10 +3,12 @@
 Every selector is required, with no silent default. The authorizer the auth interceptor resolves each
 call through is ``interceptor.authorizer_from_env``'s, seeded in fixture mode from
 ``THEMIS_SHEAF_FIXTURE_CONTEXTS`` and ``THEMIS_SHEAF_FIXTURE_CALLERS``. ``THEMIS_SHEAF_BACKEND`` picks
-the store: ``gcs`` over the bucket ``THEMIS_WORKSPACE_BUCKET`` names, every repository under its
-``workspaces/`` prefix, or ``local`` over the directory ``THEMIS_SHEAF_LOCAL_ROOT`` names.
+the store: ``gcs`` over the bucket ``THEMIS_SHEAF_BUCKET`` names, every repository's keys at its
+root under the repository's name, signing pack URLs as the service account ``THEMIS_SHEAF_SIGNING_ACCOUNT``
+names; or ``local`` over the directory ``THEMIS_SHEAF_LOCAL_ROOT`` names, which signs nothing.
 The three ceilings — ``THEMIS_SHEAF_MAX_PUBLISH_BYTES``, ``THEMIS_SHEAF_MAX_REFS``,
-``THEMIS_SHEAF_MAX_DOCUMENT_BYTES`` — are positive integers. ``PORT`` is the Cloud Run convention;
+``THEMIS_SHEAF_MAX_DOCUMENT_BYTES`` — and a signed pack URL's lifetime,
+``THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS``, are positive integers. ``PORT`` is the Cloud Run convention;
 a ``grpc.health.v1`` health service reports SERVING alongside.
 
 The server is built through ``interceptor.gated_server`` and no other way, so every rpc is behind the
@@ -28,13 +30,11 @@ from themis.services.sheaf import servicer as servicer_mod
 _FIXTURE_CONTEXTS_VAR = 'THEMIS_SHEAF_FIXTURE_CONTEXTS'
 _FIXTURE_CALLERS_VAR = 'THEMIS_SHEAF_FIXTURE_CALLERS'
 _BACKEND_VAR = 'THEMIS_SHEAF_BACKEND'
-# The bucket's key layout: repositories live apart from anything else the bucket holds, so a prefix
-# condition can scope an identity to them.
-WORKSPACES_PREFIX = 'workspaces'
 _LIMIT_VARS = {
     'max_publish_bytes': 'THEMIS_SHEAF_MAX_PUBLISH_BYTES',
     'max_refs': 'THEMIS_SHEAF_MAX_REFS',
     'max_document_bytes': 'THEMIS_SHEAF_MAX_DOCUMENT_BYTES',
+    'pack_url_lifetime_seconds': 'THEMIS_SHEAF_PACK_URL_LIFETIME_SECONDS',
 }
 
 
@@ -68,8 +68,9 @@ def _gcs_backend_from_env() -> sheaf.Backend:
 
     from themis.sheaf.backends import gcs  # noqa: PLC0415
 
-    bucket = _require('THEMIS_WORKSPACE_BUCKET')
-    return gcs.GcsBackend(storage.Client().bucket(bucket), prefix=WORKSPACES_PREFIX)
+    bucket = _require('THEMIS_SHEAF_BUCKET')
+    signer = gcs.IamSigner(_require('THEMIS_SHEAF_SIGNING_ACCOUNT'))
+    return gcs.GcsBackend(storage.Client().bucket(bucket), signer=signer)
 
 
 def build_limits() -> servicer_mod.Limits:
@@ -83,13 +84,15 @@ def build_limits() -> servicer_mod.Limits:
         if value <= 0:
             raise SystemExit(f'{var} must be a positive integer, got {raw!r}')
         values[field] = value
-    return servicer_mod.Limits(**values)
+    try:
+        return servicer_mod.Limits(**values)
+    except ValueError as exc:
+        raise SystemExit(f'the sheaf limits are out of range: {exc}') from exc
 
 
 async def _serve() -> None:
     server = interceptor_mod.gated_server(build_authorizer())
-    # SignPackUrls is declared ahead of its handler, and grpc answers it UNIMPLEMENTED until one exists.
-    servicer = servicer_mod.Servicer(build_backend(), build_limits())  # pyright: ignore[reportAbstractUsage]
+    servicer = servicer_mod.Servicer(build_backend(), build_limits())
     sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server)
     # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
     health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]

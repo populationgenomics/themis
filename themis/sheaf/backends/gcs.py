@@ -3,16 +3,23 @@
 `ifGenerationMatch` on a single object is the compare-and-swap the protocol needs, and
 `ifGenerationMatch=0` means "only if absent", which is how a repository is created exactly once.
 Object versioning on the bucket makes every superseded ref document a retained noncurrent
-generation — the durable reflog, at no cost in code. Design:
+generation — the durable reflog, at no cost in code. A download URL is signed V4 through IAM
+Credentials `signBlob` as a named service account, so no key file is ever held. Design:
 `docs/design/sheaf.md`.
 """
 
 from __future__ import annotations
 
+import datetime
+import threading
 from collections.abc import Iterator
 from typing import override
 
+import google.auth
 from google.api_core import exceptions as api_exceptions
+from google.auth import credentials as auth_credentials
+from google.auth import iam
+from google.auth.transport import requests as auth_requests
 from google.cloud import storage
 
 from themis.sheaf import backend, errors
@@ -22,6 +29,11 @@ MUST_NOT_EXIST = 0
 
 
 _READ_ATTEMPTS = 8
+# What an access token needs to call IAM Credentials' signBlob.
+_CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
+# Signed URLs are path-style on this origin (`<endpoint>/<bucket>/<object>`), whatever endpoint the client
+# talks to: the workbench's content security policy admits the sheaf bucket's path here and nothing else.
+SIGNED_URL_ENDPOINT = 'https://storage.googleapis.com'
 
 
 def _generation_of(blob: storage.Blob) -> backend.Generation:
@@ -49,12 +61,70 @@ def _size_of(blob: storage.Blob) -> int:
     return blob.size
 
 
+class IamSigner(auth_credentials.Signing):
+    """Signs as one service account through IAM Credentials `signBlob`, with no key file.
+
+    The process's own credentials authorise each signature, so they need `signBlob` on `account` —
+    on Cloud Run, the runtime account holding it on itself. They are resolved on the first
+    signature rather than at construction, so a backend can be built where no credentials exist.
+    """
+
+    def __init__(self, account: str) -> None:
+        """Sign as `account`, a service account's email.
+
+        Raises:
+            ValueError: If `account` is empty.
+        """
+        if not account:
+            raise ValueError('a signer needs the email of the service account it signs as')
+        self.account = account
+        self._lock = threading.Lock()
+        self._iam: iam.Signer | None = None
+
+    def _iam_signer(self) -> iam.Signer:
+        with self._lock:
+            if self._iam is None:
+                credentials, _ = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
+                self._iam = iam.Signer(auth_requests.Request(), credentials, self.account)
+            return self._iam
+
+    @override
+    def sign_bytes(self, message: bytes) -> bytes:
+        """Sign `message` as the account, one IAM `signBlob` call.
+
+        Raises:
+            google.auth.exceptions.DefaultCredentialsError: If the process has no credentials.
+            google.auth.exceptions.TransportError: If IAM refuses or fails the signature.
+        """
+        return self._iam_signer().sign(message)
+
+    @property
+    @override
+    def signer_email(self) -> str:
+        return self.account
+
+    @property
+    @override
+    def signer(self) -> iam.Signer:
+        return self._iam_signer()
+
+
 class GcsBackend(backend.Backend):
     """Object-store semantics over one GCS bucket, optionally under a key prefix."""
 
-    def __init__(self, bucket: storage.Bucket, prefix: str = '') -> None:
+    def __init__(self, bucket: storage.Bucket, prefix: str = '', *, signer: auth_credentials.Signing | None) -> None:
+        """Serve `bucket`, every key under `prefix`.
+
+        Args:
+            bucket: The bucket, bound to a client whose credentials hold a role on it.
+            prefix: Key prefix every object lives under.
+            signer: The identity download URLs are signed as — in a deployment, an `IamSigner` — or
+                None where nothing signs, and then `sign_immutable` refuses. A signed URL reads with
+                the signer's own permission, so it should be the account the client's credentials are.
+        """
         self.bucket = bucket
         self.prefix = prefix.strip('/')
+        self.signer = signer
 
     def _key(self, key: str) -> str:
         return f'{self.prefix}/{key}' if self.prefix else key
@@ -159,3 +229,26 @@ class GcsBackend(backend.Backend):
         offset = len(self.prefix) + 1 if self.prefix else 0
         for blob in self.bucket.list_blobs(prefix=self._key(prefix)):
             yield backend.ObjectInfo(key=blob.name[offset:], size=_size_of(blob))
+
+    @override
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> backend.SignedUrl:
+        """A V4 signed GET URL for `key`, path-style on `SIGNED_URL_ENDPOINT`, signed as the backend's signer.
+
+        Raises:
+            SigningUnsupported: If the backend was built without a signer.
+            google.auth.exceptions.TransportError: If IAM refuses or fails the signature.
+        """
+        if self.signer is None:
+            raise errors.SigningUnsupported(f'{key}: this bucket backend was built with no account to sign as')
+        # Taken before signing and floored to the second, as the URL's own X-Goog-Date is, so this expiry is never
+        # after the URL's.
+        issued = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+        url = self.bucket.blob(self._key(key)).generate_signed_url(
+            version='v4',
+            expiration=lifetime,
+            method='GET',
+            api_access_endpoint=SIGNED_URL_ENDPOINT,
+            virtual_hosted_style=False,
+            credentials=self.signer,
+        )
+        return backend.SignedUrl(url=url, expire_time=issued + lifetime)

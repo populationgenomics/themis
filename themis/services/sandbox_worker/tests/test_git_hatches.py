@@ -13,6 +13,7 @@ import pathlib
 import pytest
 
 from themis import sheaf
+from themis.services.sandbox_worker import git_hatches
 from themis.services.sandbox_worker.tests import conftest, fakes
 from themis.sheaf.wire import reflog
 
@@ -86,6 +87,43 @@ def test_a_protected_path_is_refused_with_a_reason_the_client_reads(
 
     assert not pushed.ok
     assert 'protected skills/planted/SKILL.md' in pushed.stderr
+    assert MAIN not in analysis.store.read().refs
+
+
+@pytest.mark.parametrize(
+    ('setting', 'committed_as'),
+    [
+        ('user.email=curator@example.org', f'{git_hatches.AGENT_IDENTITY.name} <curator@example.org>'),
+        ('user.name=Jane Curator', f'Jane Curator <{git_hatches.AGENT_IDENTITY.email}>'),
+    ],
+    ids=['email', 'name'],
+)
+def test_a_commit_under_another_name_than_the_agent_s_is_refused(
+    analysis: conftest.Analysis, tmp_path: pathlib.Path, setting: str, committed_as: str
+) -> None:
+    """The worker's hook takes new commits only as the identity the guest's gitconfig gives the agent."""
+    guest = _clone(analysis, tmp_path / 'ws')
+    (guest.workspace / 'review.md').write_text('approved\n', 'utf-8')
+    assert guest.run(['git', 'add', 'review.md']).ok
+    assert guest.run(['git', '-c', setting, 'commit', '-q', '-m', 'sign off']).ok
+
+    pushed = guest.run(['git', 'push', 'origin', 'HEAD'])
+
+    assert not pushed.ok
+    assert f'committed as {committed_as}' in pushed.stderr
+    assert MAIN not in analysis.store.read().refs
+
+
+@pytest.mark.parametrize('path', ['.mailmap', 'notes/.mailmap', '.MailMap'])
+def test_a_mailmap_is_refused(analysis: conftest.Analysis, tmp_path: pathlib.Path, path: str) -> None:
+    """Git's own log would show the agent's commits under whatever name a `.mailmap` maps its email to."""
+    guest = _clone(analysis, tmp_path / 'ws')
+    _commit(guest, path, f'Jane Curator <jane@example.org> <{git_hatches.AGENT_IDENTITY.email}>\n')
+
+    pushed = guest.run(['git', 'push', 'origin', 'HEAD'])
+
+    assert not pushed.ok
+    assert f'protected {path}' in pushed.stderr
     assert MAIN not in analysis.store.read().refs
 
 

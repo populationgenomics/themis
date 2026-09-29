@@ -30,7 +30,15 @@ pytestmark = [pytest.mark.sandbox_root, pytest.mark.usefixtures('bubblewrap_root
 # A uid and gid that own nothing on any host this runs on; the deploy chooses its own pair.
 HOST_UID = 61000
 HOST_GID = 61000
-GUEST_GIT = ['git', '-c', 'protocol.ext.allow=always', '-c', 'user.name=agent', '-c', 'user.email=agent@localhost']
+GUEST_GIT = [
+    'git',
+    '-c',
+    'protocol.ext.allow=always',
+    '-c',
+    f'user.name={git_hatches.AGENT_IDENTITY.name}',
+    '-c',
+    f'user.email={git_hatches.AGENT_IDENTITY.email}',
+]
 
 
 @pytest.fixture

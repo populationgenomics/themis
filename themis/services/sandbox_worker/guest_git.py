@@ -108,8 +108,8 @@ class GuestGit:
         is pushed on its own first — one refused sibling must not demote a clean branch — and only a
         branch refused on its own is stranded, as is a detached HEAD with unpublished commits (as
         `HEAD`). Creating a stranded ref is always allowed, so a stranded tip lands whenever the store is
-        reachable and its commits write no protected path. A branch that merely fell behind holds
-        nothing the store lacks and leaves no ref.
+        reachable and its commits pass the hook's checks on what a new commit may carry. A branch that
+        merely fell behind holds nothing the store lacks and leaves no ref.
 
         Args:
             session_id: Names the stranded refs, so a later session can find this one's work.

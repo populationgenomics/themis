@@ -10,6 +10,7 @@ backend wrapper that lands a competing publish inside `cas_mutable`.
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import pathlib
 from collections.abc import Callable
 
@@ -252,6 +253,143 @@ def test_fetch_pack_of_a_malformed_id_is_invalid_before_the_store_is_consulted(
         conftest.run(lambda stub: conftest.fetch(stub, pack_id), backend)
 
 
+# --- SignPackUrls ---------------------------------------------------------------------------------------
+
+
+def _sign(stub: sheaf_pb2_grpc.SheafStub, pack_ids: list[str]) -> sheaf_pb2.SignPackUrlsResponse:
+    request = sheaf_pb2.SignPackUrlsRequest(pack_ids=pack_ids)
+    return stub.SignPackUrls(request, metadata=conftest.WEB_WITH_SESSION)
+
+
+def test_the_web_tier_is_signed_a_url_and_the_size_of_each_listed_pack_in_request_order(
+    backend: sheaf.LocalBackend, signing: conftest.Signing
+) -> None:
+    small, large = b'small pack', b'large pack ' * 50
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=[small])
+    conftest.seed(backend, {REF: (SHA_A, SHA_B)}, packs=[large])
+    asked = [sheaf.pack_id(large), sheaf.pack_id(small)]
+    before = datetime.datetime.now(datetime.UTC)
+
+    response = conftest.run(lambda stub: _sign(stub, asked), signing)
+
+    assert [pack.pack_id for pack in response.packs] == asked
+    assert [pack.size for pack in response.packs] == [len(large), len(small)]
+    store = conftest.store_for(backend)
+    assert [conftest.Signing.key_of(pack.url) for pack in response.packs] == [store.pack_key(ident) for ident in asked]
+    for pack in response.packs:
+        expires = pack.expire_time.ToDatetime(datetime.UTC)
+        assert before < expires <= datetime.datetime.now(datetime.UTC) + LIMITS.pack_url_lifetime
+
+
+def _bad_sign_requests() -> dict[str, list[str]]:
+    listed = sheaf.pack_id(PACK_1)
+    return {
+        'empty': [],
+        'over the per-call maximum': [f'{index:064x}' for index in range(servicer_mod._MAX_SIGNED_PACKS + 1)],
+        'not a pack id': [listed, 'F' * 64],
+        'a path, not an id': ['../refs.pb'],
+        'named twice': [listed, listed],
+    }
+
+
+@pytest.mark.parametrize('pack_ids', list(_bad_sign_requests().values()), ids=list(_bad_sign_requests()))
+def test_a_malformed_signing_request_is_invalid_before_the_store_is_read(
+    backend: sheaf.LocalBackend, signing: conftest.Signing, pack_ids: list[str]
+) -> None:
+    # A document the store cannot parse: a request decided after the read would be DATA_LOSS instead.
+    published = conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
+    backend.cas_mutable(conftest.store_for(backend).ref_key, b'not a ref document', published.generation)
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.INVALID_ARGUMENT)):
+        conftest.run(lambda stub: _sign(stub, pack_ids), signing)
+
+
+def test_the_per_call_maximum_is_signed_whole(backend: sheaf.LocalBackend, signing: conftest.Signing) -> None:
+    packs = [f'PACK-{index} '.encode() for index in range(servicer_mod._MAX_SIGNED_PACKS)]
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=packs)
+    asked = [sheaf.pack_id(pack) for pack in packs]
+    assert [pack.pack_id for pack in conftest.run(lambda stub: _sign(stub, asked), signing).packs] == asked
+
+
+def test_a_stored_pack_the_document_does_not_list_is_not_found(
+    backend: sheaf.LocalBackend, signing: conftest.Signing
+) -> None:
+    """Another Analysis's pack, or one a refused publish left behind: stored, but no reader here can name it."""
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
+    unlisted = conftest.store_for(backend).put_pack(PACK_2)
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
+        conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(PACK_1), unlisted]), signing)
+
+
+def test_a_full_call_of_unlisted_packs_arrives_as_not_found(signing: conftest.Signing) -> None:
+    """The refusal's message rides in a size-capped trailer, so it cannot name all 256 ids and still arrive."""
+    asked = [f'{index:064x}' for index in range(servicer_mod._MAX_SIGNED_PACKS)]
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)) as refused:
+        conftest.run(lambda stub: _sign(stub, asked), signing)
+    assert f'{len(asked)} of the packs named' in (refused.value.details() or '')  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_a_full_call_of_listed_packs_the_store_lacks_arrives_as_data_loss(
+    backend: sheaf.LocalBackend, signing: conftest.Signing
+) -> None:
+    absent = [f'{index:064x}' for index in range(servicer_mod._MAX_SIGNED_PACKS)]
+    store = conftest.store_for(backend)
+    updates = {REF: sheaf.RefUpdate(None, SHA_A), refdoc.REFLOG_REF: sheaf.RefUpdate(None, SHA_B)}
+    store.publish(store.read(), sheaf.Intent(ref_updates=updates, stored_packs=tuple(absent)))
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)) as refused:
+        conftest.run(lambda stub: _sign(stub, absent), signing)
+    assert f'lists {len(absent)} packs' in (refused.value.details() or '')  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_every_size_comes_from_one_listing(backend: sheaf.LocalBackend) -> None:
+    packs = [f'PACK-{index} '.encode() for index in range(16)]
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=packs)
+    counting = conftest.CountingLists(backend)
+    conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(pack) for pack in packs]), counting)
+    assert counting.lists == 1
+
+
+def test_packs_are_signed_concurrently(backend: sheaf.LocalBackend) -> None:
+    """Each signature is a round trip, so a full call signed one at a time would spend its URLs' lifetime waiting."""
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1, PACK_2])
+    meeting = conftest.MeetingSigners(backend, parties=2)
+    response = conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(PACK_1), sheaf.pack_id(PACK_2)]), meeting)
+    assert len(response.packs) == 2
+
+
+def test_a_repository_that_does_not_exist_lists_no_pack_to_sign(signing: conftest.Signing) -> None:
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
+        conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(PACK_1)]), signing)
+
+
+def test_a_listed_pack_the_store_does_not_hold_is_data_loss(
+    backend: sheaf.LocalBackend, signing: conftest.Signing
+) -> None:
+    store = conftest.store_for(backend)
+    absent = 'f' * 64
+    updates = {REF: sheaf.RefUpdate(None, SHA_A), refdoc.REFLOG_REF: sheaf.RefUpdate(None, SHA_B)}
+    store.publish(store.read(), sheaf.Intent(ref_updates=updates, stored_packs=(absent,)))
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.DATA_LOSS)):
+        conftest.run(lambda stub: _sign(stub, [absent]), signing)
+
+
+def test_a_store_that_cannot_sign_answers_unimplemented(backend: sheaf.LocalBackend) -> None:
+    """The local-directory store has no URL to issue; it says so rather than handing out one nothing serves."""
+    conftest.seed(backend, {REF: (None, SHA_A)}, packs=[PACK_1])
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.UNIMPLEMENTED)):
+        conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(PACK_1)]), backend)
+
+
+def test_the_web_tier_is_signed_only_its_own_analysis_s_packs(
+    backend: sheaf.LocalBackend, signing: conftest.Signing
+) -> None:
+    other = conftest.store_for(backend, OTHER_ANALYSIS_ID)
+    other_base = other.read()
+    updates = {REF: sheaf.RefUpdate(None, SHA_A), refdoc.REFLOG_REF: sheaf.RefUpdate(None, SHA_B)}
+    other.publish(other_base, sheaf.Intent(ref_updates=updates, packs=[PACK_1]))
+    with pytest.raises(grpc.RpcError, check=conftest.refused(grpc.StatusCode.NOT_FOUND)):
+        conftest.run(lambda stub: _sign(stub, [sheaf.pack_id(PACK_1)]), signing)
+
+
 # --- Publish refusals --------------------------------------------------------------------------------
 
 
@@ -470,7 +608,12 @@ def test_a_document_over_the_size_ceiling_is_refused(tmp_path: pathlib.Path) -> 
 
 def test_limits_must_be_positive() -> None:
     with pytest.raises(ValueError, match='max_refs'):
-        servicer_mod.Limits(max_publish_bytes=1, max_refs=0, max_document_bytes=1)
+        dataclasses.replace(LIMITS, max_refs=0)
+
+
+def test_a_url_lifetime_past_what_a_v4_signature_carries_is_refused() -> None:
+    with pytest.raises(ValueError, match='pack_url_lifetime_seconds'):
+        dataclasses.replace(LIMITS, pack_url_lifetime_seconds=servicer_mod._MAX_URL_LIFETIME_SECONDS + 1)
 
 
 # --- a moved document ---------------------------------------------------------------------------------

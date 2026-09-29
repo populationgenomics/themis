@@ -32,10 +32,15 @@ _SERVICES = {UPLOAD_PACK: 'upload-pack', RECEIVE_PACK: 'receive-pack'}
 # the data right, and the worst case is a spurious error to the client.
 _MAX_CONNECTIONS = 1
 
-# What the guest may never write: its ignored scratch, and the skills the SDK lays down every spawn. The bare
-# names too: a symlink committed at `skills` is recreated by the next session's clone, and the SDK resolves it
-# before it writes.
-PROTECTION = protect.Protection(paths=('scratch', 'scratch/**', 'skills', 'skills/**'))
+# The agent's git identity. The guest's system gitconfig (the Dockerfile's guest stage) sets the same name and email,
+# so the agent's ordinary commits and tags carry it, and the hook refuses new ones carrying any other.
+AGENT_IDENTITY = protect.Identity(name='Themis agent', email='agent@localhost')
+# What the guest may never write: its ignored scratch, the skills the SDK lays down every spawn, and a `.mailmap`,
+# through which git's own readers would show the agent's commits under a curator's name. The bare names too: a
+# symlink committed at `skills` is recreated by the next session's clone, and the SDK resolves it before it writes.
+PROTECTION = protect.Protection(
+    paths=('scratch', 'scratch/**', 'skills', 'skills/**', '.mailmap', '**/.mailmap'), pusher=AGENT_IDENTITY
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -59,7 +64,8 @@ class GitHatches:
 
         Args:
             mirror: The bare mirror of the Analysis repository, at a path the guest cannot see.
-            protection: Paths a push may not write; reaches the hook through its environment.
+            protection: Paths a push may not write, and the identity its new commits must carry; reaches the
+                hook through its environment.
             socket_dir: Where the two host-side sockets are bound. Traversable only by the worker
                 and whichever uid bwrap runs as, because the socket's own mode is world-writable.
         """

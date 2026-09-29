@@ -14,6 +14,17 @@ class NotFound(SheafError):
     """A key does not exist in the backend."""
 
 
+class PacksAbsent(NotFound):
+    """Packs a caller named are not stored.
+
+    A distinct type so the caller holds every absent id and decides how many to report.
+    """
+
+    def __init__(self, idents: list[str]) -> None:
+        super().__init__(f'{len(idents)} packs absent')
+        self.idents = idents
+
+
 class PreconditionFailed(SheafError):
     """A compare-and-swap write was rejected because the generation did not match.
 
@@ -133,4 +144,12 @@ class CorruptRepository(SheafError):
     race with a compaction, which looks the same to a fetch and is benign: a reader that meets a
     missing pack re-reads the document, and only an *unmoved* document makes the absence a fact about
     the store rather than about timing.
+    """
+
+
+class SigningUnsupported(SheafError):
+    """The backend cannot issue a signed URL for an object.
+
+    A deployment fault, not the caller's: a local directory has no URL anyone else could fetch, and
+    a bucket backend built without a signing account has no identity to sign as.
     """

@@ -177,7 +177,9 @@ def test_what_the_service_refuses_on_the_intent_is_a_publish_refusal(remote: rem
 
 
 def test_a_publish_over_the_ceiling_is_a_publish_refusal(backend: sheaf.LocalBackend, token_file: pathlib.Path) -> None:
-    limits = servicer_mod.Limits(max_publish_bytes=len(PACK_1) - 1, max_refs=64, max_document_bytes=1 << 16)
+    limits = servicer_mod.Limits(
+        max_publish_bytes=len(PACK_1) - 1, max_refs=64, max_document_bytes=1 << 16, pack_url_lifetime_seconds=300
+    )
     with (
         conftest.serving(backend, limits) as target,
         remote_mod.RemoteStore(target, token_file, repo=conftest.ANALYSIS_ID) as remote,
@@ -239,7 +241,9 @@ def test_a_refusal_decided_from_the_intent_reaches_a_client_still_sending_packs(
     # The ceiling is the one refusal the client cannot decide for itself: the service refuses from the
     # declared size before the first pack byte.
     pack = _still_sending()
-    limits = servicer_mod.Limits(max_publish_bytes=len(pack) - 1, max_refs=64, max_document_bytes=1 << 16)
+    limits = servicer_mod.Limits(
+        max_publish_bytes=len(pack) - 1, max_refs=64, max_document_bytes=1 << 16, pack_url_lifetime_seconds=300
+    )
     with (
         conftest.serving(backend, limits) as target,
         remote_mod.RemoteStore(target, token_file, repo=conftest.ANALYSIS_ID) as remote,

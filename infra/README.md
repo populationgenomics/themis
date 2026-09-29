@@ -15,7 +15,7 @@ all differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/web.py`                 | Cloud Run web app + external HTTPS LB + IAP; its runtime SA is the Managed-Agents client identity.                                                                                                     |
 | `themis_infra/auth.py`                | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                                                             |
 | `themis_infra/store.py`               | The store data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and working-document/workspace GCS buckets.                                                                            |
-| `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (IAM-gated Cloud Run) + its runtime SA, an object-user on the store's workspace bucket.                                                                              |
+| `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (IAM-gated Cloud Run), its bucket of repositories, and its runtime SA, an object-user on that bucket.                                                                |
 | `themis_infra/sql.py`                 | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                                  |
 | `themis_infra/storage.py`             | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                                            |
 | `themis_infra/convert.py`             | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                                  |
@@ -62,14 +62,17 @@ Deletion is a safeguard, not a lock: `force_destroy` is False so `pulumi destroy
 intentional removal — a copyright takedown, a retraction — is always available manually (`gcloud storage rm`, or
 empty-then-destroy).
 
-The store's **workspace** bucket, `gs://cpg-themis-<env>-store-workspace`, carries the same policy — versioned with the
-same 30-day noncurrent window, soft delete off, Autoclass to Archive — and no age-based delete rule. The constraint is
-the sheaf repository it is shaped to hold ([`docs/design/sheaf.md`](../docs/design/sheaf.md)): packfiles are written
-once and never rewritten, so a rule that deletes by age would remove a long-lived repository's base pack while the ref
-document still names it, whereas a noncurrent-age rule cannot touch a pack, since a pack never has a noncurrent
-generation. Nothing in that design deletes, so what accumulates sinks to Archive rather than being reclaimed. For the
-single tar archive a live session rewrites each turn, each rewrite makes the previous generation noncurrent and those
-expire after 30 days; the current archive persists until something deletes it.
+The sheaf service's **repository** bucket, `gs://cpg-themis-<env>-sheaf-repositories`, carries the same policy —
+versioned with the same 30-day noncurrent window, soft delete off, Autoclass to Archive — and no age-based delete rule.
+The constraint is the sheaf repository it holds ([`docs/design/sheaf.md`](../docs/design/sheaf.md)): packfiles are
+written once and never rewritten, so a rule that deletes by age would remove a long-lived repository's base pack while
+the ref document still names it, whereas a noncurrent-age rule cannot touch a pack, since a pack never has a noncurrent
+generation. Nothing in that design deletes, so what accumulates sinks to Archive rather than being reclaimed. Its CORS
+rule admits `GET` from the workbench's origin, which downloads packs by URLs the sheaf service signs.
+
+The store's **workspace** bucket, `gs://cpg-themis-<env>-store-workspace`, carries the same policy for the single tar
+archive a live session rewrites each turn: each rewrite makes the previous generation noncurrent and those expire after
+30 days; the current archive persists until something deletes it.
 
 The **PR review screenshot** bucket, `gs://cpg-themis-dev-pr-screenshots`, is the one exception to that private policy
 and the only bucket in the project that permits public access: GitHub renders a PR-body image through its Camo proxy,

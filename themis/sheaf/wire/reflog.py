@@ -1,10 +1,10 @@
-"""The reflog ref: one commit per publish, parented on every tip the publish set.
+"""The reflog ref: one commit per publish, parented on the commit each tip the publish set peels to.
 
 Nothing in a sheaf repository is ever deleted, and no ref is ever rewritten or removed, so every
 commit pushed stays reachable from the ref it was pushed to. What the branch graph does not record
 is which of those commits were ever a tip, and when. The reflog ref does: each publish that moves a
-ref writes a commit here whose parents are the previous reflog commit and the new tips, with the
-transitions in the message. A writer publishes it in the same compare-and-swap as the refs it
+ref writes a commit here whose parents are the previous reflog commit and the commits the new tips
+peel to, with the transitions in the message. A writer publishes it in the same compare-and-swap as the refs it
 describes, so the two cannot disagree. Design: `docs/design/sheaf.md`.
 """
 
@@ -46,8 +46,10 @@ def record(git: GitRunner, previous: str | None, transitions: Sequence[Transitio
     """Write the reflog commit for one publish and return its id.
 
     Parents are the previous reflog commit and each new tip, deduplicated, so every commit that was
-    ever a tip is reachable from `REF` and survives any repack. The tree is empty: the message is the
-    record.
+    ever a tip is reachable from `REF` and survives any repack. A tip that is an annotated tag
+    contributes the commit it peels to, since a tag object cannot be a commit's parent; the tag stays
+    reachable through its own ref, which is never deleted, and the transition line still records the
+    tag's own id. The tree is empty: the message is the record.
 
     On a repository's first publish a parentless root entry is written first and the real entry is
     parented on it, so the chain's first-parent walk ends on a commit sheaf wrote and never runs on
@@ -60,7 +62,7 @@ def record(git: GitRunner, previous: str | None, transitions: Sequence[Transitio
 
     Raises:
         ValueError: If `transitions` is empty — a publish moving no ref has nothing to log.
-        RuntimeError: If git cannot write the commit.
+        RuntimeError: If git cannot write the commit, or a tip does not peel to a commit.
     """
     if not transitions:
         raise ValueError('a reflog entry records at least one ref transition')
@@ -68,12 +70,24 @@ def record(git: GitRunner, previous: str | None, transitions: Sequence[Transitio
     if previous is None:
         previous = _commit(git, [], _ROOT_SUBJECT)
     parents = [previous]
-    for sha in (t.new for t in transitions):
+    for sha in _peeled(git, [t.new for t in transitions]):
         if sha not in parents:
             parents.append(sha)
     summary = ', '.join(t.ref for t in transitions)
     body = ''.join(f'{t.ref} {t.old or _ZERO} {t.new}\n' for t in transitions)
     return _commit(git, parents, f'{_SUMMARY_PREFIX}{summary}\n\n{body}')
+
+
+def _peeled(git: GitRunner, tips: Sequence[str]) -> list[str]:
+    """The commit each tip peels to, in order; a commit peels to itself.
+
+    Raises:
+        RuntimeError: If a tip does not peel to a commit.
+    """
+    peeled = git('rev-parse', *(f'{tip}^{{commit}}' for tip in tips)).decode().split()
+    if len(peeled) != len(tips):
+        raise RuntimeError(f'git peeled {len(tips)} tips to {len(peeled)} commits')
+    return peeled
 
 
 def _commit(git: GitRunner, parents: Sequence[str], message: str) -> str:

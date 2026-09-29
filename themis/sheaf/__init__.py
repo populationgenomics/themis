@@ -12,7 +12,7 @@ This module re-exports the package's public API; `themis.sheaf.compact`, `themis
 
 from __future__ import annotations
 
-from themis.sheaf.backend import Backend, Generation, ObjectInfo, StoredBlob
+from themis.sheaf.backend import Backend, Generation, ObjectInfo, SignedUrl, StoredBlob
 from themis.sheaf.backends.local import LocalBackend
 from themis.sheaf.errors import (
     BookkeepingOnly,
@@ -21,6 +21,7 @@ from themis.sheaf.errors import (
     InvalidPackId,
     InvalidRefName,
     NotFound,
+    PacksAbsent,
     PreconditionFailed,
     PublishRefused,
     RaceLost,
@@ -30,6 +31,7 @@ from themis.sheaf.errors import (
     RetriesExhausted,
     ServiceFault,
     SheafError,
+    SigningUnsupported,
 )
 from themis.sheaf.refdoc import DirectTarget, RefDoc, SymbolicTarget, Target
 from themis.sheaf.store import (
@@ -37,6 +39,7 @@ from themis.sheaf.store import (
     Intent,
     RefUpdate,
     Repository,
+    SignedPack,
     Snapshot,
     Store,
     Verdict,
@@ -60,6 +63,7 @@ __all__ = [
     'LocalBackend',
     'NotFound',
     'ObjectInfo',
+    'PacksAbsent',
     'PreconditionFailed',
     'PublishRefused',
     'RaceLost',
@@ -72,6 +76,9 @@ __all__ = [
     'RetriesExhausted',
     'ServiceFault',
     'SheafError',
+    'SignedPack',
+    'SignedUrl',
+    'SigningUnsupported',
     'Snapshot',
     'Store',
     'StoredBlob',

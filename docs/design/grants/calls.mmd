@@ -61,10 +61,12 @@ flowchart TB
     n20 -->|ServiceInvoker| n33
     n20 -->|ServiceInvoker| n35
     n20 -->|ServiceInvoker| n36
+    n21 -->|SelfSigner| n21
     n21 -->|ServiceInvoker| n26
     n22 -->|ServiceInvoker| n26
     n23 -->|SelfSigner| n23
     n23 -->|ServiceInvoker| n31
+    n23 -->|ServiceInvoker| n35
     n24 -. fronts .-> n37
     n26 -. runs as .-> n6
     n27 -. runs as .-> n10

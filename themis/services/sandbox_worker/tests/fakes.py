@@ -20,9 +20,18 @@ from typing import Any
 import postern
 from postern import stream
 
+from themis.services.sandbox_worker import git_hatches
+
 # The worker's guest git has the identity and the ext:: allowance from the guest rootfs's /etc/gitconfig; a host
 # stand-in supplies them per invocation, and reads no configuration of the developer's own.
-_GIT_CONFIG = ['-c', 'protocol.ext.allow=always', '-c', 'user.name=Themis agent', '-c', 'user.email=agent@localhost']
+_GIT_CONFIG = [
+    '-c',
+    'protocol.ext.allow=always',
+    '-c',
+    f'user.name={git_hatches.AGENT_IDENTITY.name}',
+    '-c',
+    f'user.email={git_hatches.AGENT_IDENTITY.email}',
+]
 _CONNECT = pathlib.Path(stream.__file__).parent / '_stream_connect.py'
 
 

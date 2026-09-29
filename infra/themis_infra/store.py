@@ -67,9 +67,8 @@ class StoreService(pulumi.ComponentResource):
         )
         self.working_document_bucket = working_documents.name
 
-        # No age-based delete: a sheaf pack is written once and never rewritten, so an age rule
-        # would delete a live repository's base pack (sheaf.md). Otherwise the full-text bucket's
-        # policy (storage.py).
+        # No age-based delete: the current archive persists until something deletes it
+        # (infra/README.md). Otherwise the full-text bucket's policy (storage.py).
         workspace = gcp.storage.Bucket(
             'themis-store-workspace',
             project=project,

@@ -38,7 +38,8 @@ def backend_from_descriptor(descriptor: Mapping[str, str]) -> backend_mod.Backen
         from themis.sheaf.backends import gcs  # noqa: PLC0415
 
         client = storage.Client(project=descriptor.get('project'))
-        return gcs.GcsBackend(client.bucket(descriptor['bucket']), descriptor.get('prefix', ''))
+        # The hook, the one process built from a descriptor, publishes and never signs.
+        return gcs.GcsBackend(client.bucket(descriptor['bucket']), descriptor.get('prefix', ''), signer=None)
     raise ValueError(f'unknown backend kind {kind!r}')
 
 

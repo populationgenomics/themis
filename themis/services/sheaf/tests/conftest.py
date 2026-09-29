@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import datetime
 import hashlib
 import pathlib
+import threading
+import urllib.parse
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import override
 
@@ -65,7 +68,9 @@ WEB_WITH_SESSION: Metadata = auth_fixture.WEB_WITH_SESSION
 NOBODY: Metadata = ()
 
 # Generous enough that every test not about a ceiling clears them.
-LIMITS = servicer_mod.Limits(max_publish_bytes=1 << 22, max_refs=64, max_document_bytes=1 << 16)
+LIMITS = servicer_mod.Limits(
+    max_publish_bytes=1 << 22, max_refs=64, max_document_bytes=1 << 16, pack_url_lifetime_seconds=300
+)
 Moves = Mapping[str, tuple[str | None, str | None]]
 
 
@@ -97,7 +102,7 @@ def serving(
     session_resolver: session_mod.SessionResolver | None = None,
 ) -> Iterator[sheaf_pb2_grpc.SheafStub]:
     """Serve `backend` behind the gate on its own thread; `session_resolver` unstated is the two-token fixture map."""
-    servicer = servicer_mod.Servicer(backend, limits)  # pyright: ignore[reportAbstractUsage]  # SignPackUrls has no handler yet
+    servicer = servicer_mod.Servicer(backend, limits)
     with (
         in_process_grpc.serving_in_thread(
             lambda server: sheaf_pb2_grpc.add_SheafServicer_to_server(servicer, server),
@@ -245,6 +250,57 @@ class Delegating(backend_mod.Backend):
     def list_immutable(self, prefix: str) -> Iterator[backend_mod.ObjectInfo]:
         return self.inner.list_immutable(prefix)
 
+    @override
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> backend_mod.SignedUrl:
+        return self.inner.sign_immutable(key, lifetime)
+
+
+class Signing(Delegating):
+    """A local store that signs, standing in for a bucket's IAM signature, which has no offline form.
+
+    The URL names the key and the expiry it was issued for, so a test can tell which object a URL
+    reads without fetching it.
+    """
+
+    SCHEME = 'https://signed.invalid/'
+
+    @override
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> backend_mod.SignedUrl:
+        expire_time = datetime.datetime.now(datetime.UTC) + lifetime
+        query = urllib.parse.urlencode({'expires': expire_time.isoformat()})
+        return backend_mod.SignedUrl(url=f'{self.SCHEME}{urllib.parse.quote(key)}?{query}', expire_time=expire_time)
+
+    @classmethod
+    def key_of(cls, url: str) -> str:
+        """The key a URL this backend signed reads."""
+        return urllib.parse.unquote(urllib.parse.urlsplit(url).path.removeprefix('/'))
+
+
+class CountingLists(Signing):
+    """Counts listings, for the one that sizes every pack of a signing call."""
+
+    def __init__(self, inner: backend_mod.Backend) -> None:
+        super().__init__(inner)
+        self.lists = 0
+
+    @override
+    def list_immutable(self, prefix: str) -> Iterator[backend_mod.ObjectInfo]:
+        self.lists += 1
+        return super().list_immutable(prefix)
+
+
+class MeetingSigners(Signing):
+    """Signs only once `parties` signatures are in flight together, so a serial signer times out instead."""
+
+    def __init__(self, inner: backend_mod.Backend, parties: int) -> None:
+        super().__init__(inner)
+        self._barrier = threading.Barrier(parties, timeout=10)
+
+    @override
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> backend_mod.SignedUrl:
+        self._barrier.wait()
+        return super().sign_immutable(key, lifetime)
+
 
 class CountingPuts(Delegating):
     """Counts pack uploads: the local backend's put is idempotent, so a listing cannot show a re-upload."""
@@ -277,6 +333,11 @@ class RacingCas(Delegating):
 @pytest.fixture
 def backend(tmp_path: pathlib.Path) -> sheaf.LocalBackend:
     return sheaf.LocalBackend(tmp_path / 'store')
+
+
+@pytest.fixture
+def signing(backend: sheaf.LocalBackend) -> Signing:
+    return Signing(backend)
 
 
 @dataclasses.dataclass(frozen=True)

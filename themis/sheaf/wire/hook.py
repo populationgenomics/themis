@@ -1,13 +1,14 @@
 """The pre-receive hook: the one place sheaf gets a say in a push.
 
 Git has validated the objects by the time this runs, and no ref has moved yet. The hook refuses
-anything that would rewrite or delete history, writes the reflog entry for what remains, packs the
-new objects, uploads them, and compare-and-swaps the ref document against the generation the
-client's view was built from. Exiting non-zero makes git
-discard the quarantine and leave every ref untouched, so a rejection here cannot leave the bare repo
-disagreeing with the store. The converse has to hold too: anything git would refuse *after* this hook
-— a ref name that collides with an existing one as a directory — must be refused here, or the store
-commits what the mirror can never write.
+what `protect` says a push may not do — rewrite or delete history, write a protected path or under
+another's name, add a name the workbench cannot read — writes the reflog entry for what remains,
+packs the new objects, uploads them, and compare-and-swaps the ref document against the generation
+the client's view was built from. Exiting non-zero makes git discard the quarantine and leave every
+ref untouched, so a rejection here cannot leave the bare repo disagreeing with the store. The
+converse has to hold too: anything git would refuse *after* this hook — a ref name that collides
+with an existing one as a directory — must be refused here, or the store commits what the mirror
+can never write.
 
 `pre-receive` rather than `update`: it sees the whole push at once, so a multi-ref push maps onto a
 single compare-and-swap. Design: `docs/design/sheaf.md`.
@@ -34,9 +35,6 @@ GIT_DIR_ENV = 'SHEAF_GIT_DIR'
 
 _MOVED = 'the workspace moved while your push was in flight'
 _MOVED_HINT = 'run `git pull --rebase` (or merge) and push again.'
-_POLICY_HINT = (
-    'history here is append-only: push only branches and tags, fast-forward them, and revert any protected path.'
-)
 
 
 def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str, str]:
@@ -62,16 +60,17 @@ def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str
     }
 
 
-def _refuse(reasons: list[str], hint: str) -> int:
+def _refuse(reasons: list[str], *hints: str) -> int:
     """Report a refusal to the client and return the hook's exit status.
 
-    Each line says what happened and the last says what to do about it: git relays stderr to the
-    client prefixed with `remote:`, and the thing reading it may be a model trained on git's own
-    wording.
+    The first lines say what happened and the last ones what to do about it, one line per remedy:
+    git relays stderr to the client prefixed with `remote:`, and the thing reading it may be a model
+    trained on git's own wording.
     """
     for reason in reasons:
         print(f'sheaf: refused: {reason}', file=sys.stderr)
-    print(f'sheaf: {hint}', file=sys.stderr)
+    for hint in hints:
+        print(f'sheaf: {hint}', file=sys.stderr)
     return 1
 
 
@@ -130,21 +129,22 @@ def main(argv: list[str] | None = None) -> int:
     if not updates:
         return 0
 
-    # The state file and the descriptor are written by the process that installed this hook, so a
-    # fault in either is that deployment's, and is reported to the pusher as such rather than as
+    # The state file, the descriptor and the protection are written by the process that installed this
+    # hook, so a fault in any is that deployment's, and is reported to the pusher as such rather than as
     # the traceback git would otherwise relay.
     try:
         state = bare.SyncState.load(state_path)
         store = stores.from_descriptor(state.store)
+        protection = protect.Protection.from_env()
     except (OSError, ValueError, KeyError, ImportError, errors.CredentialsUnusable) as exc:
         return _refuse([f'{type(exc).__name__}: {exc}'], 'this is a deployment fault, not yours.')
     repo = bare.BareRepo(store, os.environ.get(GIT_DIR_ENV) or os.environ.get('GIT_DIR', '.'))
 
     # Policy first: a protection violation is a definite refusal, so report it even where the push
     # also lost a race — otherwise the pusher is told to retry something that can never succeed.
-    refusals = protect.violations(repo, updates, protect.Protection.from_env())
-    if refusals:
-        return _refuse(refusals, _POLICY_HINT)
+    found = protect.violations(repo, updates, protection)
+    if found:
+        return _refuse([v.reason for v in found], *dict.fromkeys(v.remedy for v in found))
 
     # The client built its push against the refs advertised at `state.generation`. Anything else
     # there now means somebody landed in between, and the push has to be rebuilt rather than merged
@@ -180,7 +180,8 @@ def _publish(
     ]
     entry = reflog.record(repo.git, snapshot.tip(reflog.REF), transitions)
     ref_updates = {**updates, reflog.REF: store_mod.RefUpdate(snapshot.tip(reflog.REF), entry)}
-    packs = [repo.pack_for([entry])]
+    # The entry reaches every new commit, but only the commit a tag tip peels to, so the tips are packed too.
+    packs = [repo.pack_for([entry, *(t.new for t in transitions)])]
 
     try:
         store.publish(snapshot, store_mod.Intent(ref_updates=ref_updates, packs=packs))

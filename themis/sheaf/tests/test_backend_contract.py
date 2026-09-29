@@ -11,6 +11,7 @@ local backend, and `test_gcs.py` pins that gap rather than letting a green suite
 
 from __future__ import annotations
 
+import datetime
 from concurrent import futures
 
 import pytest
@@ -91,3 +92,10 @@ def test_immutable_put_is_create_if_absent(any_backend: sheaf.Backend) -> None:
 def test_a_backend_has_no_way_to_delete_an_immutable_object() -> None:
     """Nothing in a sheaf store is ever removed, and the seam says so by having no verb for it."""
     assert not any(name.startswith('delete') for name in dir(sheaf.Backend))
+
+
+def test_a_backend_with_no_identity_to_sign_as_refuses_rather_than_forging_a_url(any_backend: sheaf.Backend) -> None:
+    """The local directory has no URL to issue, and a bucket backend built without a signer no account to sign as."""
+    any_backend.put_immutable('p/one.pack', b'0123456789')
+    with pytest.raises(sheaf.SigningUnsupported):
+        any_backend.sign_immutable('p/one.pack', datetime.timedelta(minutes=5))

@@ -22,7 +22,7 @@ _MIN_GCS_GENERATION = 1_000_000
 
 
 def test_publish_read_and_fetch_over_gcs(gcs_bucket: storage.Bucket) -> None:
-    backend = gcs.GcsBackend(gcs_bucket)
+    backend = gcs.GcsBackend(gcs_bucket, signer=None)
     intent = conftest.intent(0, {conftest.REF: (None, conftest.SHA_A)}, packs=[conftest.PACK_1])
 
     def scenario(
@@ -41,3 +41,20 @@ def test_publish_read_and_fetch_over_gcs(gcs_bucket: storage.Bucket) -> None:
     assert list(snapshot.document.packs) == [sheaf.pack_id(conftest.PACK_1)]
     assert fetched == conftest.PACK_1
     assert sheaf.Store(backend, fixture_session.ANALYSIS_ID).read().generation == response.generation
+
+
+def test_sign_pack_urls_sizes_each_pack_from_the_bucket(gcs_bucket: storage.Bucket) -> None:
+    """The size comes from a listing under the pack's exact key, which the emulator answers as GCS does."""
+    backend = gcs.GcsBackend(gcs_bucket, signer=None)
+    small, large = b'small pack', b'large pack ' * 50
+    conftest.seed(backend, {conftest.REF: (None, conftest.SHA_A)}, packs=[small, large])
+    request = sheaf_pb2.SignPackUrlsRequest(pack_ids=[sheaf.pack_id(large), sheaf.pack_id(small)])
+
+    response = conftest.run(
+        lambda stub: stub.SignPackUrls(request, metadata=conftest.WEB_WITH_SESSION), conftest.Signing(backend)
+    )
+
+    assert [(pack.pack_id, pack.size) for pack in response.packs] == [
+        (sheaf.pack_id(large), len(large)),
+        (sheaf.pack_id(small), len(small)),
+    ]

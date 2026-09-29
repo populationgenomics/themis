@@ -7,6 +7,7 @@ bucket down to the history that stands in for a server-side reflog. Design:
 
 from __future__ import annotations
 
+import datetime
 import os
 import pathlib
 import tempfile
@@ -130,3 +131,13 @@ class LocalBackend(backend.Backend):
             if not key.startswith(prefix):
                 continue
             yield backend.ObjectInfo(key=key, size=path.stat().st_size)
+
+    @override
+    def sign_immutable(self, key: str, lifetime: datetime.timedelta) -> backend.SignedUrl:
+        """Refuse: a directory on this host has no URL another party could fetch.
+
+        Raises:
+            SigningUnsupported: Always.
+        """
+        del lifetime
+        raise errors.SigningUnsupported(f'{key}: a local-directory store cannot sign a download URL')

@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import override
 
 import grpc
 import grpc.aio
-from google.protobuf import empty_pb2
+from google.protobuf import empty_pb2, timestamp_pb2
 
 from themis.clients.auth import context as context_mod
 from themis.clients.auth import interceptor as interceptor_mod
@@ -33,6 +34,17 @@ from themis.sheaf import store as store_mod
 _CHUNK_SIZE = 1 << 20
 # The generation a repository that does not exist yet has on the wire.
 _NO_DOCUMENT = 0
+# Packs one SignPackUrls call may name: each costs a signing request, so a larger want asks in batches.
+_MAX_SIGNED_PACKS = 256
+# Signing requests in flight per call. A signature is one signBlob round trip, so eight at a time sign a full call
+# in 32 rounds. The signer's HTTP session pools ten connections per host, shared by the instance's concurrent
+# calls; a request past them opens a connection it discards afterwards, a cost and not a failure.
+_SIGNING_CONCURRENCY = 8
+# Ids a refusal names before it only counts the rest: the message rides in a trailer whose size gRPC caps, and one
+# naming every id of a full call arrives as RESOURCE_EXHAUSTED instead.
+_NAMED_IDS = 3
+# The longest a V4 signed URL may live.
+_MAX_URL_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 
 # Refusals of the intent itself, all INVALID_ARGUMENT.
 _INVALID_INTENT = (
@@ -46,21 +58,38 @@ _INVALID_INTENT = (
 
 @dataclasses.dataclass(frozen=True)
 class Limits:
-    """The deployment's ceilings on a publish, each refused with RESOURCE_EXHAUSTED beyond it.
+    """The deployment's bounds: its ceilings on a publish, and how long a signed pack URL lives.
 
-    No defaults: the values are deployment configuration, and a publish's bytes are whatever the
-    guest pushed with nothing ever reclaimed, so an unstated ceiling is no ceiling.
+    A publish over a ceiling is refused with RESOURCE_EXHAUSTED. No defaults: the values are
+    deployment configuration, and a publish's bytes are whatever the guest pushed with nothing ever
+    reclaimed, so an unstated ceiling is no ceiling; a signed URL is a bearer capability for its
+    whole lifetime, so its lifetime is stated too.
+
+    Raises:
+        ValueError: If a value is not a positive integer, or the URL lifetime exceeds the seven days
+            a V4 signature can carry.
     """
 
     max_publish_bytes: int
     max_refs: int
     max_document_bytes: int
+    pack_url_lifetime_seconds: int
 
     def __post_init__(self) -> None:
         for field in dataclasses.fields(self):
             value = getattr(self, field.name)
             if value <= 0:
                 raise ValueError(f'{field.name} must be a positive integer, got {value!r}')
+        if self.pack_url_lifetime_seconds > _MAX_URL_LIFETIME_SECONDS:
+            raise ValueError(
+                f'pack_url_lifetime_seconds is {self.pack_url_lifetime_seconds}; '
+                f'a V4 signed URL lives at most {_MAX_URL_LIFETIME_SECONDS}'
+            )
+
+    @property
+    def pack_url_lifetime(self) -> datetime.timedelta:
+        """How long a signed pack URL works for."""
+        return datetime.timedelta(seconds=self.pack_url_lifetime_seconds)
 
 
 def _generation(snapshot: store_mod.Snapshot) -> int:
@@ -252,11 +281,69 @@ async def _store_packs(
         )
 
 
+def _requested_pack_ids(request: sheaf_pb2.SignPackUrlsRequest) -> list[str]:
+    """The ids a signing request names, refusing what is wrong with the list on its own.
+
+    Raises:
+        interceptor_mod.StatusError: INVALID_ARGUMENT for an empty list, more than the per-call maximum, an id
+            that is not a pack id, or an id named twice.
+    """
+    ids = list(request.pack_ids)
+    if not ids:
+        raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, 'name at least one pack to sign')
+    if len(ids) > _MAX_SIGNED_PACKS:
+        raise interceptor_mod.StatusError(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            f'{len(ids)} packs named; one call signs at most {_MAX_SIGNED_PACKS}, so ask in batches',
+        )
+    seen: set[str] = set()
+    for ident in ids:
+        try:
+            refdoc.validate_pack_id(ident)
+        except errors.InvalidPackId as exc:
+            raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, str(exc)) from exc
+        if ident in seen:
+            raise interceptor_mod.StatusError(grpc.StatusCode.INVALID_ARGUMENT, f'pack {ident} is named twice')
+        seen.add(ident)
+    return ids
+
+
+def _sign_all(store: store_mod.Store, ids: Sequence[str], lifetime: datetime.timedelta) -> list[store_mod.SignedPack]:
+    """Size and sign each pack, in the order named.
+
+    Raises:
+        interceptor_mod.StatusError: DATA_LOSS if a pack the document lists is not stored; UNIMPLEMENTED if
+            this deployment's storage cannot sign.
+    """
+    try:
+        return store.sign_packs(ids, lifetime, concurrency=_SIGNING_CONCURRENCY)
+    except errors.PacksAbsent as exc:
+        raise interceptor_mod.StatusError(
+            grpc.StatusCode.DATA_LOSS,
+            f'the document lists {len(exc.idents)} packs the store does not hold ({_some_of(exc.idents)})',
+        ) from exc
+    except errors.SigningUnsupported as exc:
+        raise interceptor_mod.StatusError(grpc.StatusCode.UNIMPLEMENTED, str(exc)) from exc
+
+
+def _some_of(ids: Sequence[str]) -> str:
+    named = ', '.join(ids[:_NAMED_IDS])
+    rest = len(ids) - _NAMED_IDS
+    return f'{named} and {rest} more' if rest > 0 else named
+
+
+def _signed_pack(signed: store_mod.SignedPack) -> sheaf_pb2.SignedPack:
+    expire_time = timestamp_pb2.Timestamp()
+    expire_time.FromDatetime(signed.expire_time)
+    return sheaf_pb2.SignedPack(pack_id=signed.ident, url=signed.url, size=signed.size, expire_time=expire_time)
+
+
 class Servicer(sheaf_pb2_grpc.SheafServicer):
     """Serves one repository per call: the Analysis the call's bound `AuthContext` names.
 
     Holds the backend and the deployment's limits, and no per-repository state; every call opens
-    the store afresh on the Analysis's prefix.
+    the store afresh on the Analysis's prefix. Signing a pack URL is the backend's to do, so a
+    backend that cannot sign answers `SignPackUrls` UNIMPLEMENTED and every other rpc as usual.
     """
 
     def __init__(self, backend: backend_mod.Backend, limits: Limits) -> None:
@@ -303,6 +390,24 @@ class Servicer(sheaf_pb2_grpc.SheafServicer):
             raise interceptor_mod.StatusError(grpc.StatusCode.NOT_FOUND, f'no pack {request.pack_id}') from exc
         for start in range(0, len(data), _CHUNK_SIZE):
             yield sheaf_pb2.PackChunk(content=data[start : start + _CHUNK_SIZE])
+
+    @override
+    async def SignPackUrls(
+        self, request: sheaf_pb2.SignPackUrlsRequest, context: grpc.aio.ServicerContext
+    ) -> sheaf_pb2.SignPackUrlsResponse:
+        del context
+        store = self._store()
+        ids = _requested_pack_ids(request)
+        listed = set((await _read(store)).packs)
+        unlisted = [ident for ident in ids if ident not in listed]
+        if unlisted:
+            raise interceptor_mod.StatusError(
+                grpc.StatusCode.NOT_FOUND,
+                f'the current document does not list {len(unlisted)} of the packs named ({_some_of(unlisted)}): '
+                'read it again and ask for what it lists',
+            )
+        signed = await asyncio.to_thread(_sign_all, store, ids, self._limits.pack_url_lifetime)
+        return sheaf_pb2.SignPackUrlsResponse(packs=[_signed_pack(pack) for pack in signed])
 
     @override
     async def Publish(
