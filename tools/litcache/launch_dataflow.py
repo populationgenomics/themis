@@ -37,6 +37,7 @@ there and the workers, not the submitter, read and write them; the staged shape 
 Example::
 
     uv run --group dataflow python -m tools.litcache.launch_dataflow \
+        --project cpg-themis-dev \
         --sdk-image australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis/litcache-worker:<tag> \
         --limit 50
 """
@@ -61,7 +62,6 @@ from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger('litcache.launch_dataflow')
 
-_DEFAULT_PROJECT = 'cpg-themis-dev'
 _DEFAULT_REGION = 'australia-southeast1'
 _SQL_DATABASE = 'themis'
 # Parallel GCS rewrite calls when staging the seed; each is a metadata-only op, so oversubscribing
@@ -73,9 +73,8 @@ _STAGE_CONCURRENCY = 16
 class _Target:
     """Where a run lands: the project and region, plus every resource name derived from them.
 
-    The derivations mirror the infra that creates each resource, so a run against another
-    project reaches that project's instance, SA and subnet rather than silently crossing
-    back to the defaults.
+    The derivations mirror the infra that creates each resource, so a run reaches the named
+    project's instance, SA and subnet and no other project's.
     """
 
     project: str
@@ -190,7 +189,7 @@ def _dataflow_options(
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--sdk-image', required=True, help='the litcache worker image in Artifact Registry')
-    parser.add_argument('--project', default=_DEFAULT_PROJECT, help='GCP project to run in (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project to run in')
     parser.add_argument('--region', default=_DEFAULT_REGION, help='GCP region to run in (default: %(default)s)')
     parser.add_argument(
         '--scratch-bucket',

@@ -26,12 +26,19 @@ def test_bucket_follows_the_project() -> None:
 
 
 def test_an_explicit_bucket_is_kept() -> None:
-    args = refresh_metadata._parse_args(['--bucket', 'elsewhere'])
+    args = refresh_metadata._parse_args(['--project', 'cpg-themis-test', '--bucket', 'elsewhere'])
     assert args.bucket == 'elsewhere'
 
 
-@pytest.mark.parametrize('bad', [['--limit', '0'], ['--limit', '-3']])
-def test_non_positive_limit_is_rejected(bad: list[str]) -> None:
+@pytest.mark.parametrize(
+    'bad',
+    [
+        ['--bucket', 'elsewhere'],
+        ['--project', 'cpg-themis-test', '--limit', '0'],
+        ['--project', 'cpg-themis-test', '--limit', '-3'],
+    ],
+)
+def test_bad_arguments_are_rejected(bad: list[str]) -> None:
     with pytest.raises(SystemExit):
         refresh_metadata._parse_args(bad)
 
@@ -58,7 +65,7 @@ def test_dry_run_lists_the_due_paper_and_writes_nothing(
 
     monkeypatch.setattr(refresh_metadata, '_resolve_live', never_called)
 
-    code = refresh_metadata.main(['--bucket', 'ignored', '--dry-run'])
+    code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored', '--dry-run'])
 
     assert code == 0
     assert _DOC in capsys.readouterr().out
@@ -72,7 +79,7 @@ def test_dry_run_reports_a_paper_it_cannot_attempt_and_exits_non_zero(
     gcs_bucket.blob(writer.manifest_path(_DOC)).upload_from_string(manifest.SerializeToString())
     monkeypatch.setattr(refresh_metadata, '_open_bucket', lambda _name: gcs_bucket)
 
-    code = refresh_metadata.main(['--bucket', 'ignored', '--dry-run'])
+    code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored', '--dry-run'])
 
     assert code == 1
     assert _DOC in capsys.readouterr().err
@@ -90,7 +97,7 @@ def test_a_resolver_miss_is_reported_and_exits_non_zero(
 
     monkeypatch.setattr(refresh_metadata, '_resolve_live', nothing)
 
-    code = refresh_metadata.main(['--bucket', 'ignored'])
+    code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored'])
 
     assert code == 1
     assert _DOC in capsys.readouterr().err
@@ -110,7 +117,7 @@ def test_a_complete_refresh_exits_zero(gcs_bucket: gcs.Bucket, monkeypatch: pyte
 
     monkeypatch.setattr(refresh_metadata, '_resolve_live', one)
 
-    code = refresh_metadata.main(['--bucket', 'ignored'])
+    code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored'])
 
     assert code == 0
     assert gcs_bucket.blob(writer.metadata_path(_DOC)).download_as_bytes() == _metadata('1')

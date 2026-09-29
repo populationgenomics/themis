@@ -22,8 +22,8 @@ written and a re-run resumes.
 
 Example::
 
-    uv run --group litcache python -m tools.litcache.refresh_metadata --dry-run
-    uv run --group litcache python -m tools.litcache.refresh_metadata --limit 500
+    uv run --group litcache python -m tools.litcache.refresh_metadata --project cpg-themis-dev --dry-run
+    uv run --group litcache python -m tools.litcache.refresh_metadata --project cpg-themis-dev --limit 500
 """
 
 from __future__ import annotations
@@ -40,8 +40,6 @@ from google.cloud import storage as gcs
 
 from themis.common import constants
 from themis.litcache import refresh, resolve
-
-_DEFAULT_PROJECT = 'cpg-themis-dev'
 
 
 def _open_bucket(name: str) -> gcs.Bucket:
@@ -60,9 +58,7 @@ async def _resolve_live(requests: Sequence[resolve.ResolveRequest]) -> dict[str,
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        '--project', default=_DEFAULT_PROJECT, help='GCP project the store lives in (default: %(default)s)'
-    )
+    parser.add_argument('--project', required=True, help='GCP project the store lives in')
     parser.add_argument(
         '--bucket', default=None, help='the litcache bucket holding papers/ (default: <project>-fulltext)'
     )

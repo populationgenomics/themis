@@ -20,9 +20,13 @@ def _parse(*extra: str) -> argparse.Namespace:
     return launch_dataflow._parse_args([*_REQUIRED, *extra])
 
 
-def test_project_and_region_default_to_the_dev_deployment() -> None:
-    args = _parse()
-    assert args.target.project == launch_dataflow._DEFAULT_PROJECT
+def test_project_is_required() -> None:
+    with pytest.raises(SystemExit):
+        _parse()
+
+
+def test_region_defaults() -> None:
+    args = _parse('--project', 'cpg-themis-test')
     assert args.target.region == launch_dataflow._DEFAULT_REGION
 
 
@@ -37,11 +41,10 @@ def test_every_derived_resource_follows_the_project() -> None:
         args.source_bucket,
     ]
     assert all('cpg-themis-test' in value for value in derived)
-    assert not any(launch_dataflow._DEFAULT_PROJECT in value for value in derived)
 
 
 def test_region_reaches_the_instance_and_the_subnet() -> None:
-    args = _parse('--region', 'europe-west2')
+    args = _parse('--project', 'cpg-themis-test', '--region', 'europe-west2')
     assert 'europe-west2' in args.target.sql_connection_name
     assert 'europe-west2' in args.target.subnetwork
     assert launch_dataflow._DEFAULT_REGION not in args.target.subnetwork
