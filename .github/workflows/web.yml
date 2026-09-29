@@ -21,6 +21,17 @@ jobs:
         working-directory: apps/web
     permissions:
       contents: read
+    # The pool's statement_timeout test needs a real server (`src/server/pg-timeouts.test.ts`); the
+    # major matches Cloud SQL's (infra/themis_infra/sql.py).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 15
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -32,6 +43,8 @@ jobs:
       # The transcription checks that need no capture. The verbatim ones read the calculator page and
       # the two supplements, which are not committed, and skip here (see `workflows/fidelity.test.ts`).
       - run: bun test
+        env:
+          THEMIS_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Both are generated and committed, and a Python test joins each to the library: the cell
       # inventory to what the framework prices, the DAFT tables to the library's own reading of SM3.
       # A stale export checks the wrong thing against the right library.

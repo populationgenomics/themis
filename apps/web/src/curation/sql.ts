@@ -2,7 +2,7 @@ import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { Pool, PoolClient } from "pg";
 import { AssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
-import { getPool, type SqlConfig } from "@/server/pg";
+import { getPool, inTransaction, type SqlConfig } from "@/server/pg";
 import type {
   Entry,
   NewVariant,
@@ -65,19 +65,7 @@ export class SqlCurationStore implements CurationStore {
   private async transaction<T>(
     body: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    const pool = await this.pool();
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const out = await body(client);
-      await client.query("COMMIT");
-      return out;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    return inTransaction(await this.pool(), body);
   }
 
   async roleOf(email: string): Promise<Role | undefined> {

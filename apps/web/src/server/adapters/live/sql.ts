@@ -13,7 +13,7 @@ import {
   ResourceNotFoundError,
   UndecodableAnalysisError,
 } from "../../errors";
-import { getPool, type SqlConfig } from "../../pg";
+import { getPool, inTransaction, type SqlConfig } from "../../pg";
 import { clientSpan } from "../../tracing/spans";
 
 // Cloud SQL (Postgres) persistence for the analysis-session lifecycle, over the shared
@@ -109,9 +109,9 @@ export class Sql {
   private async insertAnalysisInTransaction(
     input: InsertAnalysisInput,
   ): Promise<Date> {
-    const client = await this.connection();
-    try {
-      await client.query("BEGIN");
+    // Checked out through `connection()`, so the transaction's `pg.connect` span is its child.
+    const connections = { connect: () => this.connection() };
+    return inTransaction(connections, async (client) => {
       const inserted = await client.query<{ created_at: Date }>(
         `INSERT INTO analyses (id, session_id, project_id, inputs, created_by)
          VALUES ($1, $2, $3, $4, $5)
@@ -135,14 +135,8 @@ export class Sql {
          VALUES ($1, $2, $3)`,
         [input.tokenHash, input.projectId, input.id],
       );
-      await client.query("COMMIT");
       return createdAt;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /** The analysis row by id. Unknown id → a typed not-found (→ 404). A drifted

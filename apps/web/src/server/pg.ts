@@ -3,7 +3,7 @@ import {
   Connector,
   IpAddressTypes,
 } from "@google-cloud/cloud-sql-connector";
-import { Pool } from "pg";
+import { type ClientConfig, Pool, type PoolClient, type PoolConfig } from "pg";
 
 // The process-wide Cloud SQL pool, and the connection inputs that build it. Shared because a
 // connector and pool are per-instance infrastructure, not per-caller state: a second set in the same
@@ -94,12 +94,89 @@ async function buildPool(config: SqlConfig, s: PoolSingletons): Promise<Pool> {
     authType: AuthTypes.IAM,
     ipType: IpAddressTypes.PUBLIC,
   });
-  return new Pool({
+  return createPool({
     ...options,
     user: config.dbUser,
     database: config.database,
-    max: 5,
   });
+}
+
+/** A pool over the given connection inputs (the connector's stream, the IAM user, the database).
+ *
+ *  An idle connection is kept for minutes, not pg-pool's default ten seconds, so the next request
+ *  after a pause reuses it rather than paying a fresh Cloud SQL dial.
+ *
+ *  Every wait is bounded. A checkout that finds no free connection and no room to dial one, or a
+ *  dial that stalls, rejects after `connectionTimeoutMillis`: two 2.5 s Poll ticks, against a
+ *  slowest observed dial of about 2 s on a cold instance. The server cancels a statement that runs
+ *  past `statement_timeout`, a lock wait included, and ends a session left idle inside a transaction
+ *  past `idle_in_transaction_session_timeout`. pg rejects a query that gets no reply at all within
+ *  `query_timeout`, which catches a connection the network dropped without a reset.
+ *
+ *  A connection that fails on its own, idle or checked out, is logged and discarded; it never
+ *  reaches the process as an uncaught error. A query that fails is not retried: it rejects with the
+ *  driver's error, its connection is discarded, and the next query takes another idle connection or
+ *  dials a new one. A caller whose statement is safe to repeat retries it itself. */
+export function createPool(
+  connection: ClientConfig & Pick<PoolConfig, "Client">,
+): Pool {
+  const pool = new Pool({
+    ...connection,
+    max: 5,
+    // pg-pool's reaper closes a connection idle this long, under Cloud Run's 10-min egress idle
+    // timeout; a throttled CPU runs the timer late, so the reap can land on the next request.
+    idleTimeoutMillis: 5 * 60 * 1000,
+    // Bounds both the wait for a free connection and a dial.
+    connectionTimeoutMillis: 5_000,
+    // Sent in the startup packet, so it covers every statement on the connection.
+    statement_timeout: 5_000,
+    // Sent in the startup packet: the server ends a session whose close never reached it.
+    idle_in_transaction_session_timeout: 10_000,
+    // Above statement_timeout, so it fires only when the server's own cancellation never arrives.
+    query_timeout: 10_000,
+  });
+  // pg-pool listens on a client only while it is idle; this listener covers a checked-out one too.
+  pool.on("connect", (client) => {
+    client.on("error", (error) => {
+      console.error("Cloud SQL: a pooled connection failed:", error.message);
+    });
+  });
+  // Already logged by the client's listener above, and pg-pool has discarded the client.
+  pool.on("error", () => {});
+  return pool;
+}
+
+/** Run `body` in a transaction on a connection `pool.connect()` checks out: a `Pool`, or a caller
+ *  wrapping its checkout (in a span, say).
+ *
+ *  A failed transaction releases its connection with the failure, so pg-pool discards it rather
+ *  than returning it: closing the session rolls the transaction back on the server, and a
+ *  connection a timeout left with a statement outstanding is never reused. That includes a
+ *  server-reported error or a body's own, which costs the next checkout a dial; failures are rare.
+ *
+ *  Raises when COMMIT reports a rollback, as it does for a transaction a caught error aborted. */
+export async function inTransaction<T>(
+  pool: { connect(): Promise<PoolClient> },
+  body: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  let failure: Error | undefined;
+  try {
+    await client.query("BEGIN");
+    const out = await body(client);
+    const committed = await client.query("COMMIT");
+    if (committed.command !== "COMMIT") {
+      throw new Error(
+        `the transaction was rolled back at COMMIT (${committed.command})`,
+      );
+    }
+    return out;
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
+    throw error;
+  } finally {
+    client.release(failure);
+  }
 }
 
 /** Close the pool and connector for a clean process shutdown. */
