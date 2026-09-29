@@ -7,7 +7,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class Work(_message.Message):
-    __slots__ = ("abstract_inverted_index", "apc_list", "apc_paid", "authorships", "awards", "best_oa_location", "biblio", "citation_normalized_percentile", "cited_by_count", "cited_by_percentile_year", "concepts", "content_url", "content_urls", "corresponding_author_ids", "corresponding_institution_ids", "countries_distinct_count", "counts_by_year", "created_date", "display_name", "doi", "funders", "fwci", "has_content", "has_fulltext", "id", "ids", "indexed_in", "institutions", "institutions_distinct_count", "is_paratext", "is_retracted", "is_xpac", "keywords", "language", "locations", "locations_count", "mesh", "open_access", "primary_location", "primary_topic", "publication_date", "publication_year", "referenced_works", "referenced_works_count", "related_works", "relevance_score", "sustainable_development_goals", "title", "topics", "type", "updated_date")
+    __slots__ = ("abstract_inverted_index", "apc_list", "apc_paid", "authorships", "awards", "best_oa_location", "biblio", "citation_normalized_percentile", "cited_by_count", "cited_by_percentile_year", "concepts", "content_url", "content_urls", "corresponding_author_ids", "corresponding_institution_ids", "countries_distinct_count", "counts_by_year", "created_date", "display_name", "doi", "funders", "fwci", "has_content", "has_fulltext", "id", "ids", "indexed_in", "institutions", "institutions_distinct_count", "is_paratext", "is_retracted", "is_xpac", "keywords", "language", "locations", "locations_count", "mesh", "open_access", "primary_location", "primary_topic", "publication_date", "publication_year", "referenced_works", "referenced_works_count", "related_works", "relevance_score", "sustainable_development_goals", "title", "topics", "type", "updated_date", "study_designs", "x_sdgs")
     class AbstractInvertedIndexEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -66,6 +66,8 @@ class Work(_message.Message):
     TOPICS_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
     UPDATED_DATE_FIELD_NUMBER: _ClassVar[int]
+    STUDY_DESIGNS_FIELD_NUMBER: _ClassVar[int]
+    X_SDGS_FIELD_NUMBER: _ClassVar[int]
     abstract_inverted_index: _containers.MessageMap[str, Positions]
     apc_list: Apc
     apc_paid: Apc
@@ -117,7 +119,9 @@ class Work(_message.Message):
     topics: _containers.RepeatedCompositeFieldContainer[Topic]
     type: str
     updated_date: str
-    def __init__(self, abstract_inverted_index: _Optional[_Mapping[str, Positions]] = ..., apc_list: _Optional[_Union[Apc, _Mapping]] = ..., apc_paid: _Optional[_Union[Apc, _Mapping]] = ..., authorships: _Optional[_Iterable[_Union[Authorship, _Mapping]]] = ..., awards: _Optional[_Iterable[_Union[Award, _Mapping]]] = ..., best_oa_location: _Optional[_Union[Location, _Mapping]] = ..., biblio: _Optional[_Union[Biblio, _Mapping]] = ..., citation_normalized_percentile: _Optional[_Union[CitationNormalizedPercentile, _Mapping]] = ..., cited_by_count: _Optional[int] = ..., cited_by_percentile_year: _Optional[_Union[CitedByPercentileYear, _Mapping]] = ..., concepts: _Optional[_Iterable[_Union[Concept, _Mapping]]] = ..., content_url: _Optional[str] = ..., content_urls: _Optional[_Union[ContentUrls, _Mapping]] = ..., corresponding_author_ids: _Optional[_Iterable[str]] = ..., corresponding_institution_ids: _Optional[_Iterable[str]] = ..., countries_distinct_count: _Optional[int] = ..., counts_by_year: _Optional[_Iterable[_Union[CountsByYear, _Mapping]]] = ..., created_date: _Optional[str] = ..., display_name: _Optional[str] = ..., doi: _Optional[str] = ..., funders: _Optional[_Iterable[_Union[DehydratedFunder, _Mapping]]] = ..., fwci: _Optional[float] = ..., has_content: _Optional[_Union[HasContent, _Mapping]] = ..., has_fulltext: _Optional[bool] = ..., id: _Optional[str] = ..., ids: _Optional[_Union[Ids, _Mapping]] = ..., indexed_in: _Optional[_Iterable[str]] = ..., institutions: _Optional[_Iterable[_Union[DehydratedInstitution, _Mapping]]] = ..., institutions_distinct_count: _Optional[int] = ..., is_paratext: _Optional[bool] = ..., is_retracted: _Optional[bool] = ..., is_xpac: _Optional[bool] = ..., keywords: _Optional[_Iterable[_Union[Keyword, _Mapping]]] = ..., language: _Optional[str] = ..., locations: _Optional[_Iterable[_Union[Location, _Mapping]]] = ..., locations_count: _Optional[int] = ..., mesh: _Optional[_Iterable[_Union[Mesh, _Mapping]]] = ..., open_access: _Optional[_Union[OpenAccess, _Mapping]] = ..., primary_location: _Optional[_Union[Location, _Mapping]] = ..., primary_topic: _Optional[_Union[Topic, _Mapping]] = ..., publication_date: _Optional[str] = ..., publication_year: _Optional[int] = ..., referenced_works: _Optional[_Iterable[str]] = ..., referenced_works_count: _Optional[int] = ..., related_works: _Optional[_Iterable[str]] = ..., relevance_score: _Optional[float] = ..., sustainable_development_goals: _Optional[_Iterable[_Union[SustainableDevelopmentGoal, _Mapping]]] = ..., title: _Optional[str] = ..., topics: _Optional[_Iterable[_Union[Topic, _Mapping]]] = ..., type: _Optional[str] = ..., updated_date: _Optional[str] = ...) -> None: ...
+    study_designs: _containers.RepeatedCompositeFieldContainer[StudyDesign]
+    x_sdgs: _containers.RepeatedCompositeFieldContainer[SustainableDevelopmentGoal]
+    def __init__(self, abstract_inverted_index: _Optional[_Mapping[str, Positions]] = ..., apc_list: _Optional[_Union[Apc, _Mapping]] = ..., apc_paid: _Optional[_Union[Apc, _Mapping]] = ..., authorships: _Optional[_Iterable[_Union[Authorship, _Mapping]]] = ..., awards: _Optional[_Iterable[_Union[Award, _Mapping]]] = ..., best_oa_location: _Optional[_Union[Location, _Mapping]] = ..., biblio: _Optional[_Union[Biblio, _Mapping]] = ..., citation_normalized_percentile: _Optional[_Union[CitationNormalizedPercentile, _Mapping]] = ..., cited_by_count: _Optional[int] = ..., cited_by_percentile_year: _Optional[_Union[CitedByPercentileYear, _Mapping]] = ..., concepts: _Optional[_Iterable[_Union[Concept, _Mapping]]] = ..., content_url: _Optional[str] = ..., content_urls: _Optional[_Union[ContentUrls, _Mapping]] = ..., corresponding_author_ids: _Optional[_Iterable[str]] = ..., corresponding_institution_ids: _Optional[_Iterable[str]] = ..., countries_distinct_count: _Optional[int] = ..., counts_by_year: _Optional[_Iterable[_Union[CountsByYear, _Mapping]]] = ..., created_date: _Optional[str] = ..., display_name: _Optional[str] = ..., doi: _Optional[str] = ..., funders: _Optional[_Iterable[_Union[DehydratedFunder, _Mapping]]] = ..., fwci: _Optional[float] = ..., has_content: _Optional[_Union[HasContent, _Mapping]] = ..., has_fulltext: _Optional[bool] = ..., id: _Optional[str] = ..., ids: _Optional[_Union[Ids, _Mapping]] = ..., indexed_in: _Optional[_Iterable[str]] = ..., institutions: _Optional[_Iterable[_Union[DehydratedInstitution, _Mapping]]] = ..., institutions_distinct_count: _Optional[int] = ..., is_paratext: _Optional[bool] = ..., is_retracted: _Optional[bool] = ..., is_xpac: _Optional[bool] = ..., keywords: _Optional[_Iterable[_Union[Keyword, _Mapping]]] = ..., language: _Optional[str] = ..., locations: _Optional[_Iterable[_Union[Location, _Mapping]]] = ..., locations_count: _Optional[int] = ..., mesh: _Optional[_Iterable[_Union[Mesh, _Mapping]]] = ..., open_access: _Optional[_Union[OpenAccess, _Mapping]] = ..., primary_location: _Optional[_Union[Location, _Mapping]] = ..., primary_topic: _Optional[_Union[Topic, _Mapping]] = ..., publication_date: _Optional[str] = ..., publication_year: _Optional[int] = ..., referenced_works: _Optional[_Iterable[str]] = ..., referenced_works_count: _Optional[int] = ..., related_works: _Optional[_Iterable[str]] = ..., relevance_score: _Optional[float] = ..., sustainable_development_goals: _Optional[_Iterable[_Union[SustainableDevelopmentGoal, _Mapping]]] = ..., title: _Optional[str] = ..., topics: _Optional[_Iterable[_Union[Topic, _Mapping]]] = ..., type: _Optional[str] = ..., updated_date: _Optional[str] = ..., study_designs: _Optional[_Iterable[_Union[StudyDesign, _Mapping]]] = ..., x_sdgs: _Optional[_Iterable[_Union[SustainableDevelopmentGoal, _Mapping]]] = ...) -> None: ...
 
 class Positions(_message.Message):
     __slots__ = ("positions",)
@@ -166,14 +170,16 @@ class Affiliation(_message.Message):
     def __init__(self, institution_ids: _Optional[_Iterable[str]] = ..., raw_affiliation_string: _Optional[str] = ...) -> None: ...
 
 class DehydratedAuthor(_message.Message):
-    __slots__ = ("display_name", "id", "orcid")
+    __slots__ = ("display_name", "id", "orcid", "observed_orcids")
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     ORCID_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_ORCIDS_FIELD_NUMBER: _ClassVar[int]
     display_name: str
     id: str
     orcid: str
-    def __init__(self, display_name: _Optional[str] = ..., id: _Optional[str] = ..., orcid: _Optional[str] = ...) -> None: ...
+    observed_orcids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, display_name: _Optional[str] = ..., id: _Optional[str] = ..., orcid: _Optional[str] = ..., observed_orcids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DehydratedInstitution(_message.Message):
     __slots__ = ("country_code", "display_name", "id", "lineage", "ror", "type")
@@ -338,7 +344,7 @@ class Location(_message.Message):
     def __init__(self, id: _Optional[str] = ..., is_accepted: _Optional[bool] = ..., is_oa: _Optional[bool] = ..., is_published: _Optional[bool] = ..., landing_page_url: _Optional[str] = ..., license: _Optional[str] = ..., license_id: _Optional[str] = ..., pdf_url: _Optional[str] = ..., raw_source_name: _Optional[str] = ..., raw_type: _Optional[str] = ..., source: _Optional[_Union[DehydratedSource, _Mapping]] = ..., version: _Optional[str] = ...) -> None: ...
 
 class DehydratedSource(_message.Message):
-    __slots__ = ("display_name", "host_organization", "host_organization_lineage", "host_organization_lineage_names", "host_organization_name", "id", "is_core", "is_in_doaj", "is_oa", "issn", "issn_l", "type")
+    __slots__ = ("display_name", "host_organization", "host_organization_lineage", "host_organization_lineage_names", "host_organization_name", "id", "is_core", "is_in_doaj", "is_oa", "issn", "issn_l", "type", "listed_in")
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     HOST_ORGANIZATION_FIELD_NUMBER: _ClassVar[int]
     HOST_ORGANIZATION_LINEAGE_FIELD_NUMBER: _ClassVar[int]
@@ -351,6 +357,7 @@ class DehydratedSource(_message.Message):
     ISSN_FIELD_NUMBER: _ClassVar[int]
     ISSN_L_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
+    LISTED_IN_FIELD_NUMBER: _ClassVar[int]
     display_name: str
     host_organization: str
     host_organization_lineage: _containers.RepeatedScalarFieldContainer[str]
@@ -363,7 +370,8 @@ class DehydratedSource(_message.Message):
     issn: _containers.RepeatedScalarFieldContainer[str]
     issn_l: str
     type: str
-    def __init__(self, display_name: _Optional[str] = ..., host_organization: _Optional[str] = ..., host_organization_lineage: _Optional[_Iterable[str]] = ..., host_organization_lineage_names: _Optional[_Iterable[str]] = ..., host_organization_name: _Optional[str] = ..., id: _Optional[str] = ..., is_core: _Optional[bool] = ..., is_in_doaj: _Optional[bool] = ..., is_oa: _Optional[bool] = ..., issn: _Optional[_Iterable[str]] = ..., issn_l: _Optional[str] = ..., type: _Optional[str] = ...) -> None: ...
+    listed_in: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, display_name: _Optional[str] = ..., host_organization: _Optional[str] = ..., host_organization_lineage: _Optional[_Iterable[str]] = ..., host_organization_lineage_names: _Optional[_Iterable[str]] = ..., host_organization_name: _Optional[str] = ..., id: _Optional[str] = ..., is_core: _Optional[bool] = ..., is_in_doaj: _Optional[bool] = ..., is_oa: _Optional[bool] = ..., issn: _Optional[_Iterable[str]] = ..., issn_l: _Optional[str] = ..., type: _Optional[str] = ..., listed_in: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Mesh(_message.Message):
     __slots__ = ("descriptor_name", "descriptor_ui", "is_major_topic", "qualifier_name", "qualifier_ui")
@@ -390,6 +398,14 @@ class OpenAccess(_message.Message):
     oa_status: str
     oa_url: str
     def __init__(self, any_repository_has_fulltext: _Optional[bool] = ..., is_oa: _Optional[bool] = ..., oa_status: _Optional[str] = ..., oa_url: _Optional[str] = ...) -> None: ...
+
+class StudyDesign(_message.Message):
+    __slots__ = ("display_name", "id")
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    ID_FIELD_NUMBER: _ClassVar[int]
+    display_name: str
+    id: str
+    def __init__(self, display_name: _Optional[str] = ..., id: _Optional[str] = ...) -> None: ...
 
 class SustainableDevelopmentGoal(_message.Message):
     __slots__ = ("display_name", "id", "score")

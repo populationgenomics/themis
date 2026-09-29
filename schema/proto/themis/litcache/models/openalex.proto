@@ -65,6 +65,10 @@ message Work {
   repeated Topic topics = 49;
   optional string type = 50;
   optional string updated_date = 51 [json_name = "updated_date"];
+  repeated StudyDesign study_designs = 52 [json_name = "study_designs"];
+  // Element type from the upstream's docs ("the same shape as sustainable_development_goals"): the
+  // upstream has published only empty arrays.
+  repeated SustainableDevelopmentGoal x_sdgs = 53 [json_name = "x_sdgs"];
 }
 
 // The positions array under one word of `abstract_inverted_index`.
@@ -100,6 +104,7 @@ message DehydratedAuthor {
   optional string display_name = 1 [json_name = "display_name"];
   optional string id = 2;
   optional string orcid = 3;
+  repeated string observed_orcids = 4 [json_name = "observed_orcids"];
 }
 
 message DehydratedInstitution {
@@ -210,6 +215,7 @@ message DehydratedSource {
   repeated string issn = 10;
   optional string issn_l = 11 [json_name = "issn_l"];
   optional string type = 12;
+  repeated string listed_in = 13 [json_name = "listed_in"];
 }
 
 message Mesh {
@@ -227,6 +233,12 @@ message OpenAccess {
   optional string oa_url = 4 [json_name = "oa_url"];
 }
 
+message StudyDesign {
+  optional string display_name = 1 [json_name = "display_name"];
+  optional string id = 2;
+}
+
+// A `sustainable_development_goals` / `x_sdgs` entry.
 message SustainableDevelopmentGoal {
   optional string display_name = 1 [json_name = "display_name"];
   optional string id = 2;
