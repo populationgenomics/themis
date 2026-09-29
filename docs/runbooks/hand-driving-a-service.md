@@ -101,23 +101,39 @@ is how a fresh environment gets seeded, not as a caution.
 ## A git remote over the sheaf service
 
 An Analysis's repository lives behind the `Sheaf` service, which scopes every call by a session token rather than by a
-name. Cloning it from a laptop takes two steps: derive the Analysis's session token, then serve a loopback git remote
-that presents it, together with an ID token minted as above, on every call.
+name. To inspect one from a laptop, clone it in one command:
+
+```bash
+uv run --group tools_sheaf python -m tools.clone_analysis --analysis-id "$ANALYSIS" ./"$ANALYSIS"
+```
+
+The tool derives the Analysis's session token into a file in a private temporary directory. It then serves a loopback
+git remote in the same process, which presents that token on every call together with an ID token minted as above. It
+clones through the remote, stops it, and deletes the temporary directory with the token in it. The clone has the default
+branch checked out and every branch under `origin/`. It also holds the tags, and the refs that pushes and sheaf itself
+write outside branches and tags, under their own names. One of them, `refs/sheaf/reflog`, gains a commit on every
+publish, and that commit's message names each ref the publish moved. `git log --first-parent refs/sheaf/reflog` lists
+the publishes newest first, down to the root entry sheaf writes when the repository is created
+([`sheaf.md`](../design/sheaf.md#the-reflog-ref-says-what-was-current)).
+
+The clone's `origin` names the stopped server, so a fetch or a push from it fails. Pushing needs a remote that keeps
+running, which takes the two steps separately, in two terminals:
 
 ```bash
 uv run --group tools_sheaf python -m tools.session_token --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
 uv run --group tools_sheaf python -m tools.sheaf_remote --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
-git clone http://127.0.0.1:<port>/"$ANALYSIS"        # the port is printed; push works the same way
+git clone http://127.0.0.1:<port>/"$ANALYSIS"        # or `git remote set-url origin` on an existing clone
 ```
 
-The first reads the Analysis's session id from the database and MAC-signs it through the session-token KMS key, both as
-`themis-clu`, so the account needs `cloudkms.signerVerifier` on that key besides the database login, and `run.invoker`
-on the sheaf service for the second; both land with the sheaf deploy, and until they do the tools fail with the KMS or
-gRPC error as is. The signing grant is a decision, not a convenience: whoever can sign can derive any Analysis's session
-token, the credential that scopes the sandbox's every call. The second keeps the ID token fresh in the token file while
-it runs and removes it on Ctrl-C. Every read goes through `ReadRefDoc` and `FetchPack` and every push through `Publish`,
-so a push refused by the service reads back in the hook's wording, as it would for the sandbox worker. The token is only
-ever in that file; it is never on the command line or in the environment.
+The port is printed by the second step. Deriving the token reads the Analysis's session id from the database and
+MAC-signs it through the session-token KMS key, both as `themis-clu`. The account therefore needs
+`cloudkms.signerVerifier` on that key besides the database login, and `run.invoker` on the sheaf service for the remote.
+Both grants land with the sheaf deploy, and until they do the tools fail with the KMS or gRPC error as is. The signing
+grant is a decision, not a convenience: whoever can sign can derive any Analysis's session token, the credential that
+scopes the sandbox's every call. `tools.sheaf_remote` keeps the ID token fresh in the token file while it runs and
+removes it on Ctrl-C. Every read goes through `ReadRefDoc` and `FetchPack` and every push through `Publish`, so a push
+refused by the service reads back in the hook's wording, as it would for the sandbox worker. The token is only ever in
+that file; it is never on the command line or in the environment.
 
 ## What it can reach
 

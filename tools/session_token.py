@@ -98,6 +98,37 @@ async def _sign(key_version: str, session_id: str, service_account: str) -> str:
     return await sign(session_id)
 
 
+def derive_session_token(analysis_id: str, *, project: str, service_account: str, key_version: str | None) -> str:
+    """The session token of `analysis_id`: its session id read from the database, MAC-signed through KMS.
+
+    Args:
+        analysis_id: The Analysis whose token to derive.
+        project: The environment's GCP project.
+        service_account: The account the database read and the KMS call act as.
+        key_version: The signing key version's resource name, or None for the one MAC key on the
+            key ring at the pinned version.
+
+    Raises:
+        SystemExit: If no such Analysis exists, or `gcloud` cannot list the key ring, or the key ring
+            holds anything but one MAC key.
+        clu.GcloudError: If `gcloud` is not on PATH.
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
+    """
+    key_version = key_version or signing_key_version(project)
+    session_id = session_id_for(analysis_id, project=project, service_account=service_account)
+    return asyncio.run(_sign(key_version, session_id, service_account))
+
+
+def write_token_file(path: pathlib.Path, session_token: str) -> None:
+    """Write `session_token` to the token file at `path`, readable by its owner alone, claimed as the caller's own."""
+    remote_mod.write_credentials(
+        path,
+        remote_mod.Credentials(
+            session_token=session_token, bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_SELF
+        ),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--analysis-id', required=True, help='the Analysis whose session token to derive')
@@ -120,18 +151,13 @@ def main() -> None:
     args = parser.parse_args()
     service_account = args.impersonate or clu.service_account(args.project)
     try:
-        key_version = args.key_version or signing_key_version(args.project)
-        session_id = session_id_for(args.analysis_id, project=args.project, service_account=service_account)
-        session_token = asyncio.run(_sign(key_version, session_id, service_account))
+        session_token = derive_session_token(
+            args.analysis_id, project=args.project, service_account=service_account, key_version=args.key_version
+        )
     except (clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     args.session_token_file.parent.mkdir(parents=True, exist_ok=True)
-    remote_mod.write_credentials(
-        args.session_token_file,
-        remote_mod.Credentials(
-            session_token=session_token, bearer=None, calling_as=sandbox_options_pb2.CALLING_AS_SELF
-        ),
-    )
+    write_token_file(args.session_token_file, session_token)
     print(f'wrote the session token for {args.analysis_id} to {args.session_token_file}')
     print(
         'next: uv run --group tools_sheaf python -m tools.sheaf_remote '

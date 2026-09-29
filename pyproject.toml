@@ -293,6 +293,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Both set GRPC_ENABLE_FORK_SUPPORT, which gRPC reads once at import, above their other imports.
+"tools/clone_analysis.py" = ["E402"]
+"tools/sheaf_remote.py" = ["E402"]
 # One block for every tests tree under `themis/`, rather than one per directory: `*` crosses `/` in
 # ruff's patterns, and a per-directory list meant a new interface's tests failed lint until someone
 # remembered to add it. The rules are the same everywhere — pytest's bare `assert`, reaching into

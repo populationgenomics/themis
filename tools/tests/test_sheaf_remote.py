@@ -101,3 +101,32 @@ def test_the_refreshing_store_describes_itself_as_the_plain_remote_store(
         assert store.descriptor() == remote.descriptor()
         assert store.repo == 'ana'
     assert not minted, 'describing the store mints nothing'
+
+
+def _serve_then_fail(token_file: pathlib.Path, root: pathlib.Path, bearers: list[str | None]) -> None:
+    """Enter `serving`, record the file's bearer inside the block, and fail as a clone would."""
+    with sheaf_remote.serving(
+        analysis_id='ana',
+        token_file=token_file,
+        service_url='https://sheaf.example',
+        service_account='clu@example.iam.gserviceaccount.com',
+        port=0,
+        root=root,
+    ) as instance:
+        assert instance.url('ana').startswith('http://127.0.0.1:')
+        bearers.append(remote_mod.read_credentials(token_file).bearer)
+        raise RuntimeError('the clone failed')
+
+
+def test_serving_mints_a_bearer_and_removes_it_however_the_block_ends(
+    tmp_path: pathlib.Path, minted: list[str]
+) -> None:
+    token_file = tmp_path / 'token.json'
+    remote_mod.write_credentials(token_file, _credentials(bearer=None))
+    bearers: list[str | None] = []
+
+    with pytest.raises(RuntimeError, match='the clone failed'):
+        _serve_then_fail(token_file, tmp_path / 'mirror', bearers)
+
+    assert bearers == minted, 'the block saw the bearer minted on entry'
+    assert remote_mod.read_credentials(token_file) == _credentials(bearer=None)

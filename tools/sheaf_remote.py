@@ -19,8 +19,15 @@ runs about once an hour otherwise.
 
 from __future__ import annotations
 
+import os
+
+# Set before gRPC is first imported: this process forks `git` while gRPC threads run, and with fork
+# support on, gRPC logs every fork on stderr.
+os.environ.setdefault('GRPC_ENABLE_FORK_SUPPORT', '0')
+
 import argparse
 import base64
+import contextlib
 import dataclasses
 import json
 import pathlib
@@ -30,6 +37,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from typing import override
 
 from themis.clients.sheaf import store as remote_mod
@@ -38,7 +46,7 @@ from themis.sheaf import store as store_mod
 from themis.sheaf.wire import protect, server
 from tools import clu
 
-_SERVICE = 'themis-sheaf'
+SERVICE = 'themis-sheaf'
 # Re-mint this long before the token's `exp`; ID tokens live an hour.
 _REFRESH_MARGIN_SECONDS = 10 * 60
 
@@ -130,28 +138,59 @@ class RefreshingStore(store_mod.Repository):
         return self._inner.descriptor()
 
 
-def serve(
+@contextlib.contextmanager
+def serving(
     *, analysis_id: str, token_file: pathlib.Path, service_url: str, service_account: str, port: int, root: pathlib.Path
-) -> None:
-    """Serve until SIGINT or SIGTERM, then remove the bearer from the token file."""
+) -> Iterator[server.SheafGitServer]:
+    """Serve `analysis_id` on a loopback port over the service at `service_url`, for the duration of the block.
+
+    The bearer is minted into `token_file` before the server starts, kept fresh while it runs, and
+    removed from the file on the way out, whatever ends the block.
+
+    Args:
+        analysis_id: The Analysis; names the repository in the clone URL.
+        token_file: The token file `tools/session_token.py` writes.
+        service_url: The sheaf service's `https://` URL, the audience of the bearer.
+        service_account: The account the bearer is minted as.
+        port: The loopback port; 0 takes an ephemeral one, which the yielded server reports.
+        root: Directory for the bare mirror.
+
+    Raises:
+        clu.GcloudError: If the first bearer cannot be minted.
+    """
     keeper = BearerKeeper(token_file, service_account=service_account, audience=service_url)
     keeper.refresh()
     try:
-        stop = threading.Event()
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(signum, lambda *_: stop.set())
         with (
             remote_mod.RemoteStore(service_url, token_file, repo=analysis_id) as remote,
             server.SheafGitServer(
                 [RefreshingStore(remote, keeper)], root, port=port, protection=protect.Protection.unprotected()
             ) as instance,
         ):
-            print(f'serving {analysis_id} over {service_url}', file=sys.stderr)
-            print(f'    git clone {instance.url(analysis_id)}', file=sys.stderr)
-            print('Ctrl-C to stop.', file=sys.stderr)
-            stop.wait()
+            yield instance
     finally:
         keeper.forget()
+
+
+def serve(
+    *, analysis_id: str, token_file: pathlib.Path, service_url: str, service_account: str, port: int, root: pathlib.Path
+) -> None:
+    """Serve until SIGINT or SIGTERM, then remove the bearer from the token file."""
+    stop = threading.Event()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, lambda *_: stop.set())
+    with serving(
+        analysis_id=analysis_id,
+        token_file=token_file,
+        service_url=service_url,
+        service_account=service_account,
+        port=port,
+        root=root,
+    ) as instance:
+        print(f'serving {analysis_id} over {service_url}', file=sys.stderr)
+        print(f'    git clone {instance.url(analysis_id)}', file=sys.stderr)
+        print('Ctrl-C to stop.', file=sys.stderr)
+        stop.wait()
 
 
 def main() -> None:
@@ -165,7 +204,7 @@ def main() -> None:
     )
     parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
     parser.add_argument(
-        '--service-url', default=None, help=f'the sheaf service URL (default: gcloud describes {_SERVICE} in --project)'
+        '--service-url', default=None, help=f'the sheaf service URL (default: gcloud describes {SERVICE} in --project)'
     )
     parser.add_argument('--port', type=int, default=0, help='loopback port to serve on (default: an ephemeral one)')
     parser.add_argument(
@@ -191,7 +230,7 @@ def main() -> None:
         serve(
             analysis_id=args.analysis_id,
             token_file=args.session_token_file,
-            service_url=args.service_url or clu.run_service_url(_SERVICE, project=args.project),
+            service_url=args.service_url or clu.run_service_url(SERVICE, project=args.project),
             service_account=service_account,
             port=args.port,
             root=root,
