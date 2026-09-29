@@ -283,9 +283,6 @@ class WebService(pulumi.ComponentResource):
             protocol='HTTPS',
             load_balancing_scheme='EXTERNAL_MANAGED',
             backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
-            # IAP is on the Cloud Run service and cannot be on both. Explicit: an
-            # omitted `iap` block leaves whatever the backend has live.
-            iap=gcp.compute.BackendServiceIapArgs(enabled=False),
             log_config=gcp.compute.BackendServiceLogConfigArgs(enable=True, sample_rate=1.0),
             opts=child,
         )
