@@ -6,6 +6,7 @@ import asyncio
 import json
 
 import pytest
+from google.cloud.sql import connector
 
 from themis.services.auth import __main__ as main_mod
 from themis.services.auth import backend as auth_backend
@@ -51,6 +52,24 @@ def test_cloudsql_backend_requires_sql_config(monkeypatch: pytest.MonkeyPatch) -
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(SystemExit):
         main_mod.build_backend()
+
+
+def test_cloudsql_backend_refreshes_its_certificate_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cloud Run throttles the CPU between requests, stalling the connector's default background refresh.
+    strategies: list[object] = []
+
+    class _RecordingConnector:
+        def __init__(self, **kwargs: object) -> None:
+            strategies.append(kwargs.get('refresh_strategy'))
+
+    monkeypatch.setattr(connector, 'Connector', _RecordingConnector)
+    monkeypatch.setenv('THEMIS_BACKEND', 'cloudsql')
+    monkeypatch.setenv('THEMIS_SQL_CONNECTION_NAME', 'proj:region:instance')
+    monkeypatch.setenv('THEMIS_SQL_DATABASE', 'themis')
+    monkeypatch.setenv('THEMIS_DB_USER', 'themis-auth@proj.iam')
+    main_mod.build_backend()
+
+    assert strategies == [connector.RefreshStrategy.LAZY]
 
 
 def test_missing_bindings_exits(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -43,9 +43,11 @@ def _cloudsql_backend_from_env() -> auth_backend.SessionBackend:
     from themis.services.auth import cloudsql  # noqa: PLC0415 — deferred so the fixture path skips the connector import
 
     return cloudsql.CloudSqlBackend(
-        connection_name=_require('THEMIS_SQL_CONNECTION_NAME'),
-        database=_require('THEMIS_SQL_DATABASE'),
-        db_user=_require('THEMIS_DB_USER'),
+        cloudsql.engine(
+            connection_name=_require('THEMIS_SQL_CONNECTION_NAME'),
+            database=_require('THEMIS_SQL_DATABASE'),
+            db_user=_require('THEMIS_DB_USER'),
+        )
     )
 
 

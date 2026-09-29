@@ -15,6 +15,9 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants, sql
 
+# Each instance pools up to 4 Cloud SQL connections, so 3 hold at most 12 of db-f1-micro's 25.
+_MAX_INSTANCES = 3
+
 
 class AuthService(pulumi.ComponentResource):
     """Cloud Run auth service (internal ingress) over Cloud SQL.
@@ -81,8 +84,11 @@ class AuthService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                # Scale to zero — idle cost ≈ 0 at the spike's traffic.
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                # Scale to zero — idle cost ≈ 0 at the spike's traffic. The cap bounds the
+                # connections the auth pool can hold (themis/services/auth/cloudsql.py).
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,

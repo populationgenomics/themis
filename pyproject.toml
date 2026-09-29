@@ -66,10 +66,13 @@ dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
 # Cloud SQL client: the connector + pg8000 (IAM auth, no stored password, mirroring
 # infra/sql.py), shared by the auth service's cloudsql backend and the migrate runner.
 cloudsql = ["cloud-sql-python-connector", "pg8000"]
+# Pooled Cloud SQL connections (themis/common/sql_pool.py) for a service that queries per
+# request: SQLAlchemy's pool over the cloudsql client.
+sql_pool = ["sqlalchemy", { include-group = "cloudsql" }]
 # auth service (themis/services/auth): the grpc.aio server + generated stubs + the Cloud
 # SQL backend. grpcio is the runtime; grpcio-health-checking serves grpc.health.v1;
 # protobuf backs the generated messages (json_format seeds the fixture backend).
-auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "cloudsql" }]
+auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sql_pool" }]
 # migration runner (themis/migrate): applies the committed SQL migrations at deploy.
 migrate = [{ include-group = "cloudsql" }]
 # curation operator tooling (themis/curation/vocabulary_backfill.py): rewrites the stored
