@@ -21,9 +21,6 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
       # buf on PATH for the buf-lint hook.
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -32,8 +29,7 @@ jobs:
           # anonymous, against a per-IP rate limit shared across the hosted runner pool.
           github_token: ${{ github.token }}
       # biome + tsc hooks need apps/web/node_modules.
-      - run: bun install --frozen-lockfile
-        working-directory: apps/web
+      - uses: ./.github/actions/setup-web
       # Pre-sync the lint env so the pyright hook's `uv run` is a no-op.
       - run: uv sync --locked --group lint --python 3.13
       - uses: actions/cache@v6
