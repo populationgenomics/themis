@@ -340,18 +340,62 @@ before the call
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#in-silico-prediction-one-predictor-chosen-in-advance)).
 `Vep.Annotate` will serve any predictor on its allowlist, so **the single-predictor guarantee is the policy plus the
 library's enforcement, not the rpc**: the library's score-to-bin step scores the policy's predictor and no other, every
-selection reports the entry that decided it, and a missing or malformed gene id raises rather than defaulting. The other
-predictors' scores ride in the payload as what a policy *revision* would be argued from.
+selection reports the entry that decided it, and a missing or malformed gene id raises rather than defaulting. A caller
+that asks for a second predictor gets its score beside the first, as what a policy *revision* would be argued from.
 
 **Worked example.** Ensembl ignores a flag it does not recognise: asking for `BayesDel` by a misspelled name returns a
 200 with the score absent, which no caller can distinguish from the variant having no score. So the predictor names are
 a closed set and one outside it is refused — the alternative is a run that silently scores nothing.
 
+The same silence hides a misread answer, which is why each score is a typed field rather than a key in the payload. Each
+wire form spells its score differently: the request names the dbNSFP column `BayesDel_noAF_score` and VEP answers under
+`bayesdel_noaf_score`, while AlphaMissense's score sits inside a per-flag object as `alphamissense.am_pathogenicity`. A
+caller that looks up the request's spelling finds nothing on any real response and reports MIS_PRD as undetermined, and
+tests written against a hand-made payload that shares the mistake still pass. The spellings are facts about the upstream
+that only a real response proves, so the service is the one place that reads them, and it states each score under the
+name the request used. What proves them is a VEP response recorded from the live API for the exact request the service
+builds and checked in beside the adapter's tests
+([`vep.json`](../../themis/services/evidence/upstreams/tests/fixtures/vep.json)); those tests read every accepted
+predictor's score off it.
+
+The scores sit on a typed element per annotated transcript, which keeps two absences apart. A transcript with no score
+for a requested predictor is VEP serving none on it, while a transcript missing from the list altogether is one VEP did
+not annotate. In the recorded response for `NM_001042492.3:c.3496G>C`, with BayesDel and AlphaMissense requested, VEP
+returns the MANE Select transcript as (trimmed)
+
+```json
+{
+  "transcript_id": "ENST00000358273.9",
+  "mane_select": "NM_001042492.3",
+  "bayesdel_noaf_score": 0.0531436,
+  "alphamissense": {"am_class": "likely_pathogenic", "am_pathogenicity": 0.9467}
+}
+```
+
+and `Vep.Annotate` states it as
+
+```textproto
+transcripts {
+  transcript_id: "ENST00000358273.9"
+  mane_select: "NM_001042492.3"
+  scores { predictor: "BayesDel" score: 0.0531436 }
+  scores { predictor: "AlphaMissense" score: 0.9467 }
+}
+```
+
+VEP annotates Ensembl transcripts only, so the element also carries the transcript's MANE RefSeq pair, which is how a
+caller holding the MANE Select `NM_` finds its transcript. The rpc asks VEP for versioned transcript ids, and the
+library (`themis.svcv4`), which does that lookup, applies one rule to both namespaces: an unversioned accession matches
+by its base, and a versioned one must agree exactly, because another version is another transcript model.
+
 **Caveats and moving off the upstream.** The public Ensembl REST endpoint is frozen — its final release has shipped —
 which pins the Ensembl release and therefore the transcript set, the MANE version and the dbNSFP branch. Nothing breaks;
 the answers drift from current annotation silently, which is why the release stamps on the wire matter *more* under a
-freeze rather than less. The end state for this upstream is a self-hosted `ensembl-vep`, for reasons the announced
-successor makes concrete ([Alternatives](#alternatives-considered)).
+freeze rather than less. One drift is not silent: when MANE moves a gene to a new transcript version after the freeze, a
+caller holding the current MANE Select accession no longer matches the version VEP pairs, and the library refuses the
+score rather than reading it off another model. The refusal names the version VEP holds, so the agent can decide whether
+to score against it and say so. The end state for this upstream is a self-hosted `ensembl-vep`, for reasons the
+announced successor makes concrete ([Alternatives](#alternatives-considered)).
 
 #### Predictor data licensing binds on one trigger
 

@@ -27,7 +27,7 @@ from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_model
 from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14themis/rpc/vep.proto\x12\x0ethemis.rpc.vep\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"6\n\x0f\x41nnotateRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\x12\x12\n\npredictors\x18\x02 \x03(\t\"\xb6\x01\n\x10\x41nnotateResponse\x12\x44\n\x17most_severe_consequence\x18\x01 \x01(\x0e\x32#.themis.evidence.models.Consequence\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2[\n\x03Vep\x12T\n\x08\x41nnotate\x12\x1f.themis.rpc.vep.AnnotateRequest\x1a .themis.rpc.vep.AnnotateResponse\"\x05\xa2\xb5\x18\x01\x03\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14themis/rpc/vep.proto\x12\x0ethemis.rpc.vep\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"6\n\x0f\x41nnotateRequest\x12\x0f\n\x07variant\x18\x01 \x01(\t\x12\x12\n\npredictors\x18\x02 \x03(\t\"A\n\x0ePredictorScore\x12\x11\n\tpredictor\x18\x01 \x01(\t\x12\x12\n\x05score\x18\x02 \x01(\x01H\x00\x88\x01\x01\x42\x08\n\x06_score\"\x8e\x01\n\x14TranscriptAnnotation\x12\x15\n\rtranscript_id\x18\x01 \x01(\t\x12\x13\n\x0bmane_select\x18\x02 \x01(\t\x12\x1a\n\x12mane_plus_clinical\x18\x03 \x01(\t\x12.\n\x06scores\x18\x04 \x03(\x0b\x32\x1e.themis.rpc.vep.PredictorScore\"\xf1\x01\n\x10\x41nnotateResponse\x12\x44\n\x17most_severe_consequence\x18\x01 \x01(\x0e\x32#.themis.evidence.models.Consequence\x12\x39\n\x0btranscripts\x18\x02 \x03(\x0b\x32$.themis.rpc.vep.TranscriptAnnotation\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance2[\n\x03Vep\x12T\n\x08\x41nnotate\x12\x1f.themis.rpc.vep.AnnotateRequest\x1a .themis.rpc.vep.AnnotateResponse\"\x05\xa2\xb5\x18\x01\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -38,8 +38,12 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_VEP'].methods_by_name['Annotate']._serialized_options = b'\242\265\030\001\003'
   _globals['_ANNOTATEREQUEST']._serialized_start=143
   _globals['_ANNOTATEREQUEST']._serialized_end=197
-  _globals['_ANNOTATERESPONSE']._serialized_start=200
-  _globals['_ANNOTATERESPONSE']._serialized_end=382
-  _globals['_VEP']._serialized_start=384
-  _globals['_VEP']._serialized_end=475
+  _globals['_PREDICTORSCORE']._serialized_start=199
+  _globals['_PREDICTORSCORE']._serialized_end=264
+  _globals['_TRANSCRIPTANNOTATION']._serialized_start=267
+  _globals['_TRANSCRIPTANNOTATION']._serialized_end=409
+  _globals['_ANNOTATERESPONSE']._serialized_start=412
+  _globals['_ANNOTATERESPONSE']._serialized_end=653
+  _globals['_VEP']._serialized_start=655
+  _globals['_VEP']._serialized_end=746
 # @@protoc_insertion_point(module_scope)

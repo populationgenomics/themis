@@ -6,10 +6,12 @@ consequence, the calibrated predictor scores and a colocated-variant snapshot.
 Design: docs/design/evidence-interfaces.md.
 
 Modelled from:
-  Ensembl VEP REST (HGVS endpoint): `AnnotateResponse.raw` is its JSON verbatim, and `predictors`
-    names each score by the VEP flag or dbNSFP-plugin column that serves it.
-  This interface's own design: `AnnotateRequest` (the closed predictor set, the GRCh38 pin), and
-    `AnnotateResponse.most_severe_consequence`, VEP's term re-encoded onto the shared SVCv4 enum.
+  Ensembl VEP REST (HGVS endpoint): `AnnotateResponse.raw` is its JSON, each requested dbNSFP
+    column resolved to one value per transcript, and `predictors` names each score by predictor.
+  This interface's own design: `AnnotateRequest` (the closed predictor set, the GRCh38 pin),
+    `AnnotateResponse.most_severe_consequence`, VEP's term re-encoded onto the shared SVCv4 enum,
+    and `TranscriptAnnotation`, each annotated transcript with its MANE pair and the
+    calibrated missense scores read off their wire forms.
 
 EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
 thresholds and code names may change before publication, so the SVCv4 codes named throughout

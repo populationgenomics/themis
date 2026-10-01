@@ -3,10 +3,12 @@
 // Design: docs/design/evidence-interfaces.md.
 //
 // Modelled from:
-//   Ensembl VEP REST (HGVS endpoint): `AnnotateResponse.raw` is its JSON verbatim, and `predictors`
-//     names each score by the VEP flag or dbNSFP-plugin column that serves it.
-//   This interface's own design: `AnnotateRequest` (the closed predictor set, the GRCh38 pin), and
-//     `AnnotateResponse.most_severe_consequence`, VEP's term re-encoded onto the shared SVCv4 enum.
+//   Ensembl VEP REST (HGVS endpoint): `AnnotateResponse.raw` is its JSON, each requested dbNSFP
+//     column resolved to one value per transcript, and `predictors` names each score by predictor.
+//   This interface's own design: `AnnotateRequest` (the closed predictor set, the GRCh38 pin),
+//     `AnnotateResponse.most_severe_consequence`, VEP's term re-encoded onto the shared SVCv4 enum,
+//     and `TranscriptAnnotation`, each annotated transcript with its MANE pair and the
+//     calibrated missense scores read off their wire forms.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
 // thresholds and code names may change before publication, so the SVCv4 codes named throughout
@@ -35,7 +37,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file themis/rpc/vep.proto.
  */
 export const file_themis_rpc_vep: GenFile = /*@__PURE__*/
-  fileDesc("ChR0aGVtaXMvcnBjL3ZlcC5wcm90bxIOdGhlbWlzLnJwYy52ZXAiNgoPQW5ub3RhdGVSZXF1ZXN0Eg8KB3ZhcmlhbnQYASABKAkSEgoKcHJlZGljdG9ycxgCIAMoCSK2AQoQQW5ub3RhdGVSZXNwb25zZRJEChdtb3N0X3NldmVyZV9jb25zZXF1ZW5jZRgBIAEoDjIjLnRoZW1pcy5ldmlkZW5jZS5tb2RlbHMuQ29uc2VxdWVuY2USJAoDcmF3GA8gASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBI2Cgpwcm92ZW5hbmNlGBAgAygLMiIudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Qcm92ZW5hbmNlMlsKA1ZlcBJUCghBbm5vdGF0ZRIfLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVxdWVzdBogLnRoZW1pcy5ycGMudmVwLkFubm90YXRlUmVzcG9uc2UiBaK1GAEDYgZwcm90bzM", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
+  fileDesc("ChR0aGVtaXMvcnBjL3ZlcC5wcm90bxIOdGhlbWlzLnJwYy52ZXAiNgoPQW5ub3RhdGVSZXF1ZXN0Eg8KB3ZhcmlhbnQYASABKAkSEgoKcHJlZGljdG9ycxgCIAMoCSJBCg5QcmVkaWN0b3JTY29yZRIRCglwcmVkaWN0b3IYASABKAkSEgoFc2NvcmUYAiABKAFIAIgBAUIICgZfc2NvcmUijgEKFFRyYW5zY3JpcHRBbm5vdGF0aW9uEhUKDXRyYW5zY3JpcHRfaWQYASABKAkSEwoLbWFuZV9zZWxlY3QYAiABKAkSGgoSbWFuZV9wbHVzX2NsaW5pY2FsGAMgASgJEi4KBnNjb3JlcxgEIAMoCzIeLnRoZW1pcy5ycGMudmVwLlByZWRpY3RvclNjb3JlIvEBChBBbm5vdGF0ZVJlc3BvbnNlEkQKF21vc3Rfc2V2ZXJlX2NvbnNlcXVlbmNlGAEgASgOMiMudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Db25zZXF1ZW5jZRI5Cgt0cmFuc2NyaXB0cxgCIAMoCzIkLnRoZW1pcy5ycGMudmVwLlRyYW5zY3JpcHRBbm5vdGF0aW9uEiQKA3JhdxgPIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSNgoKcHJvdmVuYW5jZRgQIAMoCzIiLnRoZW1pcy5ldmlkZW5jZS5tb2RlbHMuUHJvdmVuYW5jZTJbCgNWZXASVAoIQW5ub3RhdGUSHy50aGVtaXMucnBjLnZlcC5Bbm5vdGF0ZVJlcXVlc3QaIC50aGVtaXMucnBjLnZlcC5Bbm5vdGF0ZVJlc3BvbnNlIgWitRgBA2IGcHJvdG8z", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
 
 /**
  * One VEP call carries several SVCv4 lines at once. Doc maps each to its code so the agent knows
@@ -43,15 +45,15 @@ export const file_themis_rpc_vep: GenFile = /*@__PURE__*/
  *   consequence          -> the routing key (and the NUL_ vs CDS_ LoF path)
  *   per-transcript hgvsc / hgvsp / exon / canonical / mane_select / mane_plus_clinical
  *                         -> the transcript each annotation belongs to, the exon it lands in, and
- *                            which model is MANE. VEP emits NONE of these by default, so the rpc
- *                            asks for them on every call (`hgvs`, `numbers`, `canonical`, `mane`) —
+ *                            which model is MANE, each transcript id versioned. VEP emits NONE of
+ *                            these by default, so the rpc asks for them on every call —
  *                            `predictors` adds scores on top and never replaces them.
- *   predictor score       -> MIS_PRD candidate score. WHICH predictor is the frozen per-gene policy
- *                            in themis.svcv4 (BayesDel by default, AlphaMissense for PKD1), read
- *                            before the call; the library applies that predictor's score->bin table
- *                            and enforces ONE calibrated predictor per gene — do NOT tool-shop here.
- *                            The others ride in raw as what a policy revision would be argued from,
- *                            never a per-variant pick.
+ *   predictor score       -> MIS_PRD candidate score, typed in `transcripts`. WHICH predictor
+ *                            is the frozen per-gene policy in themis.svcv4 (BayesDel by default,
+ *                            AlphaMissense for PKD1), read before the call; the library applies that
+ *                            predictor's score->bin table and enforces ONE calibrated predictor per
+ *                            gene — do NOT tool-shop here. A second one requested rides alongside
+ *                            as what a policy revision would be argued from, never a per-variant pick.
  *   SpliceAI deltas       -> SPL_PRD (every variant type checks a splice effect)
  *   colocated ClinVar     -> context ONLY — an Ensembl-release snapshot, not live; use clinvar for
  *                            the informative-variant pool at a stated review-status floor
@@ -108,7 +110,87 @@ export const AnnotateRequestSchema: GenMessage<AnnotateRequest> = /*@__PURE__*/
   messageDesc(file_themis_rpc_vep, 0);
 
 /**
- * VEP's consolidated annotation: the routing consequence typed, the rest of the payload in raw.
+ * One calibrated missense predictor's score on one transcript. Read a score here, not from raw:
+ * raw spells each predictor's key the way its wire form does.
+ *
+ * @generated from message themis.rpc.vep.PredictorScore
+ */
+export type PredictorScore = Message<"themis.rpc.vep.PredictorScore"> & {
+  /**
+   * The predictor, under the name the request used for it: one of `AnnotateRequest.predictors`.
+   *
+   * @generated from field: string predictor = 1;
+   */
+  predictor: string;
+
+  /**
+   * The score on the predictor's own published scale, as served: always set, finite, never rescaled
+   * or binned.
+   *
+   * @generated from field: optional double score = 2;
+   */
+  score?: number | undefined;
+};
+
+/**
+ * Describes the message themis.rpc.vep.PredictorScore.
+ * Use `create(PredictorScoreSchema)` to create a new message.
+ */
+export const PredictorScoreSchema: GenMessage<PredictorScore> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_vep, 1);
+
+/**
+ * One transcript VEP annotated the variant on: its identity, the MANE RefSeq model it is paired
+ * with, and the requested predictors' scores on it.
+ *
+ * @generated from message themis.rpc.vep.TranscriptAnnotation
+ */
+export type TranscriptAnnotation = Message<"themis.rpc.vep.TranscriptAnnotation"> & {
+  /**
+   * VEP's `transcript_id`: an Ensembl accession, versioned ("ENST00000358273.9").
+   *
+   * @generated from field: string transcript_id = 1;
+   */
+  transcriptId: string;
+
+  /**
+   * The versioned RefSeq accession this transcript is the MANE Select pair of ("NM_001042492.3"),
+   * or empty where it is none. A caller holding the MANE RefSeq accession finds its transcript here,
+   * since VEP annotates Ensembl transcripts only.
+   *
+   * @generated from field: string mane_select = 2;
+   */
+  maneSelect: string;
+
+  /**
+   * The versioned RefSeq accession this transcript is the MANE Plus Clinical pair of, or empty.
+   *
+   * @generated from field: string mane_plus_clinical = 3;
+   */
+  manePlusClinical: string;
+
+  /**
+   * One entry per requested SVCv4-calibrated missense predictor (AlphaMissense, BayesDel, ESM1b,
+   * MutPred2, REVEL, VARITY_R) that VEP served a score for on this transcript. A requested predictor
+   * with no entry is VEP serving no score for it here. An unrequested predictor has no entry, which
+   * says nothing about the variant. CADD and SpliceAI stay in raw: neither is a calibrated missense
+   * score.
+   *
+   * @generated from field: repeated themis.rpc.vep.PredictorScore scores = 4;
+   */
+  scores: PredictorScore[];
+};
+
+/**
+ * Describes the message themis.rpc.vep.TranscriptAnnotation.
+ * Use `create(TranscriptAnnotationSchema)` to create a new message.
+ */
+export const TranscriptAnnotationSchema: GenMessage<TranscriptAnnotation> = /*@__PURE__*/
+  messageDesc(file_themis_rpc_vep, 2);
+
+/**
+ * VEP's consolidated annotation: the routing consequence and each transcript's identity and
+ * predictor scores typed, the rest of the payload in raw.
  *
  * @generated from message themis.rpc.vep.AnnotateResponse
  */
@@ -119,13 +201,18 @@ export type AnnotateResponse = Message<"themis.rpc.vep.AnnotateResponse"> & {
   mostSevereConsequence: Consequence;
 
   /**
-   * The full VEP JSON. Where a predictor score is read: the element of `transcript_consequences`
-   * whose `transcript_id` names the transcript, and on that element one flat key per wire form — a
-   * first-class field under VEP's own name (AlphaMissense: `am_pathogenicity`), a dbNSFP column under
-   * the plugin's column name, case included (BayesDel: `BayesDel_noAF_score`). Neither nests under a
-   * per-plugin object. An element omitting that key, or stating it null, is VEP serving no score for
-   * that predictor on that transcript rather than schema drift — for a predictor `predictors` asked
-   * for; a response fetched without one carries no key for it either.
+   * One element per transcript VEP annotated, whether or not it carries a score, in VEP's order. A
+   * transcript absent here is one VEP did not annotate; a transcript present with no score for a
+   * requested predictor is VEP serving no score on it.
+   *
+   * @generated from field: repeated themis.rpc.vep.TranscriptAnnotation transcripts = 2;
+   */
+  transcripts: TranscriptAnnotation[];
+
+  /**
+   * The full VEP JSON, verbatim apart from each requested dbNSFP column: resolved to one value per
+   * transcript, and deleted where dbNSFP holds no value for it. For replay and for what no typed
+   * field carries; read a transcript's scores from `transcripts`.
    *
    * @generated from field: google.protobuf.Struct raw = 15;
    */
@@ -142,7 +229,7 @@ export type AnnotateResponse = Message<"themis.rpc.vep.AnnotateResponse"> & {
  * Use `create(AnnotateResponseSchema)` to create a new message.
  */
 export const AnnotateResponseSchema: GenMessage<AnnotateResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_vep, 1);
+  messageDesc(file_themis_rpc_vep, 3);
 
 /**
  * @generated from service themis.rpc.vep.Vep
