@@ -21,7 +21,7 @@
         "cadd_phred": 33,
         "hgnc_id": "HGNC:7765",
         "polyphen_prediction": "probably_damaging",
-        "transcript_id": "ENST00000356175",
+        "transcript_id": "ENST00000356175.8",
         "biotype": "protein_coding",
         "gene_symbol_source": "HGNC",
         "hgvsc": "ENST00000356175.8:c.3496G>C",
@@ -111,7 +111,7 @@
           "missense_variant",
           "splice_region_variant"
         ],
-        "transcript_id": "ENST00000358273",
+        "transcript_id": "ENST00000358273.9",
         "polyphen_prediction": "possibly_damaging",
         "hgnc_id": "HGNC:7765"
       },
@@ -163,7 +163,7 @@
         },
         "hgnc_id": "HGNC:7765",
         "polyphen_prediction": "possibly_damaging",
-        "transcript_id": "ENST00000456735",
+        "transcript_id": "ENST00000456735.6",
         "flags": [
           "cds_start_NF"
         ]
@@ -178,7 +178,7 @@
         "flags": [
           "cds_start_NF"
         ],
-        "transcript_id": "ENST00000466819",
+        "transcript_id": "ENST00000466819.5",
         "strand": 1,
         "gene_symbol": "NF1",
         "hgnc_id": "HGNC:7765",
@@ -219,7 +219,7 @@
         "hgnc_id": "HGNC:7765",
         "gene_symbol": "NF1",
         "strand": 1,
-        "transcript_id": "ENST00000479614",
+        "transcript_id": "ENST00000479614.1",
         "flags": [
           "cds_start_NF"
         ],
@@ -237,7 +237,7 @@
           "splice_region_variant",
           "non_coding_transcript_exon_variant"
         ],
-        "transcript_id": "ENST00000493220",
+        "transcript_id": "ENST00000493220.5",
         "strand": 1,
         "cdna_start": 2032,
         "gene_symbol": "NF1",
@@ -284,7 +284,7 @@
         "cdna_start": 3271,
         "gene_symbol": "NF1",
         "strand": 1,
-        "transcript_id": "ENST00000495910",
+        "transcript_id": "ENST00000495910.6",
         "flags": [
           "cds_start_NF"
         ],
@@ -326,7 +326,7 @@
         "protein_end": 1166,
         "cdna_start": 3598,
         "strand": 1,
-        "transcript_id": "ENST00000579081",
+        "transcript_id": "ENST00000579081.6",
         "cdna_end": 3598,
         "hgnc_id": "HGNC:7765",
         "variant_allele": "C",
@@ -361,7 +361,7 @@
         },
         "gene_symbol": "NF1",
         "gene_symbol_source": "HGNC",
-        "transcript_id": "ENST00000687863",
+        "transcript_id": "ENST00000687863.1",
         "strand": 1,
         "distance": 2314,
         "biotype": "retained_intron",
@@ -395,7 +395,7 @@
         "cadd_phred": 33,
         "polyphen_prediction": "possibly_damaging",
         "hgnc_id": "HGNC:7765",
-        "transcript_id": "ENST00000691014",
+        "transcript_id": "ENST00000691014.2",
         "bayesdel_noaf_score": 0.0531436,
         "cadd_raw": 5.802463,
         "gene_id": "ENSG00000196712",
@@ -441,7 +441,7 @@
         "gene_id": "ENSG00000196712",
         "cadd_raw": 5.802463,
         "biotype": "retained_intron",
-        "transcript_id": "ENST00000693210",
+        "transcript_id": "ENST00000693210.1",
         "strand": 1,
         "cdna_start": 222,
         "gene_symbol": "NF1",
@@ -476,7 +476,7 @@
         "cadd_phred": 33,
         "hgnc_id": "HGNC:7765",
         "polyphen_prediction": "possibly_damaging",
-        "transcript_id": "ENST00000696138",
+        "transcript_id": "ENST00000696138.2",
         "bayesdel_noaf_score": 0.0531436,
         "cadd_raw": 5.802463,
         "gene_id": "ENSG00000196712",
@@ -531,7 +531,7 @@
         "gene_id": "ENSG00000196712",
         "polyphen_prediction": "possibly_damaging",
         "hgnc_id": "HGNC:7765",
-        "transcript_id": "ENST00000696139",
+        "transcript_id": "ENST00000696139.1",
         "flags": [
           "cds_start_NF"
         ],
@@ -599,11 +599,11 @@
         "gene_symbol": "NF1",
         "protein_end": 1166,
         "strand": 1,
-        "transcript_id": "ENST00000990273"
+        "transcript_id": "ENST00000990273.1"
       },
       {
         "strand": 1,
-        "transcript_id": "ENST00001108366",
+        "transcript_id": "ENST00001108366.1",
         "gene_symbol": "NF1",
         "gene_symbol_source": "HGNC",
         "impact": "MODIFIER",
@@ -633,7 +633,7 @@
         "protein_end": 1166,
         "gene_symbol": "NF1",
         "cdna_start": 3923,
-        "transcript_id": "ENST00001136372",
+        "transcript_id": "ENST00001136372.1",
         "strand": 1,
         "cdna_end": 3923,
         "polyphen_prediction": "probably_damaging",
@@ -722,7 +722,7 @@
         "cdna_start": 3923,
         "gene_symbol": "NF1",
         "protein_end": 1166,
-        "transcript_id": "ENST00001136373",
+        "transcript_id": "ENST00001136373.1",
         "strand": 1
       }
     ],

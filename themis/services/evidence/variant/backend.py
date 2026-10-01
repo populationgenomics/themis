@@ -44,7 +44,11 @@ def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBacke
 
 
 class LiveBackend(VariantBackend):
-    """The deployed backend, chaining the Allele Registry, VariantValidator and VEP."""
+    """The deployed backend, chaining the Allele Registry, VariantValidator and VEP.
+
+    The VEP leg parses the whole annotation (`vep.parse_vep`), transcripts included, so an upstream
+    shape change fails `Normalize` loudly rather than only the rpcs that read the transcripts.
+    """
 
     def __init__(self, http_client: httpx2.AsyncClient) -> None:
         self._http_client = http_client

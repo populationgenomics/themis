@@ -168,35 +168,6 @@ _POINTS: Mapping[Predictor, Callable[[Score], decimal.Decimal]] = {
 }
 
 
-# The key each predictor's score arrives under on one of VEP's transcript consequences. Two wire
-# forms end at one key here: AlphaMissense is a first-class VEP field, and BayesDel reaches VEP
-# through its dbNSFP plugin, whose per-transcript dotted string `Vep.Annotate` has already resolved
-# to one value per transcript.
-_SCORE_KEYS: Mapping[Predictor, str] = {
-    Predictor.ALPHAMISSENSE: 'am_pathogenicity',
-    Predictor.BAYESDEL: 'BayesDel_noAF_score',
-}
-
-
-def score_key(predictor: Predictor) -> str:
-    """The key `Vep.Annotate` serves this predictor's score under, on a transcript consequence.
-
-    Args:
-        predictor: The pre-selected calibrated predictor.
-
-    Returns:
-        The key to read the score at.
-
-    Raises:
-        NotImplementedError: For a predictor with no threshold table here, whose score could then be
-            read and not binned.
-    """
-    try:
-        return _SCORE_KEYS[predictor]
-    except KeyError as e:
-        raise NotImplementedError(f'no key is recorded for {predictor.value}, whose score this build cannot bin') from e
-
-
 def implements(predictor: Predictor) -> bool:
     """Whether this module holds `predictor`'s SM6 threshold table, so a score for it can be binned.
 

@@ -13,6 +13,7 @@ Each builder returns a fresh payload, so a test can mutate one into the case it 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 from google.protobuf import json_format
 
@@ -132,45 +133,39 @@ def clinvar_describe_response(
     )
 
 
-def vep_payload() -> dict[str, object]:
-    """Ensembl VEP's answer, with a per-transcript consequence carrying each wire form's score.
+class VepTranscript(NamedTuple):
+    """One transcript VEP annotated, as a test states it."""
 
-    The paths `vep.proto` maps to MIS_PRD: the element of `transcript_consequences` whose
-    `transcript_id` names the transcript, and the predictor's score on it — `am_pathogenicity` as a
-    first-class VEP field, and the dbNSFP column the plugin serves resolved to one value.
-    """
-    return {
-        'input': 'NM_000123.4:c.3496G>C',
-        'assembly_name': 'GRCh38',
-        'most_severe_consequence': 'missense_variant',
-        'transcript_consequences': [
-            {
-                'transcript_id': 'NM_000123.4',
-                'hgvsc': 'NM_000123.4:c.3496G>C',
-                'hgvsp': 'NP_000114.1:p.Gly1166Arg',
-                'exon': '25/45',
-                'consequence_terms': ['missense_variant'],
-                'BayesDel_noAF_score': 0.35,
-                'am_pathogenicity': 0.9812,
-            },
-            {
-                'transcript_id': 'NM_000456.2',
-                'hgvsc': 'NM_000456.2:c.100G>C',
-                'consequence_terms': ['missense_variant'],
-                'BayesDel_noAF_score': 0.11,
-            },
-        ],
-    }
+    transcript_id: str
+    mane_select: str
+    mane_plus_clinical: str
+    scores: tuple[tuple[str, float], ...]
 
 
-def vep_response(payload: dict[str, object] | None = None) -> vep_pb2.AnnotateResponse:
-    """A `Vep.Annotate` response over `payload`, defaulting to `vep_payload()`."""
-    response = vep_pb2.AnnotateResponse(
+# The shape VEP answers in: Ensembl ids, versioned, each paired with its MANE RefSeq model where it
+# has one, and each scored separately, so reading the wrong transcript shows.
+VEP_TRANSCRIPTS: tuple[VepTranscript, ...] = (
+    VepTranscript('ENST00000355739.9', 'NM_000123.4', '', (('BayesDel', 0.35), ('AlphaMissense', 0.9812))),
+    VepTranscript('ENST00000652225.2', '', 'NM_001204425.2', (('BayesDel', 0.11),)),
+    VepTranscript('ENST00000534520.5', '', '', ()),
+)
+
+
+def vep_response(transcripts: Sequence[VepTranscript] = VEP_TRANSCRIPTS) -> vep_pb2.AnnotateResponse:
+    """A `Vep.Annotate` response annotating `transcripts`, with no raw payload to read."""
+    return vep_pb2.AnnotateResponse(
         most_severe_consequence=evidence_pb2.CONSEQUENCE_MISSENSE,
+        transcripts=[
+            vep_pb2.TranscriptAnnotation(
+                transcript_id=transcript.transcript_id,
+                mane_select=transcript.mane_select,
+                mane_plus_clinical=transcript.mane_plus_clinical,
+                scores=[vep_pb2.PredictorScore(predictor=name, score=score) for name, score in transcript.scores],
+            )
+            for transcript in transcripts
+        ],
         provenance=[provenance('Ensembl VEP REST', 'Ensembl 113', 'GRCh38')],
     )
-    json_format.ParseDict(vep_payload() if payload is None else payload, response.raw)
-    return response
 
 
 def splice_deltas_response(

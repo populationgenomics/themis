@@ -1,10 +1,12 @@
-"""Ensembl VEP REST adapter: molecular consequence + the predictor scores that ride in `raw`.
+"""Ensembl VEP REST adapter: molecular consequence, per-transcript predictor scores, and `raw`.
 
 One VEP call carries several SVCv4 lines: the `most_severe_consequence` SO term is the routing key
-(mapped here onto the `Consequence` enum), and the per-transcript predictor scores / `spliceai` /
-`mane_select` plus a colocated ClinVar/gnomAD snapshot ride in the payload for the model to read. This
-adapter types only the routing consequence and returns the whole variant annotation verbatim as `raw`;
-the backend wraps it in `AnnotateResponse` and stamps `retrieved_at`.
+(mapped here onto the `Consequence` enum); each annotated transcript's identity, MANE pair and
+requested calibrated missense scores are read here (`TranscriptAnnotation`), at the spelling
+`SCORE_PATHS` records for each wire form; and `spliceai` plus a colocated ClinVar/gnomAD snapshot
+ride in the payload for the model to read. The whole variant annotation is returned as `raw`, each
+requested dbNSFP column resolved; the backend wraps it all in `AnnotateResponse` and stamps
+`retrieved_at`.
 
 GRCh38 is the default host; GRCh37 uses the `grch37.rest.ensembl.org` host (MANE is GRCh38-only, as
 is AlphaMissense). The per-transcript fields the contract promises are asked for on every call
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import math
 import urllib.parse
 from collections.abc import Mapping, Sequence
 
@@ -38,9 +41,10 @@ _GRCH37_HOST = 'https://grch37.rest.ensembl.org'
 
 # The VEP REST options producing the per-transcript fields this adapter's contract promises:
 # `hgvs` -> hgvsc/hgvsp, `numbers` -> exon/intron, `mane` -> mane/mane_select/mane_plus_clinical,
-# `canonical` -> canonical. Ensembl answers an option it does not recognise with a 200 that simply
-# lacks the field, so a misspelling here is invisible in the response.
-_ANNOTATION_OPTIONS: Mapping[str, int] = {'hgvs': 1, 'numbers': 1, 'canonical': 1, 'mane': 1}
+# `canonical` -> canonical, `transcript_version` -> a versioned transcript_id. Ensembl answers an
+# option it does not recognise with a 200 that simply lacks the field, so a misspelling here is
+# invisible in the response.
+_ANNOTATION_OPTIONS: Mapping[str, int] = {'hgvs': 1, 'numbers': 1, 'canonical': 1, 'mane': 1, 'transcript_version': 1}
 
 # Scores VEP serves as first-class fields: `?<name>=1` yields a nested object (`alphamissense`,
 # `spliceai`), a scalar (`revel`) or a field pair (`cadd_phred` / `cadd_raw`). Ensembl documents
@@ -61,6 +65,16 @@ _DBNSFP_COLUMNS: Mapping[str, str] = {
 }
 
 ACCEPTED_PREDICTORS: frozenset[str] = _FIRST_CLASS_PREDICTORS | frozenset(_DBNSFP_COLUMNS)
+
+# Where each calibrated missense predictor's score sits on a transcript consequence, as the recorded
+# payload shows: a first-class flag under a key of its own (AlphaMissense nests it in a per-flag
+# object), a dbNSFP column lower-cased. CADD and SpliceAI are accepted but carry no calibrated
+# missense score, so they stay in raw.
+SCORE_PATHS: Mapping[str, tuple[str, ...]] = {
+    'AlphaMissense': ('alphamissense', 'am_pathogenicity'),
+    'REVEL': ('revel',),
+    **{name: (column.lower(),) for name, column in _DBNSFP_COLUMNS.items()},
+}
 
 # dbNSFP writes a column's per-transcript values as one comma-joined string, "." where it holds
 # none; this asks VEP to keep the entries matching the annotated transcript.
@@ -84,6 +98,32 @@ _SO_TERM_TO_CONSEQUENCE: Mapping[str, int] = {
 
 
 @dataclasses.dataclass(frozen=True)
+class PredictorScore:
+    """One requested calibrated predictor's score, finite and as served."""
+
+    predictor: str
+    score: float
+
+
+@dataclasses.dataclass(frozen=True)
+class TranscriptAnnotation:
+    """One transcript VEP annotated: its Ensembl id, its MANE RefSeq pairs, and its scores.
+
+    Attributes:
+        transcript_id: VEP's unversioned Ensembl accession.
+        mane_select: The versioned RefSeq accession it is the MANE Select pair of, or empty.
+        mane_plus_clinical: The versioned RefSeq accession it is the MANE Plus Clinical pair of, or
+            empty.
+        scores: Each requested calibrated predictor VEP served a score for on it.
+    """
+
+    transcript_id: str
+    mane_select: str
+    mane_plus_clinical: str
+    scores: tuple[PredictorScore, ...]
+
+
+@dataclasses.dataclass(frozen=True)
 class VepResult:
     """The VEP annotation for one variant.
 
@@ -93,6 +133,8 @@ class VepResult:
         gene_symbol: The canonical transcript's HGNC symbol, or empty if VEP carried none.
         hgnc_id: The canonical transcript's HGNC id (`HGNC:nnnn`), or empty if VEP carried none
             (never fabricated — an empty id signals the downstream reference-table key is unknown).
+        transcripts: One element per transcript consequence VEP annotated, scored or not, in payload
+            order.
         raw: The full VEP annotation object for the variant, for the proto `Struct`.
         source: Provenance source label.
         dataset_versions: The VEP release and the assembly it was run against, e.g.
@@ -103,6 +145,7 @@ class VepResult:
     most_severe_consequence: int
     gene_symbol: str
     hgnc_id: str
+    transcripts: tuple[TranscriptAnnotation, ...]
     raw: dict[str, object]
     source: str
     dataset_versions: tuple[str, ...]
@@ -183,9 +226,9 @@ def _resolved_consequence(consequence: Mapping[str, object], columns: Sequence[s
         key = column.lower()  # VEP lower-cases a dbNSFP column name in its output
         if key not in resolved:
             continue
-        value = _dbnsfp_value(column, resolved[key], transcript)
+        value = None if resolved[key] is None else _dbnsfp_value(column, resolved[key], transcript)
         if value is None:
-            # dbNSFP's "." is an absence; left in place it reads as a score.
+            # A null or dbNSFP's "." is an absence; left in place it reads as a score.
             del resolved[key]
         else:
             resolved[key] = value
@@ -199,6 +242,85 @@ def _with_resolved_dbnsfp(annotation: Mapping[str, object], columns: Sequence[st
         return dict(annotation)
     resolved = [_resolved_consequence(c, columns) if isinstance(c, Mapping) else c for c in consequences]
     return {**annotation, 'transcript_consequences': resolved}
+
+
+def _served_score(consequence: Mapping[str, object], predictor: str, transcript: str) -> float | None:
+    """The predictor's score on one resolved transcript consequence, or None where VEP served none.
+
+    VEP serving no score is the path's first key absent or null. Past that, a nested form whose
+    object is present without a number at its leaf is drift in the upstream's shape, not an absence.
+
+    Raises:
+        ValueError: If a step of the path holds something other than an object, if a present object
+            holds no score, or if the score is not a finite number. Read as an absence, each would drop
+            a score VEP did serve.
+    """
+    *steps, leaf = SCORE_PATHS[predictor]
+    held: Mapping[str, object] = consequence
+    for step in steps:
+        stated = held.get(step)
+        if stated is None and held is consequence:
+            return None
+        if not isinstance(stated, Mapping):
+            raise ValueError(f'VEP returned a {type(stated).__name__} for {step} on {transcript}, expected an object')
+        held = stated
+    stated = held.get(leaf)
+    if stated is None:
+        if steps:
+            raise ValueError(f'VEP returned {".".join(steps)} on {transcript} without its {leaf}')
+        return None
+    if isinstance(stated, bool) or not isinstance(stated, int | float):
+        raise ValueError(f'VEP returned a {type(stated).__name__} for {predictor} on {transcript}, expected a number')
+    if not math.isfinite(stated):
+        raise ValueError(f'VEP returned a non-finite {predictor} score on {transcript}: {stated!r}')
+    return float(stated)
+
+
+def _mane_accession(consequence: Mapping[str, object], key: str, transcript: str) -> str:
+    stated = consequence.get(key)
+    if stated is None:
+        return ''
+    if not isinstance(stated, str):
+        raise ValueError(f'VEP returned a {type(stated).__name__} for {key} on {transcript}, expected an accession')
+    return stated
+
+
+def _transcripts(annotation: Mapping[str, object], predictors: Sequence[str]) -> tuple[TranscriptAnnotation, ...]:
+    """Each transcript consequence of `annotation`, with the requested calibrated predictors' scores.
+
+    An annotation carrying no `transcript_consequences` (an intergenic variant) annotates none.
+
+    Raises:
+        ValueError: If `transcript_consequences` is not a list of objects, if one names no
+            `transcript_id`, or if a MANE accession or a score is malformed.
+    """
+    consequences = annotation.get('transcript_consequences')
+    if consequences is None:
+        return ()
+    if not isinstance(consequences, list):
+        raise ValueError(f'VEP returned a {type(consequences).__name__} for transcript_consequences, expected a list')
+    wanted = [name for name in dict.fromkeys(predictors) if name in SCORE_PATHS]
+    transcripts = []
+    for consequence in consequences:
+        if not isinstance(consequence, Mapping):
+            raise ValueError(f'VEP returned a {type(consequence).__name__} transcript consequence, expected an object')
+        transcript = consequence.get('transcript_id')
+        if not isinstance(transcript, str) or not transcript:
+            raise ValueError('VEP returned a transcript consequence naming no transcript_id')
+        scores = []
+        for predictor in wanted:
+            score = _served_score(consequence, predictor, transcript)
+            if score is not None:
+                scores.append(PredictorScore(predictor=predictor, score=score))
+        transcripts.append(
+            TranscriptAnnotation(
+                transcript_id=transcript,
+                mane_select=_mane_accession(consequence, 'mane_select', transcript),
+                mane_plus_clinical=_mane_accession(consequence, 'mane_plus_clinical', transcript),
+                scores=tuple(scores),
+            )
+        )
+    return tuple(transcripts)
 
 
 def _carries_term(consequence: Mapping[str, object], so_term: object) -> bool:
@@ -272,34 +394,44 @@ def _dataset_versions(software: object, genome_build: str) -> tuple[str, ...]:
 
 
 def parse_vep(
-    annotation: Mapping[str, object], *, dataset_versions: tuple[str, ...], query: str, dbnsfp_columns: Sequence[str]
+    annotation: Mapping[str, object], *, dataset_versions: tuple[str, ...], query: str, predictors: Sequence[str]
 ) -> VepResult:
-    """Parse one VEP variant annotation into the routing consequence + raw payload.
+    """Parse one VEP variant annotation into the routing consequence, the predictor scores and raw.
+
+    Every transcript consequence is read, whatever the caller asked for: a payload whose
+    transcripts are malformed fails here even for a caller reading only the routing consequence
+    (`Variant.Normalize`). That is deliberate. Every real answer carries its consequences in this
+    shape, so a failure is the upstream changing shape, which no caller should read around.
 
     Args:
         annotation: The first (and only) element of the VEP response list — the variant's annotation.
         dataset_versions: The VEP release and assembly, carried into provenance.
         query: The exact request URL issued, carried into provenance for replay.
-        dbnsfp_columns: The dbNSFP columns the request asked for, each resolved to one value per
-            transcript consequence. Named rather than detected, because the payload carries other
-            comma-joined fields (`ensembl_transcriptid`) that must be left as they are.
+        predictors: The predictor names the request asked for, from `ACCEPTED_PREDICTORS`. Each
+            dbNSFP column among them is resolved to one value per transcript consequence — named
+            rather than detected, because the payload carries other comma-joined fields
+            (`ensembl_transcriptid`) that must be left as they are — and each calibrated one's score
+            is read off at its `SCORE_PATHS` entry.
 
     Returns:
         The parsed `VepResult`.
 
     Raises:
         ValueError: If the annotation carries no `most_severe_consequence` (a malformed response),
-            or a dbNSFP column resolves to something other than one value for its transcript.
+            a dbNSFP column resolves to something other than one value for its transcript, or a
+            transcript consequence, its MANE accessions or a requested score are malformed.
     """
     so_term = annotation.get('most_severe_consequence')
     if not isinstance(so_term, str):
         raise ValueError('VEP annotation has no most_severe_consequence')
     gene_symbol, hgnc_id = _canonical_gene(annotation)
+    resolved = _with_resolved_dbnsfp(annotation, _dbnsfp_columns(predictors))
     return VepResult(
         most_severe_consequence=consequence_for_so_term(so_term),
         gene_symbol=gene_symbol,
         hgnc_id=hgnc_id,
-        raw=_with_resolved_dbnsfp(annotation, dbnsfp_columns),
+        transcripts=_transcripts(resolved, predictors),
+        raw=resolved,
         source=_SOURCE,
         dataset_versions=dataset_versions,
         query=query,
@@ -354,5 +486,5 @@ async def fetch_vep(
         annotation,
         dataset_versions=_dataset_versions(software.json(), genome_build),
         query=str(response.request.url),
-        dbnsfp_columns=_dbnsfp_columns(requested),
+        predictors=requested,
     )

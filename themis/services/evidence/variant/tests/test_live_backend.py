@@ -87,6 +87,7 @@ def test_normalize_composes_allele_validator_and_vep(monkeypatch: pytest.MonkeyP
                 most_severe_consequence=evidence_pb2.CONSEQUENCE_MISSENSE,
                 gene_symbol='BRCA1',
                 hgnc_id='HGNC:1100',
+                transcripts=(),
                 raw={'most_severe_consequence': 'missense_variant'},
                 source='Ensembl VEP REST',
                 dataset_versions=('GRCh38',),
@@ -168,6 +169,7 @@ def _normalize_over_projections(
                 most_severe_consequence=evidence_pb2.CONSEQUENCE_MISSENSE,
                 gene_symbol='BRCA1',
                 hgnc_id='HGNC:1100',
+                transcripts=(),
                 raw={},
                 source='Ensembl VEP REST',
                 dataset_versions=('GRCh38',),
@@ -266,7 +268,9 @@ def test_normalize_falls_back_to_registry_symbol_when_vep_lacks_hgnc_id(monkeypa
     monkeypatch.setattr(
         vep,
         'fetch_vep',
-        _returns(vep.VepResult(evidence_pb2.CONSEQUENCE_NONSENSE, '', '', {}, 'Ensembl VEP REST', ('GRCh38',), 'q')),
+        _returns(
+            vep.VepResult(evidence_pb2.CONSEQUENCE_NONSENSE, '', '', (), {}, 'Ensembl VEP REST', ('GRCh38',), 'q')
+        ),
     )
 
     normalized = _run(
@@ -333,7 +337,7 @@ def test_normalize_canonicalises_onto_the_refseq_mane_transcript(monkeypatch: py
     async def fake_vep(variant: str, _predictors: list[str], _build: str, **_kwargs: object) -> vep.VepResult:
         seen['vep'] = variant
         return vep.VepResult(
-            evidence_pb2.CONSEQUENCE_MISSENSE, 'NF1', 'HGNC:7765', {}, 'Ensembl VEP REST', ('GRCh38',), 'q'
+            evidence_pb2.CONSEQUENCE_MISSENSE, 'NF1', 'HGNC:7765', (), {}, 'Ensembl VEP REST', ('GRCh38',), 'q'
         )
 
     monkeypatch.setattr(variant_validator, 'fetch_variant_validator', fake_variant_validator)

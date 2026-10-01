@@ -58,6 +58,18 @@ class LiveBackend(VepBackend):
         )
         return vep_pb2.AnnotateResponse(
             most_severe_consequence=cast('evidence_pb2.Consequence', annotation.most_severe_consequence),
+            transcripts=[
+                vep_pb2.TranscriptAnnotation(
+                    transcript_id=transcript.transcript_id,
+                    mane_select=transcript.mane_select,
+                    mane_plus_clinical=transcript.mane_plus_clinical,
+                    scores=[
+                        vep_pb2.PredictorScore(predictor=score.predictor, score=score.score)
+                        for score in transcript.scores
+                    ],
+                )
+                for transcript in annotation.transcripts
+            ],
             raw=provenance.struct(annotation.raw),
             provenance=[provenance.provenance(annotation, at)],
         )

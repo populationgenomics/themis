@@ -147,7 +147,8 @@ def test_a_missing_policy_file_is_not_an_empty_policy(tmp_path: pathlib.Path) ->
 
 
 D = decimal.Decimal
-_TRANSCRIPT = 'NM_000123.4'
+_TRANSCRIPT = 'NM_000123.4'  # the MANE Select RefSeq accession the workflow holds
+_ENSEMBL = 'ENST00000355739.9'  # its MANE pair, the transcript VEP annotates
 
 
 def _scored(
@@ -155,7 +156,7 @@ def _scored(
     response: vep_pb2.AnnotateResponse | None = None,
     *,
     transcript: str = _TRANSCRIPT,
-) -> predictor_policy.PredictorScore:
+) -> predictor_policy.MisPrdScore:
     """The door as a caller reaches it: the request the selection built, and the answer to it."""
     return predictor_policy.mis_prd_from_vep(
         predictor_policy.annotate_request(selection, variant=f'{_TRANSCRIPT}:c.3496G>C'),
@@ -175,6 +176,16 @@ def _selection(predictor: predictors.Predictor = predictors.Predictor.BAYESDEL) 
     )
 
 
+def _with(transcript_id: str, **changes: object) -> list[responses.VepTranscript]:
+    """The default transcripts, with the one named `transcript_id` changed."""
+    if transcript_id not in {element.transcript_id for element in responses.VEP_TRANSCRIPTS}:
+        raise KeyError(f'the default transcripts hold no {transcript_id}')
+    return [
+        element._replace(**changes) if element.transcript_id == transcript_id else element
+        for element in responses.VEP_TRANSCRIPTS
+    ]
+
+
 def test_the_request_asks_for_the_selected_predictor_and_no_other() -> None:
     request = predictor_policy.annotate_request(_selection(), variant=f'{_TRANSCRIPT}:c.3496G>C')
     assert list(request.predictors) == ['BayesDel']
@@ -190,67 +201,103 @@ def test_a_request_naming_no_variant_is_refused() -> None:
     ('predictor', 'points'),
     [(predictors.Predictor.BAYESDEL, '2.0'), (predictors.Predictor.ALPHAMISSENSE, '3.0')],
 )
-def test_each_wire_form_is_read_at_its_own_key(predictor: predictors.Predictor, points: str) -> None:
-    # One key per predictor: a first-class VEP field and a dbNSFP column reach the payload the same
-    # way but under different names, and reading the wrong one scores nothing at all.
+def test_each_predictor_is_read_off_its_own_entry(predictor: predictors.Predictor, points: str) -> None:
+    # The transcript carries an entry per predictor; reading another's would bin it off the wrong table.
     scored = _scored(_selection(predictor))
     assert scored.points == D(points)
     assert scored.code == 'MIS_PRD'
     assert predictor.value in scored.derivation
 
 
-def test_the_transcripts_own_consequence_is_the_one_read() -> None:
-    # The payload annotates several transcripts, each with its own score.
-    scored = _scored(_selection())
-    assert scored.score == D('0.35')
+@pytest.mark.parametrize(
+    ('transcript', 'mane_pair'),
+    [(_TRANSCRIPT, _TRANSCRIPT), ('NM_000123', _TRANSCRIPT), (_ENSEMBL, ''), ('ENST00000355739', '')],
+)
+def test_the_accession_the_workflow_holds_finds_its_transcript(transcript: str, mane_pair: str) -> None:
+    # The MANE RefSeq accession reaches the Ensembl transcript through its pair; an Ensembl one by id.
+    # The other transcripts carry other scores, so reading the wrong one shows.
+    scored = _scored(_selection(), transcript=transcript)
+    assert (scored.score, scored.transcript_id, scored.mane_pair) == (D('0.35'), _ENSEMBL, mane_pair)
+    assert _ENSEMBL in scored.derivation
+    assert mane_pair in scored.derivation
 
 
-def test_the_accessions_version_run_does_not_hide_the_annotation() -> None:
-    scored = _scored(_selection(), transcript='NM_000123.9')
-    assert scored.score == D('0.35')
+def test_a_mane_plus_clinical_accession_finds_its_transcript() -> None:
+    scored = _scored(_selection(), transcript='NM_001204425.2')
+    assert (scored.score, scored.transcript_id) == (D('0.11'), 'ENST00000652225.2')
+
+
+@pytest.mark.parametrize(('transcript', 'held'), [('NM_000123.9', _TRANSCRIPT), ('ENST00000355739.7', _ENSEMBL)])
+def test_another_version_is_another_transcript_model_and_the_refusal_names_what_vep_holds(
+    transcript: str, held: str
+) -> None:
+    # One rule for both namespaces: a versioned accession has to agree, so MANE drift under the frozen
+    # release is refused rather than read off another model; the version VEP holds is named.
+    with pytest.raises(ValueError, match='another transcript model') as caught:
+        _scored(_selection(), transcript=transcript)
+    assert held in str(caught.value)
+
+
+@pytest.mark.parametrize('transcript', ['', 'NM_000123.4:c.3496G>C', 'AAA', 'ENSP00000351015', 'NM_000123.x'])
+def test_something_other_than_a_transcript_accession_is_refused_before_matching(transcript: str) -> None:
+    with pytest.raises(ValueError, match='takes a transcript accession'):
+        _scored(_selection(), transcript=transcript)
 
 
 def test_a_predictor_with_no_score_for_the_transcript_determines_nothing() -> None:
-    # The rpc holds the predictor names to a closed set, so an absent score is the predictor having
-    # none rather than a name Ensembl silently ignored.
-    payload = responses.vep_payload()
-    del payload['transcript_consequences'][0]['BayesDel_noAF_score']  # type: ignore[index] — the payload is JSON
-    scored = _scored(_selection(), responses.vep_response(payload))
+    # The rpc holds the predictor names to a closed set, so an absent score on an annotated
+    # transcript is the predictor having none rather than a name Ensembl silently ignored.
+    unscored = _with(_ENSEMBL, scores=(('AlphaMissense', 0.9812),))
+    scored = _scored(_selection(), responses.vep_response(unscored))
     assert scored.score is None
     assert scored.points is None
-    assert 'no score' in scored.derivation
+    assert f'no score on {_ENSEMBL}' in scored.derivation
 
 
-def test_a_payload_carrying_no_annotation_for_the_transcript_is_refused() -> None:
-    with pytest.raises(ValueError, match=r'NM_999999\.1'):
-        _scored(_selection(), transcript='NM_999999.1')
+def test_an_entry_without_its_score_is_refused() -> None:
+    # Presence tells a missing score from a zero, and a stated predictor with none is a broken answer.
+    response = responses.vep_response()
+    response.transcripts[0].scores[0].ClearField('score')
+    with pytest.raises(ValueError, match='without its score'):
+        _scored(_selection(), response)
 
 
-def test_a_payload_carrying_two_annotations_for_the_transcript_is_refused() -> None:
-    # Two consequences on one transcript is two answers; picking one is the shopping the policy exists
-    # to prevent.
-    payload = responses.vep_payload()
-    payload['transcript_consequences'].append(payload['transcript_consequences'][0])  # type: ignore[union-attr, index]
-    with pytest.raises(ValueError, match='must carry one'):
-        _scored(_selection(), responses.vep_response(payload))
+@pytest.mark.parametrize('transcript', ['NM_999999.1', 'ENST00000999999', 'XM_000123.1'])
+def test_an_accession_vep_did_not_annotate_is_refused(transcript: str) -> None:
+    # An accession no annotated transcript matches is a request for the wrong transcript, not a
+    # predictor with no score.
+    with pytest.raises(ValueError, match='carries nothing for'):
+        _scored(_selection(), transcript=transcript)
+
+
+def test_an_accession_two_transcripts_match_is_refused() -> None:
+    # Two transcripts is two answers; picking one is the shopping the policy exists to prevent.
+    ambiguous = _with('ENST00000534520.5', mane_plus_clinical=_TRANSCRIPT)
+    with pytest.raises(ValueError, match='must name one'):
+        _scored(_selection(), responses.vep_response(ambiguous))
 
 
 def test_a_score_outside_the_predictors_published_range_is_refused() -> None:
     # A score on another predictor's scale: binning it would report a tier off the wrong table.
-    payload = responses.vep_payload()
-    payload['transcript_consequences'][0]['BayesDel_noAF_score'] = 3.5  # type: ignore[index] — the payload is JSON
     with pytest.raises(ValueError, match='must be in'):
-        _scored(_selection(), responses.vep_response(payload))
+        _scored(_selection(), responses.vep_response(_with(_ENSEMBL, scores=(('BayesDel', 3.5),))))
 
 
-def test_every_predictor_the_policy_may_name_has_a_key_to_read_it_at() -> None:
-    """A policy entry that resolves and then has no key to read is a gene that fails on its variant."""
+def test_two_scores_for_one_predictor_on_the_transcript_are_refused() -> None:
+    twice = _with(_ENSEMBL, scores=(('BayesDel', 0.35), ('BayesDel', 0.11)))
+    with pytest.raises(ValueError, match='must carry one'):
+        _scored(_selection(), responses.vep_response(twice))
+
+
+def test_only_a_predictor_this_build_can_bin_is_requested() -> None:
+    """A policy entry the build cannot bin is a gene that would fail on its variant, so it fails first."""
     for predictor in predictors.Predictor:
         if predictors.implements(predictor):
-            assert predictors.score_key(predictor)
+            request = predictor_policy.annotate_request(_selection(predictor), variant=f'{_TRANSCRIPT}:c.3496G>C')
+            assert list(request.predictors) == [predictor.value]
         else:
             with pytest.raises(NotImplementedError):
-                predictors.score_key(predictor)
+                predictor_policy.annotate_request(_selection(predictor), variant=f'{_TRANSCRIPT}:c.3496G>C')
 
 
 def test_a_response_fetched_without_this_predictor_is_refused() -> None:

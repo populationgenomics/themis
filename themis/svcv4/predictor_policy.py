@@ -13,7 +13,7 @@ point taking several predictors, and none returning a ranking.
 
 The two calls a selection governs live here for the same reason. `annotate_request` asks `Vep.Annotate`
 for that predictor alone — a second one is a different SVCv4 line, never a second opinion on this one
-— and `mis_prd_from_vep` bins that predictor's score off the answer, at the key VEP serves it under.
+— and `mis_prd_from_vep` bins that predictor's score off the answer's typed `transcripts`.
 Between them the single-predictor guarantee is the library's rather than the rpc's, which will serve
 any predictor on its allowlist.
 
@@ -40,7 +40,7 @@ import re
 from collections.abc import Sequence
 
 from themis.rpc import vep_pb2
-from themis.svcv4 import payload, predictors, provenance
+from themis.svcv4 import exact, predictors, provenance
 
 _DEFAULT_DATA = pathlib.Path(__file__).parent / 'data' / 'predictor_policy.json'
 
@@ -239,7 +239,7 @@ def load_policy(path: pathlib.Path | None = None) -> Policy:
 
 
 @dataclasses.dataclass(frozen=True)
-class PredictorScore:
+class MisPrdScore:
     """The MIS_PRD finding: the policy's predictor, its score, and the bin it fell in.
 
     A `classify.ScoredCode`. `points` is None wherever the predictor has no score for the
@@ -249,6 +249,10 @@ class PredictorScore:
     Attributes:
         selection: The entry that fixed the predictor, so a run records which predictor it used and
             on whose authority.
+        transcript_id: The versioned Ensembl transcript VEP scored, the one the caller's accession
+            matched.
+        mane_pair: The MANE RefSeq accession the match went through, as VEP pairs it; empty where
+            the caller named the Ensembl transcript itself.
         score: The predictor's score for the substitution; None where it has none for this
             transcript.
         points: The MIS_PRD initial points, pre-matrix; None wherever `score` is.
@@ -256,6 +260,8 @@ class PredictorScore:
     """
 
     selection: Selection
+    transcript_id: str
+    mane_pair: str
     score: decimal.Decimal | None
     points: decimal.Decimal | None
     releases: tuple[provenance.Release, ...] = ()
@@ -267,16 +273,17 @@ class PredictorScore:
 
     @property
     def derivation(self) -> str:
-        """The predictor, the score, and which policy entry chose it.
+        """The predictor, the score, the transcript it was read on, and which policy entry chose it.
 
         The entry is named rather than quoted: its rationale is the evidence behind a frozen choice
         and runs to a paragraph, which belongs on the `selection` a report reads, not in a tally line.
         """
         decided = 'the policy default' if self.selection.gene is None else f'the {self.selection.gene.hgnc_id} entry'
         stated = f'{decided}, policy {self.selection.version}'
+        on = self.transcript_id + (f', the MANE pair of {self.mane_pair}' if self.mane_pair else '')
         if self.score is None:
-            return f'{self.selection.predictor.value} ({stated}) has no score for this transcript'
-        return f'{self.selection.predictor.value} {self.score} ({stated})'
+            return f'{self.selection.predictor.value} ({stated}) has no score on {on}'
+        return f'{self.selection.predictor.value} {self.score} on {on} ({stated})'
 
 
 def annotate_request(selection: Selection, *, variant: str) -> vep_pb2.AnnotateRequest:
@@ -302,33 +309,73 @@ def annotate_request(selection: Selection, *, variant: str) -> vep_pb2.AnnotateR
     """
     if not variant.strip():
         raise ValueError('Vep.Annotate takes an HGVS expression; got an empty variant')
-    predictors.score_key(selection.predictor)
+    if not predictors.implements(selection.predictor):
+        raise NotImplementedError(
+            f'{selection.predictor.value} has no threshold table here, so its score cannot be binned'
+        )
     return vep_pb2.AnnotateRequest(variant=variant.strip(), predictors=[selection.predictor.value])
 
 
-def _consequence_for(raw: dict[str, object], transcript: str) -> dict[str, object]:
-    """The transcript's own element of `raw.transcript_consequences`."""
-    consequences = payload.at(raw, 'transcript_consequences')
-    if not isinstance(consequences, list):
-        raise ValueError(f'transcript_consequences carries a {type(consequences).__name__}, expected a list')
-    wanted = transcript.split('.', 1)[0]
-    annotated = []
-    for element in consequences:
-        if not isinstance(element, dict):
-            raise ValueError(f'a transcript consequence is a {type(element).__name__}, expected an object')
-        stated = element.get('transcript_id')
-        if isinstance(stated, str) and stated.split('.', 1)[0] == wanted:
-            annotated.append(element)
-    if not annotated:
-        stated_ids = sorted(
-            str(element.get('transcript_id'))
-            for element in consequences
-            if isinstance(element, dict) and 'transcript_id' in element
+def _base(accession: str) -> str:
+    return accession.split('.', 1)[0]
+
+
+# A transcript accession the workflow holds: Ensembl, or RefSeq (curated or predicted, coding or not).
+_TRANSCRIPT_ACCESSION = re.compile(r'(ENST\d+|[NX][MR]_\d+)(\.\d+)?')
+
+
+def _named(element: vep_pb2.TranscriptAnnotation) -> str:
+    pairs = [pair for pair in (element.mane_select, element.mane_plus_clinical) if pair]
+    return f'{element.transcript_id} ({", ".join(pairs)})' if pairs else element.transcript_id
+
+
+def _candidates(element: vep_pb2.TranscriptAnnotation, transcript: str) -> tuple[str, ...]:
+    """The accessions `element` answers to in `transcript`'s namespace."""
+    if transcript.startswith('ENST'):
+        return (element.transcript_id,)
+    return tuple(pair for pair in (element.mane_select, element.mane_plus_clinical) if pair)
+
+
+def _transcript_for(response: vep_pb2.AnnotateResponse, transcript: str) -> tuple[vep_pb2.TranscriptAnnotation, str]:
+    """The response's one annotated transcript `transcript` names, and the accession it matched.
+
+    VEP annotates Ensembl transcripts only. An Ensembl accession matches the element's
+    `transcript_id`; a RefSeq one matches the Ensembl transcript it is the MANE Select or MANE Plus
+    Clinical pair of. Both namespaces take one version rule, since VEP states every accession
+    versioned: an unversioned accession matches by its base, and a versioned one has to agree
+    exactly, because another version is another transcript model.
+
+    Raises:
+        ValueError: If `transcript` is not a transcript accession, if no annotated transcript
+            matches, if more than one does, or if VEP holds only another version of the accession —
+            which the message names, so the caller can decide whether to score against it.
+    """
+    if not _TRANSCRIPT_ACCESSION.fullmatch(transcript):
+        raise ValueError(f'transcript takes a transcript accession (ENST…, or a MANE RefSeq NM_…), not {transcript!r}')
+    annotated = list(response.transcripts)
+    versioned = '.' in transcript
+    matched = []
+    for element in annotated:
+        for candidate in _candidates(element, transcript):
+            if (candidate == transcript) if versioned else (_base(candidate) == transcript):
+                matched.append((element, candidate))
+    if not matched:
+        held = sorted({c for e in annotated for c in _candidates(e, transcript) if _base(c) == _base(transcript)})
+        if held:
+            raise ValueError(
+                f'VEP holds {held}, not {transcript}: another version is another transcript model. Name the '
+                'version VEP holds to score against it, and say why'
+            )
+        raise ValueError(
+            f'the annotation carries nothing for {transcript}: VEP annotates Ensembl transcripts, matched by id '
+            f'or by their MANE RefSeq pair, and it annotates {sorted(map(_named, annotated))}'
         )
-        raise ValueError(f'the annotation carries nothing for {transcript}; it annotates {stated_ids}')
-    if len(annotated) > 1:
-        raise ValueError(f'the annotation carries {len(annotated)} consequences for {transcript}; it must carry one')
-    return annotated[0]
+    if len(matched) > 1:
+        raise ValueError(
+            f'{len(matched)} annotated transcripts match {transcript} '
+            f'({sorted(_named(element) for element, _ in matched)}); it must name one'
+        )
+    return matched[0]
 
 
 def mis_prd_from_vep(
@@ -337,25 +384,23 @@ def mis_prd_from_vep(
     selection: Selection,
     *,
     transcript: str,
-) -> PredictorScore:
+) -> MisPrdScore:
     """Bin the policy's predictor score for one transcript off a `Vep.Annotate` response.
 
-    Reads two paths of `raw`: the element of `transcript_consequences` whose `transcript_id` names
-    the transcript, and this predictor's score key on it (`predictors.score_key`). The transcript is
-    matched without its version run, since the annotation set names its own version of an accession.
+    Reads only the response's typed `transcripts`: the one element `transcript` names, and this
+    predictor's score on it. The service reads each predictor's own spelling off the wire, so none is
+    known here. `transcript` is the accession the workflow holds: the MANE Select RefSeq `NM_` (or a
+    MANE Plus Clinical one), matched through the element's MANE pair, or an Ensembl `ENST`, matched on
+    its id (`_transcript_for` says which versions have to agree).
 
-    **An absent score key is the one absence that is an answer here**, and it reads as no MIS_PRD
-    determination rather than as a broken payload: the rpc holds the predictor *names* to a closed
-    set precisely so that a score VEP omits means the predictor has none for this transcript, rather
-    than a name Ensembl silently ignored. A key stated as null reads the same way. But that
-    guarantee is the **request's**, which is why the request is taken rather than assumed: a response
-    fetched without this predictor carries no key for it either, and read against the selection alone
-    it would delete MIS_PRD from every variant it was asked about.
-
-    What neither covers is the key itself, which `vep.proto` does not state: `predictors.score_key`
-    is where the two spellings are recorded, and a rename upstream would come back as no
-    determination rather than as a failure. Pinning both keys in the contract, as `gnomad.proto`
-    pins its paths, is what would close that.
+    **A transcript with no score for the predictor is the one absence that is an answer here**, and
+    it reads as no MIS_PRD determination rather than as a broken payload: the rpc holds the predictor
+    *names* to a closed set precisely so that a score VEP omits means the predictor has none for this
+    transcript, rather than a name Ensembl silently ignored. A transcript missing altogether is VEP
+    not having annotated it, and is refused. The no-score guarantee is the **request's**, which is
+    why the request is taken rather than assumed: a response fetched without this predictor carries
+    no score for it either, and read against the selection alone it would delete MIS_PRD from every
+    variant it was asked about.
 
     Args:
         request: The request the response answers, whose predictor list has to name the selection's.
@@ -364,13 +409,13 @@ def mis_prd_from_vep(
         transcript: The accession the score is wanted for.
 
     Returns:
-        The `PredictorScore`, stamped with the Ensembl releases the response names.
+        The `MisPrdScore`, stamped with the Ensembl releases the response names.
 
     Raises:
-        ValueError: If the request did not ask for the selection's predictor, if the payload carries
-            no `transcript_consequences`, none for this transcript or more than one, if the score is
-            not a number, or if it is outside the predictor's own published range. If the response
-            states no provenance.
+        ValueError: As `_transcript_for` does; if the request did not ask for the selection's
+            predictor, if the matching transcript states the predictor without its score or more than
+            once, or if the score is not finite or is outside the predictor's own published range. If
+            the response states no provenance.
         NotImplementedError: If the policy's predictor has no threshold table here.
     """
     if selection.predictor.value not in request.predictors:
@@ -378,11 +423,23 @@ def mis_prd_from_vep(
             f'the request asked for {list(request.predictors)}, not {selection.predictor.value}; a response '
             'fetched without this predictor carries no score for it, which is not the predictor having none'
         )
-    consequence = _consequence_for(payload.fields(response.raw), transcript)
-    key = predictors.score_key(selection.predictor)
-    score = payload.number(consequence, key) if key in consequence else None
-    return PredictorScore(
+    annotated, matched = _transcript_for(response, transcript)
+    stated = [entry for entry in annotated.scores if entry.predictor == selection.predictor.value]
+    if any(not entry.HasField('score') for entry in stated):
+        raise ValueError(f'{annotated.transcript_id} states a {selection.predictor.value} entry without its score')
+    if len(stated) > 1:
+        raise ValueError(
+            f'{annotated.transcript_id} carries {len(stated)} {selection.predictor.value} scores; it must carry one'
+        )
+    score = (
+        exact.decimal_of(stated[0].score, what=f'the {selection.predictor.value} score for {transcript}')
+        if stated
+        else None
+    )
+    return MisPrdScore(
         selection=selection,
+        transcript_id=annotated.transcript_id,
+        mane_pair='' if matched == annotated.transcript_id else matched,
         score=score,
         points=None if score is None else predictors.predictor_points(selection.predictor, score),
         releases=provenance.releases_of(response.provenance),

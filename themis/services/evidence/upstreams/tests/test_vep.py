@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import re
 import urllib.parse
 from collections.abc import Callable, Sequence
 
@@ -29,6 +30,7 @@ _OPTION_FIELDS = {
     'numbers': ('exon',),
     'canonical': ('canonical',),
     'mane': ('mane', 'mane_select'),
+    'transcript_version': (),  # versions `transcript_id` rather than adding a field
 }
 
 # Each accepted predictor's output field, stated here for the same reason: an unrecognised flag is
@@ -185,8 +187,14 @@ def test_gene_identity_prefers_flagged_canonical_transcript() -> None:
     annotation = {
         'most_severe_consequence': 'missense_variant',
         'transcript_consequences': [
-            {'gene_symbol': 'OTHER', 'hgnc_id': 'HGNC:999', 'consequence_terms': ['missense_variant']},
             {
+                'transcript_id': 'ENST00000000001',
+                'gene_symbol': 'OTHER',
+                'hgnc_id': 'HGNC:999',
+                'consequence_terms': ['missense_variant'],
+            },
+            {
+                'transcript_id': 'ENST00000358273',
                 'gene_symbol': 'NF1',
                 'hgnc_id': 'HGNC:7765',
                 'mane_select': 'NM_001042492.3',
@@ -194,16 +202,18 @@ def test_gene_identity_prefers_flagged_canonical_transcript() -> None:
             },
         ],
     }
-    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', dbnsfp_columns=())
+    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=())
     assert (result.gene_symbol, result.hgnc_id) == ('NF1', 'HGNC:7765')
 
 
 def test_gene_identity_leaves_hgnc_id_empty_when_vep_omits_it() -> None:
     annotation = {
         'most_severe_consequence': 'missense_variant',
-        'transcript_consequences': [{'gene_symbol': 'NF1', 'consequence_terms': ['missense_variant']}],
+        'transcript_consequences': [
+            {'transcript_id': 'ENST00000358273', 'gene_symbol': 'NF1', 'consequence_terms': ['missense_variant']}
+        ],
     }
-    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', dbnsfp_columns=())
+    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=())
     assert result.gene_symbol == 'NF1'
     assert result.hgnc_id == ''  # never fabricated
 
@@ -330,3 +340,130 @@ def test_a_comma_joined_field_the_request_did_not_name_is_left_as_it_is() -> Non
     consequence = _resolved(ensembl_transcriptid='ENST00000358273,ENST00000356175', bayesdel_noaf_score=0.1)
 
     assert consequence['ensembl_transcriptid'] == 'ENST00000358273,ENST00000356175'
+
+
+_MANE_TRANSCRIPT = 'ENST00000358273.9'  # the recorded payload's MANE Select entry, which every predictor scores
+
+
+def _scores(result: vep.VepResult) -> dict[tuple[str, str], float]:
+    return {
+        (transcript.transcript_id, score.predictor): score.score
+        for transcript in result.transcripts
+        for score in transcript.scores
+    }
+
+
+def test_every_calibrated_predictor_resolves_on_the_recorded_payload() -> None:
+    """The recording is the proof of each spelling: a path that stops resolving scores nothing, silently.
+
+    Every accepted predictor either has a path here or carries no calibrated missense score.
+    """
+    assert set(vep.SCORE_PATHS) | {'CADD', 'SpliceAI'} == vep.ACCEPTED_PREDICTORS
+    scored = _scores(_fetch(lambda _: httpx2.Response(200, json=_FIXTURE), sorted(vep.SCORE_PATHS)))
+    assert {predictor for transcript, predictor in scored if transcript == _MANE_TRANSCRIPT} == set(vep.SCORE_PATHS)
+
+
+def test_each_score_is_the_number_its_wire_form_serves() -> None:
+    consequence = next(c for c in _FIXTURE[0]['transcript_consequences'] if c['transcript_id'] == _MANE_TRANSCRIPT)
+    scored = _scores(_fetch(lambda _: httpx2.Response(200, json=_FIXTURE), ['AlphaMissense', 'BayesDel']))
+    assert scored[(_MANE_TRANSCRIPT, 'AlphaMissense')] == consequence['alphamissense']['am_pathogenicity']
+    assert scored[(_MANE_TRANSCRIPT, 'BayesDel')] == consequence['bayesdel_noaf_score']
+
+
+def test_every_annotated_transcript_is_stated_with_its_mane_pairs() -> None:
+    """A transcript is stated whether or not it is scored, so "not annotated" stays distinct from "no score"."""
+    result = _fetch(lambda _: httpx2.Response(200, json=_FIXTURE), [])
+    recorded = _FIXTURE[0]['transcript_consequences']
+    assert [t.transcript_id for t in result.transcripts] == [c['transcript_id'] for c in recorded]
+    assert all(t.scores == () for t in result.transcripts)
+    pairs = {t.transcript_id: (t.mane_select, t.mane_plus_clinical) for t in result.transcripts}
+    assert pairs[_MANE_TRANSCRIPT] == ('NM_001042492.3', '')
+    assert pairs['ENST00000356175.8'] == ('', 'NM_000267.4')
+
+
+def test_the_recorded_transcript_ids_are_versioned() -> None:
+    """`transcript_version` is what versions them: unversioned, an Ensembl accession matches by base only."""
+    ids = [consequence['transcript_id'] for consequence in _FIXTURE[0]['transcript_consequences']]
+    assert ids
+    assert all(re.fullmatch(r'ENST\d+\.\d+', transcript_id) for transcript_id in ids)
+
+
+def test_a_predictor_the_request_did_not_name_is_not_stated() -> None:
+    """The payload carries every recorded score; only the requested ones are typed."""
+    scored = _scores(_fetch(lambda _: httpx2.Response(200, json=_FIXTURE), ['BayesDel']))
+    assert {predictor for _, predictor in scored} == {'BayesDel'}
+
+
+def test_an_accepted_predictor_with_no_calibrated_score_is_not_stated() -> None:
+    """CADD and SpliceAI are accepted, and carry no calibrated missense score to type."""
+    assert _scores(_fetch(lambda _: httpx2.Response(200, json=_FIXTURE), ['CADD', 'SpliceAI'])) == {}
+
+
+def _typed(predictors: Sequence[str], **consequence: object) -> dict[tuple[str, str], float]:
+    """The typed scores `fetch_vep` states for one transcript consequence carrying these fields."""
+    return _scores(_fetch(lambda _: httpx2.Response(200, json=_annotated(**consequence)), predictors))
+
+
+def test_a_score_vep_does_not_serve_is_no_entry() -> None:
+    assert _typed(['AlphaMissense', 'BayesDel']) == {}
+    assert _typed(['REVEL'], revel=None) == {}
+    assert _typed(['AlphaMissense'], alphamissense=None) == {}
+
+
+def test_a_dbnsfp_column_holding_nothing_is_no_entry() -> None:
+    assert _typed(['BayesDel'], bayesdel_noaf_score='.,.') == {}
+
+
+def test_a_null_dbnsfp_column_is_no_score_like_a_null_first_class_field() -> None:
+    assert _typed(['BayesDel'], bayesdel_noaf_score=None) == {}
+    assert 'bayesdel_noaf_score' not in _resolved(bayesdel_noaf_score=None)
+
+
+def test_a_nested_object_present_without_its_score_is_drift_not_absence() -> None:
+    """The flag's object came back, so VEP answered the flag; a missing leaf is its shape changing."""
+    with pytest.raises(ValueError, match='without its am_pathogenicity'):
+        _typed(['AlphaMissense'], alphamissense={'am_class': 'likely_benign'})
+
+
+def test_a_nested_score_that_is_not_under_an_object_is_an_error() -> None:
+    with pytest.raises(ValueError, match='expected an object'):
+        _typed(['AlphaMissense'], alphamissense=0.9)
+
+
+def test_a_score_that_is_not_a_number_is_an_error() -> None:
+    with pytest.raises(ValueError, match='expected a number'):
+        _typed(['REVEL'], revel='0.51')
+
+
+def test_a_score_that_is_not_finite_is_an_error() -> None:
+    # Python's JSON decoder reads a bare NaN, so the adapter is what keeps it out of the score.
+    (annotation,) = _annotated(revel=float('nan'))
+    with pytest.raises(ValueError, match='non-finite'):
+        vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=['REVEL'])
+
+
+def test_a_mane_accession_that_is_not_text_is_an_error() -> None:
+    with pytest.raises(ValueError, match='expected an accession'):
+        _typed([], mane_select=['NM_001042492.3'])
+
+
+def _parsed(annotation: dict[str, object]) -> vep.VepResult:
+    return vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=[])
+
+
+def test_an_annotation_without_transcript_consequences_annotates_none() -> None:
+    """An intergenic variant: VEP states no transcript consequences at all."""
+    assert _parsed({'most_severe_consequence': 'intergenic_variant'}).transcripts == ()
+
+
+@pytest.mark.parametrize(
+    'consequences',
+    [
+        {'transcript_id': 'ENST00000358273'},  # an object where the list belongs
+        ['ENST00000358273'],  # a string where an object belongs
+        [{'bayesdel_noaf_score': 0.2}],  # an element naming no transcript
+    ],
+)
+def test_a_malformed_transcript_consequence_is_an_error(consequences: object) -> None:
+    with pytest.raises(ValueError, match=r'transcript_consequences|transcript consequence'):
+        _parsed({'most_severe_consequence': 'missense_variant', 'transcript_consequences': consequences})

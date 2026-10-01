@@ -43,7 +43,7 @@ class ScoredCode(Protocol):
 
     Structural rather than a base class: a door's value object carries its own fields beside these
     four — `frequency.PopFrq` the FAF and the threshold it was binned against,
-    `predictors.PredictorScore` the score and the predictor that produced it — and the tally reads
+    `predictor_policy.MisPrdScore` the score and the predictor that produced it — and the tally reads
     only these.
 
     Attributes:
