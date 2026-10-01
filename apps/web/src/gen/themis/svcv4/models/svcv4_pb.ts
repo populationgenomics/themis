@@ -1,9 +1,10 @@
-// The answer SVCv4 gives about a variant: the class it lands in. One vocabulary, whether the class
-// was reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate —
-// two sides that answer in different vocabularies cannot be compared, and a run's class is read
-// against a curator's stated one (docs/design/curation-surface.md).
+// The vocabularies an SVCv4 answer about a variant is stated in: the class it lands in, each
+// evidence code's status, and how open a call is. One vocabulary per concept, whether the answer was
+// reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate: two
+// sides that answer in different vocabularies cannot be compared, and a run's answer is read against
+// a curator's (docs/design/curation-surface.md).
 //
-// Modelled from:
+// The class is modelled from:
 //   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
 //   SVCv4 SM18's gate, whose two terminal levels end in a result string rather than a class —
 //     `Reference.gate[…].result`, returned as `scoring.GateOutcome.final_class`.
@@ -23,7 +24,7 @@ import { enumDesc, fileDesc } from "@bufbuild/protobuf/codegenv2";
  * Describes the file themis/svcv4/models/svcv4.proto.
  */
 export const file_themis_svcv4_models_svcv4: GenFile = /*@__PURE__*/
-  fileDesc("Ch90aGVtaXMvc3ZjdjQvbW9kZWxzL3N2Y3Y0LnByb3RvEhN0aGVtaXMuc3ZjdjQubW9kZWxzKs4CCg5DbGFzc2lmaWNhdGlvbhIeChpDTEFTU0lGSUNBVElPTl9VTlNQRUNJRklFRBAAEh0KGUNMQVNTSUZJQ0FUSU9OX1BBVEhPR0VOSUMQARIkCiBDTEFTU0lGSUNBVElPTl9MSUtFTFlfUEFUSE9HRU5JQxACEhYKEkNMQVNTSUZJQ0FUSU9OX1ZVUxADEiAKHENMQVNTSUZJQ0FUSU9OX0xJS0VMWV9CRU5JR04QBBIZChVDTEFTU0lGSUNBVElPTl9CRU5JR04QBRIiCh5DTEFTU0lGSUNBVElPTl9OT1RfRVNUQUJMSVNIRUQQBhI8CjhDTEFTU0lGSUNBVElPTl9WQVJJQU5UX0lOX0dFTkVfT0ZfVU5DRVJUQUlOX1NJR05JRklDQU5DRRAHEiAKHENMQVNTSUZJQ0FUSU9OX0RPX05PVF9SRVBPUlQQCGIGcHJvdG8z");
+  fileDesc("Ch90aGVtaXMvc3ZjdjQvbW9kZWxzL3N2Y3Y0LnByb3RvEhN0aGVtaXMuc3ZjdjQubW9kZWxzKs4CCg5DbGFzc2lmaWNhdGlvbhIeChpDTEFTU0lGSUNBVElPTl9VTlNQRUNJRklFRBAAEh0KGUNMQVNTSUZJQ0FUSU9OX1BBVEhPR0VOSUMQARIkCiBDTEFTU0lGSUNBVElPTl9MSUtFTFlfUEFUSE9HRU5JQxACEhYKEkNMQVNTSUZJQ0FUSU9OX1ZVUxADEiAKHENMQVNTSUZJQ0FUSU9OX0xJS0VMWV9CRU5JR04QBBIZChVDTEFTU0lGSUNBVElPTl9CRU5JR04QBRIiCh5DTEFTU0lGSUNBVElPTl9OT1RfRVNUQUJMSVNIRUQQBhI8CjhDTEFTU0lGSUNBVElPTl9WQVJJQU5UX0lOX0dFTkVfT0ZfVU5DRVJUQUlOX1NJR05JRklDQU5DRRAHEiAKHENMQVNTSUZJQ0FUSU9OX0RPX05PVF9SRVBPUlQQCCqYAQoQQXNzZXNzbWVudFN0YXR1cxIhCh1BU1NFU1NNRU5UX1NUQVRVU19VTlNQRUNJRklFRBAAEhwKGEFTU0VTU01FTlRfU1RBVFVTX1NDT1JFRBABEiQKIEFTU0VTU01FTlRfU1RBVFVTX05PVF9BUFBMSUNBQkxFEAISHQoZQVNTRVNTTUVOVF9TVEFUVVNfTk9fREFUQRADKm0KCkNvbmZpZGVuY2USGgoWQ09ORklERU5DRV9VTlNQRUNJRklFRBAAEhYKEkNPTkZJREVOQ0VfU0VUVExFRBABEhYKEkNPTkZJREVOQ0VfTEVBTklORxACEhMKD0NPTkZJREVOQ0VfT1BFThADYgZwcm90bzM");
 
 /**
  * Everything a classification can come out as: the five ordered classes, the two outcomes the
@@ -91,4 +92,75 @@ export enum Classification {
  */
 export const ClassificationSchema: GenEnum<Classification> = /*@__PURE__*/
   enumDesc(file_themis_svcv4_models_svcv4, 0);
+
+/**
+ * Whether an evidence code was scored, and if not, which kind of not: a curator's answer to a
+ * workflow and a run's to a code state it alike, and a run is judged on matching it. The three are
+ * different findings. `NOT_APPLICABLE` is the framework's own precondition barring the code;
+ * `NO_DATA` is a code that applies with nothing to determine it on. A code reading zero is SCORED:
+ * the calculator carries a zero option, and assessing to it is a judgement rather than an absence.
+ *
+ * @generated from enum themis.svcv4.models.AssessmentStatus
+ */
+export enum AssessmentStatus {
+  /**
+   * @generated from enum value: ASSESSMENT_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ASSESSMENT_STATUS_SCORED = 1;
+   */
+  SCORED = 1,
+
+  /**
+   * @generated from enum value: ASSESSMENT_STATUS_NOT_APPLICABLE = 2;
+   */
+  NOT_APPLICABLE = 2,
+
+  /**
+   * @generated from enum value: ASSESSMENT_STATUS_NO_DATA = 3;
+   */
+  NO_DATA = 3,
+}
+
+/**
+ * Describes the enum themis.svcv4.models.AssessmentStatus.
+ */
+export const AssessmentStatusSchema: GenEnum<AssessmentStatus> = /*@__PURE__*/
+  enumDesc(file_themis_svcv4_models_svcv4, 1);
+
+/**
+ * How open whoever made a call considers it, a curator or a run. A reader treats a divergence inside
+ * the stated envelope as that side's own uncertainty rather than as a defect.
+ *
+ * @generated from enum themis.svcv4.models.Confidence
+ */
+export enum Confidence {
+  /**
+   * @generated from enum value: CONFIDENCE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: CONFIDENCE_SETTLED = 1;
+   */
+  SETTLED = 1,
+
+  /**
+   * @generated from enum value: CONFIDENCE_LEANING = 2;
+   */
+  LEANING = 2,
+
+  /**
+   * @generated from enum value: CONFIDENCE_OPEN = 3;
+   */
+  OPEN = 3,
+}
+
+/**
+ * Describes the enum themis.svcv4.models.Confidence.
+ */
+export const ConfidenceSchema: GenEnum<Confidence> = /*@__PURE__*/
+  enumDesc(file_themis_svcv4_models_svcv4, 2);
 

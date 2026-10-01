@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Assessment,
   AssessmentSchema,
-  AssessmentStatus,
   type CaseAssessment,
   CaseAssessmentSchema,
   type RoutingAssessment,
@@ -19,7 +18,10 @@ import {
   Consequence,
   Inheritance,
 } from "@/gen/themis/evidence/models/evidence_pb";
-import { Classification } from "@/gen/themis/svcv4/models/svcv4_pb";
+import {
+  AssessmentStatus,
+  Classification,
+} from "@/gen/themis/svcv4/models/svcv4_pb";
 import { POP_FRQ_ID } from "../workflows/pop";
 import { barredWorkflowIds, barringBin } from "../workflows/rarity-gate";
 import {

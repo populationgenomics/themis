@@ -1,4 +1,4 @@
-import { AssessmentStatus } from "@/gen/themis/curation/models/curation_pb";
+import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
 import type {
   Entry,

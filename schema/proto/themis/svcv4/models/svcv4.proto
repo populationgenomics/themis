@@ -1,9 +1,10 @@
-// The answer SVCv4 gives about a variant: the class it lands in. One vocabulary, whether the class
-// was reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate —
-// two sides that answer in different vocabularies cannot be compared, and a run's class is read
-// against a curator's stated one (docs/design/curation-surface.md).
+// The vocabularies an SVCv4 answer about a variant is stated in: the class it lands in, each
+// evidence code's status, and how open a call is. One vocabulary per concept, whether the answer was
+// reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate: two
+// sides that answer in different vocabularies cannot be compared, and a run's answer is read against
+// a curator's (docs/design/curation-surface.md).
 //
-// Modelled from:
+// The class is modelled from:
 //   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
 //   SVCv4 SM18's gate, whose two terminal levels end in a result string rather than a class —
 //     `Reference.gate[…].result`, returned as `scoring.GateOutcome.final_class`.
@@ -33,4 +34,25 @@ enum Classification {
   CLASSIFICATION_VARIANT_IN_GENE_OF_UNCERTAIN_SIGNIFICANCE = 7;
   // The gate's result for a Disputed or Refuted relationship ("Do not report"). Terminal likewise.
   CLASSIFICATION_DO_NOT_REPORT = 8;
+}
+
+// Whether an evidence code was scored, and if not, which kind of not: a curator's answer to a
+// workflow and a run's to a code state it alike, and a run is judged on matching it. The three are
+// different findings. `NOT_APPLICABLE` is the framework's own precondition barring the code;
+// `NO_DATA` is a code that applies with nothing to determine it on. A code reading zero is SCORED:
+// the calculator carries a zero option, and assessing to it is a judgement rather than an absence.
+enum AssessmentStatus {
+  ASSESSMENT_STATUS_UNSPECIFIED = 0;
+  ASSESSMENT_STATUS_SCORED = 1;
+  ASSESSMENT_STATUS_NOT_APPLICABLE = 2;
+  ASSESSMENT_STATUS_NO_DATA = 3;
+}
+
+// How open whoever made a call considers it, a curator or a run. A reader treats a divergence inside
+// the stated envelope as that side's own uncertainty rather than as a defect.
+enum Confidence {
+  CONFIDENCE_UNSPECIFIED = 0;
+  CONFIDENCE_SETTLED = 1;
+  CONFIDENCE_LEANING = 2;
+  CONFIDENCE_OPEN = 3;
 }

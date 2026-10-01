@@ -1,12 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
+import type {
+  FieldValue,
+  WorkflowAssessment,
+} from "@/gen/themis/curation/models/curation_pb";
 import {
   AssessmentStatus,
   Confidence,
-  type FieldValue,
-  type WorkflowAssessment,
-} from "@/gen/themis/curation/models/curation_pb";
+} from "@/gen/themis/svcv4/models/svcv4_pb";
 
 // The worksheet's presentational vocabulary. Two rules run through all of it:
 //

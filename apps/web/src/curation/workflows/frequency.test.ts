@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
-import {
-  AssessmentStatus,
-  WorkflowAssessmentSchema,
-} from "@/gen/themis/curation/models/curation_pb";
+import { WorkflowAssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
+import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { readField, withField } from "../ui/primitives";
 import {
   derivedBin,

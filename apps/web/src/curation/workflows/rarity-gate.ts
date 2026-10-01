@@ -1,7 +1,5 @@
-import {
-  AssessmentStatus,
-  type WorkflowAssessment,
-} from "@/gen/themis/curation/models/curation_pb";
+import type { WorkflowAssessment } from "@/gen/themis/curation/models/curation_pb";
+import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
 import type { Cell } from "../ui/primitives";
 import { derivedBin } from "./frequency";
 import type { WorkflowDef } from "./types";

@@ -29,8 +29,9 @@ human's — has a reference authored by a human, in a shape a reader can compare
 - **Two curators answer each variant blind to one another, and both answers are kept.** Analyst-to-analyst spread is the
   measurement that says how much of a run's divergence is normal, and a split between the two is a finding the manager
   reads in a compare view, never a conflict to reconcile.
-- **One vocabulary per concept.** Molecular consequence, mode of inheritance and class are the enums the evidence
-  interfaces and `themis.svcv4` already speak, so a curator's answer and a run's are the same members.
+- **One vocabulary per concept.** Molecular consequence, mode of inheritance, class, a workflow's status and a call's
+  confidence are the enums the evidence interfaces and `themis.svcv4` already speak, so a curator's answer and a run's
+  are the same members.
 - **Storage is a scratch tier and a record tier.** Auto-save upserts drafts; submitting copies them, whole and in one
   transaction, into insert-only assessments under a submission that owns the set. Lifecycle and status are read from
   those two facts, never stored.
@@ -318,10 +319,11 @@ an evidence interface answers about a variant and a curated entity, so they live
 [`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto); the class ladder is what `themis.svcv4`
 computes, so it lives beside the library in [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto),
 together with the two outcomes SM18's gate substitutes for a class when gene-disease validity falls below Limited and
-the curator's own "no class established". The curation contract declares only the vocabularies nobody else has an
-opinion on — whether a workflow was scored, and how open the curator considers the call — and names the shared ones for
-the rest. The library returns a class as a string, so a test holds the proto ladder and the loaded reference to naming
-each other, and a framework revision that adds a class cannot leave the wire behind.
+the curator's own "no class established". Whether a code was scored, and how open a call is, live there too: a run
+states both about every code it reports, as a curator states them about every workflow. The curation contract declares
+no vocabulary of its own and names the shared ones. The library returns a class as a string, so a test holds the proto
+ladder and the loaded reference to naming each other, and a framework revision that adds a class cannot leave the wire
+behind.
 
 Sharing costs something in the other direction, and the worksheet pays it. The shared inheritance vocabulary is the one
 the curated sources harmonise onto, so it carries modes — Y-linked, mitochondrial, undetermined — that the calculator's

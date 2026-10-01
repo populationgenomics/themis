@@ -2,35 +2,12 @@ from buf.validate import validate_pb2 as _validate_pb2
 from themis.evidence.models import evidence_pb2 as _evidence_pb2
 from themis.svcv4.models import svcv4_pb2 as _svcv4_pb2
 from google.protobuf.internal import containers as _containers
-from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
-
-class AssessmentStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    ASSESSMENT_STATUS_UNSPECIFIED: _ClassVar[AssessmentStatus]
-    ASSESSMENT_STATUS_SCORED: _ClassVar[AssessmentStatus]
-    ASSESSMENT_STATUS_NOT_APPLICABLE: _ClassVar[AssessmentStatus]
-    ASSESSMENT_STATUS_NO_DATA: _ClassVar[AssessmentStatus]
-
-class Confidence(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    CONFIDENCE_UNSPECIFIED: _ClassVar[Confidence]
-    CONFIDENCE_SETTLED: _ClassVar[Confidence]
-    CONFIDENCE_LEANING: _ClassVar[Confidence]
-    CONFIDENCE_OPEN: _ClassVar[Confidence]
-ASSESSMENT_STATUS_UNSPECIFIED: AssessmentStatus
-ASSESSMENT_STATUS_SCORED: AssessmentStatus
-ASSESSMENT_STATUS_NOT_APPLICABLE: AssessmentStatus
-ASSESSMENT_STATUS_NO_DATA: AssessmentStatus
-CONFIDENCE_UNSPECIFIED: Confidence
-CONFIDENCE_SETTLED: Confidence
-CONFIDENCE_LEANING: Confidence
-CONFIDENCE_OPEN: Confidence
 
 class FieldValue(_message.Message):
     __slots__ = ("field_id", "cell_id", "label", "value")
@@ -55,16 +32,16 @@ class WorkflowAssessment(_message.Message):
     NEAREST_ALTERNATIVE_REASON_FIELD_NUMBER: _ClassVar[int]
     CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
     CONFIDENCE_NOTE_FIELD_NUMBER: _ClassVar[int]
-    status: AssessmentStatus
+    status: _svcv4_pb2.AssessmentStatus
     fields: _containers.RepeatedCompositeFieldContainer[FieldValue]
     status_reason: str
     evidence: str
     rationale: str
     nearest_alternative: FieldValue
     nearest_alternative_reason: str
-    confidence: Confidence
+    confidence: _svcv4_pb2.Confidence
     confidence_note: str
-    def __init__(self, status: _Optional[_Union[AssessmentStatus, str]] = ..., fields: _Optional[_Iterable[_Union[FieldValue, _Mapping]]] = ..., status_reason: _Optional[str] = ..., evidence: _Optional[str] = ..., rationale: _Optional[str] = ..., nearest_alternative: _Optional[_Union[FieldValue, _Mapping]] = ..., nearest_alternative_reason: _Optional[str] = ..., confidence: _Optional[_Union[Confidence, str]] = ..., confidence_note: _Optional[str] = ...) -> None: ...
+    def __init__(self, status: _Optional[_Union[_svcv4_pb2.AssessmentStatus, str]] = ..., fields: _Optional[_Iterable[_Union[FieldValue, _Mapping]]] = ..., status_reason: _Optional[str] = ..., evidence: _Optional[str] = ..., rationale: _Optional[str] = ..., nearest_alternative: _Optional[_Union[FieldValue, _Mapping]] = ..., nearest_alternative_reason: _Optional[str] = ..., confidence: _Optional[_Union[_svcv4_pb2.Confidence, str]] = ..., confidence_note: _Optional[str] = ...) -> None: ...
 
 class CaseAssessment(_message.Message):
     __slots__ = ("proband_narrative", "testing_performed", "co_observed_variant", "segregation", "assays", "other")

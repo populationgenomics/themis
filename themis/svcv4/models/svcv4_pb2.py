@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fthemis/svcv4/models/svcv4.proto\x12\x13themis.svcv4.models*\xce\x02\n\x0e\x43lassification\x12\x1e\n\x1a\x43LASSIFICATION_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x43LASSIFICATION_PATHOGENIC\x10\x01\x12$\n CLASSIFICATION_LIKELY_PATHOGENIC\x10\x02\x12\x16\n\x12\x43LASSIFICATION_VUS\x10\x03\x12 \n\x1c\x43LASSIFICATION_LIKELY_BENIGN\x10\x04\x12\x19\n\x15\x43LASSIFICATION_BENIGN\x10\x05\x12\"\n\x1e\x43LASSIFICATION_NOT_ESTABLISHED\x10\x06\x12<\n8CLASSIFICATION_VARIANT_IN_GENE_OF_UNCERTAIN_SIGNIFICANCE\x10\x07\x12 \n\x1c\x43LASSIFICATION_DO_NOT_REPORT\x10\x08\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1fthemis/svcv4/models/svcv4.proto\x12\x13themis.svcv4.models*\xce\x02\n\x0e\x43lassification\x12\x1e\n\x1a\x43LASSIFICATION_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x43LASSIFICATION_PATHOGENIC\x10\x01\x12$\n CLASSIFICATION_LIKELY_PATHOGENIC\x10\x02\x12\x16\n\x12\x43LASSIFICATION_VUS\x10\x03\x12 \n\x1c\x43LASSIFICATION_LIKELY_BENIGN\x10\x04\x12\x19\n\x15\x43LASSIFICATION_BENIGN\x10\x05\x12\"\n\x1e\x43LASSIFICATION_NOT_ESTABLISHED\x10\x06\x12<\n8CLASSIFICATION_VARIANT_IN_GENE_OF_UNCERTAIN_SIGNIFICANCE\x10\x07\x12 \n\x1c\x43LASSIFICATION_DO_NOT_REPORT\x10\x08*\x98\x01\n\x10\x41ssessmentStatus\x12!\n\x1d\x41SSESSMENT_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n\x18\x41SSESSMENT_STATUS_SCORED\x10\x01\x12$\n ASSESSMENT_STATUS_NOT_APPLICABLE\x10\x02\x12\x1d\n\x19\x41SSESSMENT_STATUS_NO_DATA\x10\x03*m\n\nConfidence\x12\x1a\n\x16\x43ONFIDENCE_UNSPECIFIED\x10\x00\x12\x16\n\x12\x43ONFIDENCE_SETTLED\x10\x01\x12\x16\n\x12\x43ONFIDENCE_LEANING\x10\x02\x12\x13\n\x0f\x43ONFIDENCE_OPEN\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,4 +33,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CLASSIFICATION']._serialized_start=57
   _globals['_CLASSIFICATION']._serialized_end=391
+  _globals['_ASSESSMENTSTATUS']._serialized_start=394
+  _globals['_ASSESSMENTSTATUS']._serialized_end=546
+  _globals['_CONFIDENCE']._serialized_start=548
+  _globals['_CONFIDENCE']._serialized_end=657
 # @@protoc_insertion_point(module_scope)

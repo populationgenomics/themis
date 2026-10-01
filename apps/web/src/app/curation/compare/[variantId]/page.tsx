@@ -3,10 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isCurationAccessError } from "@/curation/access";
 import { curationContext } from "@/curation/http";
-import {
-  AssessmentStatus,
-  type WorkflowAssessment,
-} from "@/gen/themis/curation/models/curation_pb";
+import type { WorkflowAssessment } from "@/gen/themis/curation/models/curation_pb";
+import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { isResourceNotFoundError } from "@/server/errors";
 
 export const dynamic = "force-dynamic";

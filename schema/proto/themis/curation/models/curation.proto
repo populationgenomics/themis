@@ -7,10 +7,11 @@
 // and `themis.svcv4` owns the arithmetic. `cell_id` is the framework's own name for the cell a
 // curator chose.
 //
-// The three framework vocabularies a curator answers in — consequence, mode of inheritance, class —
-// are declared once, where every other side of the comparison already reads them:
-// themis/evidence/models/evidence.proto and themis/svcv4/models/svcv4.proto. A curator's answer and
-// a run's are comparable only if they are the same enum.
+// Every framework vocabulary a curator answers in is declared once, where every other side of the
+// comparison already reads it: consequence and mode of inheritance in
+// themis/evidence/models/evidence.proto; class, a workflow's status and a call's confidence in
+// themis/svcv4/models/svcv4.proto. A curator's answer and a run's are comparable only if they are the
+// same enum.
 
 syntax = "proto3";
 
@@ -19,27 +20,6 @@ package themis.curation.models.curation;
 import "buf/validate/validate.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/svcv4/models/svcv4.proto";
-
-// Whether the curator scored the workflow, and if not, which kind of not. The three are different
-// findings and a run is judged on matching which one — `NOT_APPLICABLE` is the framework's own
-// precondition barring the code, `NO_DATA` is a code that applies with nothing to assess it on. A
-// cell reading zero is SCORED: the calculator carries a zero option, and assessing to it is a
-// judgement rather than an absence.
-enum AssessmentStatus {
-  ASSESSMENT_STATUS_UNSPECIFIED = 0;
-  ASSESSMENT_STATUS_SCORED = 1;
-  ASSESSMENT_STATUS_NOT_APPLICABLE = 2;
-  ASSESSMENT_STATUS_NO_DATA = 3;
-}
-
-// How open the curator considers the call. A reader treats a divergence inside the stated envelope
-// as the curator's own uncertainty rather than as a defect.
-enum Confidence {
-  CONFIDENCE_UNSPECIFIED = 0;
-  CONFIDENCE_SETTLED = 1;
-  CONFIDENCE_LEANING = 2;
-  CONFIDENCE_OPEN = 3;
-}
 
 // One control's value, and the framework cell it answers. Uniform across the two shapes the
 // calculator's workflows use: a radio group (`value` is the chosen option's id) and a per-row count
@@ -68,7 +48,7 @@ message FieldValue {
 // The curator's capture for one SVCv4 workflow: what they concluded, and everything that makes a
 // divergence from it adjudicable rather than merely visible.
 message WorkflowAssessment {
-  AssessmentStatus status = 1 [(buf.validate.field).enum.defined_only = true];
+  themis.svcv4.models.AssessmentStatus status = 1 [(buf.validate.field).enum.defined_only = true];
 
   // The controls the curator filled. Empty where `status` is not SCORED.
   repeated FieldValue fields = 2 [(buf.validate.field).repeated.max_items = 64];
@@ -90,7 +70,7 @@ message WorkflowAssessment {
   FieldValue nearest_alternative = 6;
   string nearest_alternative_reason = 7 [(buf.validate.field).string.max_len = 20000];
 
-  Confidence confidence = 8 [(buf.validate.field).enum.defined_only = true];
+  themis.svcv4.models.Confidence confidence = 8 [(buf.validate.field).enum.defined_only = true];
   string confidence_note = 9 [(buf.validate.field).string.max_len = 20000];
 }
 
