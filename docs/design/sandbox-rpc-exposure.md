@@ -151,6 +151,10 @@ parses unchanged.
   cross-checked against the descriptor in CI, so the assertion sits on the code it is about.
 - **Visible allowlist diff.** The generated allowlist is committed, so widening the boundary shows up in review as a
   list of method paths.
+- **Marked failure text.** An exposed rpc's failures reach the agent with their text only where the servicer marked it
+  as its own, and marked text is held to what
+  [`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary) says it may carry. A servicer that
+  aborts without the mark leaves the agent a bare status code.
 
 ### Exposure is a security assertion about the rpc
 

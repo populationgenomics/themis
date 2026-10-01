@@ -25,7 +25,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-from themis.services.evidence import errors
+from themis.common import trailer
 from themis.services.evidence.upstreams import litvar
 
 
@@ -91,9 +91,9 @@ class RequestedVariant(NamedTuple):
         # Echoes are clipped: the message lands in a gRPC trailer, and an over-long value would
         # push the diagnosis past the cut.
         if requested.rsid and not _RSID.match(requested.rsid):
-            raise ValueError(f'rsid {errors.clipped(rsid, 80)!r} is not a dbSNP rsID ("rs" and digits)')
+            raise ValueError(f'rsid {trailer.clipped(rsid, 80)!r} is not a dbSNP rsID ("rs" and digits)')
         if requested.caid and not _CAID.match(requested.caid):
-            raise ValueError(f'caid {errors.clipped(caid, 80)!r} is not a ClinGen allele id ("CA" and digits)')
+            raise ValueError(f'caid {trailer.clipped(caid, 80)!r} is not a ClinGen allele id ("CA" and digits)')
         if not (
             requested.entity_id
             or requested.rsid

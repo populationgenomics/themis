@@ -110,7 +110,7 @@ def _rejected_query(response: httpx2.Response, tissues: Sequence[str], gencode_i
     accepted = _accepted_tissue_ids(response)
     return errors.InvalidRequestError(
         f'GTEx rejected the median-expression query for {gencode_id!r} with tissues {list(tissues)}; '
-        f'accepted {_TISSUE_ID} values: {accepted or response.text}'
+        f'accepted {_TISSUE_ID} values: {accepted or errors.explanation(response)}'
     )
 
 

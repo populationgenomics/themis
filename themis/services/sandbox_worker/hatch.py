@@ -17,6 +17,7 @@ from google.protobuf import message
 from postern import grpc as postern_grpc
 
 from themis.clients.auth import claim as claim_mod
+from themis.common import authored_status
 from themis.rpc import (
     clinvar_pb2,
     clinvar_pb2_grpc,
@@ -52,18 +53,6 @@ _FORWARD_CEILING_S = 90.0
 # Bounds the hatch's serving threads, and with them how many forwarded calls one guest can hold open at once.
 _HATCH_WORKERS = 8
 
-# The codes whose `details` only an upstream servicer writes. grpc synthesises the text under any other code, and a
-# channel-level failure's synthesised text names the resolved upstream. UNAUTHENTICATED and PERMISSION_DENIED stay
-# out although a servicer sets them too: Cloud Run and the ID-token plugin set them as well, naming the audience.
-_SERVICER_AUTHORED_CODES = frozenset(
-    {
-        grpc.StatusCode.INVALID_ARGUMENT,
-        grpc.StatusCode.DEADLINE_EXCEEDED,
-        grpc.StatusCode.NOT_FOUND,
-        grpc.StatusCode.FAILED_PRECONDITION,
-    }
-)
-
 # The methods the guest may reach, generated from the `agent_exposed` proto option (sandbox-rpc-exposure.md):
 # whichever rpcs carry it. store and auth carry no option, so the worker-only surface stays off the hatch.
 GUEST_METHODS = _generated.GUEST_METHODS
@@ -78,9 +67,10 @@ def _forward[Request: message.Message, Response: message.Message](
     """Forward one call under the caller's own budget, capped, restating a settled failure under its own code.
 
     An ``RpcError`` left to escape a servicer reaches the guest as UNKNOWN, so a settled NOT_FOUND would read as
-    a fault worth retrying rather than as the answer it is. The status crosses; the diagnostic does not — only a
-    code the upstream contract sets carries its ``details`` through, so the guest never learns an upstream from
-    text grpc synthesised.
+    a fault worth retrying rather than as the answer it is. The status crosses under any code; its ``details``
+    cross only where the servicer marked them as its own (`authored_status`). grpc writes its own text for a failed
+    channel under the same codes a servicer uses, and that text names the resolved upstream; Cloud Run and the
+    ID-token plugin set UNAUTHENTICATED and PERMISSION_DENIED naming the audience. None of those carries the mark.
 
     Raises:
         grpc.RpcError: Always, for a failed upstream call — either the original, when it carries no status, or
@@ -92,7 +82,7 @@ def _forward[Request: message.Message, Response: message.Message](
         if not isinstance(error, grpc.Call):
             raise
         code = error.code()
-        details = error.details() if code in _SERVICER_AUTHORED_CODES else None
+        details = error.details() if authored_status.authored(error) else None
         context.abort(code, details or code.name)
 
 

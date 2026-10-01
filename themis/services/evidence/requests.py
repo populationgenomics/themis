@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 
+from themis.common import trailer
 from themis.services.evidence import errors
 
 # Coding accessions only: the exon table is reported in c. coordinates and the splice outcome is
@@ -40,8 +41,10 @@ _HGNC_ID = re.compile(r'HGNC:\d{1,7}', re.IGNORECASE)
 # contig would otherwise read as an SPL_PRD finding. The allele runs are unbounded here: a large
 # indel spells a long id and that is a well-formed allele, not a malformed field.
 #
-# `M`/`MT` are in the set and are real, but the SpliceAI host 503s on both, deterministically. That
-# leaves `Splice` retrying a 5xx and ending at UNKNOWN — correct handling of a 5xx, and not ours.
+# `M`/`MT` are in the set and are real, and gnomAD answers them. The Broad hosts answer them too,
+# inside a 200 (measured 2026-09-29): SpliceAI scores an `M` or `MT` id against the mitochondrial tRNA
+# or rRNA it falls in, and Pangolin scores `chrM` on GRCh38 and reports the others as unscorable.
+# Whether a splice score means anything there is the routing's question, not this check's.
 _POSITIONAL_ID = re.compile(r'(?:chr)?(?:[1-9]|1\d|2[0-2]|MT|[XYM])-\d{1,12}-[ACGTN]+-[ACGTN]+')
 
 # The longest positional id these rpcs carry. A TRANSPORT bound, not a shape one: the Broad splice
@@ -159,7 +162,7 @@ def require_positional_id(rpc: str, field: str, variant: str) -> None:
         errors.InvalidRequestError: If `variant` is not `chrom-pos-ref-alt`, or is longer than the
             Broad hosts' request line carries.
     """
-    echoed = errors.clipped(variant, _ECHOED_ID)
+    echoed = trailer.clipped(variant, _ECHOED_ID)
     if _POSITIONAL_ID.fullmatch(variant) is None:
         raise errors.InvalidRequestError(
             f'{rpc} takes {field} as a gnomAD-style chrom-pos-ref-alt id, e.g. 17-31232881-G-C; got {echoed!r}'

@@ -90,6 +90,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
 COPY themis/rpc ./themis/rpc
 COPY themis/evidence/models ./themis/evidence/models
 COPY themis/clients/id_token.py ./themis/clients/id_token.py
+# The mark the hatch reads to pass a servicer's own failure details on to the guest.
+COPY themis/common/__init__.py themis/common/authored_status.py themis/common/trailer.py ./themis/common/
 COPY themis/clients/work_queue/__init__.py themis/clients/work_queue/client.py ./themis/clients/work_queue/
 # The Sheaf service's client, over which the mirror hydrates and the hook publishes; it rides the session client's
 # metadata key and target form.

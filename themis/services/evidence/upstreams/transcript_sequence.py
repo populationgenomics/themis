@@ -16,6 +16,7 @@ import dataclasses
 
 import httpx2
 
+from themis.common import trailer
 from themis.services.evidence import errors
 
 _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
@@ -63,15 +64,17 @@ def parse_fasta(text: str, *, accession: str, query: str) -> TranscriptSequenceR
     """
     lines = text.strip().splitlines()
     if not lines or not lines[0].startswith('>'):
-        raise ValueError(f'efetch returned no FASTA record for {errors.clipped(accession)!r}: {errors.clipped(text)!r}')
+        raise ValueError(
+            f'efetch returned no FASTA record for {trailer.clipped(accession)!r}: {trailer.clipped(text)!r}'
+        )
     header, _, description = lines[0][1:].partition(' ')
     if header != accession:
         raise ValueError(
-            f'efetch returned {errors.clipped(header)!r} for requested accession {errors.clipped(accession)!r}'
+            f'efetch returned {trailer.clipped(header)!r} for requested accession {trailer.clipped(accession)!r}'
         )
     sequence = ''.join(line.strip() for line in lines[1:]).upper()
     if not sequence:
-        raise ValueError(f'efetch returned an empty sequence for {errors.clipped(accession)!r}')
+        raise ValueError(f'efetch returned an empty sequence for {trailer.clipped(accession)!r}')
     return TranscriptSequenceResult(
         accession=header,
         description=description,
@@ -104,8 +107,8 @@ async def fetch_transcript_sequence(accession: str, *, http_client: httpx2.Async
     response = await http_client.get(_EFETCH_URL, params=params)
     if response.status_code == httpx2.codes.BAD_REQUEST:
         raise errors.UnknownVariantError(
-            f'NCBI Nucleotide holds no sequence for {errors.clipped(accession)!r} ({response.status_code}): '
-            f'{errors.clipped(response.text.strip())}'
+            f'NCBI Nucleotide holds no sequence for {trailer.clipped(accession)!r} ({response.status_code}): '
+            f'{errors.explanation(response)}'
         )
     response.raise_for_status()
     return parse_fasta(response.text, accession=accession, query=str(response.request.url))

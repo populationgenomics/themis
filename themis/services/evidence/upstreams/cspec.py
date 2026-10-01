@@ -129,22 +129,23 @@ async def _fetch(url: str, *, http_client: httpx2.AsyncClient) -> httpx2.Respons
     return await http_client.get(url, params=_DETAIL)
 
 
-def _refusal(response: httpx2.Response) -> str:
-    """The registry's own explanation of a failure, from whichever envelope it used.
+def _refusal(response: httpx2.Response) -> str | None:
+    """The registry's own explanation of a failure, from whichever envelope it used; None for no envelope.
 
     The store answers a missing entity under ``status.msg``; its router answers an unparseable path
-    under ``errMsg``, in a body carrying no ``status`` at all.
+    under ``errMsg``, in a body carrying no ``status`` at all. A body in neither is left to
+    ``errors.explanation``, which names an HTML page rather than quoting it.
     """
     try:
         body = response.json()
     except ValueError:
-        return response.text.strip()
+        return None
     if not isinstance(body, dict):
-        return response.text.strip()
+        return None
     status = body.get('status')
     if isinstance(status, dict) and isinstance(message := status.get('msg'), str):
         return message
-    return message if isinstance(message := body.get('errMsg'), str) else response.text.strip()
+    return message if isinstance(message := body.get('errMsg'), str) else None
 
 
 def _data(response: httpx2.Response, *, subject: str, caller_supplied_id: bool = False) -> dict[str, object]:
@@ -178,7 +179,9 @@ def _data(response: httpx2.Response, *, subject: str, caller_supplied_id: bool =
             and response.status_code != httpx2.codes.TOO_MANY_REQUESTS
         )
         if contradicts_its_own_links:
-            raise ValueError(f'{_SOURCE} answered {subject} with {response.status_code}: {refusal}')
+            raise ValueError(
+                f'{_SOURCE} answered {subject} with {response.status_code}: {errors.explanation(response, refusal)}'
+            )
         errors.raise_for_status(response, upstream=_SOURCE, subject=subject, detail=refusal)
     body = response.json()
     if not isinstance(body, dict) or not isinstance(data := body.get('data'), dict):

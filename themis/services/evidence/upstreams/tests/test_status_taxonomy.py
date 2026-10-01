@@ -3,7 +3,7 @@
 The property spans the adapters rather than sitting in any one of them, and it is what the guest's
 retry helper keys on. ``errors.InvalidRequestError`` (INVALID_ARGUMENT), ``errors.UnknownVariantError``
 (NOT_FOUND) and ``errors.InconsistentSourcesError`` (FAILED_PRECONDITION) are settled and are never
-retried; ``httpx2.HTTPStatusError`` surfaces as UNKNOWN, which is reissued four times with backoff. A
+retried; a 429 or 5xx ``httpx2.HTTPStatusError`` surfaces as UNAVAILABLE, which is reissued four times with backoff. A
 failure in the wrong bucket therefore either burns four calls on a verdict that cannot change, or
 states a settled fact about a fault a single retry would have cleared. That every one of those types
 reaches a status of its own is ``tests/test_serving.py``'s.

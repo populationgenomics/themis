@@ -713,8 +713,9 @@ the finding the rpc has to let a run report.
 
 ### The contracts are written against the upstreams' failure modes
 
-The hard part of wrapping a public database is not the happy path. Five cross-cutting rules follow, each fixing a way an
-upstream's answer is silently wrong. Per-rpc instances of each are in the protos.
+The hard part of wrapping a public database is not the happy path. Six cross-cutting rules follow, each fixing a way an
+upstream's answer, or its failure to answer, would reach the caller as something it is not. Per-rpc instances of each
+are in the protos.
 
 #### An upstream's "no record" is a finding, and gets its own status
 
@@ -776,6 +777,42 @@ The reference-table refresh job is outside the taxonomy for a fourth reason: it 
 > **The test is not "does a caller-chosen value reach this URL".** It does at two of the three. The test is "would a 4xx
 > here be the source's verdict on that value". Where the answer is no, the exemption has to be paid for at the boundary
 > instead — which is why the two rpcs whose absence is scored carry shape preconditions.
+
+#### An upstream that fails says which upstream it was
+
+A 429 or 5xx, a connect, read or write timeout, and a connection that failed or broke off reach the caller as
+`UNAVAILABLE`, stating the rpc, the upstream and what it returned: "PredictDeltas: SpliceAI returned 503 for …; a 5xx is
+usually transient". The message reports evidence rather than a verdict, because a 5xx is not always passing: gnomAD
+answers a dataset outside its enum with a 500 on every call, which is why `DescribeVariant` checks the dataset before
+the call. The distinction matters most where the caller is an agent: an upstream outage reported as `UNKNOWN` reads the
+same as a bug of ours, so the agent retries until its budget runs out and can only report that the call failed, with no
+cause to act on or pass on.
+
+`UNKNOWN` stays for faults of ours. That covers any other status and any other transport error, and two failures that
+look like the upstream's but are not. A pool timeout means this service's own connections were all in use, so no
+upstream was asked. A connection refused by TLS verification is either our trust store or the upstream's certificate,
+and in neither case does a reissue clear it.
+
+The upstream is named by its label or public host, never by URL. A URL repeats the whole query, including parameters the
+service adds to it (the dbNSFP column list on a VEP call, for one), and runs to kilobytes for a long indel's id on a
+splice call, while the message is a bounded trailer the sandbox agent reads.
+
+Where a message quotes an upstream's error body, an HTML page is named ("an HTML error page") rather than quoted. A page
+states nothing the caller can act on, and quoting it would spend the trailer's budget on markup.
+
+A quoted body can also carry our own egress address, or a credential. NCBI's E-utilities, refusing a keyless caller over
+its rate limit, names the caller's address under `api-key`, and would name the key itself if one were sent:
+
+```json
+{"error":"API rate limit exceeded","api-key":"203.0.113.7","count":"4","limit":"3"}
+```
+
+So an `api-key` field is withheld whole, and any other IPv4 or IPv6 address a body quotes is masked; the message quotes
+that body as `{"error":"API rate limit exceeded","api-key":"<withheld>",...}`.
+
+The hatch passes a status's text to the guest only where the servicer marked it as its own. Every status the evidence
+servicers write is marked, and what marked text may carry is stated in
+[`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary).
 
 #### Two sources disagreeing is neither an absence nor a bad request
 

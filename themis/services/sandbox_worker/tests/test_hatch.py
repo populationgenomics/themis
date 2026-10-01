@@ -15,6 +15,7 @@ import pytest
 from google.protobuf import descriptor as protobuf_descriptor
 
 from themis.clients.auth import claim as claim_mod
+from themis.common import authored_status
 from themis.rpc import (
     clinvar_pb2,
     cspec_pb2,
@@ -188,10 +189,13 @@ def test_forwarder_injects_the_session_token_on_every_rpc(forwarder_class: _Forw
 class _SettledFailure(grpc.RpcError):
     """An upstream failure carrying a settled status, shaped like the ``_InactiveRpcError`` a real stub raises."""
 
-    def __init__(self, code: grpc.StatusCode, details: str) -> None:
+    def __init__(
+        self, code: grpc.StatusCode, details: str, trailing_metadata: tuple[tuple[str, str], ...] = ()
+    ) -> None:
         super().__init__()
         self._code = code
         self._details = details
+        self._trailing_metadata = trailing_metadata
 
     @override
     def code(self) -> grpc.StatusCode:
@@ -201,10 +205,17 @@ class _SettledFailure(grpc.RpcError):
     def details(self) -> str:
         return self._details
 
+    @override
+    def trailing_metadata(self) -> tuple[tuple[str, str], ...]:  # pyright: ignore[reportIncompatibleMethodOverride] — pairs unpack as grpc's metadatum does
+        return self._trailing_metadata
+
 
 # The forwarder gates on `isinstance(error, grpc.Call)`; registering satisfies it without implementing the six
 # abstract methods of that interface no forwarder consults.
 grpc.Call.register(_SettledFailure)
+
+# The trailer a servicer ends a failure with when it wrote the details itself (`authored_status.abort`).
+_MARKED = ((authored_status.AUTHORED_METADATA, '1'),)
 
 
 @pytest.mark.parametrize(('forwarder_class', 'method_name'), _FORWARDER_RPC_CASES)
@@ -213,7 +224,7 @@ def test_forwarder_carries_a_settled_upstream_status_through(
 ) -> None:
     # A settled status must reach the guest as itself. Left to escape the servicer it becomes UNKNOWN, so a
     # NOT_FOUND would read as a fault the caller retries rather than as the answer it is.
-    failure = _SettledFailure(grpc.StatusCode.NOT_FOUND, 'the source holds no record')
+    failure = _SettledFailure(grpc.StatusCode.NOT_FOUND, 'the source holds no record', _MARKED)
     forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
     context = _GuestContext()
     with pytest.raises(grpc.RpcError):
@@ -222,22 +233,28 @@ def test_forwarder_carries_a_settled_upstream_status_through(
     assert context.details == 'the source holds no record'
 
 
-# A code the upstream contract does not exclusively own, paired with text only something below the servicer writes.
-# PERMISSION_DENIED is the one an evidence servicer also sets: Cloud Run and the ID-token plugin set it too, and
-# theirs names the audience — which is the upstream URL.
+# Text something below the servicer writes, under a code a servicer writes too. grpc synthesises every one of these
+# for a failed channel or a cut deadline, naming the resolved upstream; Cloud Run and the ID-token plugin set the auth
+# codes naming the audience, which is the upstream URL. None carries the mark, whatever the code.
 _UNAUTHORED_FAILURES = [
     (grpc.StatusCode.UNAVAILABLE, 'failed to connect to all addresses; last error: ipv4:10.4.0.7:443'),
     (grpc.StatusCode.PERMISSION_DENIED, 'audience https://themis-evidence-service-xyz.a.run.app was rejected'),
+    (grpc.StatusCode.DEADLINE_EXCEEDED, 'Deadline Exceeded while dialling ipv4:10.4.0.7:443'),
+    (grpc.StatusCode.INVALID_ARGUMENT, 'grpc: error unmarshalling request from 10.4.0.7'),
+    (grpc.StatusCode.NOT_FOUND, 'Method not found on https://themis-evidence-service-xyz.a.run.app'),
+    (grpc.StatusCode.FAILED_PRECONDITION, 'the ALTS handshake with 10.4.0.7 failed'),
 ]
 
 
-@pytest.mark.parametrize(('code', 'upstream_details'), _UNAUTHORED_FAILURES)
+@pytest.mark.parametrize(
+    ('code', 'upstream_details'), _UNAUTHORED_FAILURES, ids=[c.name for c, _ in _UNAUTHORED_FAILURES]
+)
 @pytest.mark.parametrize(('forwarder_class', 'method_name'), _FORWARDER_RPC_CASES)
-def test_forwarder_withholds_a_diagnostic_the_upstream_did_not_author(
+def test_forwarder_withholds_details_the_servicer_did_not_mark(
     forwarder_class: _ForwarderClass, method_name: str, code: grpc.StatusCode, upstream_details: str
 ) -> None:
-    # Text under a code no evidence servicer exclusively owns was written below it, and names the upstream. The
-    # code crosses so the guest can tell a fault from an answer; the string does not.
+    # The mark is the one rule: unmarked text under any code was written below the servicer, and names the upstream.
+    # The code crosses so the guest can tell a fault from an answer; the string does not.
     failure = _SettledFailure(code, upstream_details)
     forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
     context = _GuestContext()
@@ -245,6 +262,22 @@ def test_forwarder_withholds_a_diagnostic_the_upstream_did_not_author(
         getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
     assert context.code is code
     assert context.details == code.name
+
+
+@pytest.mark.parametrize(('forwarder_class', 'method_name'), _FORWARDER_RPC_CASES)
+def test_forwarder_carries_details_the_servicer_marked_as_its_own(
+    forwarder_class: _ForwarderClass, method_name: str
+) -> None:
+    # An UNAVAILABLE a servicer wrote says which of its upstreams failed, which is what lets the guest tell an
+    # outage from a fault of ours; the mark is what tells it from the channel-level text withheld above.
+    details = 'Normalize failed upstream: reg.clinicalgenome.org did not answer in time (ReadTimeout)'
+    failure = _SettledFailure(grpc.StatusCode.UNAVAILABLE, details, _MARKED)
+    forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
+    context = _GuestContext()
+    with pytest.raises(grpc.RpcError):
+        getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+    assert context.code is grpc.StatusCode.UNAVAILABLE
+    assert context.details == details
 
 
 @pytest.mark.parametrize(('forwarder_class', 'method_name'), _FORWARDER_RPC_CASES)

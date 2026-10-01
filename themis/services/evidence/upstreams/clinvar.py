@@ -60,6 +60,7 @@ import defusedxml.common
 import defusedxml.ElementTree
 import httpx2
 
+from themis.common import trailer
 from themis.services.evidence import errors, hgvs, requests
 from themis.svcv4 import clinvar_classification, frequency
 
@@ -467,7 +468,7 @@ async def _efetch_archive(accession: str, *, http_client: httpx2.AsyncClient) ->
     response = await _spaced_get('efetch.fcgi', params, http_client=http_client)
     if (stated := _stated_no_record(response)) is not None:
         raise errors.InconsistentSourcesError(
-            _crosswalk_disagreement(accession, f'refused it ({response.status_code}) with {errors.clipped(stated)!r}')
+            _crosswalk_disagreement(accession, f'refused it ({response.status_code}) with {trailer.clipped(stated)!r}')
         )
     errors.raise_for_status(response, upstream=_SOURCE, subject=_subject('efetch.fcgi', params))
     try:

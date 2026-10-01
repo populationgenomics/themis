@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from themis.services.evidence import errors
+from themis.common import trailer
 
 # One identifier in the spellings a caller holds it in: bare digits, a `PMID:` prefix, zero-padded.
 _PMID = re.compile(r'\A(?:pmid\s*:?\s*)?0*([1-9][0-9]*)\Z', re.IGNORECASE)
@@ -43,7 +43,7 @@ def pmid_key(pmid: str) -> str:
     match = _PMID.match(pmid.strip())
     if match is None:
         raise ValueError(
-            f'pmid {errors.clipped(pmid, _ECHOED_VALUE)!r} is not a PubMed identifier '
+            f'pmid {trailer.clipped(pmid, _ECHOED_VALUE)!r} is not a PubMed identifier '
             '(digits, optionally "PMID:"-prefixed)'
         )
     return match.group(1)

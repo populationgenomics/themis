@@ -187,6 +187,19 @@ several interfaces ([`services.md`](services.md)). What the trusted side then do
 reach a third party, which is why an rpc qualifies for exposure only if its own outbound calls are destination-fixed and
 query-only ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security).
 
+A failed call crosses the hatch under its own status code, so the guest can tell a settled answer from a fault, but its
+text crosses only where the servicer marked it as its own, with a trailer `themis.common.authored_status` writes.
+Without the mark the guest gets the code's bare name. The rule exists because grpc writes its own text for a failed
+channel or a cut deadline under the same codes a servicer uses, and Cloud Run and the ID-token plugin set the
+authentication codes; that text names the upstream's address or audience, which the guest is not meant to learn.
+
+The mark is therefore a promise about the text, which the hatch trusts without reading it, and marked text is read by
+the agent and by a browser. It names the rpc, the upstream by its label or public host, the status the upstream returned
+and its stated reason, and what the caller sent. It never carries an internal address (a service URL, a database
+instance, a queue path), a URL with its query, a credential or anything a header carried, a driver's or database's own
+error text, or our egress address, which some upstreams echo back. Text that might hold any of these goes to the log,
+and the status goes unmarked.
+
 ### The workspace is a repository, and the agent's git is the only git in it
 
 `/workspace` is a clone of the Analysis's sheaf repository ([`sheaf.md`](sheaf.md)), and every `git` that touches it

@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 
 import httpx2
 
-from themis.services.evidence import errors
+from themis.common import trailer
 
 _BASE_URL = 'https://www.ebi.ac.uk/ols4/api'
 _OBO_IRI = 'http://purl.obolibrary.org/obo/'
@@ -61,7 +61,7 @@ async def _get_json(
     if response.is_client_error and response.status_code != httpx2.codes.TOO_MANY_REQUESTS:
         # Not InvalidRequestError: the term asked about is a curated one, so a refusal is a stale
         # reference table or a retired MONDO term, never the caller's request.
-        raise ValueError(f'{_SOURCE} rejected {url} ({response.status_code}): {errors.clipped(response.text.strip())}')
+        raise ValueError(f'{_SOURCE} rejected {url} ({response.status_code}): {trailer.clipped(response.text.strip())}')
     response.raise_for_status()  # 429 / 5xx stay retryable
     payload = response.json()
     if not isinstance(payload, dict):

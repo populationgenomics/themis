@@ -44,8 +44,8 @@ class Servicer(gnomad_pb2_grpc.GnomadServicer, serving.EvidenceServicer):
 
         Policy, not a limit of the upstream: gnomAD resolves `gnomad_r3` too, and answering from it
         would change the allele-frequency denominator under a caller reading the result as a v4 FAF.
-        A value outside the enum is a 500 there, so an unchecked one would also arrive as an
-        uncharacterised fault and be retried four times.
+        A value outside the enum is a 500 there, so an unchecked one would also arrive as
+        UNAVAILABLE, blaming gnomAD for our request, and be retried four times.
 
         Raises:
             errors.InvalidRequestError: If `dataset` is not one of the two the rpc serves.

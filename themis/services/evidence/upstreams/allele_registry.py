@@ -34,7 +34,6 @@ from themis.services.evidence import errors
 
 _ALLELE_URL = 'https://reg.clinicalgenome.org/allele'
 _SOURCE = 'ClinGen Allele Registry'
-_MAX_ERROR_DETAIL = 512
 
 # A registered allele id, as the trailing segment of an `@id` IRI. An expression the registry knows
 # no allele for answers with a JSON-LD blank node (`_:PA`) in place of one.
@@ -339,21 +338,20 @@ def _clinvar_alleles(external: Mapping[str, object]) -> list[variant_pb2.ClinVar
     return alleles
 
 
-def _error_detail(response: httpx2.Response) -> str:
-    """The registry's own `errorType`/`description`/`message` for a failed query, else the raw body.
+def _error_detail(response: httpx2.Response) -> str | None:
+    """The registry's own `errorType`/`description`/`message` for a failed query; None for a body carrying none.
 
-    Truncated: this rides in an exception message that becomes a gRPC trailer, and a trailer over
-    the transport's header limit is dropped for a size error that names nothing.
+    A body without them is left to ``errors.explanation``, which bounds it to fit a trailer and names
+    an HTML page rather than quoting it.
     """
     try:
         body = response.json()
     except ValueError:
-        body = None
-    if isinstance(body, Mapping):
-        parts = [str(value) for key in ('errorType', 'description', 'message') if (value := body.get(key)) is not None]
-    else:
-        parts = []
-    return ' — '.join(parts)[:_MAX_ERROR_DETAIL] if parts else response.text.strip()[:_MAX_ERROR_DETAIL]
+        return None
+    if not isinstance(body, Mapping):
+        return None
+    parts = [str(value) for key in ('errorType', 'description', 'message') if (value := body.get(key)) is not None]
+    return ' — '.join(parts) if parts else None
 
 
 def parse_allele(payload: Mapping[str, object], *, query: str) -> AlleleRegistryResult:

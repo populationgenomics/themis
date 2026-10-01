@@ -44,7 +44,7 @@ class _ScriptedHello(hello_pb2_grpc.HelloServicer):
 
 
 @contextlib.contextmanager
-def _serving(servicer: _ScriptedHello, *, workers: int = 2) -> Iterator[hello_pb2_grpc.HelloStub]:
+def _serving(servicer: hello_pb2_grpc.HelloServicer, *, workers: int = 2) -> Iterator[hello_pb2_grpc.HelloStub]:
     server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=workers))
     hello_pb2_grpc.add_HelloServicer_to_server(servicer, server)
     port = server.add_insecure_port('127.0.0.1:0')
@@ -199,6 +199,51 @@ def test_the_budget_covers_the_retries_not_each_attempt_separately() -> None:
         retry.call(stub.SayHello, hello_pb2.SayHelloRequest(note='n'), timeout=0.3, backoff=0.5)
     assert servicer.calls == 1
     assert raised.value.code() is grpc.StatusCode.UNAVAILABLE
+
+
+class _FailsThenStalls(hello_pb2_grpc.HelloServicer):
+    """Fails its first call UNAVAILABLE with a cause, then holds every later one open past any budget here."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @override
+    def SayHello(self, request: hello_pb2.SayHelloRequest, context: grpc.ServicerContext) -> hello_pb2.SayHelloResponse:
+        self.calls += 1
+        if self.calls == 1:
+            context.abort(grpc.StatusCode.UNAVAILABLE, 'reg.clinicalgenome.org did not answer in time')
+        time.sleep(1.0)
+        return hello_pb2.SayHelloResponse(greeting='late')
+
+
+def test_a_retry_the_budget_cuts_short_names_the_failure_that_prompted_it() -> None:
+    """The deadline is how the call ended, not why: the failure before it is what the caller has to act on.
+
+    Raised alone, the retry's DEADLINE_EXCEEDED reads as a slow service, when the upstream had already
+    said it was down.
+    """
+    servicer = _FailsThenStalls()
+    with _serving(servicer) as stub, pytest.raises(grpc.RpcError) as raised:
+        retry.call(stub.SayHello, hello_pb2.SayHelloRequest(note='n'), timeout=0.3, backoff=0.0)
+    assert servicer.calls == 2
+    assert raised.value.code() is grpc.StatusCode.DEADLINE_EXCEEDED
+    cause = raised.value.__cause__
+    assert isinstance(cause, grpc.Call)
+    assert cause.code() is grpc.StatusCode.UNAVAILABLE
+    noted = (
+        'attempt 2 ended DEADLINE_EXCEEDED; attempt 1 had failed with UNAVAILABLE: '
+        'reg.clinicalgenome.org did not answer in time'
+    )
+    assert any(noted in note for note in getattr(raised.value, '__notes__', []))
+
+
+def test_a_deadline_on_the_first_attempt_carries_no_earlier_cause() -> None:
+    """Nothing failed before it, so nothing is named: a note there would invent a cause."""
+    servicer = _ScriptedHello([], stall=1.0)
+    with _serving(servicer) as stub, pytest.raises(grpc.RpcError) as raised:
+        _say_hello(stub, timeout=0.1)
+    assert raised.value.__cause__ is None
+    assert not getattr(raised.value, '__notes__', [])
 
 
 def test_every_call_carries_a_deadline_even_when_the_caller_names_none() -> None:

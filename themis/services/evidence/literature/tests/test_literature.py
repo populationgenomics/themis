@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import datetime
+import pathlib
 import typing
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import override
 
 import grpc
 import grpc.aio
+import httpx2
 import pytest
 
+from themis.common import authored_status
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import fixture as fixture_mod
+from themis.services.evidence.literature import pmids as pmids_mod
 from themis.services.evidence.literature import servicer as servicer_mod
 from themis.services.evidence.literature import variants
 from themis.services.evidence.tests import authz
@@ -1230,3 +1235,239 @@ def test_a_fan_out_that_never_answers_ends_as_this_rpcs_own_deadline(monkeypatch
     assert 'SearchLitVar' in (failure.details() or '')
     assert cancelled
     assert info.has_markdown  # a store rpc under the same bound answers as it always did
+
+
+def _raising(method: str, error: Exception) -> fixture_mod.FixtureBackend:
+    """The seeded backend with `method` failing every call with `error`, to reach one refusal branch."""
+    backend = _seeded()
+
+    async def fail(*_args: object, **_kwargs: object) -> typing.NoReturn:
+        raise error
+
+    setattr(backend, method, fail)
+    return backend
+
+
+_S = literature_pb2
+_MARKDOWN = _S.MarkdownSelector()
+
+# One case per refusal the servicer writes: the rpc, the backend it runs over, and the status it has to end under.
+_REFUSALS: list[
+    tuple[
+        str,
+        Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[object]],
+        literature_backend.LiteratureBackend | None,
+        grpc.StatusCode,
+    ]
+] = [
+    (
+        'describe.unknown',
+        lambda s: s.DescribePaper(_S.DescribePaperRequest(doc_id='nope')),
+        None,
+        grpc.StatusCode.NOT_FOUND,
+    ),
+    (
+        'describe.corrupt',
+        lambda s: s.DescribePaper(_S.DescribePaperRequest(doc_id=DOC_XML)),
+        _raising('describe_paper', literature_backend.CorruptMetadataError('doc-xml: bad envelope')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'markdown.unknown',
+        lambda s: s.GetMarkdown(_S.GetMarkdownRequest(doc_id='nope')),
+        None,
+        grpc.StatusCode.NOT_FOUND,
+    ),
+    (
+        'markdown.blob',
+        lambda s: s.GetMarkdown(_S.GetMarkdownRequest(doc_id=DOC_XML)),
+        _raising('get_markdown', literature_backend.MissingRenderingBlobError('doc-xml rendering r1 is missing')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'content.selector',
+        lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id=DOC_XML)),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'content.unknown',
+        lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id='nope', markdown=_MARKDOWN)),
+        None,
+        grpc.StatusCode.NOT_FOUND,
+    ),
+    (
+        'content.missing',
+        lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id=DOC_OCR, markdown=_MARKDOWN)),
+        None,
+        grpc.StatusCode.NOT_FOUND,
+    ),
+    (
+        'locate.representation',
+        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote=QUOTE_MD)),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'locate.unknown',
+        lambda s: s.Locate(_S.LocateRequest(doc_id='nope', quote='q', representation=_S.REPRESENTATION_MARKDOWN)),
+        None,
+        grpc.StatusCode.NOT_FOUND,
+    ),
+    (
+        'locate.unavailable',
+        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote='q', representation=_S.REPRESENTATION_MARKDOWN)),
+        _raising('locate', literature_backend.RepresentationUnavailableError('doc-xml has no markdown rendering')),
+        grpc.StatusCode.FAILED_PRECONDITION,
+    ),
+    (
+        'locate.pdf',
+        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote='q', representation=_S.REPRESENTATION_PDF)),
+        _raising('locate', literature_backend.PdfLocationUnavailableError('doc-xml: not yet available')),
+        grpc.StatusCode.UNIMPLEMENTED,
+    ),
+    (
+        'locate.blob',
+        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote='q', representation=_S.REPRESENTATION_MARKDOWN)),
+        _raising('locate', literature_backend.MissingRenderingBlobError('doc-xml rendering r1 is missing')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'validate.blob',
+        lambda s: s.Validate(_S.ValidateRequest(doc_id=DOC_XML, quote='q')),
+        _raising('validate', literature_backend.MissingRenderingBlobError('doc-xml rendering r1 is missing')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'poll.oversized',
+        lambda s: s.PollFullTexts(
+            _S.PollFullTextsRequest(doc_ids=[f'd{i}' for i in range(servicer_mod._MAX_DOC_IDS + 1)])
+        ),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'ingest.oversized',
+        lambda s: s.MaybeIngestPapers(
+            _S.MaybeIngestPapersRequest(external_ids=[f'pmid:{i}' for i in range(servicer_mod._MAX_EXTERNAL_IDS + 1)])
+        ),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'ingest.unqualified',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=['10.1/xml'])),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'ingest.value',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=['pmid:abc'])),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'ingest.no_crosswalk',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_XML])),
+        _raising('resolve_external_ids', literature_backend.CrosswalkNotConfiguredError('no crosswalk is configured')),
+        grpc.StatusCode.FAILED_PRECONDITION,
+    ),
+    (
+        'ingest.crosswalk_down',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_XML])),
+        _raising('resolve_external_ids', literature_backend.CrosswalkUnavailableError('connection refused')),
+        grpc.StatusCode.UNAVAILABLE,
+    ),
+    (
+        'ingest.no_queue',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
+        _raising('place_conversions', literature_backend.ConversionNotConfiguredError('no queue')),
+        grpc.StatusCode.FAILED_PRECONDITION,
+    ),
+    (
+        'ingest.queue_down',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
+        _raising('place_conversions', literature_backend.ConversionUnavailableError('cloud tasks is down')),
+        grpc.StatusCode.UNAVAILABLE,
+    ),
+    (
+        'ingest.refused',
+        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
+        _raising('place_conversions', literature_backend.ConversionEnqueueFailedError('permission denied')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'europepmc.query',
+        lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query=' ')),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'europepmc.refused',
+        lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query='MYH7')),
+        _raising('search_europe_pmc', errors.InvalidRequestError('Europe PMC rejected the query')),
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'europepmc.upstream_down',
+        lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query='MYH7')),
+        _raising('search_europe_pmc', httpx2.ReadTimeout('', request=httpx2.Request('GET', 'https://www.ebi.ac.uk/x'))),
+        grpc.StatusCode.UNAVAILABLE,
+    ),
+    ('litvar.identifier', lambda s: s.SearchLitVar(_S.SearchLitVarRequest()), None, grpc.StatusCode.INVALID_ARGUMENT),
+    (
+        'litvar.gene',
+        lambda s: s.ListLitVarEntities(_S.ListLitVarEntitiesRequest(gene=' ')),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'pubmed.malformed',
+        lambda s: s.FetchPubmedArticles(_S.FetchPubmedArticlesRequest(pmids=['abc'])),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'pubmed.oversized',
+        lambda s: s.FetchPubmedArticles(
+            _S.FetchPubmedArticlesRequest(pmids=[str(i + 1) for i in range(pmids_mod.MAX_PMIDS_PER_BATCH + 1)])
+        ),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+    (
+        'pubmed.empty',
+        lambda s: s.FetchPubmedArticles(_S.FetchPubmedArticlesRequest()),
+        None,
+        grpc.StatusCode.INVALID_ARGUMENT,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ('stub_call', 'backend', 'code'), [case[1:] for case in _REFUSALS], ids=[case[0] for case in _REFUSALS]
+)
+def test_every_refusal_the_servicer_writes_is_marked_as_its_own(
+    stub_call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[object]],
+    backend: literature_backend.LiteratureBackend | None,
+    code: grpc.StatusCode,
+) -> None:
+    """The sandbox hatch passes on only marked details, so an unmarked refusal reaches the agent as a bare code."""
+    with pytest.raises(grpc.aio.AioRpcError) as caught:
+        _run(stub_call, backend=backend)
+    assert caught.value.code() is code
+    assert authored_status.authored(caught.value)
+
+
+def test_every_abort_in_the_servicer_goes_through_the_mark() -> None:
+    """A refusal added without a case above still has to be marked: no bare `context.abort` is left to add one with."""
+    tree = ast.parse(pathlib.Path(servicer_mod.__file__).read_text('utf-8'))
+    bare = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == 'abort'
+        and not (isinstance(node.func.value, ast.Name) and node.func.value.id == 'authored_status')
+    ]
+    assert bare == []

@@ -12,6 +12,7 @@ from typing import NamedTuple
 
 import httpx2
 
+from themis.common import trailer
 from themis.services.evidence import errors
 
 _SEARCH_URL = 'https://www.ebi.ac.uk/europepmc/webservices/rest/search'
@@ -92,7 +93,7 @@ def _raise_on_refusal(payload: object, *, query: str) -> None:
     if isinstance(payload, Mapping) and 'hitCount' not in payload and ('errMsg' in payload or 'errCode' in payload):
         explained = payload.get('errMsg', f'error code {payload.get("errCode")}')
         raise errors.InvalidRequestError(
-            f'{_SOURCE} rejected search {errors.clipped(query)!r}: {errors.clipped(str(explained))}'
+            f'{_SOURCE} rejected search {trailer.clipped(query)!r}: {trailer.clipped(str(explained))}'
         )
 
 

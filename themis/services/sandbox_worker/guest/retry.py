@@ -6,7 +6,10 @@ gnomAD read timeouts — so a bare call fails a whole analysis on a fault a seco
 those, and only those: the decision reads the ``grpc.StatusCode``, never the error text, because a service states a
 settled answer *in the status* (``NOT_FOUND`` for "the source holds no record", ``INVALID_ARGUMENT`` for a request it
 does not accept). Retrying a settled answer only wastes the upstream's rate limit. Errors are never swallowed: once the
-attempts are spent, the last ``grpc.RpcError`` propagates.
+attempts are spent, the last ``grpc.RpcError`` propagates. A retry that ends ``DEADLINE_EXCEEDED`` — this caller's
+budget running out, or the service's own deadline — is raised from the failure that prompted it, with a note naming
+that failure's status and details: a deadline alone reads as a slow service, when the attempt before may have said
+which upstream was down.
 
 ``cache_dir`` makes a repeated call within one session free, for a sub-agent thread or a reviewer re-issuing the
 author's calls. Put it under ``/workspace/scratch/``, which is never pushed, so it lasts as long as the session and no
@@ -168,6 +171,14 @@ def _evict(cache_dir: pathlib.Path, target: pathlib.Path, incoming: int) -> None
         total -= size
 
 
+def _name_the_cause(error: grpc.RpcError, earlier: grpc.Call, attempt: int) -> None:
+    """Note on ``error`` the failure the attempt before it ended with, so the traceback's last lines show both."""
+    error.add_note(
+        f'[themis.agent.retry] attempt {attempt} ended DEADLINE_EXCEEDED; attempt {attempt - 1} had failed with '
+        f'{earlier.code().name}: {earlier.details() or "no details"}'
+    )
+
+
 def call[Request: message.Message, Response: message.Message](
     method: UnaryMethod[Request, Response],
     request: Request,
@@ -201,7 +212,8 @@ def call[Request: message.Message, Response: message.Message](
         TypeError: If ``cache_dir`` is set and ``method`` is not a generated stub method, which is
             the only kind carrying the rpc path the key needs.
         grpc.RpcError: The last failure, once a settled status is returned (never retried), the
-            attempts are spent, or the budget is.
+            attempts are spent, or the budget is. A retry that ends ``DEADLINE_EXCEEDED`` is raised
+            from the failure before it (``__cause__``), noted on the error.
     """
     if attempts < 1:
         raise ValueError(f'attempts must be at least 1, got {attempts}')
@@ -216,16 +228,22 @@ def call[Request: message.Message, Response: message.Message](
             return cast('Response', cached)
     attempt = 0
     deadline = time.monotonic() + timeout
+    # The transient failure that prompted the attempt in flight; only a call with a status is ever retried.
+    earlier: grpc.Call | None = None
     while True:
         attempt += 1
         try:
             response = method(request, timeout=deadline - time.monotonic())
         except grpc.RpcError as error:
+            if earlier is not None and _status(error) == grpc.StatusCode.DEADLINE_EXCEEDED:
+                _name_the_cause(error, earlier, attempt)
+                raise error from cast('grpc.RpcError', earlier)
             if attempt >= attempts or _status(error) not in TRANSIENT_CODES:
                 raise
             wait = backoff * 2 ** (attempt - 1)
             if deadline - time.monotonic() <= wait:
                 raise
+            earlier = cast('grpc.Call', error)  # a status in TRANSIENT_CODES means `_status` found a Call
             time.sleep(wait)
             continue
         if entry is not None:
