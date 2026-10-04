@@ -1,0 +1,600 @@
+// One SVCv4 classification of one variant against one monogenic disease entity, as the working
+// document draws it (docs/design/svcv4-classification-widget.md): the routing, every evidence code
+// the paths taken admit, the point tally with the class bands it was mapped against, and the tallies
+// the library computed under other values of the judgement inputs.
+//
+// `themis.svcv4.widget` builds it by running the library, so every point, total, band and class
+// here was computed by `themis.svcv4`, and none is typed by the agent. The agent supplies the
+// identifiers, each code's status, evidence and reasoning, and the inputs of the alternatives the
+// builder scores. A decimal is fixed-point decimal text, such as `-1.5` or `0`.
+//
+// A curator's judgements are three pairs of guards, a tick and a note: on the whole record, on the
+// routing, and on each code. Each clears when the agent changes what it judges. Nothing here is
+// presentation: the client draws every classification the same way, and text is shown as plain
+// text, never as markup.
+//
+// EVALUATION ONLY, AGAINST A DRAFT STANDARD. A classification composed under the SVCv4 pilot is not
+// a clinical variant classification.
+syntax = "proto3";
+
+package themis.widgets.models;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "themis/evidence/models/evidence.proto";
+import "themis/rpc/gene_disease.proto";
+import "themis/svcv4/models/svcv4.proto";
+import "themis/widgets/models/widget.proto";
+
+message Svcv4Classification {
+  option (themis.widgets.models.widget) = true;
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.one_selected_path"
+    message: "exactly one path is the one the tally counts"
+    expression: "this.paths.filter(path, path.selected).size() == 1"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.paths_unique"
+    message: "every path is listed once"
+    expression: "this.paths.map(path, path.family).unique()"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.paths_routed"
+    message: "the paths scored are the routes taken"
+    expression: "this.paths.size() == this.routing.routes.size() && this.paths.all(path, this.routing.routes.exists(route, route.family == path.family))"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.paths_in_routing_order"
+    message: "the paths come in the routing's order"
+    expression: "this.paths.size() < 2 || this.routing.routes.size() < 2 || (this.paths[0].family == this.routing.routes[0].family && this.paths[1].family == this.routing.routes[1].family)"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.codes_on_paths"
+    message: "a code on a path names one of the paths scored"
+    expression: "this.codes.all(code, code.path_family == '' || this.paths.exists(path, path.family == code.path_family))"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.lines_on_paths"
+    message: "a line on a path names one of the paths scored"
+    expression: "this.lines.all(line, line.path_family == '' || this.paths.exists(path, path.family == line.path_family))"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.alternatives_name_codes"
+    message: "an alternative names only codes the record lists"
+    expression: "this.open_values.all(value, value.codes.all(name, this.codes.exists(code, code.code == name))) && this.sensitivity.all(value, value.codes.all(name, this.codes.exists(code, code.code == name)))"
+  };
+  option (buf.validate.message).cel = {
+    id: "svcv4_classification.reported_class"
+    message: "the class reported is the tally's where every open value agrees with it, and not established where one does not"
+    expression: "this.open_values.all(value, value.tally.final_class == this.tally.final_class) ? this.classification == this.tally.final_class : this.classification == 6"
+  };
+
+  // A curator's sign-off on the whole record. It judges every field below, so any change the agent
+  // makes anywhere clears it; a tick or a note on the routing or on a code does not.
+  bool reviewed = 1 [(themis.widgets.models.guard) = {}];
+  // What the curator wrote about the whole record, as plain text. Empty means no note.
+  string note = 2 [
+    (themis.widgets.models.guard) = {},
+    (buf.validate.field).string.max_len = 4000
+  ];
+
+  // Which standard the library scored against, and the document set its citations resolve against.
+  message Framework {
+    // The standard's short name, as the library states it ("SVCv4").
+    string name = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 64
+    }];
+    // Which phase of the standard's release the transcription follows.
+    string status = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+    }];
+    // The repository of the document set every framework citation resolves against.
+    string citations_repository = 3 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // Its revision. It pins the documents cited, not the build of the library that scored.
+    string citations_revision = 4 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+    }];
+    // What output under the standard may and may not be used for, in the library's words. The client
+    // shows it with the record.
+    string usage = 5 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 2000
+    }];
+  }
+
+  // The variant as the agent identified it.
+  message Variant {
+    // The coding change on the chosen transcript, e.g. `NM_000138.5:c.7003C>T`.
+    string transcript_hgvs = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 512
+    }];
+    // The protein change, e.g. `NP_000129.3:p.(Arg2335Trp)`. Empty where the variant states none.
+    string protein_hgvs = 2 [(buf.validate.field).string.max_len = 512];
+    // The change on the GRCh38 chromosome accession, e.g. `NC_000015.10:g.48427768G>A`. Empty where
+    // the agent holds none.
+    string genomic_hgvs = 3 [(buf.validate.field).string.max_len = 512];
+    string gene_symbol = 4 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 64
+    }];
+    // `HGNC:<number>`.
+    string hgnc_id = 5 [(buf.validate.field).string.pattern = "^HGNC:[0-9]+$"];
+    // The ClinGen canonical allele id, `CA<number>`. Empty where the registry names none.
+    string caid = 6 [(buf.validate.field).string.pattern = "^(CA[0-9]+)?$"];
+  }
+
+  // The monogenic disease entity the variant is classified against.
+  message Entity {
+    string disease = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 512
+    }];
+    // `MONDO:<seven digits>`.
+    string mondo_id = 2 [(buf.validate.field).string.pattern = "^MONDO:[0-9]{7}$"];
+    themis.evidence.models.Inheritance inheritance = 3 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    // The disease mechanism the agent classified under, in its words, e.g. "loss of function". An
+    // entity is a gene, a disease, an inheritance and a mechanism, and a gene can carry two entities
+    // that differ in mechanism alone.
+    string mechanism = 4 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // The curation the gate was read from, as `GeneDisease.DescribeGene` names its source, e.g.
+    // "ClinGen Gene Validity".
+    string validity_source = 5 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // That curation's classification, verbatim, e.g. "Definitive".
+    string validity_classification = 6 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // The gate level the classification reads as: the gate that caps the class.
+    themis.rpc.gene_disease.GateLevel gate_level = 7 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+  }
+
+  // One path through a decision tree the variant was routed onto.
+  message Route {
+    // The path's family (`MIS`, `SPL`, `NUL`, `CDS`), which the path's scores and codes name.
+    string family = 1 [(buf.validate.field).string.pattern = "^[A-Z]{3}$"];
+    // The library's label for the path, which names the arm taken: the splice colour, the
+    // duplication path, a whole-gene deletion. E.g. "splice blue (SPL_)".
+    string label = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+  }
+
+  // Which workflow the variant was routed onto, against which entity, and why.
+  message Routing {
+    // A curator's tick on the routing: the variant, the consequence, the entity, the paths taken and
+    // the reason. It is cleared by the agent changing any of them, and by nothing a code or the tally
+    // says.
+    bool reviewed = 1 [(themis.widgets.models.guard) = {}];
+    // What the curator wrote about the routing, as plain text. Empty means no note.
+    string note = 2 [
+      (themis.widgets.models.guard) = {},
+      (buf.validate.field).string.max_len = 4000
+    ];
+    Variant variant = 3 [(buf.validate.field).required = true];
+    // The molecular consequence the library routed on, as `Variant.Normalize` stated it.
+    themis.evidence.models.Consequence consequence = 4 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    Entity entity = 5 [(buf.validate.field).required = true];
+    // The paths taken: one, or a missense variant's two.
+    repeated Route routes = 6 [(buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 2
+    }];
+    // Why this entity and this route, in the agent's words.
+    string rationale = 7 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 20000
+    }];
+  }
+
+  // One upstream release a fact rests on, as the evidence rpc's provenance record named it.
+  message Release {
+    // The upstream, e.g. "gnomAD GraphQL".
+    string source = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // The release, verbatim, e.g. "gnomad_r4".
+    string dataset_version = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+  }
+
+  // What an evidence rpc's provenance record said about the answer a fact was read from.
+  message Retrieval {
+    // The upstream, e.g. "Ensembl VEP".
+    string source = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    // Every release the answer rests on, verbatim, never a subset, e.g. "VEP 114" and "GRCh38".
+    repeated string dataset_versions = 2 [(buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 16
+      items: {
+        string: {
+          min_len: 1
+          max_len: 256
+        }
+      }
+    }];
+    // When the upstream answered.
+    google.protobuf.Timestamp retrieved_at = 3 [(buf.validate.field).required = true];
+  }
+
+  // A passage or paper a statement rests on, as `:quote[doc_id, quote]` or `:paper[doc_id]` carries it
+  // in prose: a click on it reveals the paper, and the quote within it, in the document pane.
+  message Citation {
+    // The litcache canonical doc_id.
+    string doc_id = 1 [(buf.validate.field).string.uuid = true];
+    // A verbatim passage of the paper, as `Validate` passed it. Empty cites the paper as a whole.
+    string quote = 2 [(buf.validate.field).string.max_len = 2000];
+  }
+
+  // A web search result the agent read only as a title and an excerpt. Nothing retrieved it, so a
+  // statement resting on one is unverifiable, and the client says so.
+  message WebResult {
+    string url = 1 [(buf.validate.field).string = {
+      uri: true
+      max_len: 2048
+    }];
+    string title = 2 [(buf.validate.field).string.max_len = 512];
+  }
+
+  // A passage of the clinical context the Analysis was started with, verbatim.
+  message CaseText {
+    string quote = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 2000
+    }];
+  }
+
+  // One fact a code rests on, and where it came from.
+  message Evidence {
+    // The fact, as plain text.
+    string statement = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 2000
+    }];
+    oneof source {
+      option (buf.validate.oneof).required = true;
+      // Served by an evidence rpc.
+      Retrieval retrieval = 2;
+      // Read in a paper the literature store holds.
+      Citation citation = 3;
+      // Stated in the clinical context.
+      CaseText case_text = 4;
+      // Seen only in a web search result.
+      WebResult web_result = 5;
+    }
+  }
+
+  // One row of a per-observation table a code was priced from, and how many observations fell in it.
+  message Cell {
+    // The library's id for the row, e.g. `CLN_DNV.specific.unconfirmed`.
+    string cell_id = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+    }];
+    // The row as the library's transcription describes it.
+    string description = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 512
+    }];
+    // How many observations the agent counted in the row: individuals, for a table priced per
+    // individual; one, for a determination such as a frequency bin.
+    uint32 count = 3 [(buf.validate.field).uint32.gte = 1];
+    // What one observation in the row scores; empty for a row the framework names and declines to
+    // value, such as a case-control odds ratio near 1.
+    string points_each = 4 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+  }
+
+  // The decision the agent weighed against the one it made, and what ruled it out.
+  message NearestAlternative {
+    // The row not chosen, where the code is priced per observation; empty otherwise.
+    string cell_id = 1 [(buf.validate.field).string.max_len = 128];
+    // The alternative, as plain text.
+    string description = 2 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 2000
+    }];
+    // What ruled it out.
+    string reason = 3 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 20000
+    }];
+  }
+
+  // One evidence code a path taken admits: whether it was scored, the points the tally counts for
+  // it, and the evidence and reasoning behind the call.
+  message Code {
+    option (buf.validate.message).cel = {
+      id: "code.family_prefix"
+      message: "a code's family is the prefix of its name"
+      expression: "this.code.startsWith(this.family + '_')"
+    };
+    option (buf.validate.message).cel = {
+      id: "code.points_when_scored"
+      message: "a scored code carries its points and raw points, and any other carries neither"
+      expression: "(this.status == 1) == (this.points != '') && (this.points != '') == (this.raw_points != '')"
+    };
+    option (buf.validate.message).cel = {
+      id: "code.reason_when_not_scored"
+      message: "a code not scored says why, and a scored one carries no such reason"
+      expression: "(this.status == 1) == (this.status_reason == '')"
+    };
+    option (buf.validate.message).cel = {
+      id: "code.reasoned_when_scored"
+      message: "a scored code carries its rationale and the agent's confidence in it"
+      expression: "this.status != 1 || (this.rationale != '' && this.confidence != 0)"
+    };
+
+    // A curator's tick on the code: its status, points, evidence and reasoning. Cleared by the agent
+    // changing any of them, including the points, which move when a judgement input the code is
+    // scaled by moves.
+    bool reviewed = 1 [(themis.widgets.models.guard) = {}];
+    // What the curator wrote about the code, as plain text. Empty means no note.
+    string note = 2 [
+      (themis.widgets.models.guard) = {},
+      (buf.validate.field).string.max_len = 4000
+    ];
+    // The framework's code name, e.g. `POP_FRQ`. A code keeps its name across revisions, which is
+    // what carries a curator's tick across a rewrite that leaves the code unchanged.
+    string code = 3 [
+      (themis.widgets.models.element_key) = true,
+      (buf.validate.field).string.pattern = "^[A-Z]{3}_[A-Z]{3}$"
+    ];
+    // The code's family, the prefix the framework groups it under, e.g. `POP`.
+    string family = 4 [(buf.validate.field).string.pattern = "^[A-Z]{3}$"];
+    // The code's name in words, as the library's transcription states it.
+    string title = 5 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    themis.svcv4.models.AssessmentStatus status = 6 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    // Why the code was not scored; set exactly when `status` is not SCORED.
+    string status_reason = 7 [(buf.validate.field).string.max_len = 20000];
+
+    // The points the tally counts for the code, after the matrix and any cap that bounds it alone;
+    // set exactly when `status` is SCORED. A code on a path the max-path rule did not select carries
+    // its points too, and the tally does not count them.
+    string points = 8 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+    // The points as they reached the library, before the matrix or a cap; set exactly when `points`
+    // is. Equal to `points` where nothing adjusted them.
+    string raw_points = 9 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+    // What the library did to the raw points, e.g. "matrix x0.5"; empty where it did nothing.
+    string adjustment = 10 [(buf.validate.field).string.max_len = 20000];
+    // Where the library read the value from, e.g. the frequency and the threshold it was binned
+    // against; empty where the value was the agent's own reduction.
+    string basis = 11 [(buf.validate.field).string.max_len = 2000];
+    // The family of the path the code sits on (`MIS`, `SPL`, `NUL`, `CDS`), naming one of `paths`;
+    // empty for a code scored outside any path.
+    string path_family = 12 [(buf.validate.field).string.pattern = "^([A-Z]{3})?$"];
+    // The decision-tree cell the agent chose for a code on a path, in the framework's words, e.g.
+    // "NMD predicted, +6"; empty for a code priced by `cells`. The library prices a path code from a
+    // tier and names no cell for it, so this is the agent's statement of the cell it read.
+    string decision = 13 [(buf.validate.field).string.max_len = 2000];
+    // The per-observation rows the points were priced from; empty for a code priced otherwise.
+    repeated Cell cells = 14 [
+      (buf.validate.field).repeated.max_items = 64,
+      (buf.validate.field).cel = {
+        id: "code.cells.unique"
+        message: "every row is listed once, with its count"
+        expression: "this.map(cell, cell.cell_id).unique()"
+      }
+    ];
+    // The upstream releases the library read the value at; empty for a code on a path, whose
+    // releases the path carries.
+    repeated Release releases = 15 [(buf.validate.field).repeated.max_items = 32];
+
+    // What the call rests on.
+    repeated Evidence evidence = 16 [(buf.validate.field).repeated.max_items = 64];
+    // Why this status and these points, given the evidence, in the agent's words. Required for a
+    // scored code.
+    string rationale = 17 [(buf.validate.field).string.max_len = 20000];
+    // Absent where the call had no near miss.
+    NearestAlternative nearest_alternative = 18;
+    // How open the agent considers the call. Required for a scored code.
+    themis.svcv4.models.Confidence confidence = 19 [(buf.validate.field).enum.defined_only = true];
+    // What would settle an open or leaning call.
+    string confidence_note = 20 [(buf.validate.field).string.max_len = 20000];
+  }
+
+  // The scores of a path taken, with its matrix-adjusted predictive points retained.
+  message Path {
+    // The path's family, naming one of the routing's routes.
+    string family = 1 [(buf.validate.field).string.pattern = "^[A-Z]{3}$"];
+    // Whether the tally counts it. Of a missense variant's two paths, the max-path rule selects one;
+    // a single path is always selected.
+    bool selected = 2;
+    string total = 3 [(buf.validate.field).string.pattern = "^-?[0-9]+(\\.[0-9]+)?$"];
+    // The fraction the matrix scaled the positive predictive points by.
+    string multiplier = 4 [(buf.validate.field).string.pattern = "^-?[0-9]+(\\.[0-9]+)?$"];
+    // The mechanism level the path was scaled by, in the framework's word ("Established"); empty
+    // where the path does not scale by mechanism.
+    string mechanism = 5 [(buf.validate.field).string.max_len = 64];
+    // The exon-relevance call the path was scaled by ("All"), or the library's account of the waiver
+    // that stood in for one; empty where the path does not scale by exon relevance.
+    string exon_relevance = 6 [(buf.validate.field).string.max_len = 20000];
+    // The upstream releases behind the values on the path.
+    repeated Release releases = 7 [(buf.validate.field).repeated.max_items = 32];
+  }
+
+  // A line of the audit trail no code carries: a cap that bounded a subtotal, or an award such as
+  // SM7's critical residue. Its points are what it adds to the tally, so the counted codes and lines
+  // sum to the total.
+  message Line {
+    // What a line does to the tally.
+    enum Kind {
+      KIND_UNSPECIFIED = 0;
+      // A cap on a subtotal: its points are the signed adjustment, which moves the subtotal towards
+      // zero, and `raw_points` the subtotal it was applied to.
+      KIND_CAP = 1;
+      // Points awarded on a path beside its codes, such as SM7's critical residue: its points are the
+      // award after the matrix, and `raw_points` the award before it.
+      KIND_AWARD = 2;
+    }
+
+    Kind kind = 6 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    // The library's label, e.g. "parent cap".
+    string label = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    }];
+    string points = 2 [(buf.validate.field).string.pattern = "^-?[0-9]+(\\.[0-9]+)?$"];
+    // For a cap, the subtotal it was applied to; for an award, the award before the matrix scaled it.
+    string raw_points = 3 [(buf.validate.field).string.pattern = "^-?[0-9]+(\\.[0-9]+)?$"];
+    // The bound or the account, as the library states it.
+    string note = 4 [(buf.validate.field).string.max_len = 20000];
+    // The path the line belongs to, naming one of `paths`; empty for a line outside any path.
+    string path_family = 5 [(buf.validate.field).string.pattern = "^([A-Z]{3})?$"];
+  }
+
+  // A total, and the class the library mapped it to.
+  message Tally {
+    option (buf.validate.message).cel = {
+      id: "tally.vus_subband"
+      message: "a VUS total names its sub-band, and no other total names one"
+      expression: "(this.band == 3) == (this.vus_subband != '')"
+    };
+
+    string total = 1 [(buf.validate.field).string.pattern = "^-?[0-9]+(\\.[0-9]+)?$"];
+    // The class band the total falls in, before the gate.
+    themis.svcv4.models.Classification band = 2 [(buf.validate.field).enum = {
+      defined_only: true
+      in: [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }];
+    // The VUS sub-band as the reference names it ("VUS-low"); set exactly when `band` is VUS.
+    string vus_subband = 3 [(buf.validate.field).string.max_len = 64];
+    // The class after the gene-disease-validity gate.
+    themis.svcv4.models.Classification final_class = 4 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [
+        0,
+        6
+      ]
+    }];
+    // Whether the gate changed the class.
+    bool gate_capped = 5;
+  }
+
+  // The tally the library computed under another value of one or more judgement inputs.
+  message Alternative {
+    // The inputs and the values taken, in the agent's words, e.g. "parentage confirmed".
+    string assumption = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 1000
+    }];
+    // The codes whose points differ from the ones `codes` shows, as the library computed them, each
+    // once and each one `codes` lists.
+    repeated string codes = 2 [(buf.validate.field).repeated = {
+      max_items: 64
+      unique: true
+      items: {
+        string: {pattern: "^[A-Z]{3}_[A-Z]{3}$"}
+      }
+    }];
+    Tally tally = 3 [(buf.validate.field).required = true];
+  }
+
+  // A class band the totals were mapped against, as the reference states it. A VUS total's band is
+  // its sub-band, so the bands tile the points line from benign to pathogenic.
+  message Band {
+    // The reference's name for the band: a class ("LB") or a VUS sub-band ("VUS-mid").
+    string name = 1 [(buf.validate.field).string = {
+      min_len: 1
+      max_len: 64
+    }];
+    themis.svcv4.models.Classification classification = 2 [(buf.validate.field).enum = {
+      defined_only: true
+      in: [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }];
+    // The bounds; empty where the band is unbounded on that side.
+    string lower = 3 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+    bool lower_inclusive = 4;
+    string upper = 5 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+    bool upper_inclusive = 6;
+  }
+
+  Framework framework = 3 [(buf.validate.field).required = true];
+  Routing routing = 4 [(buf.validate.field).required = true];
+  // Every code the paths taken admit, each once, in the reference's order: every independent code,
+  // and every code of each route.
+  repeated Code codes = 5 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      max_items: 64
+    },
+    (buf.validate.field).cel = {
+      id: "svcv4_classification.codes.unique"
+      message: "every code is listed once"
+      expression: "this.map(code, code.code).unique()"
+    }
+  ];
+  // The scores of each route, in the routing's order.
+  repeated Path paths = 6 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 2
+  }];
+  // The trail's lines no code carries.
+  repeated Line lines = 7 [(buf.validate.field).repeated.max_items = 64];
+  // The tally `codes` and `lines` sum to, under the values the document proceeds on.
+  Tally tally = 8 [(buf.validate.field).required = true];
+  // The tallies under the other values that survive the evidence for an input the agent reports
+  // open. Empty where every input is settled.
+  repeated Alternative open_values = 9 [(buf.validate.field).repeated.max_items = 16];
+  // The tallies under each judgement input varied across its plausible range.
+  repeated Alternative sensitivity = 10 [(buf.validate.field).repeated.max_items = 32];
+  // The class the record reports: the tally's, where every open value's class agrees with it, and
+  // NOT_ESTABLISHED where one does not.
+  themis.svcv4.models.Classification classification = 11 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // Benign to pathogenic.
+  repeated Band bands = 12 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 16
+  }];
+}

@@ -3,4 +3,5 @@
 // rather than the generated paths.
 
 export * from "@/gen/themis/widgets/models/checklist_pb";
+export * from "@/gen/themis/widgets/models/svcv4_classification_pb";
 export * from "@/gen/themis/widgets/models/widget_pb";

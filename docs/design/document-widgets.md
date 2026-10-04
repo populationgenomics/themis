@@ -6,7 +6,8 @@ renderer, the citation directives, and the reveal a citation raises);
 [`agent-output-rendering.md`](agent-output-rendering.md) (why agent text never becomes markup, and how the client draws
 a value that a tab's build does not know); [`sheaf.md`](sheaf.md) (the pre-receive hook every agent push passes);
 [`proto.md`](proto.md) (the option pattern, and the compatibility gate that binds a schema from its first commit);
-[`curation-surface.md`](curation-surface.md) (the SVCv4 capture the evidence-tree sketch lines up with).
+[`svcv4-classification-widget.md`](svcv4-classification-widget.md) (the SVCv4 classification, the richest payload so
+far).
 
 ## Overview
 
@@ -265,11 +266,11 @@ The shapes below recur across payloads. Each is a decision about the framework r
 
 An item that rests on a source carries its own citation: a litcache `doc_id` and an optional quote. A click on it opens
 the paper, and the quote within it, as a `:paper` or `:quote` in prose does, and a malformed id draws the same visibly
-broken mark, never a guess at the nearest match. The citation sits on the item rather than on the file, because an
-evidence tree's criteria rest on different sources. It stays a pattern rather than a type because not every payload
-cites literature (an aligned-reads view cites nothing; the reads are the evidence), and because a citation into a figure
-or a table may need more than a doc id and a quote. The first payload that needs more, the evidence tree, decides its
-shape.
+broken mark, never a guess at the nearest match. The citation sits on the item rather than on the file, because an SVCv4
+classification's codes rest on different sources. It stays a pattern rather than a type because not every payload cites
+literature (an aligned-reads view cites nothing; the reads are the evidence), and because a citation into a figure or a
+table may need more than a doc id and a quote. The SVCv4 classification needed no more, so the first payload that does
+decides that shape.
 
 A payload about a place in the genome says which place, as an interval: the shared `themis.evidence.models.GenomicSpan`
 beside the chromosome accession it lies on, the pairing the evidence contracts use. Normalising an allele belongs to the
@@ -628,20 +629,16 @@ redirected `GET` with the original headers, dropping only `Authorization` when t
 ([Fetch Standard, "HTTP-redirect fetch"](https://fetch.spec.whatwg.org/#http-redirect-fetch)). So a `Range` header
 survives the redirect to the signed URL, and the case-genomes bucket's CORS rule has to admit it.
 
-### The evidence tree and the pedigree, sketched
+### The SVCv4 classification and the pedigree
 
-Beyond the checklist in the walk-through, the design was pressure-tested against three types, none of them declared
-here: the evidence tree below, the hardest structure the scenario needs; the pedigree below, the simplest thing that is
-not prose; and the aligned-reads view above, whose data cannot live in a revision.
+Beyond the checklist in the walk-through, the design was pressure-tested against three types: the SVCv4 classification,
+the hardest structure the scenario needs; the pedigree, the simplest thing that is not prose; and the aligned-reads view
+above, whose data cannot live in a revision.
 
-The SVCv4 evidence tree follows the framework's own structure: the routing decisions, then a node per evidence code with
-its status (scored, not applicable, no data), the decision-tree cell selected in the framework's vocabulary, the
-evidence the call rests on and the reasoning from one to the other, each item that rests on a source carrying its
-citation. That is the capture [`curation-surface.md`](curation-surface.md) §"What is captured, and why" fixes for a
-curator's worksheet, and the alignment is deliberate: the run-review loop joins the curator's selected cell to the
-run's, and a join needs both sides to name the same thing in the same vocabulary. Everything below the top level, such
-as how the tree carries the library's audit trail and how strengths and paths are represented, is decided against
-SVCv4's own revisions, not here.
+The SVCv4 classification draws one run's point tally: the routing, a row per evidence code with its status, points,
+evidence and reasoning, and the curator's tick and note at three levels. Its payload is a message of its own that shares
+the curator's worksheet's vocabulary, so the run-review loop reads both sides in the same terms.
+[`svcv4-classification-widget.md`](svcv4-classification-widget.md) is its design.
 
 A pedigree draws the family behind a proband as the chart a clinical geneticist reads. Its payload names the locus the
 chart is about, as a genomic span. How it represents the family is decided with the type, starting from grus
@@ -669,13 +666,6 @@ protobuf, with a renderer and importers.
 - **A git merge driver for widget files.** git would resolve a widget file that both sides of a rebase changed by
   itself, applying the rule, so the rebase would not stop there. It lost because the agent already resolves such a stop
   with one call to `update`, so a driver would only save it a turn.
-
-## Open questions
-
-- **Whether the evidence-tree payload reuses the curation contract's messages or maps onto them.** Sharing them makes
-  the join structural, but couples the agent's output to a surface built for a curator working alone, whose future is
-  unsettled ([`curation-surface.md`](curation-surface.md) §"Where it lives, and what it is coupled to"). Mapping keeps
-  the two free to change and puts the correspondence in code that can drift.
 
 ## Appendix: reading an embed's label as source text
 

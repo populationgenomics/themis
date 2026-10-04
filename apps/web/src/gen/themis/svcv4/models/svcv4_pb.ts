@@ -28,7 +28,7 @@ export const file_themis_svcv4_models_svcv4: GenFile = /*@__PURE__*/
 
 /**
  * Everything a classification can come out as: the five ordered classes, the two outcomes the
- * gene-disease-validity gate substitutes for a class, and the curator's own "none established".
+ * gene-disease-validity gate substitutes for a class, and "none established".
  *
  * @generated from enum themis.svcv4.models.Classification
  */
@@ -64,8 +64,9 @@ export enum Classification {
   BENIGN = 5,
 
   /**
-   * No class established. The curator's own finding, not an unanswered field and not a gate outcome:
-   * UNSPECIFIED is what an unanswered one reads as.
+   * No class established: a curator's own finding, or a run's where the values an open judgement
+   * input leaves standing yield different classes. Not an unanswered field, which reads as
+   * UNSPECIFIED, and not a gate outcome.
    *
    * @generated from enum value: CLASSIFICATION_NOT_ESTABLISHED = 6;
    */

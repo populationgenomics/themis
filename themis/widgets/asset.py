@@ -22,6 +22,7 @@ from google.protobuf import any_pb2, descriptor, descriptor_pool, message, messa
 from buf.validate import validate_pb2
 from themis.widgets.models import (
     checklist_pb2,  # noqa: F401  (registers the payload in the descriptor pool `decode` reads)
+    svcv4_classification_pb2,  # noqa: F401  (likewise)
     widget_pb2,
 )
 

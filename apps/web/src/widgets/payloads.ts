@@ -1,6 +1,10 @@
 import { type DescFile, type DescMessage, getOption } from "@bufbuild/protobuf";
 import { nestedTypes } from "@bufbuild/protobuf/reflect";
-import { file_themis_widgets_models_checklist, widget } from "@/models/widgets";
+import {
+  file_themis_widgets_models_checklist,
+  file_themis_widgets_models_svcv4_classification,
+  widget,
+} from "@/models/widgets";
 
 // Every widget payload schema this build knows, without the components that draw them: what the
 // SharedWorker needs to read an asset whatever its type. payloads.test.ts fails a payload file
@@ -8,6 +12,7 @@ import { file_themis_widgets_models_checklist, widget } from "@/models/widgets";
 
 export const PAYLOAD_FILES: readonly DescFile[] = [
   file_themis_widgets_models_checklist,
+  file_themis_widgets_models_svcv4_classification,
 ];
 
 const PAYLOADS: ReadonlyMap<string, DescMessage> = new Map(

@@ -1,7 +1,7 @@
 import type { DescMessage, MessageShape } from "@bufbuild/protobuf";
 import type { Any } from "@bufbuild/protobuf/wkt";
 import type { ComponentType, ReactNode } from "react";
-import { ChecklistSchema } from "@/models/widgets";
+import { ChecklistSchema, Svcv4ClassificationSchema } from "@/models/widgets";
 import { readPayload } from "@/widgets/asset";
 import type { FileAtCommit } from "@/workspace-copy/copy";
 import { ChecklistWidget } from "./checklist";
@@ -72,8 +72,8 @@ export function placeholder(schema: DescMessage): RegisteredWidget {
 
 /** Every widget type this build draws, by payload type name. */
 export const WIDGETS: ReadonlyMap<string, RegisteredWidget> = new Map(
-  [widget(ChecklistSchema, ChecklistWidget)].map((entry) => [
-    entry.schema.typeName,
-    entry,
-  ]),
+  [
+    widget(ChecklistSchema, ChecklistWidget),
+    placeholder(Svcv4ClassificationSchema),
+  ].map((entry) => [entry.schema.typeName, entry]),
 );

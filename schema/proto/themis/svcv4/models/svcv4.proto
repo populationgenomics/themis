@@ -18,7 +18,7 @@ syntax = "proto3";
 package themis.svcv4.models;
 
 // Everything a classification can come out as: the five ordered classes, the two outcomes the
-// gene-disease-validity gate substitutes for a class, and the curator's own "none established".
+// gene-disease-validity gate substitutes for a class, and "none established".
 enum Classification {
   CLASSIFICATION_UNSPECIFIED = 0;
   CLASSIFICATION_PATHOGENIC = 1;
@@ -26,8 +26,9 @@ enum Classification {
   CLASSIFICATION_VUS = 3;
   CLASSIFICATION_LIKELY_BENIGN = 4;
   CLASSIFICATION_BENIGN = 5;
-  // No class established. The curator's own finding, not an unanswered field and not a gate outcome:
-  // UNSPECIFIED is what an unanswered one reads as.
+  // No class established: a curator's own finding, or a run's where the values an open judgement
+  // input leaves standing yield different classes. Not an unanswered field, which reads as
+  // UNSPECIFIED, and not a gate outcome.
   CLASSIFICATION_NOT_ESTABLISHED = 6;
   // The gate's result for a gene-disease relationship below Limited validity ("Variant in Gene of
   // Uncertain Significance"). Terminal: it overrides the computed class in either direction.

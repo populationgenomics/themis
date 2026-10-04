@@ -100,8 +100,10 @@ COPY themis/clients/sheaf/__init__.py themis/clients/sheaf/store.py ./themis/cli
 # sheaf whole: the mirror and the pre-receive hook git spawns, which imports it from this tree by its baked path.
 COPY themis/sheaf ./themis/sheaf
 # What the content check the hook imports by name (git_hatches.PROTECTION) reads assets with: the widgets library, its
-# payload stubs, and the buf.validate stub protovalidate reads their rules off.
+# payload stubs, the SVCv4 vocabulary stubs a payload names, and the buf.validate stub protovalidate reads their rules
+# off.
 COPY themis/widgets ./themis/widgets
+COPY themis/svcv4/models ./themis/svcv4/models
 COPY buf ./buf
 COPY themis/services/sandbox_worker ./themis/services/sandbox_worker
 # Import the worker and the hook's store at build time, so a module the COPY set misses, or a wheel the locked
