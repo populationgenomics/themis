@@ -148,6 +148,22 @@ trimming a value to fit.
   that carries any divergence. Adopt and stop only when the VCEP ran SVCv4 and nothing patient-specific rules it out.
   `Cspec.ListSpecifications` serves the panel's text; a 2015 frequency cutoff earns SM3's first rung only through its
   own derivation.
+- **A ClinVar submission as a `CLN_AFF` proband** is a disposition, not an open input. Walk each submission once and
+  say in `CLN_AFF`'s evidence whether it counts and why. It counts one affected proband when it states a case of its
+  own: an observation with `affected_status` "yes" in a named condition, or a comment narrating the case. It counts
+  none where:
+  - it states no case: `affected_status` empty or "unknown" with no narrative, or a comment that only lists criteria;
+  - the case is a paper's: the comment or the observation attributes it to a publication, or it is a curation
+    submission (an expert panel's), which observed no one. Count those cases through the paper, and not at all while
+    the paper is unread; a cited PMID alone adds nothing;
+  - identity evidence ties it to a paper you count: the comment says the patient was published, or the paper credits
+    the submitting lab with the testing. A bare citation is not overlap;
+  - it comes from carrier, reproductive or healthy-cohort screening, or its `collection_method` is research.
+
+  One family reported by several submitters is one case, and one submitter's observations are one case unless it says
+  they are unrelated families: `variant_alleles` counts individuals, not unrelated ones. A counted submission that
+  states neither the genes tested nor the other variants found sits in the with-caveats column. The count is a lower
+  bound.
 - **`LOC_PHE`'s diagnostic yield** is a published cohort statistic, reached through the literature. It is keyed on the
   phenotype of the most specifically phenotyped carrier of the variant, internal or published, not the testee's by
   default. Award it only where the cohort's testing method matches this case's and its phenotype definition fits that
