@@ -22,6 +22,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
+      # The bot's shell can neither redirect nor pipe, so a diff larger than its tool-output limit is
+      # readable only as a file, by range. Pinned to the event's SHAs to match the checkout.
+      - name: Write the PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api -H 'Accept: application/vnd.github.diff' \
+            "repos/$GITHUB_REPOSITORY/compare/$BASE...$HEAD" > "$RUNNER_TEMP/pr.diff"
       # Concatenate the per-concern instruction files into one prompt.
       # When this is later replaced by an orchestrator that spawns one
       # subagent per concern, each file becomes a subagent prompt as-is.
@@ -127,8 +137,13 @@ jobs:
             ## Scope rule
 
             Focus on changes introduced by this PR. Don't re-flag content that
-            already exists in the base branch unchanged. Use `gh pr diff` to
-            see exactly what changed.
+            already exists in the base branch unchanged.
+
+            The PR's diff is in `${{ runner.temp }}/pr.diff`, the same diff
+            GitHub shows, at the head commit checked out here. Grep it for
+            `^diff --git` with line numbers to find each file's section, then
+            Read that range. It is your only copy of the diff: the checkout
+            holds the head commit alone, without the base.
 
             You can read other files in the working tree (Read / Grep / Glob)
             to cross-check a change — e.g. to confirm whether a new endpoint
@@ -186,7 +201,7 @@ jobs:
 
             ${{ env.CONCERNS }}
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_review_comments,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_review_comments,Bash(gh pr comment:*),Bash(gh pr view:*),Read,Grep,Glob"
       # The Actions console only shows the action's init + final result; the
       # turn-by-turn transcript (tool calls, permission denials, the model's
       # decision to post nothing) lives only in this file. Upload it so those

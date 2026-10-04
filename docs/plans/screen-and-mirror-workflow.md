@@ -130,7 +130,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt_file: .github/screen/llm-instructions.md
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr view:*)"
 ```
 
 `.github/screen/llm-instructions.md` is a structured instructions document with one section per concern (participant
@@ -141,7 +141,8 @@ model id, which is secret-class (see [`deployment.md`](../design/deployment.md) 
 also include:
 
 - **Scope rule**: "Focus on changes introduced by this PR. Don't re-flag content that exists in the base branch
-  unchanged. Use `gh pr diff` to see exactly what changed."
+  unchanged." The PR's diff is written to a file before the agent starts, which it reads by range: its shell can neither
+  redirect nor pipe, so a diff larger than its tool-output limit is unreadable as `gh pr diff` output.
 - **Dedup rule**: "Before posting an inline comment, run `gh pr view --json comments,reviewComments` (or equivalent) and
   check whether the same concern has already been raised on the same line. If yes — resolved or not — skip it."
 - **Output rule**: post line-anchored review comments via the inline-comment MCP tool. If any inline findings were
@@ -213,10 +214,10 @@ The thread payloads are written to `.followups/*.md` in the workspace and read b
 into the prompt: review-comment bodies are the least controlled input in the system, and text arriving as a file is data
 rather than something that can close a prompt delimiter.
 
-The sweep judges the merged diff (`gh pr diff`), not the checked-out tree; with squash-only merging the two agree up to
-any drift between the PR's merge base and the `main` tip (required checks are non-strict), and the checkout is there so
-the agent can read surrounding code for context. It skips generated files and lockfiles, which no human would read a
-comment on.
+The sweep judges the merge commit's own diff against its parent, written to a file before the agent starts. With
+squash-only merging that is exactly what the PR landed, and its line numbers match the checkout even when `main` moved
+under the PR (required checks are non-strict). The checkout is there so the agent can read surrounding code for context.
+It skips generated files and lockfiles, which no human would read a comment on.
 
 The workflow has no `workflow_dispatch`: a manual run is on the `main` ref, whose OIDC subject Path A's federation rule
 rejects. Re-run the run from the Actions UI instead, which replays the original `pull_request` event.

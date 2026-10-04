@@ -113,6 +113,16 @@ jobs:
 
           wc -l .followups/*.md
 
+      # The agent's shell can neither redirect nor pipe, so a diff larger than its tool-output limit is
+      # readable only as a file, by range. The merge commit's own diff, so its line numbers match the checkout.
+      - name: Write the merged diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          gh api -H 'Accept: application/vnd.github.diff' \
+            "repos/$GITHUB_REPOSITORY/compare/$MERGE^...$MERGE" > "$RUNNER_TEMP/pr.diff"
+
       - name: Load review instructions
         run: |
           {
@@ -201,12 +211,17 @@ jobs:
 
             ## Task 2 — sweep what landed
 
-            Review this PR's diff (`gh pr diff ${{ github.event.pull_request.number }}`)
-            against the concerns below and collect the **T3** findings. The
-            PR-time review posted only T1 and T2 and held its T3s silently; this
-            is where they surface, judged against what landed rather than an
-            intermediate push, so anything fixed along the way is correctly
-            never filed.
+            Review what this PR landed against the concerns below and collect
+            the **T3** findings. The PR-time review posted only T1 and T2 and held
+            its T3s silently; this is where they surface, judged against what
+            landed rather than an intermediate push, so anything fixed along
+            the way is correctly never filed.
+
+            The diff of the merge commit against its parent is in
+            `${{ runner.temp }}/pr.diff`. Grep it for
+            `^diff --git` with line numbers to find each file's section, then
+            Read that range. It is your only copy of the diff: the checkout
+            holds the merge commit alone, without its parent.
 
             File them as **one issue for the whole PR**, labelled `untriaged`:
             a short lead line, then one `###` section per finding with its
@@ -256,7 +271,7 @@ jobs:
 
             ${{ env.CONCERNS }}
           claude_args: |
-            --allowedTools "Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(rg:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh pr view:*),Bash(rg:*),Read,Grep,Glob"
 
       - name: Upload merge-follow-ups execution log
         if: always() && steps.claude.outputs.execution_file != ''
