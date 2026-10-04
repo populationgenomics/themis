@@ -150,6 +150,7 @@ class CodeSpec:
 
     Attributes:
         code: The code name.
+        title: What the code assesses, in words, as a reader of a classification sees it named.
         family: The code's prefix (POP, CLN, LOC, MIS, CDS, NUL, SPL); which of them a variant-type
             path sums is `Reference.independent_families`.
         concept: The evidence concept the code carries inside its family (FRQ, PRD, FXN, INF, ...).
@@ -163,6 +164,7 @@ class CodeSpec:
     """
 
     code: str
+    title: str
     family: str
     concept: str
     direction: str | None
@@ -172,12 +174,12 @@ class CodeSpec:
     notes: str
 
     def __post_init__(self) -> None:
-        """A code names itself, its family and its concept; a blank one addresses no cap.
+        """A code names itself, its title, its family and its concept; a blank one addresses no cap.
 
         The family carries the most: `independent_families` reads the path split off it, so a blank
         one puts the code on neither side of the split rather than on the wrong one.
         """
-        for name in ('code', 'family', 'concept'):
+        for name in ('code', 'title', 'family', 'concept'):
             if not getattr(self, name).strip():
                 raise ReferenceDataError(f'evidence code {self.code!r} states a blank {name}')
 

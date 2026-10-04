@@ -281,13 +281,13 @@ def test_a_stage_caps_the_running_subtotal_even_with_no_items(ref: reference.Ref
     ).total == D('2')
 
 
-def test_an_item_note_reaches_the_audit_trail(ref: reference.Reference) -> None:
+def test_an_item_s_reading_reaches_the_audit_trail_as_its_basis(ref: reference.Reference) -> None:
     path = _staged(
         scoring.CombineStage(
             label='first', items=(scoring.PointItem('SPL_SPA', D('1'), note='substantial'),), cap=(D('-8'), D('9'))
         )
     )
-    trail = {c.label: c.note for c in scoring.score_path(ref, path).contributions}
+    trail = {c.label: c.basis for c in scoring.score_path(ref, path).contributions}
     assert trail['SPL_SPA'] == 'substantial'
 
 

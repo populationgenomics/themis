@@ -24,6 +24,7 @@ from themis.svcv4 import reference
 _SPECS = (
     reference.CodeSpec(
         code='POP_FRQ',
+        title='Population frequency',
         family='POP',
         concept='FRQ',
         direction='benign',
@@ -34,6 +35,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='POP_HMZ',
+        title='Homozygous observations',
         family='POP',
         concept='HMZ',
         direction='benign',
@@ -47,6 +49,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CLN_CCS',
+        title='Case-control studies',
         family='CLN',
         concept='CCS',
         direction=None,
@@ -61,6 +64,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CLN_AFF',
+        title='Affected proband observations',
         family='CLN',
         concept='AFF',
         direction=None,
@@ -71,6 +75,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CLN_DNV',
+        title='De novo observations',
         family='CLN',
         concept='DNV',
         direction=None,
@@ -84,6 +89,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CLN_ALT',
+        title='Alternate cause of disease',
         family='CLN',
         concept='ALT',
         direction='benign',
@@ -94,6 +100,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CLN_UAF',
+        title='Unaffected individual observations',
         family='CLN',
         concept='UAF',
         direction='benign',
@@ -104,6 +111,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='LOC_PHE',
+        title='Specific phenotype',
         family='LOC',
         concept='PHE',
         direction=None,
@@ -117,6 +125,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='LOC_SEG',
+        title='Segregation with disease',
         family='LOC',
         concept='SEG',
         direction=None,
@@ -132,6 +141,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='MIS_PRD',
+        title='Amino-acid change prediction',
         family='MIS',
         concept='PRD',
         direction=None,
@@ -146,6 +156,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='MIS_FXN',
+        title='Functional assessment of the amino-acid change',
         family='MIS',
         concept='FXN',
         direction=None,
@@ -156,6 +167,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='MIS_INF',
+        title='Informative variants',
         family='MIS',
         concept='INF',
         direction=None,
@@ -166,6 +178,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='NUL_PRD',
+        title='Predicted null effect',
         family='NUL',
         concept='PRD',
         direction=None,
@@ -180,6 +193,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='NUL_FXN',
+        title='Functional assessment',
         family='NUL',
         concept='FXN',
         direction=None,
@@ -190,6 +204,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='NUL_INF',
+        title='Informative variants',
         family='NUL',
         concept='INF',
         direction=None,
@@ -200,6 +215,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CDS_PRD',
+        title='Protein effect prediction',
         family='CDS',
         concept='PRD',
         direction=None,
@@ -210,6 +226,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CDS_FXN',
+        title='Functional assessment',
         family='CDS',
         concept='FXN',
         direction=None,
@@ -220,6 +237,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='CDS_INF',
+        title='Informative variants',
         family='CDS',
         concept='INF',
         direction=None,
@@ -230,6 +248,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='SPL_PRD',
+        title='Splice change prediction',
         family='SPL',
         concept='PRD',
         direction=None,
@@ -240,6 +259,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='SPL_SPA',
+        title='Splice assay',
         family='SPL',
         concept='SPA',
         direction=None,
@@ -256,6 +276,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='SPL_FXN',
+        title='Functional assessment of the splice product',
         family='SPL',
         concept='FXN',
         direction=None,
@@ -266,6 +287,7 @@ _SPECS = (
     ),
     reference.CodeSpec(
         code='SPL_INF',
+        title='Informative variants',
         family='SPL',
         concept='INF',
         direction=None,

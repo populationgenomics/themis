@@ -117,20 +117,25 @@ def judgements(msg: message.Message, path: str = '') -> list[str]:
 
     An element sharing its key with another in its list is named with its ordinal among them, ``items[a#2]``.
     """
-    found: list[str] = []
+    return [where for where, _ in judged_values(msg, path)]
+
+
+def judged_values(msg: message.Message, path: str = '') -> list[tuple[str, object]]:
+    """Each judgement `msg` holds, where it is as `judgements` names it, with the value the user gave it."""
+    found: list[tuple[str, object]] = []
     desc = _descriptor(msg)
     for field in desc.fields:
         where = _join(path, field.name)
         if is_guard(field):
             if _encoding(msg, field):
-                found.append(where)
+                found.append((where, getattr(msg, field.name)))
         elif _holds_beneath(field):
             if _repeated(field):
                 elements = getattr(msg, field.name)
                 for element, at in zip(elements, _element_paths(elements, field, where), strict=True):
-                    found.extend(judgements(element, at))
+                    found.extend(judged_values(element, at))
             elif msg.HasField(field.name):
-                found.extend(judgements(getattr(msg, field.name), where))
+                found.extend(judged_values(getattr(msg, field.name), where))
     return found
 
 

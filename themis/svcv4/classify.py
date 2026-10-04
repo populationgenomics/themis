@@ -381,6 +381,7 @@ def classify(ref: reference.Reference, request: ClassificationInput) -> Classifi
         raw_points=selected.raw_prd,
         points=selected.total,
         note=f'adjusted PRD {selected.adjusted_prd}; selected path',
+        kind=scoring.LineKind.PATH,
     )
     independent, independent_subtotal = _independent_contributions(ref, codes)
 

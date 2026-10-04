@@ -30,12 +30,12 @@ export const VARIANT_CLASSIFICATION_OUTLINE: ReadonlyArray<OutlineSection> = [
   {
     heading: "Evidence assessment",
     holds:
-      "per applicable code: the evidence, its provenance, the decision-tree cell scored, and for a judgement call the reasoning and an explicit uncertainty; the predictor the policy selected and the entry that decided it; a one-line derivation for each supplied code; codes not assessable and why; the deposit-request list of papers the store could not serve.",
+      "the calls that span codes, each with its reasoning and an explicit uncertainty: the mechanism level with the rubric criteria met and their sum, and the exon relevance; the predictor the policy selected and the entry that decided it; then the SVCv4 classification widget, which carries every code the paths taken admit, with its status, evidence, provenance, decision-tree cell or priced cells, reasoning and uncertainty; the deposit-request list of papers the store could not serve.",
   },
   {
     heading: "Point tally",
     holds:
-      "the audit trail, gate effect, total, band and VUS sub-band, and the final class — with a judgement input open, per-value totals replace the total, band and sub-band, the audit trail and gate effect stay, and the class appears only where the surviving values agree; the matrix multiplier and both missense paths where relevant; closing with the sensitivity table — each judgement input varied across its plausible range, the total and class each yields, and which calls are class-determinative.",
+      "a reading of the tally the widget draws: the gate effect, what holds the class where it is, and, with a judgement input open, the classes in contention; the widget carries the audit trail, the totals, the bands, the open values and the sensitivity rows, so this section restates none of their numbers; closing with which calls the sensitivity rows show to be class-determinative.",
   },
   {
     heading: "Verdict",

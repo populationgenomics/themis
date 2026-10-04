@@ -9,8 +9,11 @@ import pytest
 from google.protobuf import message, message_factory, timestamp_pb2
 
 from themis.services.sandbox_worker.guest import widgets
+from themis.svcv4 import data, widget
+from themis.svcv4.models import svcv4_pb2
+from themis.svcv4.tests import widget_cases
 from themis.widgets import asset, tracking
-from themis.widgets.models import checklist_pb2
+from themis.widgets.models import checklist_pb2, svcv4_classification_pb2
 from themis.widgets.tests import ownership_cases
 
 _Checklist = checklist_pb2.Checklist
@@ -39,6 +42,28 @@ def test_write_lands_an_asset_decode_reads_back(workspace: pathlib.Path) -> None
 def test_write_refuses_a_path_no_embed_would_draw(workspace: pathlib.Path, path: str) -> None:
     with pytest.raises(asset.AssetError):
         widgets.write(path, _ONE_ITEM, workspace=workspace)
+    assert _written(workspace) == []
+
+
+def test_every_helper_takes_a_path_absolute_inside_the_workspace(workspace: pathlib.Path) -> None:
+    absolute = str(workspace / 'assets' / 'checklist.binpb')
+    assert widgets.write(absolute, _ONE_ITEM, workspace=workspace) == workspace / 'assets' / 'checklist.binpb'
+    assert widgets.read(absolute, workspace=workspace) == _ONE_ITEM
+    _commit(workspace, 'assets/checklist.binpb')
+    assert widgets.judgements(absolute, workspace=workspace) == []
+
+    def keep(committed: message.Message | None) -> message.Message:
+        assert committed is not None
+        return committed
+
+    widgets.update(absolute, keep, workspace=workspace)
+    assert widgets.read('assets/checklist.binpb', workspace=workspace) == _ONE_ITEM
+
+
+@pytest.mark.parametrize('below', ['', '../escape.binpb', '.git/a.binpb', 'a b.binpb', 'scratch/a.binpb'])
+def test_an_absolute_path_is_held_to_what_an_embed_may_name_from_the_root(workspace: pathlib.Path, below: str) -> None:
+    with pytest.raises(asset.AssetError):
+        widgets.write(f'{workspace}/{below}', _ONE_ITEM, workspace=workspace)
     assert _written(workspace) == []
 
 
@@ -178,3 +203,62 @@ def test_update_reports_a_tick_on_an_item_it_leaves_out(
     assert capsys.readouterr().err == (
         '[themis.agent.widgets] assets/checklist.binpb: items[a].checked cleared: its element was removed\n'
     )
+
+
+def _classification(workspace: pathlib.Path) -> None:
+    """The last commit's SVCv4 classification, with a curator's tick on POP_FRQ and a note on CLN_DNV."""
+    payload = widget_cases.built(data.load_reference(), widget_cases.missense())
+    for code in payload.codes:
+        if code.code == 'POP_FRQ':
+            code.reviewed = True
+        if code.code == 'CLN_DNV':
+            code.note = 'The clinic letter confirms parentage.'
+    target = workspace / 'assets' / 'svcv4.binpb'
+    target.parent.mkdir(parents=True)
+    target.write_bytes(asset.encode(payload))
+    _commit(workspace, 'assets/svcv4.binpb')
+
+
+def test_read_returns_the_payload_an_asset_holds(workspace: pathlib.Path) -> None:
+    payload = _Checklist(items=[_Checklist.Item(id='ps3', label='Functional studies reviewed')])
+    widgets.write('assets/checklist.binpb', payload, workspace=workspace)
+    assert widgets.read('assets/checklist.binpb', workspace=workspace) == payload
+
+
+def test_judgements_prints_every_tick_and_note_the_last_commit_holds(
+    workspace: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _classification(workspace)
+    found = widgets.judgements('assets/svcv4.binpb', workspace=workspace)
+    assert found == [
+        ('codes[POP_FRQ].reviewed', True),
+        ('codes[CLN_DNV].note', 'The clinic letter confirms parentage.'),
+    ]
+    assert "codes[CLN_DNV].note = 'The clinic letter confirms parentage.'" in capsys.readouterr().out
+    assert widgets.judgements('assets/none.binpb', workspace=workspace) == []
+
+
+def test_update_prints_what_a_note_it_clears_said(workspace: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _classification(workspace)
+    ref = data.load_reference()
+    record = svcv4_classification_pb2.Svcv4Classification
+    restated = {
+        'CLN_DNV': record.Code(
+            status=svcv4_pb2.ASSESSMENT_STATUS_SCORED,
+            rationale='parentage confirmed',
+            confidence=svcv4_pb2.CONFIDENCE_SETTLED,
+            cells=[record.Cell(cell_id='CLN_DNV.specific.confirmed', count=1)],
+        )
+    }
+
+    def rebuild(before: object) -> svcv4_classification_pb2.Svcv4Classification:
+        assert isinstance(before, record)
+        return widget.build(ref, widget_cases.missense('7.0'), codes=restated, committed=before)
+
+    widgets.update('assets/svcv4.binpb', rebuild, workspace=workspace)
+    reported = capsys.readouterr().err
+    assert 'codes[CLN_DNV].note cleared: its ' in reported
+    assert "The user had written: 'The clinic letter confirms parentage.'" in reported
+    landed = asset.decode((workspace / 'assets' / 'svcv4.binpb').read_bytes())
+    assert isinstance(landed, record)
+    assert [code.code for code in landed.codes if code.reviewed] == ['POP_FRQ']

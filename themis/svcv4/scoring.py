@@ -194,6 +194,15 @@ class CombineStage:
     cap: tuple[decimal.Decimal, decimal.Decimal]
 
 
+class LineKind(enum.Enum):
+    """What a line of the audit trail is."""
+
+    CODE = 'code'  # an evidence code's points
+    CAP = 'cap'  # the signed adjustment of a cap on a subtotal (`cap_line`)
+    AWARD = 'award'  # points a path awards beside its codes, such as SM7's critical residue
+    PATH = 'path'  # a variant-type path's total, as the classification's trail carries it
+
+
 @dataclasses.dataclass(frozen=True)
 class Contribution:
     """One line of the audit trail: a component's raw and post-adjustment points.
@@ -207,7 +216,9 @@ class Contribution:
 
     `basis` and `note` answer different questions and neither substitutes for the other: `basis` is
     where the value came from — the FAF and threshold behind a POP_FRQ, the predictor and score
-    behind a MIS_PRD — and `note` is what this engine did to it, the cap or the matrix.
+    behind a MIS_PRD, the reading behind a splice assay's points — and `note` is what this engine did
+    to it, the cap or the matrix; empty where it did nothing. `kind` says which of the trail's lines
+    this is, so a reader tells a cap from an award without reading its label.
     """
 
     label: str
@@ -215,6 +226,7 @@ class Contribution:
     points: decimal.Decimal
     note: str = ''
     basis: str = ''
+    kind: LineKind = LineKind.CODE
 
 
 def cap_line(label: str, subtotal: decimal.Decimal, capped: decimal.Decimal, note: str) -> Contribution:
@@ -229,7 +241,7 @@ def cap_line(label: str, subtotal: decimal.Decimal, capped: decimal.Decimal, not
     Returns:
         The `Contribution`, its `points` the (signed) adjustment so the column stays additive.
     """
-    return Contribution(label=label, raw_points=subtotal, points=capped - subtotal, note=note)
+    return Contribution(label=label, raw_points=subtotal, points=capped - subtotal, note=note, kind=LineKind.CAP)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -276,6 +288,11 @@ class GateOutcome:
 
     final_class: str
     capped: bool
+
+
+def _bounds(cap: tuple[decimal.Decimal, decimal.Decimal]) -> str:
+    """A cap as the trail states it, `[-8.0, 6.0]`."""
+    return f'[{cap[0]}, {cap[1]}]'
 
 
 def clamp(value: decimal.Decimal, low: decimal.Decimal, high: decimal.Decimal) -> decimal.Decimal:
@@ -340,6 +357,8 @@ def matrix_note(scaling: Scaling, exon: ExonAxis | None, multiplier: decimal.Dec
         return ''
     if isinstance(exon, ExonRelevanceWaiver):
         return f'matrix x{multiplier}; {exon.describe()}'
+    if multiplier == 1:
+        return ''
     return f'matrix x{multiplier}'
 
 
@@ -425,6 +444,7 @@ def score_path(ref: reference.Reference, path: PathInput) -> PathResult:
                 raw_points=path.critical_residue,
                 points=awarded,
                 note=note,
+                kind=LineKind.AWARD,
             )
         )
         combined += awarded
@@ -432,19 +452,19 @@ def score_path(ref: reference.Reference, path: PathInput) -> PathResult:
         for item in stage.items:
             combined += item.points
             contributions.append(
-                Contribution(label=item.name, raw_points=item.points, points=item.points, note=item.note)
+                Contribution(label=item.name, raw_points=item.points, points=item.points, basis=item.note)
             )
         capped = clamp(combined, *stage.cap)
         if capped != combined:
-            contributions.append(cap_line(f'{stage.label} cap', combined, capped, str(stage.cap)))
+            contributions.append(cap_line(f'{stage.label} cap', combined, capped, _bounds(stage.cap)))
         combined = capped
 
     inf = path.inf
-    inf_note = 'after matrix; exempt'
+    inf_note = ''
     if path.inf_cap is not None:
         inf = clamp(path.inf, *path.inf_cap)
         if inf != path.inf:
-            inf_note = f'{inf_note}; cap [{path.inf_cap[0]}, {path.inf_cap[1]}]'
+            inf_note = f'cap [{path.inf_cap[0]}, {path.inf_cap[1]}]'
     total = combined + inf
     if path.inf != 0 or inf != 0:
         contributions.append(
@@ -453,7 +473,7 @@ def score_path(ref: reference.Reference, path: PathInput) -> PathResult:
     if path.parent_cap is not None:
         capped_total = clamp(total, *path.parent_cap)
         if capped_total != total:
-            contributions.append(cap_line('parent cap', total, capped_total, str(path.parent_cap)))
+            contributions.append(cap_line('parent cap', total, capped_total, _bounds(path.parent_cap)))
         total = capped_total
 
     return PathResult(

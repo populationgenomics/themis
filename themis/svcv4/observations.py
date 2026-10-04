@@ -63,8 +63,24 @@ _UNAFFECTED = _UnaffectedExpansion(
 )
 
 
-def _priced(grid: reference.ObservationGrid) -> Iterator[tuple[str, str | None, decimal.Decimal | None]]:
-    """Every cell a grid prices: the row's fragment, the column's where the cell has one, and the value.
+@dataclasses.dataclass(frozen=True)
+class _Cell:
+    """One addressed cell: its id, what one observation in it scores, and its row as the table states it."""
+
+    cell_id: str
+    points: decimal.Decimal | None
+    description: str
+
+
+def _described(*parts: str) -> str:
+    """A row as the reference's text states it, its fragments joined for a reader."""
+    return ' · '.join(part.replace('_', ' ') for part in parts)
+
+
+def _priced(
+    grid: reference.ObservationGrid,
+) -> Iterator[tuple[str, str | None, decimal.Decimal | None, str]]:
+    """Every cell a grid prices: the row's fragment, the column's where the cell has one, the value, the text.
 
     A row priced per column is addressed by both fragments; a collapsed row is addressed by its own
     alone, which is what `None` says. Walking the two kinds together is what keeps a collapsed row
@@ -74,17 +90,18 @@ def _priced(grid: reference.ObservationGrid) -> Iterator[tuple[str, str | None, 
         grid: A per-observation table.
 
     Yields:
-        (row fragment, column fragment or None, points).
+        (row fragment, column fragment or None, points, the row's description and the column's heading, where
+        the cell has a column).
     """
     for row in grid.rows:
         for column, points in zip(grid.columns, row.points, strict=True):
-            yield row.cell, column.cell, points
+            yield row.cell, column.cell, points, _described(row.description, column.heading)
     for row in grid.collapsed_rows:
-        yield row.cell, None, row.points
+        yield row.cell, None, row.points, _described(row.description)
 
 
-def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal | None]]:
-    """Every per-observation cell, as the id addressing it and what one observation in it scores.
+def _addressed(ref: reference.Reference) -> Iterator[_Cell]:
+    """Every per-observation cell, as the id addressing it, what one observation in it scores, and its text.
 
     `None` is a row the framework declines to value, which is addressed all the same: the determination is
     recordable and there is no number to read for it.
@@ -95,62 +112,72 @@ def _addressed(ref: reference.Reference) -> Iterator[tuple[str, decimal.Decimal 
     tables = ref.per_observation
 
     for frequency_bin in ref.frequency_bins:
-        yield f'POP_FRQ.bin.{frequency_bin.cell}', frequency_bin.points
+        yield _Cell(f'POP_FRQ.bin.{frequency_bin.cell}', frequency_bin.points, frequency_bin.ratio)
 
     for weight in (tables.homozygous.dominant, tables.homozygous.other):
-        yield f'POP_HMZ.{weight.cell}', weight.points
+        yield _Cell(f'POP_HMZ.{weight.cell}', weight.points, _described(weight.description))
 
     # SM4 Table 5 collapses the zygosities into two columns: what the unaffected individual carries
     # on its own account or in trans with a P variant, and in trans with an LP one. Which zygosity
     # reads which column is the expansion below, and a band priced without a column (under-80%
     # penetrance) is that value for every one of them.
-    for band, column, points in _priced(tables.unaffected):
-        zygosities = _UNAFFECTED.zygosities.get(column)
-        if zygosities is None:
-            read = sorted(name for name in _UNAFFECTED.zygosities if name is not None)
-            raise reference.ReferenceDataError(
-                f'CLN_UAF states a column {column!r} no zygosity reads; the expansion reads {read}'
-            )
-        if column in (None, _UNAFFECTED.dominant_column):
-            yield f'CLN_UAF.ad.{band}', points
-        for zygosity in zygosities:
-            yield f'CLN_UAF.arxl.{band}.{zygosity}', points
+    for row in tables.unaffected.collapsed_rows:
+        yield _Cell(f'CLN_UAF.ad.{row.cell}', row.points, _described(row.description))
+        for zygosity in _UNAFFECTED.zygosities[None]:
+            yield _Cell(f'CLN_UAF.arxl.{row.cell}.{zygosity}', row.points, _described(row.description, zygosity))
+    for grid_row in tables.unaffected.rows:
+        for grid_column, points in zip(tables.unaffected.columns, grid_row.points, strict=True):
+            band, column = grid_row.cell, grid_column.cell
+            zygosities = _UNAFFECTED.zygosities.get(column)
+            if zygosities is None:
+                read = sorted(name for name in _UNAFFECTED.zygosities if name is not None)
+                raise reference.ReferenceDataError(
+                    f'CLN_UAF states a column {column!r} no zygosity reads; the expansion reads {read}'
+                )
+            if column == _UNAFFECTED.dominant_column:
+                yield _Cell(f'CLN_UAF.ad.{band}', points, _described(grid_row.description))
+            for zygosity in zygosities:
+                yield _Cell(f'CLN_UAF.arxl.{band}.{zygosity}', points, _described(grid_row.description, zygosity))
 
     # CLN_ALT is scored on two axes -- an alternate cause in this variant, and one in another gene --
     # over the same rows; the recessive row is the variant axis's alone.
     alternate = tables.alternate_cause
     for axis in ('variant', 'gene'):
-        yield f'CLN_ALT.{axis}.{alternate.more_severe.cell}', alternate.more_severe.points
-        yield f'CLN_ALT.{axis}.{alternate.not_more_severe.cell}', alternate.not_more_severe.points
+        for row in (alternate.more_severe, alternate.not_more_severe):
+            yield _Cell(
+                f'CLN_ALT.{axis}.{row.cell}', row.points, _described(f'alternate cause in the {axis}', row.description)
+            )
     recessive = alternate.not_consistent_recessive
-    yield f'CLN_ALT.variant.{recessive.cell}', recessive.points
+    yield _Cell(f'CLN_ALT.variant.{recessive.cell}', recessive.points, _described(recessive.description))
 
     # A monoallelic proband's row and column read as one fragment, the way SM4 Table 1 names a case.
-    for row, column, points in _priced(tables.affected_monoallelic):
-        yield f'CLN_AFF.ad.{row if column is None else f"{row}_{column}"}', points
+    for row, column, points, description in _priced(tables.affected_monoallelic):
+        yield _Cell(f'CLN_AFF.ad.{row if column is None else f"{row}_{column}"}', points, description)
 
-    for row, column, points in _priced(tables.affected_biallelic):
-        yield f'CLN_AFF.arxl.{row if column is None else f"{row}.{column}"}', points
+    for row, column, points, description in _priced(tables.affected_biallelic):
+        yield _Cell(f'CLN_AFF.arxl.{row if column is None else f"{row}.{column}"}', points, description)
 
-    for row, column, points in _priced(tables.de_novo):
-        yield f'CLN_DNV.{row if column is None else f"{row}.{column}"}', points
+    for row, column, points, description in _priced(tables.de_novo):
+        yield _Cell(f'CLN_DNV.{row if column is None else f"{row}.{column}"}', points, description)
 
     # CLN_CCS is one determination about a cohort rather than a count of individuals, so its rows are
     # addressed by their own fragment alone.
     for row in tables.case_control:
-        yield f'CLN_CCS.{row.cell}', row.points
+        yield _Cell(f'CLN_CCS.{row.cell}', row.points, _described(row.description))
 
     for yield_bin in tables.diagnostic_yield:
-        yield f'LOC_PHE.yield.{yield_bin.cell}', yield_bin.points
+        yield _Cell(
+            f'LOC_PHE.yield.{yield_bin.cell}', yield_bin.points, _described('diagnostic yield', yield_bin.description)
+        )
     # Step 1 gates the workflow rather than scoring it.
-    yield 'LOC_PHE.step1.no', decimal.Decimal(0)
-    yield 'LOC_PHE.step1.yes', decimal.Decimal(0)
+    yield _Cell('LOC_PHE.step1.no', decimal.Decimal(0), 'step 1 · phenotype not specific enough to proceed')
+    yield _Cell('LOC_PHE.step1.yes', decimal.Decimal(0), 'step 1 · phenotype specific enough to proceed')
 
     for row in tables.cosegregation:
-        yield f'LOC_SEG.{row.cell}', row.points
+        yield _Cell(f'LOC_SEG.{row.cell}', row.points, _described('co-segregation', *row.description.split('.')))
 
     for row in tables.non_segregation:
-        yield f'LOC_SEG.non_segregation.{row.cell}', row.points
+        yield _Cell(f'LOC_SEG.non_segregation.{row.cell}', row.points, _described('non-segregation', row.description))
 
 
 def _all_cells(ref: reference.Reference) -> dict[str, decimal.Decimal | None]:
@@ -160,14 +187,23 @@ def _all_cells(ref: reference.Reference) -> dict[str, decimal.Decimal | None]:
         ReferenceDataError: If two rows are addressed by one id, which would price one of them at
             the other's value, or if CLN_UAF states a column no zygosity reads.
     """
-    cells: dict[str, decimal.Decimal | None] = {}
-    for cell_id, points in _addressed(ref):
-        if cell_id in cells:
+    return {cell_id: cell.points for cell_id, cell in _cells(ref).items()}
+
+
+def _cells(ref: reference.Reference) -> dict[str, _Cell]:
+    """Every per-observation cell by id.
+
+    Raises:
+        ReferenceDataError: As `_all_cells`.
+    """
+    cells: dict[str, _Cell] = {}
+    for cell in _addressed(ref):
+        if cell.cell_id in cells:
             raise reference.ReferenceDataError(
-                f'two per-observation rows are addressed by {cell_id!r}; one of them would be priced at the '
+                f'two per-observation rows are addressed by {cell.cell_id!r}; one of them would be priced at the '
                 "other's value"
             )
-        cells[cell_id] = points
+        cells[cell.cell_id] = cell
     return cells
 
 
@@ -219,6 +255,18 @@ def points_for(ref: reference.Reference, cell_id: str) -> decimal.Decimal:
         return cell_points(ref)[cell_id]
     except KeyError as e:
         raise UnknownCellError(f'no per-observation table prices {cell_id!r}') from e
+
+
+def description(ref: reference.Reference, cell_id: str) -> str:
+    """The row a cell addresses, in the words of the reference's own tables.
+
+    Raises:
+        UnknownCellError: If no table defines the cell.
+    """
+    try:
+        return _cells(ref)[cell_id].description
+    except KeyError as e:
+        raise UnknownCellError(f'no per-observation table defines {cell_id!r}') from e
 
 
 def _code_of(cell_id: str) -> str:

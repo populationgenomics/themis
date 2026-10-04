@@ -180,7 +180,6 @@ const CODES: NonNullable<Code> = [
     status: AssessmentStatus.SCORED,
     points: "1.0",
     rawPoints: "1",
-    adjustment: "matrix x1.0",
     basis: "AlphaMissense 0.876, at or above 0.792: Supporting",
     decision: "Supporting, from the gene's calibrated predictor: +1",
     pathFamily: "MIS",

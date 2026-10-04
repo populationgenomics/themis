@@ -19,7 +19,7 @@ that is you.
   use it.
 - **`themis.svcv4` computes every point.** You supply the judgement inputs and read its trail back. Never compute a
   total, band or class by hand. The exception is the `CLN_*`/`LOC_*` case codes: you reduce them from the case facts and
-  price them with `observations.total`, showing the arithmetic.
+  price them with `observations.total`, and the classification record carries the cells you priced.
 - **You judge** the MDE, mechanism level, exon relevance, informative-variant eligibility, assay concordance, DAFT
   parameters, critical-residue and multiple-disorder calls, and the verdict. Give each its reasoning, an explicit
   uncertainty and its provenance. The verdict rests on your reasoning over the evidence, not on the total.
@@ -171,6 +171,10 @@ decided.
 
 ## The workflow
 
+1. **Judgements.** On a turn that finds an SVCv4 classification committed, first run
+   `widgets.judgements('assets/svcv4.binpb')` (`from themis.agent import widgets`). It prints each tick and note a
+   curator has made. A note is the curator's answer on the code, the routing or the record it sits on: treat it as
+   §"Questions for the curator" treats an answer.
 1. **Normalize.** `Variant.Normalize` gives the canonical ids, `gene_symbol`, `hgnc_id`, `consequence`, the transcript
    projections (use the MANE Select RefSeq `NM_`), and the ClinVar crosswalk `clinvar_variations[]`. Establish the MDE.
    On `FAILED_PRECONDITION` from `DescribeGene`, restate the entity rather than broadening the term.
@@ -186,8 +190,9 @@ decided.
    judge, and call `classify_variant`.
 1. **Sensitivity.** Re-run the tally across each judgement input's plausible range, to find the class-determinative
    calls.
-1. **Write** the working document to the kickoff's outline. Run `python3 -m themis.document_linter <document path>` and
-   fix every issue it names. Commit and push.
+1. **Write** the SVCv4 classification (below), then the working document to the kickoff's outline, embedding the
+   classification in "Evidence assessment". Run `python3 -m themis.document_linter <document path>` and fix every issue
+   it names. Commit and push.
 1. **Review** (below), fold in the findings, commit.
 1. **Questions for the curator** (below). Commit, push, and end the turn.
 
@@ -219,9 +224,29 @@ outline and add no sections. What the outline does not say:
   without one passage: `:paper[<doc_id>]`. A paper served as `TEXT_PROVENANCE_SUPPLIED` gets "(supplied)" at its first
   citation. Database facts and CSpec text: prose naming the source and its `provenance.retrieved_at`. An abstract:
   prose naming its PMID. None of these take a directive.
-- **Each scored code names its decision-tree cell** beside its points.
-- **Each supplied code shows its derivation on one line**: one term per observation, each with its identifier, summing
-  to the value `observations.total` priced. State caps in the framework's wording.
+- **The SVCv4 classification is a widget, and the record of every code.** Build it with `themis.svcv4.widget`: read
+  its docstring first. `widget.Inputs` takes what `classify_variant` takes, and `widget.build` runs the classification
+  itself, so every point, total and class in the record is the library's. `widget.admitted(ref, inputs)` lists the
+  codes it needs an annotation for, and every one gets a status: scored, not applicable (the framework bars it) or no
+  data (it applies and nothing determines it), with the reason for either of the last two. A scored code carries its
+  evidence (each item a retrieval, a validated citation, a case-text quote or a web result), its rationale, how open
+  you consider the call, and the nearest cell you ruled out. A code on a path names its decision-tree cell in
+  `decision`; an independent code names the cells it was priced from, as `cell_id` and `count`, the same
+  observations `observations.total` priced. Pass the other surviving values of an open input as `open_values`, and the
+  sensitivity rows as `sensitivity`, each as the inputs with the varied ones replaced: the builder scores them. Write it
+  with `widgets.update('assets/svcv4.binpb', lambda committed: widget.build(..., committed=committed))`, and put
+  `::embed[assets/svcv4.binpb]` on a line of its own in "Evidence assessment". The document does not restate what the
+  record carries: a code's cell, points, evidence and reasoning live in the record alone. Nor does a code's text state
+  what the builder scores, such as an alternative's total or class or whether a sensitivity row changes the class: the
+  record draws each beside the code it moves, and a sentence stating one goes stale when a revision re-scores it.
+- **Revising the classification**: restate a code in `codes` only when its status, evidence or reasoning changed. A
+  code you leave out keeps the annotation the committed record holds, and with it the curator's tick; the builder
+  refuses to carry one the new tally moved (its points, its path, the releases behind it), so restate that code. The
+  first write needs `routing=`; later writes carry it until the consequence, the paths taken or the gate level change,
+  when the builder refuses and you restate it. Each curator's note clears when you change what it is on, so a note you
+  answered without changing its code stays: act on a note only when the answers recorded under the open items do not
+  already cover it. `update` prints the text of each note it clears, for example when a rebase meets a note written
+  mid-turn: read it as a note found at the start of a turn. After any rebase, run `widgets.judgements` again.
 - **Reflection (f)** quotes the code a ready helper should have written, judged by whether getting it wrong would be
   easy and silent, not by length. (b) is about the services; (f) is about the code around them.
 - **Things the curator confirms one by one**, such as the assumptions your open items proceed on, go in a checklist
@@ -247,19 +272,23 @@ of your reasoning, so paste the kickoff's clinical context (the evidence behind 
 name your snippet directory. Base the brief on:
 
 > Read `/workspace/skills/classifying-sequence-variants/SKILL.md` first. The clinical context the kickoff supplied,
-> verbatim: `<paste it>`. Then read `<document path>` and its cited evidence fresh: the captured papers under
+> verbatim: `<paste it>`. Then read `<document path>`, the classification record it embeds
+> (`display.show(widgets.read('assets/svcv4.binpb'))`, `from themis.agent import display, widgets`), which holds every
+> code's cell, points, evidence and reasoning, and their cited evidence fresh: the captured papers under
 > `/workspace/scratch/captured/`, and the service answers, by re-issuing the calls whose snippets are under
 > `<snippet directory>` through `retry.call(..., cache_dir='/workspace/scratch/cache')`. Where an answer differs from
 > what the document reports, check your request against the author's snippet before calling it a divergence; a request
 > you could not reproduce is a reproduction gap. Do not redo the classification and do not write to the document. For
-> each scored code, check its cell against the evidence the document cites and the framework's rule for that cell;
+> each scored code in the record, check its cell against the evidence the record cites and the framework's rule for
+> that cell;
 > check each stated absence against what the services returned. Report every divergence with the clause that decides it
 > (the response field, the passage, the framework rule), quoting both sides with their locations. A cell its evidence
 > does not support, points that disagree with the library, an absence the evidence contradicts, a quote that does not
 > validate: each is a finding. Do not rank or call anything minor; check the rows, not the total. Where you cannot tell,
 > say what would settle it. Return findings as prose, at most one page.
 
-The report is a claim: reconcile it against your own evidence. Fold in what holds. Where you overrule a finding, record
+The report is a claim: reconcile it against your own evidence. Fold in what holds; the document then states the
+corrected reading, with no account of what the review changed. Where you overrule a finding, record
 in the evidence section what was raised and why it did not move the cell.
 
 ## Questions for the curator
@@ -269,17 +298,17 @@ can retrieve, every code you can settle, the full tally. Then record each call w
 document's open items, with the assumption you took to proceed, and repeat the numbered list at the end of your turn.
 
 Record a call only when a second answer is live (the evidence admits more than one value, or a disposition stands in for
-real uncertainty) and it changes the class or points a reader would care about. The sensitivity table answers the
-second. Rank by outcome moved; past five, list the class-changing ones and say the rest are in the document. `ND` where
-a code does not apply is an answer, not a question. Do not record what you could have looked up, do not present a
+real uncertainty) and it changes the class or points a reader would care about. The sensitivity rows answer the second.
+Rank by outcome moved; past five, list the class-changing ones and say the rest are in the document. A code that is
+not applicable, or has no data, is an answer, not a question. Do not record what you could have looked up, do not present a
 settled call as open, and do not bundle judgements.
 
 For each call give: a number; the question in one sentence, naming the code it feeds; each admissible option with the
-points and class it lands on, both from the library this turn; your own read and the assumption the document proceeds
+points and class it lands on, both read from the record you last wrote, in the open items as in the message; your own read and the assumption the document proceeds
 on (on an open input, your read does not settle it, and the class it favours is not the class the document reports);
 and what would settle it. Then say how to reply, and that reasoning is worth more to you than a label.
 
-When an answer arrives, do not guess at an ambiguous reply: say what you read and ask again. Re-derive through the
-library rather than patching a total. Revise the document at its path, record under the open items what the answer
+When an answer arrives, in the conversation or as a note in the classification, do not guess at an ambiguous reply:
+say what you read and ask again. Re-derive through the library rather than patching a total. Revise the document at its path, record under the open items what the answer
 changed and what it did not, and commit and push. This run started from the pushed repository with `scratch/` gone, so
 capture a paper again before quoting it anew. Keep the curator's words as the rationale, and say what is still open.
