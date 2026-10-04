@@ -3,12 +3,12 @@ import { QueryClient } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearCopy } from "../workbench/clear-copy";
-import { tickStore } from "./checklist-ticks";
 import {
   UnsavedChangesBody,
   unsavedChangesGuard,
   unsavedChangesQuestion,
 } from "./clear-guard";
+import { judgementStore } from "./judgements";
 import { WidgetStates } from "./widget-state";
 
 // A clear of an Analysis's copy discards the changes its widgets have not saved yet, so it asks
@@ -20,14 +20,14 @@ const COMMIT = "c0".padEnd(40, "0");
 function withTicks(...items: string[]) {
   const states = new WidgetStates();
   const store = states.entry("an_1", "assets/c.binpb", "checklist", () =>
-    tickStore(async () => true),
+    judgementStore(async () => true),
   );
   for (const [index, itemId] of items.entries()) {
     store.dispatch({
-      kind: "ticked",
-      itemId,
+      kind: "made",
+      key: `items[${itemId}].checked`,
       seq: index + 1,
-      checked: true,
+      value: true,
       drawnAt: COMMIT,
       judged: new Uint8Array(),
     });

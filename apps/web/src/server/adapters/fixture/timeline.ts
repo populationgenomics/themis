@@ -802,7 +802,7 @@ export function finishedHistory(analysis: Analysis): SeedCommit[] {
     {
       files: { [CHECKLIST_PATH]: checklistAsset(new Set([TICKED_ITEM])) },
       author: { name: DEV_USER_EMAIL, email: DEV_USER_EMAIL },
-      message: `Check ${TICKED_ITEM} in ${CHECKLIST_PATH}`,
+      message: `Tick items[${TICKED_ITEM}].checked in ${CHECKLIST_PATH}`,
     },
   ];
 }

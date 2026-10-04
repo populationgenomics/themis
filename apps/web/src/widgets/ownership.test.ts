@@ -132,10 +132,15 @@ describe("what a guard judges", () => {
   const accepted = Node.fields.find((field) => field.name === "accepted");
   if (approved === undefined || accepted === undefined)
     throw new Error("no guard");
-  const judged = (desc: DescMessage, judge: typeof approved, json: JsonValue) =>
-    Buffer.from(judgedContent(desc, fromJson(desc, json), judge)).toString(
-      "hex",
-    );
+  const judged = (
+    desc: DescMessage,
+    judge: typeof approved,
+    json: JsonValue,
+    keyed = desc === Node,
+  ) =>
+    Buffer.from(
+      judgedContent(desc, fromJson(desc, json), judge, { keyed }),
+    ).toString("hex");
 
   test("leaves out the fields it ignores and every guard, and keeps the rest", () => {
     const base = judged(Tree, approved, { title: "a", note: { text: "x" } });
@@ -163,6 +168,25 @@ describe("what a guard judges", () => {
     );
   });
 
+  test("judges the key of a message no list matched it by", () => {
+    expect(judged(Node, accepted, { id: "a", claim: "c" }, false)).not.toBe(
+      judged(Node, accepted, { id: "b", claim: "c" }, false),
+    );
+  });
+
+  test("reads a keyed list beneath it as a set, whatever its order", () => {
+    const children = [
+      { id: "x", claim: "one" },
+      { id: "y", claim: "two" },
+    ];
+    expect(judged(Node, accepted, { id: "a", children })).toBe(
+      judged(Node, accepted, { id: "a", children: [...children].reverse() }),
+    );
+    expect(judged(Node, accepted, { id: "a", children })).not.toBe(
+      judged(Node, accepted, { id: "a", children: [children[0]] }),
+    );
+  });
+
   test("is read only of a schema the rule reads", () => {
     const schemaCase = cases.schemas.find(
       (each) => each.name === "a guard ignoring a name its message lacks",
@@ -178,15 +202,17 @@ describe("what a guard judges", () => {
     const done = elementSchema.fields.find((field) => field.name === "done");
     if (done === undefined) throw new Error("no guard");
     expect(() =>
-      judgedContent(elementSchema, fromJson(elementSchema, {}), done),
+      judgedContent(elementSchema, fromJson(elementSchema, {}), done, {
+        keyed: true,
+      }),
     ).toThrow(OwnershipSchemaError);
   });
 
   test("is asked of a guard of the message alone", () => {
     const title = Tree.fields.find((field) => field.name === "title");
     if (title === undefined) throw new Error("no title");
-    expect(() => judgedContent(Tree, fromJson(Tree, {}), title)).toThrow(
-      "not a guard",
-    );
+    expect(() =>
+      judgedContent(Tree, fromJson(Tree, {}), title, { keyed: false }),
+    ).toThrow("not a guard");
   });
 });

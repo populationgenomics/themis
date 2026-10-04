@@ -21,10 +21,7 @@ import {
   install,
   type MiniElement,
 } from "../minidom.test-support";
-import {
-  CHANGED_SINCE_SHOWN,
-  UNCONFIRMED_NOTICE,
-} from "../widgets/checklist-ticks";
+import { CHANGED_SINCE_SHOWN, UNCONFIRMED_NOTICE } from "../widgets/judgements";
 import type { RegisteredWidget } from "../widgets/registry";
 import { WidgetStatesProvider } from "../widgets/widget-state";
 import type { WorkingDocumentSignal } from "./workspace-sync";
@@ -289,14 +286,14 @@ describe("a checklist in the working document", () => {
     await doc.tick();
     expect(calls).toHaveLength(1);
     expect(doc.container.textContent).toContain(
-      "Not saved: the item changed since it was shown",
+      `Not saved: ${CHANGED_SINCE_SHOWN}`,
     );
 
     await doc.render(C1);
 
     expect(doc.checkboxes()[0]).toBe(box);
     expect(doc.container.textContent).toContain(
-      "Not saved: the item changed since it was shown",
+      `Not saved: ${CHANGED_SINCE_SHOWN}`,
     );
     await doc.unmount();
   });
@@ -356,7 +353,7 @@ describe("a checklist in the working document", () => {
     expect(doc.checkboxes()).toHaveLength(2);
     expect(doc.checkboxes()).not.toContain(box);
     expect(doc.container.textContent).toContain(
-      "Not saved: the item changed since it was shown",
+      `Not saved: ${CHANGED_SINCE_SHOWN}`,
     );
     await doc.unmount();
   });

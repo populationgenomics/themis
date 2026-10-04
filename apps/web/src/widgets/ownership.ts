@@ -223,24 +223,28 @@ export function userOnlyViolations(
     : [`the edit changes ${schema.typeName} beyond a user's judgements`];
 }
 
-/** What the guard `judge` of `message`, an element of a list matched by its key, judges: the
- *  encoding of every field of the message but its key and the fields `judge` ignores, with every
- *  guard at any depth at its default. Raises `OwnershipSchemaError` on a schema `checkSchema`
- *  refuses. */
+/** What the guard `judge` of `message` judges: the encoding of every field of the message but the
+ *  fields `judge` ignores and, where `keyed`, the key the message was matched by as an element of a
+ *  list, with every guard at any depth at its default and every list whose elements are matched by
+ *  key in key order, since a list's order is not part of what is judged. The root of a payload and
+ *  a singular message are not `keyed`: they judge a key field like any other. Raises
+ *  `OwnershipSchemaError` on a schema `checkSchema` refuses. */
 export function judgedContent(
   schema: DescMessage,
   message: Message,
   judge: DescField,
+  { keyed }: { keyed: boolean },
 ): Uint8Array {
   if (!isGuard(judge) || !schema.fields.includes(judge)) {
     throw new Error(`${judge.name} is not a guard of ${schema.typeName}`);
   }
   checkSchema(schema);
-  const judged = withoutGuards(schema, message);
+  const judged = clone(schema, message);
+  strip(reflect(schema, judged), { sortKeyed: true });
   const holder = reflect(schema, judged);
   const ignores = new Set(getOption(judge, guard).ignores);
   for (const field of schema.fields) {
-    if (isKey(field) || ignores.has(field.name)) holder.clear(field);
+    if ((keyed && isKey(field)) || ignores.has(field.name)) holder.clear(field);
   }
   return toBinary(schema, judged);
 }
@@ -251,22 +255,53 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 
 function withoutGuards(schema: DescMessage, message: Message): Message {
   const copy = clone(schema, message);
-  strip(reflect(schema, copy));
+  strip(reflect(schema, copy), { sortKeyed: false });
   return copy;
 }
 
-function strip(holder: ReflectMessage): void {
+/** Clear every guard beneath `holder`, and with `sortKeyed` put every list whose elements hold
+ *  guards in key order, as themis/widgets/ownership.py's `_strip` does before it compares. A user's
+ *  edit is compared unsorted: the browser writes the order it read. */
+function strip(
+  holder: ReflectMessage,
+  { sortKeyed }: { sortKeyed: boolean },
+): void {
   for (const field of holder.desc.fields) {
     if (isGuard(field)) {
       holder.clear(field);
       continue;
     }
-    if (descended(field) === undefined) continue;
+    const element = descended(field);
+    if (element === undefined) continue;
     if (field.fieldKind === "list") {
       for (const item of holder.get(field) as Iterable<ReflectMessage>)
-        strip(item);
+        strip(item, { sortKeyed });
+      if (sortKeyed) sortByKey(holder.message, field, element);
     } else if (field.fieldKind === "message" && holder.isSet(field)) {
-      strip(holder.get(field) as ReflectMessage);
+      strip(holder.get(field) as ReflectMessage, { sortKeyed });
     }
   }
+}
+
+function sortByKey(
+  message: Message,
+  list: DescField,
+  element: DescMessage,
+): void {
+  const key = element.fields.find(isKey);
+  if (key === undefined) {
+    throw new OwnershipSchemaError(
+      `${element.typeName} holds guards in a list and marks no element key`,
+    );
+  }
+  const items = (message as unknown as Record<string, Message[]>)[
+    list.localName
+  ];
+  const value = (item: Message) =>
+    (item as unknown as Record<string, string | number | bigint | boolean>)[
+      key.localName
+    ];
+  items.sort((a, b) =>
+    value(a) < value(b) ? -1 : value(a) > value(b) ? 1 : 0,
+  );
 }

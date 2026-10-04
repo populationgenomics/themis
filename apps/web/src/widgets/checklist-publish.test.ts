@@ -2,20 +2,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { create, fromBinary, type MessageInitShape } from "@bufbuild/protobuf";
 import { AnySchema } from "@bufbuild/protobuf/wkt";
+import type { WidgetEdit } from "@/components/widgets/edit";
 import {
   CHANGED_SINCE_SHOWN,
-  NO_TICKS,
-  reduceTicks,
-  type TickEvent,
-  tickQueue,
-} from "@/components/widgets/checklist-ticks";
-import type { WidgetEdit } from "@/components/widgets/edit";
+  type JudgementEvent,
+  judgementQueue,
+  NO_JUDGEMENTS,
+  reduceJudgements,
+} from "@/components/widgets/judgements";
 import { type Checklist, ChecklistSchema } from "@/models/widgets";
 import { FixtureWorkspace } from "@/server/adapters/fixture/workspace";
 import {
   AGENT,
   type SeedFiles,
 } from "@/server/adapters/fixture/workspace-seed";
+import type { GuardAddress } from "@/widgets/guard-operation";
 import { COLLABORATIVE_BRANCH, WorkspaceCopy } from "@/workspace-copy/copy";
 import {
   type FixtureRemote,
@@ -28,7 +29,12 @@ import {
 import { hydrate } from "@/workspace-copy/hydrate";
 import { type EditOutcome, publishEdit } from "@/workspace-copy/publish";
 import { writePayload } from "./asset";
-import { setCheckedFile } from "./checklist-operation";
+import { setGuardFile } from "./guard-operation";
+
+/** Where item `id`'s tick sits in a checklist. */
+function checkedOf(id: string): GuardAddress {
+  return { steps: [{ field: "items", key: id }], guard: "checked" };
+}
 
 // A curator's tick through the write path, against the offline store: when the agent pushed between
 // the page load and the click to another file, the tick lands on the agent's commit, so both
@@ -124,10 +130,10 @@ async function drawnAt(base: string) {
 /** A tick on `itemId` as the checklist was drawn at `base`, published against the store's tip. */
 async function tick(base: string, itemId: string) {
   const drawn = await drawnAt(base);
-  const edit = setCheckedFile(drawn.bytes, drawn.mode, {
+  const edit = setGuardFile(drawn.bytes, drawn.mode, {
     path: ASSET,
-    itemId,
-    checked: true,
+    address: checkedOf(itemId),
+    value: true,
   });
   if (edit === undefined) throw new Error("the tick changes nothing");
   return publishWidgetEdit({ base, ...edit });
@@ -191,22 +197,24 @@ describe("a tick in the widget", () => {
       ]),
     });
     const before = await remote.readRefDoc();
-    let state = NO_TICKS;
-    await tickQueue(copyAncestry)(
+    let state = NO_JUDGEMENTS;
+    await judgementQueue(copyAncestry)(
       {
         asset: await drawnAt(base),
         path: ASSET,
         drawnAt: base,
-        itemId: "ps3",
-        checked: true,
+        address: checkedOf("ps3"),
+        value: true,
       },
       publishWidgetEdit,
       (event) => {
-        state = reduceTicks(state, event);
+        state = reduceJudgements(state, event);
       },
     );
-    expect(state.failures.get("ps3")).toBe(`Not saved: ${CHANGED_SINCE_SHOWN}`);
-    expect(state.ticks.size).toBe(0);
+    expect(state.failures.get("items[ps3].checked")).toBe(
+      `Not saved: ${CHANGED_SINCE_SHOWN}`,
+    );
+    expect(state.judgements.size).toBe(0);
     expect((await remote.readRefDoc()).generation).toBe(before.generation);
     expect((await tipChecklist()).items.map((item) => item.checked)).toEqual([
       false,
@@ -219,14 +227,20 @@ describe("a tick in the widget", () => {
     const base = state.refs.get(COLLABORATIVE_BRANCH);
     if (base === undefined) throw new Error("no tip");
     const asset = await drawnAt(base);
-    let ticks = NO_TICKS;
-    const dispatch = (event: TickEvent) => {
-      ticks = reduceTicks(ticks, event);
+    let ticks = NO_JUDGEMENTS;
+    const dispatch = (event: JudgementEvent) => {
+      ticks = reduceJudgements(ticks, event);
     };
-    const queue = tickQueue(copyAncestry);
+    const queue = judgementQueue(copyAncestry);
     const tick = (itemId: string) =>
       queue(
-        { asset, path: ASSET, drawnAt: base, itemId, checked: true },
+        {
+          asset,
+          path: ASSET,
+          drawnAt: base,
+          address: checkedOf(itemId),
+          value: true,
+        },
         publishWidgetEdit,
         dispatch,
       );
@@ -242,34 +256,46 @@ describe("a tick in the widget", () => {
     const state = await hydrate(copy, remote, OPEN);
     const base = state.refs.get(COLLABORATIVE_BRANCH);
     if (base === undefined) throw new Error("no tip");
-    let ticks = NO_TICKS;
+    let ticks = NO_JUDGEMENTS;
     const landedAs = new Map<string, string>();
-    const dispatch = (event: TickEvent) => {
-      ticks = reduceTicks(ticks, event);
-      if (event.kind === "landed") landedAs.set(event.itemId, event.commit);
+    const dispatch = (event: JudgementEvent) => {
+      ticks = reduceJudgements(ticks, event);
+      if (event.kind === "landed") landedAs.set(event.key, event.commit);
     };
-    const queue = tickQueue(copyAncestry);
+    const queue = judgementQueue(copyAncestry);
     const asset = await drawnAt(base);
     const first = queue(
-      { asset, path: ASSET, drawnAt: base, itemId: "ps3", checked: true },
+      {
+        asset,
+        path: ASSET,
+        drawnAt: base,
+        address: checkedOf("ps3"),
+        value: true,
+      },
       publishWidgetEdit,
       dispatch,
     );
     const second = queue(
-      { asset, path: ASSET, drawnAt: base, itemId: "pm2", checked: true },
+      {
+        asset,
+        path: ASSET,
+        drawnAt: base,
+        address: checkedOf("pm2"),
+        value: true,
+      },
       publishWidgetEdit,
       dispatch,
     );
     await first;
-    const redrawn = landedAs.get("ps3");
+    const redrawn = landedAs.get("items[ps3].checked");
     if (redrawn === undefined) throw new Error("the first tick did not land");
     const third = queue(
       {
         asset: await drawnAt(redrawn),
         path: ASSET,
         drawnAt: redrawn,
-        itemId: "pm2",
-        checked: false,
+        address: checkedOf("pm2"),
+        value: false,
       },
       publishWidgetEdit,
       dispatch,
@@ -287,9 +313,9 @@ describe("a tick in the widget", () => {
     const base = state.refs.get(COLLABORATIVE_BRANCH);
     if (base === undefined) throw new Error("no tip");
     const drawn = await drawnAt(base);
-    let ticks = NO_TICKS;
-    const dispatch = (event: TickEvent) => {
-      ticks = reduceTicks(ticks, event);
+    let ticks = NO_JUDGEMENTS;
+    const dispatch = (event: JudgementEvent) => {
+      ticks = reduceJudgements(ticks, event);
     };
     let publishes = 0;
     const publish = async (edit: WidgetEdit) => {
@@ -310,15 +336,23 @@ describe("a tick in the widget", () => {
       }
       return outcome;
     };
-    const queue = tickQueue(copyAncestry);
+    const queue = judgementQueue(copyAncestry);
     const tick = (itemId: string) =>
       queue(
-        { asset: drawn, path: ASSET, drawnAt: base, itemId, checked: true },
+        {
+          asset: drawn,
+          path: ASSET,
+          drawnAt: base,
+          address: checkedOf(itemId),
+          value: true,
+        },
         publish,
         dispatch,
       );
     await Promise.all([tick("ps3"), tick("pm2")]);
-    expect(ticks.failures.get("pm2")).toBe(`Not saved: ${CHANGED_SINCE_SHOWN}`);
+    expect(ticks.failures.get("items[pm2].checked")).toBe(
+      `Not saved: ${CHANGED_SINCE_SHOWN}`,
+    );
     expect(
       (await tipChecklist()).items.map((item) => [item.label, item.checked]),
     ).toEqual([
@@ -331,18 +365,18 @@ describe("a tick in the widget", () => {
     const state = await hydrate(copy, remote, OPEN);
     const base = state.refs.get(COLLABORATIVE_BRANCH);
     if (base === undefined) throw new Error("no tip");
-    let ticks = NO_TICKS;
-    const dispatch = (event: TickEvent) => {
-      ticks = reduceTicks(ticks, event);
+    let ticks = NO_JUDGEMENTS;
+    const dispatch = (event: JudgementEvent) => {
+      ticks = reduceJudgements(ticks, event);
     };
-    const queue = tickQueue(copyAncestry);
+    const queue = judgementQueue(copyAncestry);
     await queue(
       {
         asset: await drawnAt(base),
         path: ASSET,
         drawnAt: base,
-        itemId: "ps3",
-        checked: true,
+        address: checkedOf("ps3"),
+        value: true,
       },
       publishWidgetEdit,
       dispatch,
@@ -367,8 +401,8 @@ describe("a tick in the widget", () => {
         asset: await drawnAt(agents),
         path: ASSET,
         drawnAt: agents,
-        itemId: "pm2",
-        checked: true,
+        address: checkedOf("pm2"),
+        value: true,
       },
       publishWidgetEdit,
       dispatch,
@@ -390,14 +424,14 @@ describe("a tick in the widget", () => {
       COLLABORATIVE_BRANCH,
     );
     if (agents === undefined) throw new Error("no tip");
-    let ticks = NO_TICKS;
-    const dispatch = (event: TickEvent) => {
-      ticks = reduceTicks(ticks, event);
+    let ticks = NO_JUDGEMENTS;
+    const dispatch = (event: JudgementEvent) => {
+      ticks = reduceJudgements(ticks, event);
     };
-    const queue = tickQueue(copyAncestry);
-    const tick = { path: ASSET, itemId: "ps3" };
+    const queue = judgementQueue(copyAncestry);
+    const tick = { path: ASSET, address: checkedOf("ps3") };
     await queue(
-      { ...tick, asset: await drawnAt(base), drawnAt: base, checked: true },
+      { ...tick, asset: await drawnAt(base), drawnAt: base, value: true },
       publishWidgetEdit,
       dispatch,
     );
@@ -408,7 +442,7 @@ describe("a tick in the widget", () => {
         ...tick,
         asset: await drawnAt(agents),
         drawnAt: agents,
-        checked: false,
+        value: false,
       },
       publishWidgetEdit,
       dispatch,
@@ -418,7 +452,7 @@ describe("a tick in the widget", () => {
       false,
       false,
     ]);
-    const landed = ticks.ticks.get("ps3")?.landedAs;
+    const landed = ticks.judgements.get("items[ps3].checked")?.landedAs;
     if (landed === undefined) throw new Error("the untick did not land");
     expect(await copy.isAncestor(agents, landed)).toBe(true);
   });

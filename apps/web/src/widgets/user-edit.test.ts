@@ -4,7 +4,7 @@ import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { AnySchema } from "@bufbuild/protobuf/wkt";
 import { Checklist_ItemSchema, ChecklistSchema } from "@/models/widgets";
 import { readAny, readPayload, writePayload } from "./asset";
-import { setCheckedFile } from "./checklist-operation";
+import { setGuardFile } from "./guard-operation";
 import { checkUserEdit } from "./user-edit";
 
 // The write path's check that a user's edit changes guards alone, whatever widget made it.
@@ -30,10 +30,10 @@ function writing(bytes: Uint8Array): void {
 
 describe("a user's edit", () => {
   test("that ticks and unticks items passes", () => {
-    const edit = setCheckedFile(BASE, "100644", {
+    const edit = setGuardFile(BASE, "100644", {
       path: PATH,
-      itemId: "a",
-      checked: true,
+      address: { steps: [{ field: "items", key: "a" }], guard: "checked" },
+      value: true,
     });
     if (edit === undefined) throw new Error("nothing written");
     const [written] = edit.files;
