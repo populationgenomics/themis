@@ -168,6 +168,25 @@
   --color-acmg-pm: #c2641f;
   --color-acmg-pp: #527c7a;
 
+  /* SVCv4 classification: the direction of points, benign against pathogenic, and nothing else.
+     The two poles pass the dataviz validator against white (CVD ΔE 11.4, contrast ≥ 3:1); the
+     band tints are the poles over white, and VUS the warm neutral between them. The alt shades,
+     the poles darkened, tell neighbouring segments apart; the text shades are the same darkening,
+     at 6.4:1 and 6.8:1 on white. cut is the surface striped over the points a cap removed. */
+  --color-svcv4-benign: #008b7f;
+  --color-svcv4-benign-alt: #006b62;
+  --color-svcv4-benign-text: #006b62;
+  --color-svcv4-benign-band: #b8dedb;
+  --color-svcv4-benign-tint: #dbefed;
+  --color-svcv4-pathogenic: #c0472f;
+  --color-svcv4-pathogenic-alt: #a33521;
+  --color-svcv4-pathogenic-text: #a33521;
+  --color-svcv4-pathogenic-band: #edcbc5;
+  --color-svcv4-pathogenic-tint: #f6e5e2;
+  --color-svcv4-vus-band: #f3f0eb;
+  --color-svcv4-vus-band-alt: #ece8e1;
+  --color-svcv4-cut: rgba(255, 255, 255, 0.9);
+
   /* <mark> highlight fill + 3px bleed. */
   --color-mark: #fce7a1;
 

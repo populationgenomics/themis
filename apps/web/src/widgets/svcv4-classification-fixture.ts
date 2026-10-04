@@ -72,7 +72,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "CLN_CCS",
     family: "CLN",
-    title: "Case-control study",
+    title: "Case-control studies",
     status: AssessmentStatus.NO_DATA,
     statusReason: "No case-control study reports this variant.",
   },
@@ -87,7 +87,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "CLN_DNV",
     family: "CLN",
-    title: "De novo occurrence",
+    title: "De novo observations",
     status: AssessmentStatus.SCORED,
     points: "2.0",
     rawPoints: "2.0",
@@ -127,7 +127,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "CLN_ALT",
     family: "CLN",
-    title: "Alternate cause identified",
+    title: "Alternate cause of disease",
     status: AssessmentStatus.NO_DATA,
     statusReason: "No other candidate variant is reported for the proband.",
   },
@@ -141,7 +141,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "LOC_PHE",
     family: "LOC",
-    title: "Phenotype specificity",
+    title: "Specific phenotype",
     status: AssessmentStatus.SCORED,
     points: "4.0",
     rawPoints: "4.0",
@@ -169,14 +169,14 @@ const CODES: NonNullable<Code> = [
   {
     code: "LOC_SEG",
     family: "LOC",
-    title: "Segregation",
+    title: "Segregation with disease",
     status: AssessmentStatus.NO_DATA,
     statusReason: "The proband is the only affected family member reported.",
   },
   {
     code: "MIS_PRD",
     family: "MIS",
-    title: "Missense predictor",
+    title: "Amino-acid change prediction",
     status: AssessmentStatus.SCORED,
     points: "1.0",
     rawPoints: "1",
@@ -204,7 +204,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "MIS_FXN",
     family: "MIS",
-    title: "Missense functional assay",
+    title: "Functional assessment of the amino-acid change",
     status: AssessmentStatus.NO_DATA,
     statusReason: "MaveDB holds no assay of this change.",
     pathFamily: "MIS",
@@ -212,7 +212,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "MIS_INF",
     family: "MIS",
-    title: "Missense informative variants",
+    title: "Informative variants",
     status: AssessmentStatus.NO_DATA,
     statusReason: "ClinVar holds no other classified variant at codon 2335.",
     pathFamily: "MIS",
@@ -220,7 +220,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "SPL_PRD",
     family: "SPL",
-    title: "Splice predictor",
+    title: "Splice change prediction",
     status: AssessmentStatus.SCORED,
     points: "0",
     rawPoints: "0",
@@ -254,7 +254,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "SPL_FXN",
     family: "SPL",
-    title: "Splice product functional assay",
+    title: "Functional assessment of the splice product",
     status: AssessmentStatus.NOT_APPLICABLE,
     statusReason:
       "The splice path predicts no aberrant product to assay (SM6).",
@@ -263,7 +263,7 @@ const CODES: NonNullable<Code> = [
   {
     code: "SPL_INF",
     family: "SPL",
-    title: "Splice informative variants",
+    title: "Informative variants",
     status: AssessmentStatus.NO_DATA,
     statusReason: "No classified splice-acting variant at this position.",
     pathFamily: "SPL",

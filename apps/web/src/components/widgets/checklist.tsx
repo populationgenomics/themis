@@ -1,87 +1,41 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
 import { type Citation, CitationMark } from "@/components/workbench/citation";
 import {
   type Checklist,
   type Checklist_Item,
   ChecklistSchema,
 } from "@/models/widgets";
-import {
-  addressName,
-  type GuardAddress,
-  judgementIn,
-} from "@/widgets/guard-operation";
-import { workspaceCopy } from "@/workspace-copy/client";
-import { useWidgetEdit } from "./edit";
-import {
-  type GuardInFile,
-  type GuardView,
-  guardView,
-  type Judgement,
-  judgementStore,
-  NO_JUDGEMENTS,
-  unansweredReason,
-} from "./judgements";
+import { addressName, type GuardAddress } from "@/widgets/guard-operation";
+import { JudgementFailure, JudgementMarker } from "./judgement-controls";
 import type { WidgetProps } from "./registry";
-import { useWidgetStates } from "./widget-state";
+import { type GuardState, useJudgements } from "./use-judgements";
 
 // A checklist the agent asks a curator to work through: each item's label as plain text, the paper
 // or passage it rests on as the citation mark prose uses, and whether a curator has ticked it, with
-// what a tick being published shows over it (judgements.ts), kept for the window's life beside
-// every other component drawing the same asset (widget-state.tsx).
+// what a tick being published shows over it (use-judgements.ts).
 
 export function ChecklistWidget(
   props: WidgetProps<Checklist>,
 ): React.ReactElement {
-  const { payload, asset, path, drawnAt, onCitation, revision } = props;
-  const edit = useWidgetEdit(props);
-  const { analysisId } = revision;
-  const store = useWidgetStates().entry(analysisId, path, "judgements", () =>
-    judgementStore((ancestor, descendant) =>
-      workspaceCopy.isAncestor(analysisId, ancestor, descendant),
-    ),
+  const { payload, onCitation } = props;
+  const guards = useJudgements(
+    props,
+    ChecklistSchema,
+    payload.items.map(checkedOf),
   );
-  const state = useSyncExternalStore(store.subscribe, store.state, store.state);
-  // A pinned version is not the tip's line, and a tick shows over none of its items.
-  const shown = revision.pinned ? NO_JUDGEMENTS : state;
-  const views = payload.items.map((item) =>
-    guardView(shown, checkedIn(payload, item), drawnAt),
-  );
-  // Each render asks what its views are missing; both are no-ops once answered.
-  useEffect(() => {
-    for (const view of views) {
-      for (const [ancestor, descendant] of view.asks)
-        store.relate(ancestor, descendant);
-      if (view.superseded !== undefined)
-        store.dispatch({ kind: "superseded", ...view.superseded });
-    }
-  });
-
-  const tick = (item: Checklist_Item, checked: boolean) => {
-    if (edit === null) return Promise.resolve();
-    return store.queue(
-      { asset, path, drawnAt, address: checkedOf(item), value: checked },
-      edit,
-      store.dispatch,
-    );
-  };
-
   return (
     <ul className="divide-y divide-line-row rounded-[8px] border border-line-soft bg-surface-doc-pane">
-      {payload.items.map((item, index) => {
-        const view = views[index];
+      {payload.items.map((item) => {
+        const guard = guards.get(addressName(checkedOf(item)));
+        if (guard === undefined) {
+          throw new Error(`the checklist's item ${item.id} has no tick`);
+        }
         return (
           <ChecklistRow
             key={item.id}
             item={item}
-            view={view}
-            failure={
-              shown.failures.get(addressName(checkedOf(item))) ??
-              unansweredReason(shown, view)
-            }
-            editable={edit !== null && !view.undecided}
-            onTick={(checked) => void tick(item, checked)}
+            guard={guard}
             onCitation={onCitation}
           />
         );
@@ -92,27 +46,22 @@ export function ChecklistWidget(
 
 function ChecklistRow({
   item,
-  view,
-  failure,
-  editable,
-  onTick,
+  guard,
   onCitation,
 }: {
   item: Checklist_Item;
-  view: GuardView;
-  failure: string | undefined;
-  editable: boolean;
-  onTick: (checked: boolean) => void;
+  guard: GuardState;
   onCitation: (citation: Citation) => void;
 }): React.ReactElement {
+  const { view, failure, editable } = guard;
   const citation = item.citation;
   return (
     <li className="flex items-start gap-[10px] px-[13px] py-[9px]">
       <input
         type="checkbox"
         checked={view.value === true}
-        disabled={!editable || view.marker === "saving"}
-        onChange={(event) => onTick(event.target.checked)}
+        disabled={!editable}
+        onChange={(event) => guard.set(event.target.checked)}
         aria-label={item.label}
         className="mt-[4px] size-[14px] shrink-0 accent-primary disabled:cursor-default"
       />
@@ -137,48 +86,21 @@ function ChecklistRow({
           </div>
         )}
         {failure !== undefined && (
-          <div role="alert" className="mt-[3px] text-[12.5px] text-error-text">
-            {failure}
+          <div className="mt-[3px]">
+            <JudgementFailure failure={failure} />
           </div>
         )}
       </div>
-      {view.marker !== undefined && <TickState state={view.marker} />}
+      {view.marker !== undefined && (
+        <div className="mt-[3px] shrink-0">
+          <JudgementMarker state={view.marker} />
+        </div>
+      )}
     </li>
-  );
-}
-
-const TICK_STATE: Record<
-  Judgement["state"],
-  { text: string; className: string }
-> = {
-  saving: { text: "saving…", className: "text-ink-faint" },
-  saved: { text: "saved", className: "text-status-done-fg" },
-};
-
-function TickState({
-  state,
-}: {
-  state: Judgement["state"];
-}): React.ReactElement {
-  const { text, className } = TICK_STATE[state];
-  return (
-    <span className={`mt-[3px] shrink-0 text-[11.5px] ${className}`}>
-      {text}
-    </span>
   );
 }
 
 /** Where an item's tick sits in the checklist. */
 function checkedOf(item: Checklist_Item): GuardAddress {
   return { steps: [{ field: "items", key: item.id }], guard: "checked" };
-}
-
-/** The item's tick as the checklist drawn holds it. */
-function checkedIn(payload: Checklist, item: Checklist_Item): GuardInFile {
-  const address = checkedOf(item);
-  const found = judgementIn(ChecklistSchema, payload, address);
-  if (found === undefined) {
-    throw new Error(`the checklist drawn has no item ${item.id}`);
-  }
-  return { key: addressName(address), ...found };
 }

@@ -1,7 +1,7 @@
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import { requireInputs } from "@/lib/scenario";
-import { ChecklistSchema } from "@/models/widgets";
+import { ChecklistSchema, Svcv4ClassificationSchema } from "@/models/widgets";
 import {
   type Analysis,
   type ConversationEvent,
@@ -9,6 +9,7 @@ import {
   SubAgentStatus,
 } from "@/models/workbench";
 import { writePayload } from "@/widgets/asset";
+import { fbn1Classification } from "@/widgets/svcv4-classification-fixture";
 import { kickoffText } from "../../kickoff";
 import { projectToolCall } from "../../tool-projection";
 import { DEV_USER_EMAIL } from "./identity";
@@ -170,13 +171,20 @@ A malformed reference :paper[not-a-real-id] renders as broken.`;
 /** The checklist the corrected document embeds, and where the agent writes it. */
 const CHECKLIST_PATH = "assets/curator-checks.binpb";
 
+/** The SVCv4 classification the corrected document embeds, and where the agent writes it. */
+const CLASSIFICATION_PATH = "assets/svcv4.binpb";
+
 /** An asset the corrected document names before the agent has written it: a mid-edit state, which
  *  the document pane draws as a placeholder. */
 const UNWRITTEN_ASSET_PATH = "assets/pedigree.binpb";
 
-/** What the corrected document adds after its Sources: the things the curator confirms, as a
- *  checklist widget, and a widget whose asset is still to come. */
-const CHECKS_FINAL = `### Curator checks
+/** What the corrected document adds after its Sources: the SVCv4 classification, the things the
+ *  curator confirms, as a checklist widget, and a widget whose asset is still to come. */
+const CHECKS_FINAL = `### Evidence assessment
+
+::embed[${CLASSIFICATION_PATH}]
+
+### Curator checks
 
 ::embed[${CHECKLIST_PATH}]
 
@@ -785,6 +793,10 @@ export function documentFiles(analysis: Analysis, version: number): SeedFiles {
     ? {
         [WORKING_DOCUMENT_PATH]: markdown,
         [CHECKLIST_PATH]: checklistAsset(new Set()),
+        [CLASSIFICATION_PATH]: writePayload(
+          Svcv4ClassificationSchema,
+          fbn1Classification(),
+        ),
       }
     : { [WORKING_DOCUMENT_PATH]: markdown };
 }

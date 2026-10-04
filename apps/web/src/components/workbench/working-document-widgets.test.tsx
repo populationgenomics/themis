@@ -6,14 +6,21 @@ import {
   expect,
   test,
 } from "bun:test";
-import { create, toBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AnySchema, anyPack, StructSchema } from "@bufbuild/protobuf/wkt";
 import type { ReactElement } from "react";
-import { ChecklistSchema } from "@/models/widgets";
+import { Classification } from "@/gen/themis/svcv4/models/svcv4_pb";
+import {
+  ChecklistSchema,
+  type Svcv4Classification,
+  Svcv4ClassificationSchema,
+} from "@/models/widgets";
+import { fbn1Classification } from "@/widgets/svcv4-classification-fixture";
 import {
   PublishUnconfirmedError,
   workspaceCopy,
 } from "@/workspace-copy/client";
+import type { EditFile } from "@/workspace-copy/protocol";
 import type { EditOutcome } from "@/workspace-copy/publish";
 import {
   click,
@@ -708,5 +715,214 @@ describe("a widget in the working document", () => {
       console.error = quiet;
       widgets.delete(StructSchema.typeName);
     }
+  });
+});
+
+describe("an SVCv4 classification in the working document", () => {
+  const CLASSIFICATION = toBinary(
+    AnySchema,
+    anyPack(Svcv4ClassificationSchema, fbn1Classification()),
+  );
+
+  function labelled(doc: ReturnType<typeof mount>, label: string): MiniElement {
+    const [found] = findAll(
+      doc.container,
+      (node) => (node as MiniElement).getAttribute?.("aria-label") === label,
+    ) as MiniElement[];
+    if (found === undefined) throw new Error(`nothing labelled ${label}`);
+    return found;
+  }
+
+  function codesShown(doc: ReturnType<typeof mount>): string[] {
+    return findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "BUTTON" &&
+        (node as MiniElement).getAttribute?.("aria-expanded") !== null,
+    ).map((node) => node.textContent.slice(1, 8));
+  }
+
+  test("links the ruler's caption to the table of alternatives", async () => {
+    const doc = mount({ [C0]: CLASSIFICATION });
+    await doc.render(C0);
+    const [link] = findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "A" &&
+        node.textContent === "other values of the judgement inputs",
+    ) as MiniElement[];
+    const href = link?.getAttribute("href") ?? "";
+    expect(href.startsWith("#")).toBe(true);
+    const targets = findAll(
+      doc.container,
+      (node) => (node as MiniElement).getAttribute?.("id") === href.slice(1),
+    ) as MiniElement[];
+    expect(targets.map((target) => target.tagName)).toEqual(["SECTION"]);
+    expect(targets[0].textContent).toContain(
+      "Other values of the judgement inputs",
+    );
+    await doc.unmount();
+  });
+
+  test("publishes the record's tick and the routing's as their guards alone", async () => {
+    const calls = publishing({
+      kind: "landed",
+      commit: C1,
+      generation: BigInt(1),
+    });
+    const doc = mount({ [C0]: CLASSIFICATION, [C1]: CLASSIFICATION });
+    await doc.render(C0);
+    await React.act(async () =>
+      click(doc.container, labelled(doc, "Reviewed: the whole classification")),
+    );
+    await React.act(async () =>
+      click(doc.container, labelled(doc, "Reviewed: the routing")),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(
+      (calls as { message: string }[]).map((call) => call.message),
+    ).toEqual([`Tick reviewed in ${PATH}`, `Tick routing.reviewed in ${PATH}`]);
+    await doc.unmount();
+  });
+
+  test("opens a note's editor, keeps Save off until the text changes, and cancels it", async () => {
+    const doc = mount({ [C0]: CLASSIFICATION });
+    await doc.render(C0);
+    await React.act(async () =>
+      click(doc.container, labelled(doc, "Add a note on CLN_DNV")),
+    );
+    const areas = () =>
+      findAll(
+        doc.container,
+        (node) => (node as MiniElement).tagName === "TEXTAREA",
+      );
+    expect(areas()).toHaveLength(1);
+    expect(dom.document.activeElement).toBe(areas()[0] as MiniElement);
+    const button = (text: string) =>
+      findAll(
+        doc.container,
+        (node) =>
+          (node as MiniElement).tagName === "BUTTON" &&
+          node.textContent === text,
+      )[0] as MiniElement;
+    expect(button("Save note").hasAttribute("disabled")).toBe(true);
+    await React.act(async () => click(doc.container, button("Cancel")));
+    expect(areas()).toHaveLength(0);
+    expect(dom.document.activeElement).toBe(
+      labelled(doc, "Add a note on CLN_DNV"),
+    );
+    await doc.unmount();
+  });
+
+  test("hands focus to the row's note button when a note is removed", async () => {
+    deferredPublish();
+    const noted = toBinary(
+      AnySchema,
+      anyPack(
+        Svcv4ClassificationSchema,
+        fbn1Classification({
+          codes: { CLN_DNV: { note: "Parentage is confirmed." } },
+        }),
+      ),
+    );
+    const doc = mount({ [C0]: noted });
+    await doc.render(C0);
+    const [remove] = findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "BUTTON" &&
+        node.textContent === "Remove",
+    ) as MiniElement[];
+    await React.act(async () => click(doc.container, remove));
+    expect(dom.document.activeElement).toBe(
+      labelled(doc, "Add a note on CLN_DNV"),
+    );
+    await doc.unmount();
+  });
+
+  test("keeps a row the curator ticks under the filter while the tick saves", async () => {
+    deferredPublish();
+    const doc = mount({ [C0]: CLASSIFICATION });
+    await doc.render(C0);
+    const [filter] = findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "INPUT" &&
+        node.parentNode?.textContent === "Show only codes needing review",
+    ) as MiniElement[];
+    await React.act(async () => click(doc.container, filter));
+    await React.act(async () =>
+      click(doc.container, labelled(doc, "Reviewed: CLN_DNV")),
+    );
+    expect(codesShown(doc)).toContain("CLN_DNV");
+    await doc.unmount();
+  });
+
+  test("reports each tally in contention where an open input leaves no class", async () => {
+    const payload = fbn1Classification();
+    payload.openValues = payload.sensitivity.slice(0, 1);
+    payload.classification = Classification.NOT_ESTABLISHED;
+    const doc = mount({
+      [C0]: toBinary(AnySchema, anyPack(Svcv4ClassificationSchema, payload)),
+    });
+    await doc.render(C0);
+    const header = doc.container.textContent;
+    expect(header).toContain("Class not established");
+    expect(header).toContain("+7 LP or +12 P");
+    await doc.unmount();
+  });
+
+  test("publishes a code's tick as that guard alone", async () => {
+    const calls = publishing({
+      kind: "landed",
+      commit: C1,
+      generation: BigInt(1),
+    });
+    const doc = mount({ [C0]: CLASSIFICATION });
+    await doc.render(C0);
+    await React.act(async () =>
+      click(doc.container, labelled(doc, "Reviewed: CLN_DNV")),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(calls).toHaveLength(1);
+    const [{ files, message }] = calls as {
+      files: EditFile[];
+      message: string;
+    }[];
+    expect(message).toBe(`Tick codes[CLN_DNV].reviewed in ${PATH}`);
+    const written: Svcv4Classification = fromBinary(
+      Svcv4ClassificationSchema,
+      fromBinary(AnySchema, files[0].bytes).value,
+    );
+    expect(
+      written.codes.filter((code) => code.reviewed).map((code) => code.code),
+    ).toEqual(["CLN_DNV"]);
+    expect(written.reviewed).toBe(false);
+    expect(written.routing?.reviewed).toBe(false);
+    await doc.unmount();
+  });
+
+  test("shows only the codes needing review when the curator asks, and each row opens", async () => {
+    const doc = mount({ [C0]: CLASSIFICATION });
+    await doc.render(C0);
+    expect(codesShown(doc)).toHaveLength(fbn1Classification().codes.length);
+    const [filter] = findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "INPUT" &&
+        node.parentNode?.textContent === "Show only codes needing review",
+    ) as MiniElement[];
+    await React.act(async () => click(doc.container, filter));
+    expect(codesShown(doc)).toEqual(["CLN_DNV", "LOC_PHE"]);
+    const [row] = findAll(
+      doc.container,
+      (node) =>
+        (node as MiniElement).tagName === "BUTTON" &&
+        node.textContent.includes("CLN_DNV"),
+    ) as MiniElement[];
+    await React.act(async () => click(doc.container, row));
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(doc.container.textContent).toContain("CLN_DNV.specific.confirmed");
+    await doc.unmount();
   });
 });

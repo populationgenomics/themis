@@ -7,6 +7,7 @@ import type { FileAtCommit } from "@/workspace-copy/copy";
 import { ChecklistWidget } from "./checklist";
 import { EmbedPlaceholder, unregisteredTypeReason } from "./placeholder";
 import type { WidgetContext } from "./revision";
+import { Svcv4ClassificationWidget } from "./svcv4/svcv4-classification";
 
 // The widget types this build draws, each payload type mapped to the component that draws it. Written
 // by hand: behind each entry is a component somebody wrote, so the mapping is a decision, not a naming
@@ -74,6 +75,6 @@ export function placeholder(schema: DescMessage): RegisteredWidget {
 export const WIDGETS: ReadonlyMap<string, RegisteredWidget> = new Map(
   [
     widget(ChecklistSchema, ChecklistWidget),
-    placeholder(Svcv4ClassificationSchema),
+    widget(Svcv4ClassificationSchema, Svcv4ClassificationWidget),
   ].map((entry) => [entry.schema.typeName, entry]),
 );

@@ -123,6 +123,21 @@ export class MiniElement extends MiniNode {
   hasAttribute(key: string): boolean {
     return key in this.attributes;
   }
+
+  /** Take focus: the document records it, so a test can ask where focus went. */
+  focus(): void {
+    if (this.ownerDocument !== null) this.ownerDocument.activeElement = this;
+  }
+
+  /** Nothing is laid out, so every element measures as an empty box at the origin. */
+  getBoundingClientRect(): {
+    width: number;
+    height: number;
+    top: number;
+    left: number;
+  } {
+    return { width: 0, height: 0, top: 0, left: 0 };
+  }
 }
 
 class MiniDocument extends MiniNode {
@@ -201,6 +216,12 @@ export function install(): { document: MiniDocument; uninstall: () => void } {
     HTMLIFrameElement: class {},
     HTMLElement: MiniElement,
     Node: MiniNode,
+    // Lays nothing out, so it never reports a size: a component draws as before its first measurement.
+    ResizeObserver: class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   if (global.navigator === undefined) added.navigator = { userAgent: "bun" };
