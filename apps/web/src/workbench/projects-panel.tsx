@@ -2,7 +2,7 @@ import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { ReaderTime } from "@/components/reader-time";
-import { absoluteTime, timeAgo } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 import type { Analysis, Project } from "@/models/workbench";
 import { userContext } from "@/server/context";
 
@@ -112,11 +112,7 @@ function ProjectCard({ row }: { row: ProjectRow }) {
             />
             <span>
               latest{" "}
-              <ReaderTime
-                iso={latestIso}
-                pinnedLabel={timeAgo(latestIso)}
-                pinnedTitle={absoluteTime(latestIso)}
-              />
+              <ReaderTime iso={latestIso} pinnedLabel={timeAgo(latestIso)} />
             </span>
           </>
         )}

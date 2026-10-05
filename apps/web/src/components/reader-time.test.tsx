@@ -15,18 +15,18 @@ describe("the instant a card carries before it mounts", () => {
       <ReaderTime
         iso={ISO}
         pinnedLabel={timeAgo(ISO, Date.parse("2026-08-06T07:49:00Z"))}
-        pinnedTitle={absoluteTime(ISO)}
       />,
     );
     expect(html).toContain("3 h ago");
-    expect(html).toContain("UTC");
+    // The server has no reader zone to state the full instant in, so it states none.
+    expect(html).not.toContain(absoluteTime(ISO));
   });
 
   test("the machine-readable instant is in the markup, whatever is shown", () => {
     // What a screen reader gets rather than a rounded label. React serializes the attribute name as
     // `dateTime`, which HTML parses case-insensitively, so match it that way.
     const html = renderToStaticMarkup(
-      <ReaderTime iso={ISO} pinnedLabel="just now" pinnedTitle="whenever" />,
+      <ReaderTime iso={ISO} pinnedLabel="just now" />,
     );
     expect(html.toLowerCase()).toContain(`datetime="${ISO.toLowerCase()}"`);
   });

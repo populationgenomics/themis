@@ -129,6 +129,13 @@ export class MiniElement extends MiniNode {
     if (this.ownerDocument !== null) this.ownerDocument.activeElement = this;
   }
 
+  /** Only `:focus-visible` is answered: nothing here has keyboard modality, so it never matches. A
+   *  selector this stub cannot answer fails the test rather than guessing. */
+  matches(selector: string): boolean {
+    if (selector === ":focus-visible") return false;
+    throw new Error(`the mini DOM cannot match ${selector}`);
+  }
+
   /** Nothing is laid out, so every element measures as an empty box at the origin. */
   getBoundingClientRect(): {
     width: number;

@@ -2,6 +2,7 @@
 
 import { Pencil } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { Judgement } from "./judgements";
 import type { GuardState } from "./use-judgements";
 
@@ -178,19 +179,28 @@ export function NoteControl({
   }
   if (text === "") {
     return (
-      <button
-        ref={trigger}
-        type="button"
-        disabled={!editable}
-        onClick={() => open("")}
-        aria-label={`Add a note on ${label}`}
-        title={compact ? `Add a note on ${label}` : undefined}
-        className="inline-flex shrink-0 items-center gap-[5px] rounded-button px-[6px] py-[2px] text-[12.5px] text-ink-muted hover:bg-surface-idle hover:text-ink-primary disabled:cursor-default disabled:opacity-60 disabled:hover:bg-transparent"
+      <Tooltip
+        content={compact ? `Add a note on ${label}` : ""}
+        describes={false}
       >
-        <Pencil className="size-[12px]" strokeWidth={2} aria-hidden />
-        {!compact && <span>Note</span>}
-        {view.marker !== undefined && <JudgementMarker state={view.marker} />}
-      </button>
+        {/* A disabled button takes no pointer events in every browser, so the box around it does. */}
+        <span className="inline-flex shrink-0">
+          <button
+            ref={trigger}
+            type="button"
+            disabled={!editable}
+            onClick={() => open("")}
+            aria-label={`Add a note on ${label}`}
+            className="inline-flex shrink-0 items-center gap-[5px] rounded-button px-[6px] py-[2px] text-[12.5px] text-ink-muted hover:bg-surface-idle hover:text-ink-primary disabled:pointer-events-none disabled:opacity-60"
+          >
+            <Pencil className="size-[12px]" strokeWidth={2} aria-hidden />
+            {!compact && <span>Note</span>}
+            {view.marker !== undefined && (
+              <JudgementMarker state={view.marker} />
+            )}
+          </button>
+        </span>
+      </Tooltip>
     );
   }
   return (

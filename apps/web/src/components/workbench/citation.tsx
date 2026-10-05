@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 
 // A citation the agent embeds in narration or the working document: `:paper[id]` points at a
 // paper; `:quote[id, text]` points at a locatable quote within one. Clicking reveals it in the
@@ -19,13 +20,15 @@ export function CitationMark({
   children: ReactNode;
 }) {
   if (!UUID.test(citation.docId)) {
+    const reason = `Unresolved citation: ${citation.docId || "missing id"}`;
+    // The marker takes no focus, so the reason is also its text for a reader the hover never reaches.
     return (
-      <span
-        title={`Unresolved citation: ${citation.docId || "missing id"}`}
-        className="rounded-[3px] bg-error-bg px-[3px] text-[13px] text-error-text line-through"
-      >
-        {children}
-      </span>
+      <Tooltip content={reason} describes={false}>
+        <span className="rounded-[3px] bg-error-bg px-[3px] text-[13px] text-error-text line-through">
+          {children}
+          <span className="sr-only">{` (${reason})`}</span>
+        </span>
+      </Tooltip>
     );
   }
   return (

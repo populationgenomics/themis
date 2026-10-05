@@ -35,3 +35,18 @@ That value goes in a **cookie**: it is scoped to a domain and rides every reques
 synchronously when it renders the markup, and either side can set it. The same properties bound what belongs there — a
 cookie costs bytes on every request and is capped near 4 KB, so it carries only what the server needs at render time and
 is never a general store.
+
+## Hover text
+
+Hover text goes through `Tooltip` in `apps/web/src/components/ui/tooltip.tsx`, never the `title` attribute, which opens
+late, only over the painted pixels, and in the browser's style. A mark narrower than about 24px gets a transparent hit
+area of that size, or a nearest-mark layer that draws `TooltipPanel` against the mark it snaps to, driven by
+`useTooltip` so it keeps one-open-at-a-time, Escape, and the release on pointer leave or blur. An `iframe`'s `title`,
+its accessible name, is the one exception. An SVG `<title>` child shows as a native hover too, so it is banned as well:
+name an SVG with `aria-label` or hide it.
+
+- `Tooltip`'s wrapper has no box, but it is a `span`: never put it where only a `tr`, `td` or `li` may sit.
+- Text that repeats the target's own accessible name gets `describes={false}`; a label the target shows whole except
+  when cut off gets `truncatedOnly`.
+- A disabled button receives no pointer events in every browser: wrap it in its own box inside the `Tooltip` and give it
+  `disabled:pointer-events-none`.

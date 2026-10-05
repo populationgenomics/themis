@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 
 // The calculator's "Disease Allele Frequency Threshold - Binning Approach" reference: SM3's six DAFT
 // lookup tables, transcribed verbatim from the calculator's rendering of them.
@@ -546,10 +547,12 @@ function Table({ table }: { table: BinningTable }) {
                 </th>
                 <th
                   scope="col"
-                  title={AC_HEADING}
                   className="framework-voice py-1 pr-2 pl-2 font-normal text-[11px] text-ink-faint"
                 >
-                  gnomAD v4 AC
+                  {/* The note under the table states this for every reader. */}
+                  <Tooltip content={AC_HEADING} describes={false}>
+                    <span>gnomAD v4 AC</span>
+                  </Tooltip>
                 </th>
               </Fragment>
             ))}

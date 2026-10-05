@@ -6,7 +6,7 @@ import { AppBar } from "@/components/app-bar";
 import { BackLink } from "@/components/back-link";
 import { Eyebrow } from "@/components/eyebrow";
 import { ReaderTime } from "@/components/reader-time";
-import { absoluteTime, timeAgo } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 import { cardContent, requireInputs } from "@/lib/scenario";
 import type { Analysis } from "@/models/workbench";
 import { userContext } from "@/server/context";
@@ -112,7 +112,6 @@ function AnalysisCard({ analysis }: { analysis: Analysis }) {
         className="mt-auto pt-[2px] font-mono text-[10.5px] text-ink-faintest"
         iso={iso}
         pinnedLabel={timeAgo(iso)}
-        pinnedTitle={absoluteTime(iso)}
       />
     </Link>
   );

@@ -5,6 +5,7 @@ import { AppBar } from "@/components/app-bar";
 import { BackLink } from "@/components/back-link";
 import { ReaderTime } from "@/components/reader-time";
 import { useGroupRef } from "@/components/ui/resizable";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useCopyClearedAnnouncements } from "@/components/workbench/clear-copy";
 import { REGISTRY } from "@/components/workbench/content-kinds";
 import { ConversationDock } from "@/components/workbench/conversation-dock";
@@ -50,7 +51,7 @@ export interface AnalysisIdentity {
   scenario: string;
   /** When the Analysis was created, with the page's pinned render of it — what the markup carries
    *  until `ReaderTime` reformats it on the reader's clock. */
-  created: { iso: string; pinnedLabel: string; pinnedTitle: string };
+  created: { iso: string; pinnedLabel: string };
   projectId: string;
   projectName: string;
   /** Whether the platform holds this run's session, and so whether it has a conversation. */
@@ -202,15 +203,13 @@ export function Workbench({
                   className="font-mono"
                   iso={analysis.created.iso}
                   pinnedLabel={analysis.created.pinnedLabel}
-                  pinnedTitle={analysis.created.pinnedTitle}
                 />
               </span>
-              <span
-                className="truncate font-mono text-[13px] font-medium text-ink-primary"
-                title={analysis.detail}
-              >
-                {analysis.title}
-              </span>
+              <Tooltip content={analysis.detail}>
+                <span className="truncate font-mono text-[13px] font-medium text-ink-primary">
+                  {analysis.title}
+                </span>
+              </Tooltip>
             </span>
           </>
         }

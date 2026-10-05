@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import type {
   FieldValue,
   WorkflowAssessment,
@@ -162,22 +163,27 @@ export function StatusPicker({
   ];
   return (
     <div className="flex flex-wrap gap-1.5">
-      {options.map(([status, label, title]) => (
-        <button
-          key={status}
-          type="button"
-          title={title}
-          disabled={disabled}
-          aria-pressed={value === status}
-          onClick={() => onChange(status)}
-          className={`framework-voice rounded-sm border px-2.5 py-1 text-[13px] transition-colors disabled:cursor-not-allowed ${
-            value === status
-              ? "border-primary bg-primary text-primary-foreground"
-              : "border-line-input bg-white text-ink-muted enabled:hover:border-ink-ghost disabled:opacity-40"
-          }`}
-        >
-          {label}
-        </button>
+      {options.map(([status, label, hint]) => (
+        <Tooltip key={status} content={hint}>
+          {/* A disabled button takes no pointer events in every browser, so the box around it does. */}
+          <span
+            className={`inline-flex ${disabled ? "cursor-not-allowed" : ""}`}
+          >
+            <button
+              type="button"
+              disabled={disabled}
+              aria-pressed={value === status}
+              onClick={() => onChange(status)}
+              className={`framework-voice rounded-sm border px-2.5 py-1 text-[13px] transition-colors disabled:pointer-events-none ${
+                value === status
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-line-input bg-white text-ink-muted enabled:hover:border-ink-ghost disabled:opacity-40"
+              }`}
+            >
+              {label}
+            </button>
+          </span>
+        </Tooltip>
       ))}
     </div>
   );

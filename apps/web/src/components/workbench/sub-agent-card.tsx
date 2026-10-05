@@ -2,6 +2,7 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import { type Citation, Markdown } from "@/components/workbench/markdown";
 import { useThread } from "@/lib/queries";
 import { errorMessage } from "@/lib/rpc";
@@ -171,12 +172,11 @@ function Prompt({ text }: { text: string | undefined }) {
     );
   }
   return (
-    <span
-      className="min-w-0 flex-1 truncate text-[12px] text-ink-body"
-      title={text}
-    >
-      {text}
-    </span>
+    <Tooltip content={text} describes={false} truncatedOnly>
+      <span className="min-w-0 flex-1 truncate text-[12px] text-ink-body">
+        {text}
+      </span>
+    </Tooltip>
   );
 }
 

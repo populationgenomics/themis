@@ -1,7 +1,7 @@
 import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { absoluteTime, timeAgo } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 import { isManagedSession } from "@/lib/harness";
 import {
   analysisDetail,
@@ -72,10 +72,6 @@ export default async function AnalysisPage({
 /** The created time the chrome shows: the instant, plus this render of it. The chrome reformats it on
  *  the reader's clock once mounted (`components/reader-time.tsx`); these are what the markup carries
  *  until then. */
-function created(iso: string): {
-  iso: string;
-  pinnedLabel: string;
-  pinnedTitle: string;
-} {
-  return { iso, pinnedLabel: timeAgo(iso), pinnedTitle: absoluteTime(iso) };
+function created(iso: string): { iso: string; pinnedLabel: string } {
+  return { iso, pinnedLabel: timeAgo(iso) };
 }

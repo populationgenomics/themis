@@ -7,6 +7,7 @@ import {
   type ContextMenuItem,
 } from "@/components/ui/context-menu";
 import { DropdownMenu, type MenuItem } from "@/components/ui/dropdown-menu";
+import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useCopyClearing } from "./clear-copy";
 import {
@@ -602,23 +603,25 @@ function TabButton({
 
   const body = labels ? (
     <div className="group relative" data-tab-id={tab.id}>
-      <button
-        type="button"
-        draggable
-        onDragStart={onDragStart}
-        onDragEnd={endDrag}
-        onClick={onSelect}
-        title={label}
-        aria-current={active}
-        aria-haspopup={hasMenu ? "menu" : undefined}
-        className={cn(
-          "flex w-full items-center gap-[8px] rounded-[6px] py-[6px] pr-[24px] pl-[9px] text-left",
-          activeClass,
-        )}
-      >
-        {icon}
-        <span className="min-w-0 flex-1 truncate text-[12.5px]">{label}</span>
-      </button>
+      {/* The label is the button's name; the panel only shows it whole where the tab cuts it off. */}
+      <Tooltip content={label} describes={false} truncatedOnly>
+        <button
+          type="button"
+          draggable
+          onDragStart={onDragStart}
+          onDragEnd={endDrag}
+          onClick={onSelect}
+          aria-current={active}
+          aria-haspopup={hasMenu ? "menu" : undefined}
+          className={cn(
+            "flex w-full items-center gap-[8px] rounded-[6px] py-[6px] pr-[24px] pl-[9px] text-left",
+            activeClass,
+          )}
+        >
+          {icon}
+          <span className="min-w-0 flex-1 truncate text-[12.5px]">{label}</span>
+        </button>
+      </Tooltip>
       {closable && (
         <button
           type="button"
@@ -632,23 +635,24 @@ function TabButton({
     </div>
   ) : (
     <div className="group relative" data-tab-id={tab.id}>
-      <button
-        type="button"
-        draggable
-        onDragStart={onDragStart}
-        onDragEnd={endDrag}
-        onClick={onSelect}
-        title={label}
-        aria-label={label}
-        aria-current={active}
-        aria-haspopup={hasMenu ? "menu" : undefined}
-        className={cn(
-          "flex size-[30px] items-center justify-center rounded-[7px]",
-          activeClass,
-        )}
-      >
-        {icon}
-      </button>
+      <Tooltip content={label} describes={false}>
+        <button
+          type="button"
+          draggable
+          onDragStart={onDragStart}
+          onDragEnd={endDrag}
+          onClick={onSelect}
+          aria-label={label}
+          aria-current={active}
+          aria-haspopup={hasMenu ? "menu" : undefined}
+          className={cn(
+            "flex size-[30px] items-center justify-center rounded-[7px]",
+            activeClass,
+          )}
+        >
+          {icon}
+        </button>
+      </Tooltip>
       {closable && (
         <button
           type="button"
