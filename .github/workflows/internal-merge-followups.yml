@@ -248,7 +248,10 @@ jobs:
 
             ## Issue format
 
-            Create issues with `gh issue create`. For every issue:
+            Create issues with `gh issue create --body-file`, writing each
+            body first to a file under `.followups/issues/` with the Write
+            tool: the shell refuses an inline `--body` holding a line that
+            starts with `#`. For every issue:
 
             - **Title**: match the repo's existing convention — `area(sub): what
               is wrong`, lower case, specific enough to be actionable from the
@@ -271,7 +274,7 @@ jobs:
 
             ${{ env.CONCERNS }}
           claude_args: |
-            --allowedTools "Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh pr view:*),Bash(rg:*),Read,Grep,Glob"
+            --allowedTools "Bash(gh issue create:*),Bash(gh issue list:*),Bash(gh pr view:*),Read,Grep,Glob,Edit(./.followups/issues/**)"
 
       - name: Upload merge-follow-ups execution log
         if: always() && steps.claude.outputs.execution_file != ''

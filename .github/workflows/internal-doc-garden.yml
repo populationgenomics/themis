@@ -130,7 +130,7 @@ jobs:
 
             ${{ env.INSTRUCTIONS }}
           claude_args: |
-            --allowedTools "Read,Grep,Glob,Edit(*.md),Write(*.md),Bash(rg:*),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*)"
+            --allowedTools "Read,Grep,Glob,Edit(*.md),Bash(git ls-files:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*),Bash(grep:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*)"
 
       # mdformat is not run by the agent, but the PR's lint gate runs the same
       # hook and rejects unformatted docs. Set up uv and cache the hook env so
