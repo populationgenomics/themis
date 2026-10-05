@@ -25,6 +25,11 @@ const PAYLOADS: ReadonlyMap<string, DescMessage> = new Map(
   ),
 );
 
+/** Every marked payload type this build knows, by type name. */
+export function payloadTypeNames(): string[] {
+  return [...PAYLOADS.keys()].sort();
+}
+
 /** The schema of the marked payload type named `typeName`, or undefined for one this build does
  *  not know. */
 export function payloadSchema(typeName: string): DescMessage | undefined {

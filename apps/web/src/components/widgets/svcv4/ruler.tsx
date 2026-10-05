@@ -223,6 +223,7 @@ export function Ruler({
   return (
     <figure
       ref={figure}
+      data-section="ruler"
       className="relative m-0"
       aria-label={`Points ruler: total ${signedNumber(tally.total)}, ${classLabel(tally.classification).label}`}
     >

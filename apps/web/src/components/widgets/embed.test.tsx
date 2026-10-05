@@ -5,8 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "@/components/workbench/markdown";
 import { type Checklist, ChecklistSchema } from "@/models/widgets";
-import { drawAsset } from "./embed";
-import { EmbedPlaceholder } from "./placeholder";
+import { drawAsset } from "./draw";
 import { placeholder, WIDGETS } from "./registry";
 import type { WidgetRevision } from "./revision";
 import { WidgetStatesProvider } from "./widget-state";
@@ -77,24 +76,12 @@ describe("an asset", () => {
   test("of a type registered with a placeholder draws as a type no component draws", () => {
     const file = { bytes: asset(VALID), mode: "100644" };
     const unregistered = drawAsset(file, new Map());
-    if (unregistered.kind !== "placeholder") throw new Error("the asset drew");
     const drawn = drawAsset(
       file,
       new Map([[ChecklistSchema.typeName, placeholder(ChecklistSchema)]]),
     );
-    if (drawn.kind !== "drawn") throw new Error(drawn.reason);
-    const context = {
-      path: "assets/c.binpb",
-      drawnAt: COMMIT,
-      revision: REVISION,
-      current: true,
-      onCitation: () => {},
-    };
-    expect(renderToStaticMarkup(drawn.draw(context))).toBe(
-      renderToStaticMarkup(
-        <EmbedPlaceholder path={context.path} reason={unregistered.reason} />,
-      ),
-    );
+    expect(unregistered.kind).toBe("placeholder");
+    expect(drawn).toEqual(unregistered);
   });
 
   test("of a type registered with a placeholder still has its payload checked", () => {

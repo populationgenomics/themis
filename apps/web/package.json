@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "cells": "bun run scripts/cells.ts",
-    "daft": "bun run scripts/daft.ts"
+    "daft": "bun run scripts/daft.ts",
+    "browser": "bun run scripts/browser.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
@@ -66,6 +67,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "0.170.0",
+    "playwright-core": "1.63.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

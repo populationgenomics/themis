@@ -1,20 +1,15 @@
 "use client";
 
-import { createContext, type ReactNode, useContext, useMemo } from "react";
+import { createContext, useContext, useMemo } from "react";
 import { RenderBoundary } from "@/components/render-boundary";
 import type { Citation } from "@/components/workbench/citation";
 import { useWorkspaceFile } from "@/lib/queries";
-import {
-  AssetError,
-  assetPathProblem,
-  payloadTypeName,
-  readAny,
-  regularFileProblem,
-} from "@/widgets/asset";
+import { assetPathProblem } from "@/widgets/asset";
 import type { FileAtCommit } from "@/workspace-copy/copy";
-import { EmbedPlaceholder, unregisteredTypeReason } from "./placeholder";
-import { type RegisteredWidget, WIDGETS } from "./registry";
-import type { WidgetContext, WidgetRevision } from "./revision";
+import { drawAsset } from "./draw";
+import { EmbedPlaceholder } from "./placeholder";
+import { WIDGETS } from "./registry";
+import type { WidgetRevision } from "./revision";
 
 // One `::embed[<path>]` in a working document: the asset at the path in the revision's tree, drawn by
 // the component the registry maps its payload type to. Anything that cannot be drawn — a path outside
@@ -22,40 +17,6 @@ import type { WidgetContext, WidgetRevision } from "./revision";
 // payload failing its rules — draws a placeholder naming the path and the reason, and the rest of the
 // document renders (docs/design/document-widgets.md, "Drawability is checked where the file is, and
 // tolerated where it is shown").
-
-/** How an asset's bytes draw: bound to its component, or a placeholder's reason. */
-export type Drawn =
-  | { kind: "drawn"; draw: (context: WidgetContext) => ReactNode }
-  | { kind: "placeholder"; reason: string };
-
-/** How the file at an `::embed`'s path draws, `null` being no file there. */
-export function drawAsset(
-  file: FileAtCommit | null,
-  widgets: ReadonlyMap<string, RegisteredWidget>,
-): Drawn {
-  if (file === null) {
-    return {
-      kind: "placeholder",
-      reason: "there is no file at this path in this version",
-    };
-  }
-  const notRegular = regularFileProblem(file.mode);
-  if (notRegular !== null) return { kind: "placeholder", reason: notRegular };
-  try {
-    const wrapped = readAny(file.bytes);
-    const name = payloadTypeName(wrapped);
-    const entry = widgets.get(name);
-    if (entry === undefined) {
-      return { kind: "placeholder", reason: unregisteredTypeReason(name) };
-    }
-    return { kind: "drawn", draw: entry.read(wrapped, file) };
-  } catch (error) {
-    if (error instanceof AssetError) {
-      return { kind: "placeholder", reason: error.message };
-    }
-    throw error;
-  }
-}
 
 /** What a surface drawing widgets gives every embed in its document. */
 export interface WidgetSurfaceValue {

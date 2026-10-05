@@ -187,8 +187,27 @@ export interface WorkspaceRepository {
   servePack(analysis: Analysis, packId: string): Promise<Response>;
 }
 
-/** The two raw ports an Analysis is reached through, which `AuthorizedBackend` wraps together. */
+/** A document's files, by repository path. */
+export type DocumentFiles = Readonly<Record<string, string | Uint8Array>>;
+
+/** Opens a given document as a new Analysis that no run drives, in the one Project it seeds into:
+ *  what the widget browser opens its examples in (docs/runbooks/widget-browser.md). */
+export interface DocumentSeeding {
+  /** The Project a seeded Analysis is created in. */
+  readonly projectId: string;
+  /** A new Analysis in `projectId`, the Project above, whose workspace repository holds `files` as
+   *  its one commit, described by `prompt`. */
+  seedDocument(
+    projectId: string,
+    prompt: string,
+    files: DocumentFiles,
+  ): Analysis;
+}
+
+/** The raw ports an Analysis is reached through, which `AuthorizedBackend` wraps together. */
 export interface AnalysisPorts {
   dataPlane: AnalysisDataPlane;
   workspace: WorkspaceRepository;
+  /** Document seeding, on a backend that has it: the fixture's, and null on the live backend. */
+  documents: DocumentSeeding | null;
 }

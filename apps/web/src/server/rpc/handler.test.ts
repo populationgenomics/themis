@@ -114,6 +114,7 @@ function pollingPast(failure: Error): FetchRouter {
   const backend = new AuthorizedBackend(
     new FixtureDataPlane(new FixtureWorkspace()),
     new UnreadableWorkspace(failure),
+    null,
     new FixtureMembership(),
     DEV_USER_EMAIL,
     POLL_TIP_BUDGET_MS,

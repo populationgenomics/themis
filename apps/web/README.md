@@ -13,13 +13,14 @@ and [`docs/design/agent-runtime.md`](../../docs/design/agent-runtime.md) for the
 
 ## Layout
 
-| Path                | Holds                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `src/app`           | App Router routes, root layout, page tree                                              |
-| `src/app/api`       | The BFF's inbound surface: the Connect data API under `rpc/`, plus the `healthz` probe |
-| `src/server/rpc`    | The Connect router: adapter, interceptors, and the Workbench implementation            |
-| `src/components/ui` | shadcn/ui copy-in components                                                           |
-| `src/lib`           | Shared helpers (`cn`, …)                                                               |
+| Path                   | Holds                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| `src/app`              | App Router routes, root layout, page tree                                              |
+| `src/app/api`          | The BFF's inbound surface: the Connect data API under `rpc/`, plus the `healthz` probe |
+| `src/server/rpc`       | The Connect router: adapter, interceptors, and the Workbench implementation            |
+| `src/components/ui`    | shadcn/ui copy-in components                                                           |
+| `src/lib`              | Shared helpers (`cn`, …)                                                               |
+| `src/widgets/examples` | The widget browser's example payloads, in protobuf text format                         |
 
 ## Develop
 
@@ -30,6 +31,9 @@ bun run lint     # biome check
 bun run typecheck
 bun run build    # standalone output
 ```
+
+To try a widget against example payloads locally, run the widget browser: `THEMIS_BACKEND=fixture bun run dev`, then
+<http://localhost:3000/dev/widgets> ([`docs/runbooks/widget-browser.md`](../../docs/runbooks/widget-browser.md)).
 
 ## Deploy
 

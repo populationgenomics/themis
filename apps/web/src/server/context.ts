@@ -75,10 +75,11 @@ export interface LiteratureContext {
  *  RPC error interceptor) when the request carries no verifiable identity. */
 export async function userContext(headers: Headers): Promise<UserContext> {
   const userEmail = await getUserIdentity().assertedEmail(headers);
-  const { dataPlane, workspace } = analysisPorts();
+  const { dataPlane, workspace, documents } = analysisPorts();
   const backend = new AuthorizedBackend(
     dataPlane,
     workspace,
+    documents,
     membership(),
     userEmail,
     POLL_TIP_BUDGET_MS,

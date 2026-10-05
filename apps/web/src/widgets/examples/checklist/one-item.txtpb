@@ -1,0 +1,9 @@
+# proto-file: themis/widgets/models/checklist.proto
+# proto-message: themis.widgets.models.Checklist
+#
+# The smallest checklist: one item, not ticked.
+
+items {
+  id: "segregation"
+  label: "The family segregation is counted once"
+}

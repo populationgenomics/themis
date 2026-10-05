@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { create, toJson } from "@bufbuild/protobuf";
+import { isManagedSession } from "@/lib/harness";
 import {
   type Analysis,
   AnalysisInputsSchema,
@@ -238,5 +239,27 @@ describe("the fixture agent's workspace pushes", () => {
         documentMarkdown(run, i + 1).trimEnd(),
       ),
     );
+  });
+});
+
+describe("a seeded document", () => {
+  test("is an Analysis no session drives, whose tip is the document, and which no poll pushes over", async () => {
+    const workspace = new FixtureWorkspace();
+    const data = new FixtureDataPlane(workspace);
+    const markdown =
+      "# Widget examples\n\n::embed[assets/examples/c/x.binpb]\n";
+    const run = data.seedDocument(FIXTURE_PROJECT, "Widget examples", {
+      [WORKING_DOCUMENT_PATH]: markdown,
+      "assets/examples/c/x.binpb": new Uint8Array([1, 2, 3]),
+    });
+    expect(isManagedSession(run.sessionId)).toBe(false);
+    expect(run.projectId).toBe(FIXTURE_PROJECT);
+    const tip = await tipOf(workspace, run);
+    if (tip === undefined) throw new Error("the seeded repository has no tip");
+    for (let tick = 0; tick < SCRIPTED_STAGES + 2; tick += 1) {
+      await data.pollEvents(run);
+    }
+    expect(await tipOf(workspace, run)).toBe(tip);
+    expect(await documentAt(workspace, run, tip)).toBe(markdown.trimEnd());
   });
 });

@@ -25,7 +25,10 @@ export function ChecklistWidget(
     payload.items.map(checkedOf),
   );
   return (
-    <ul className="divide-y divide-line-row rounded-[8px] border border-line-soft bg-surface-doc-pane">
+    <ul
+      data-widget="checklist"
+      className="divide-y divide-line-row rounded-[8px] border border-line-soft bg-surface-doc-pane"
+    >
       {payload.items.map((item) => {
         const guard = guards.get(addressName(checkedOf(item)));
         if (guard === undefined) {

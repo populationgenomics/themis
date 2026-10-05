@@ -1,0 +1,348 @@
+# proto-file: themis/widgets/models/svcv4_classification.proto
+# proto-message: themis.widgets.models.Svcv4Classification
+#
+# FBN1 c.7003C>T against Marfan syndrome: Likely pathogenic, two paths, one sensitivity row
+# and one alternative that lands in Pathogenic. The fixture the widget's tests draw.
+
+framework {
+  name: "SVCv4"
+  status: "draft-phase3-pilot"
+  citations_repository: "populationgenomics/SVCv4-info"
+  citations_revision: "4e7050dc79f12ea80e81ce03e65013f0271ba8e2"
+  usage: "Evaluation only. Not a validated implementation, not for clinical or diagnostic use; output is not a clinical variant classification. Re-verify every value against the final published standard and the ClinGen Pilot Calculator (https://calculator.clinicalgenome.org/v4/pilot/ui/classification)."
+}
+routing {
+  variant {
+    transcript_hgvs: "NM_000138.5:c.7003C>T"
+    protein_hgvs: "NP_000129.3:p.(Arg2335Trp)"
+    genomic_hgvs: "NC_000015.10:g.48427768G>A"
+    gene_symbol: "FBN1"
+    hgnc_id: "HGNC:3603"
+  }
+  consequence: CONSEQUENCE_MISSENSE
+  entity {
+    disease: "Marfan syndrome"
+    mondo_id: "MONDO:0007947"
+    inheritance: INHERITANCE_AUTOSOMAL_DOMINANT
+    mechanism: "loss of function"
+    validity_source: "ClinGen Gene Validity"
+    validity_classification: "Definitive"
+    gate_level: GATE_LEVEL_DEFINITIVE
+  }
+  routes {
+    family: "MIS"
+    label: "amino-acid (MIS_)"
+  }
+  routes {
+    family: "SPL"
+    label: "splice blue (SPL_)"
+  }
+  rationale: "The referral describes ectopia lentis and aortic root dilatation, which fit FBN1\'s Marfan syndrome entity over its other curated ones."
+}
+codes {
+  code: "POP_FRQ"
+  family: "POP"
+  title: "Population frequency"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "0.0"
+  raw_points: "0.0"
+  basis: "absent from gnomAD v4.1 exomes and genomes; FAF 0 against a DAFT of 1.18e-05"
+  cells {
+    cell_id: "POP_FRQ.bin.lt_1_5x"
+    description: "< 1.5x DAFT"
+    count: 1
+    points_each: "0.0"
+  }
+  releases {
+    source: "gnomAD GraphQL"
+    dataset_version: "gnomad_r4"
+  }
+  evidence {
+    statement: "No carrier in gnomAD v4.1 at chr15:48,427,768 across 807,162 individuals."
+    retrieval {
+      source: "gnomAD GraphQL"
+      dataset_versions: "gnomad_r4"
+      retrieved_at {
+        seconds: 1790219520
+      }
+    }
+  }
+  rationale: "Absence from gnomAD bins below 1.5 times the disease threshold, which scores 0 and admits the clinical codes."
+  confidence: CONFIDENCE_SETTLED
+}
+codes {
+  code: "POP_HMZ"
+  family: "POP"
+  title: "Homozygous observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No homozygote in gnomAD v4.1, and SM3 determines POP_HMZ only from the second eligible observation."
+}
+codes {
+  code: "CLN_CCS"
+  family: "CLN"
+  title: "Case-control studies"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No case-control study reports this variant."
+}
+codes {
+  code: "CLN_AFF"
+  family: "CLN"
+  title: "Affected proband observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "The one affected proband is counted under CLN_DNV, and no other published proband carries the variant."
+}
+codes {
+  code: "CLN_DNV"
+  family: "CLN"
+  title: "De novo observations"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "2.0"
+  raw_points: "2.0"
+  cells {
+    cell_id: "CLN_DNV.specific.unconfirmed"
+    description: "SPECIFIC · unconfirmed parentage"
+    count: 1
+    points_each: "2.0"
+  }
+  evidence {
+    statement: "A proband with ectopia lentis and aortic root dilatation carries the variant de novo."
+    citation {
+      doc_id: "22222222-2222-4222-8222-222222222222"
+    }
+  }
+  evidence {
+    statement: "The referral says the parents have not been tested."
+    case_text {
+      quote: "parents not tested; no family history"
+    }
+  }
+  rationale: "Ectopia lentis with aortic root dilatation is specific to Marfan syndrome, so the proband sits in the specific row. The paper infers de novo status from unaffected parents without testing them, so parentage is unconfirmed."
+  nearest_alternative {
+    cell_id: "CLN_DNV.specific.confirmed"
+    description: "A specific phenotype with confirmed parentage, +7"
+    reason: "Neither the paper nor the referral reports parental testing."
+  }
+  confidence: CONFIDENCE_LEANING
+  confidence_note: "A trio result, or the clinic\'s letter, would settle parentage and move the code to +7."
+}
+codes {
+  code: "CLN_ALT"
+  family: "CLN"
+  title: "Alternate cause of disease"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No other candidate variant is reported for the proband."
+}
+codes {
+  code: "CLN_UAF"
+  family: "CLN"
+  title: "Unaffected individual observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No unaffected carrier is reported."
+}
+codes {
+  code: "LOC_PHE"
+  family: "LOC"
+  title: "Specific phenotype"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "4.0"
+  raw_points: "4.0"
+  cells {
+    cell_id: "LOC_PHE.yield.ge_82"
+    description: "diagnostic yield · > 82%"
+    count: 1
+    points_each: "4.0"
+  }
+  evidence {
+    statement: "Sequencing FBN1 in patients meeting the revised Ghent criteria finds a pathogenic variant in over 90% of them."
+    citation {
+      doc_id: "22222222-2222-4222-8222-222222222222"
+    }
+  }
+  rationale: "The proband meets the revised Ghent criteria, and the cohort\'s testing method matches the case\'s, so the yield bin applies."
+  confidence: CONFIDENCE_LEANING
+  confidence_note: "Whether the cohort\'s phenotype definition fits a proband scored on two features."
+}
+codes {
+  code: "LOC_SEG"
+  family: "LOC"
+  title: "Segregation with disease"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "The proband is the only affected family member reported."
+}
+codes {
+  code: "MIS_PRD"
+  family: "MIS"
+  title: "Amino-acid change prediction"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "1.0"
+  raw_points: "1"
+  basis: "AlphaMissense 0.876, at or above 0.792: Supporting"
+  path_family: "MIS"
+  decision: "Supporting, from the gene\'s calibrated predictor: +1"
+  evidence {
+    statement: "AlphaMissense scores the change 0.876, the predictor the gene\'s policy selects."
+    retrieval {
+      source: "Ensembl VEP"
+      dataset_versions: "VEP 114"
+      dataset_versions: "GRCh38"
+      retrieved_at {
+        seconds: 1790219520
+      }
+    }
+  }
+  rationale: "The policy fixes AlphaMissense for FBN1, and its score lands in the Supporting bin, +1 before the exon-relevance factor of 1."
+  confidence: CONFIDENCE_SETTLED
+}
+codes {
+  code: "MIS_FXN"
+  family: "MIS"
+  title: "Functional assessment of the amino-acid change"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "MaveDB holds no assay of this change."
+  path_family: "MIS"
+}
+codes {
+  code: "MIS_INF"
+  family: "MIS"
+  title: "Informative variants"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "ClinVar holds no other classified variant at codon 2335."
+  path_family: "MIS"
+}
+codes {
+  code: "SPL_PRD"
+  family: "SPL"
+  title: "Splice change prediction"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "0"
+  raw_points: "0"
+  basis: "SpliceAI maximum delta 0.02, below 0.1: unlikely"
+  path_family: "SPL"
+  decision: "Splicing unlikely, the blue path: 0"
+  evidence {
+    statement: "SpliceAI\'s largest delta for the change is 0.02."
+    retrieval {
+      source: "SpliceAI"
+      dataset_versions: "1.3.1"
+      retrieved_at {
+        seconds: 1790219520
+      }
+    }
+  }
+  rationale: "A delta below 0.1 puts the splice path on its blue row at 0."
+  confidence: CONFIDENCE_SETTLED
+}
+codes {
+  code: "SPL_SPA"
+  family: "SPL"
+  title: "Splice assay"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No RNA or minigene assay is reported."
+  path_family: "SPL"
+}
+codes {
+  code: "SPL_FXN"
+  family: "SPL"
+  title: "Functional assessment of the splice product"
+  status: ASSESSMENT_STATUS_NOT_APPLICABLE
+  status_reason: "The splice path predicts no aberrant product to assay (SM6)."
+  path_family: "SPL"
+}
+codes {
+  code: "SPL_INF"
+  family: "SPL"
+  title: "Informative variants"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No classified splice-acting variant at this position."
+  path_family: "SPL"
+}
+paths {
+  family: "MIS"
+  selected: true
+  total: "1.0"
+  multiplier: "1.0"
+  exon_relevance: "All"
+  releases {
+    source: "Ensembl VEP"
+    dataset_version: "114"
+  }
+}
+paths {
+  family: "SPL"
+  total: "0"
+  multiplier: "1"
+  releases {
+    source: "SpliceAI"
+    dataset_version: "1.3.1"
+  }
+}
+tally {
+  total: "7.0"
+  band: CLASSIFICATION_LIKELY_PATHOGENIC
+  final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+}
+sensitivity {
+  assumption: "parentage confirmed"
+  codes: "CLN_DNV"
+  tally {
+    total: "12.0"
+    band: CLASSIFICATION_PATHOGENIC
+    final_class: CLASSIFICATION_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "MIS_PRD at 0"
+  codes: "MIS_PRD"
+  tally {
+    total: "6.0"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+classification: CLASSIFICATION_LIKELY_PATHOGENIC
+bands {
+  name: "B"
+  classification: CLASSIFICATION_BENIGN
+  upper: "-4.0"
+  upper_inclusive: true
+}
+bands {
+  name: "LB"
+  classification: CLASSIFICATION_LIKELY_BENIGN
+  lower: "-4.0"
+  upper: "-1.0"
+  upper_inclusive: true
+}
+bands {
+  name: "VUS-low"
+  classification: CLASSIFICATION_VUS
+  lower: "-1.0"
+  upper: "2.0"
+}
+bands {
+  name: "VUS-mid"
+  classification: CLASSIFICATION_VUS
+  lower: "2.0"
+  lower_inclusive: true
+  upper: "4.0"
+}
+bands {
+  name: "VUS-high"
+  classification: CLASSIFICATION_VUS
+  lower: "4.0"
+  lower_inclusive: true
+  upper: "6.0"
+}
+bands {
+  name: "LP"
+  classification: CLASSIFICATION_LIKELY_PATHOGENIC
+  lower: "6.0"
+  lower_inclusive: true
+  upper: "10.0"
+}
+bands {
+  name: "P"
+  classification: CLASSIFICATION_PATHOGENIC
+  lower: "10.0"
+  lower_inclusive: true
+}

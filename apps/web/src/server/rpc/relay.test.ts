@@ -50,6 +50,7 @@ async function relayingTo(answer: EarlyAnswer) {
   const backend = new AuthorizedBackend(
     new FixtureDataPlane(new FixtureWorkspace()),
     workspace,
+    null,
     new FixtureMembership(),
     DEV_USER_EMAIL,
     POLL_TIP_BUDGET_MS,

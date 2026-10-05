@@ -52,7 +52,7 @@ export function RoutingSection({
   const { variant, entity } = routing;
   const note = guards.note.view.value;
   return (
-    <section>
+    <section data-section="routing">
       <SectionHeading
         aside={
           <>
@@ -190,6 +190,7 @@ export function AlternativesSection({
   return (
     <section
       id={id}
+      data-section="alternatives"
       style={{ scrollMarginTop: (pinnedHeight ?? PINNED_NOMINAL_PX) + 8 }}
     >
       <SectionHeading>Other values of the judgement inputs</SectionHeading>

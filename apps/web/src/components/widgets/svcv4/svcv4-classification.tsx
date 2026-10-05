@@ -123,10 +123,11 @@ export function Svcv4ClassificationWidget(
 
   return (
     <section
+      data-widget="svcv4-classification"
       aria-label={`SVCv4 classification of ${variant?.transcriptHgvs ?? "the variant"}`}
       className="@container my-[16px] rounded-card border border-line-primary bg-white text-ink-body"
     >
-      <header className="px-[14px] pt-[11px] pb-[9px]">
+      <header data-section="summary" className="px-[14px] pt-[11px] pb-[9px]">
         <div className="flex flex-wrap items-center gap-x-[10px] gap-y-[4px]">
           <span className="font-mono text-[11px] tracking-[0.02em] text-ink-faint">
             {payload.framework?.name ?? "SVCv4"} classification
@@ -230,61 +231,65 @@ export function Svcv4ClassificationWidget(
         </div>
       </div>
       <RoutingSection payload={payload} guards={pair(guards, ROUTING)} />
-      {codeGroups(payload).map((group) => {
-        // A row the curator is working on stays while they do: its tick saving or saved, its note written.
-        const shown = group.codes.filter((code) => {
-          if (!onlyNeedingReview || needing.has(code.code)) return true;
-          const guard = rowGuards.get(code.code);
+      <div data-section="codes">
+        {codeGroups(payload).map((group) => {
+          // A row the curator is working on stays while they do: its tick saving or saved, its note written.
+          const shown = group.codes.filter((code) => {
+            if (!onlyNeedingReview || needing.has(code.code)) return true;
+            const guard = rowGuards.get(code.code);
+            return (
+              guard !== undefined &&
+              (guard.reviewed.view.marker !== undefined ||
+                guard.note.view.marker !== undefined ||
+                guard.note.draft !== undefined)
+            );
+          });
+          if (shown.length === 0) return null;
           return (
-            guard !== undefined &&
-            (guard.reviewed.view.marker !== undefined ||
-              guard.note.view.marker !== undefined ||
-              guard.note.draft !== undefined)
+            <section key={group.heading}>
+              <SectionHeading
+                aside={
+                  group.path && (
+                    <span className="text-[12px] text-ink-muted">
+                      <span className="font-mono">
+                        {signedPoints(group.path.total)}
+                      </span>{" "}
+                      {group.path.selected ? "counted" : "not counted"}
+                    </span>
+                  )
+                }
+              >
+                {group.path
+                  ? `Variant effect · ${group.heading}`
+                  : group.heading}
+              </SectionHeading>
+              <ul className="m-0 list-none p-0">
+                {shown.map((code) => {
+                  const guard = rowGuards.get(code.code);
+                  if (guard === undefined)
+                    throw new Error(`no guards for ${code.code}`);
+                  return (
+                    <CodeRow
+                      key={code.code}
+                      payload={payload}
+                      code={code}
+                      counted={counted(payload, code)}
+                      guards={guard}
+                      reviewReason={needing.get(code.code)}
+                      expanded={expanded.has(code.code)}
+                      onToggle={() => toggle(code.code)}
+                      highlighted={highlighted === code.code}
+                      onHighlight={setHighlighted}
+                      scale={scale}
+                      onCitation={onCitation}
+                    />
+                  );
+                })}
+              </ul>
+            </section>
           );
-        });
-        if (shown.length === 0) return null;
-        return (
-          <section key={group.heading}>
-            <SectionHeading
-              aside={
-                group.path && (
-                  <span className="text-[12px] text-ink-muted">
-                    <span className="font-mono">
-                      {signedPoints(group.path.total)}
-                    </span>{" "}
-                    {group.path.selected ? "counted" : "not counted"}
-                  </span>
-                )
-              }
-            >
-              {group.path ? `Variant effect · ${group.heading}` : group.heading}
-            </SectionHeading>
-            <ul className="m-0 list-none p-0">
-              {shown.map((code) => {
-                const guard = rowGuards.get(code.code);
-                if (guard === undefined)
-                  throw new Error(`no guards for ${code.code}`);
-                return (
-                  <CodeRow
-                    key={code.code}
-                    payload={payload}
-                    code={code}
-                    counted={counted(payload, code)}
-                    guards={guard}
-                    reviewReason={needing.get(code.code)}
-                    expanded={expanded.has(code.code)}
-                    onToggle={() => toggle(code.code)}
-                    highlighted={highlighted === code.code}
-                    onHighlight={setHighlighted}
-                    scale={scale}
-                    onCitation={onCitation}
-                  />
-                );
-              })}
-            </ul>
-          </section>
-        );
-      })}
+        })}
+      </div>
       {onlyNeedingReview && needing.size === 0 && (
         <p className="m-0 border-t border-line-soft px-[14px] py-[10px] text-[13px] text-ink-muted">
           No code needs review: every uncertain or class-deciding code is

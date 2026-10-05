@@ -5,7 +5,6 @@ import { ChecklistSchema, Svcv4ClassificationSchema } from "@/models/widgets";
 import { readPayload } from "@/widgets/asset";
 import type { FileAtCommit } from "@/workspace-copy/copy";
 import { ChecklistWidget } from "./checklist";
-import { EmbedPlaceholder, unregisteredTypeReason } from "./placeholder";
 import type { WidgetContext } from "./revision";
 import { Svcv4ClassificationWidget } from "./svcv4/svcv4-classification";
 
@@ -19,11 +18,12 @@ import { Svcv4ClassificationWidget } from "./svcv4/svcv4-classification";
 export interface RegisteredWidget {
   schema: DescMessage;
   /** Parse and validate the payload `wrapped`, read from the file `asset`, carries, and bind it to
-   *  its component. Raises `AssetError` when the payload does not parse or fails its rules. */
+   *  its component; null for a type registered before its component, which draws as a
+   *  placeholder. Raises `AssetError` when the payload does not parse or fails its rules. */
   read(
     wrapped: Any,
     asset: FileAtCommit,
-  ): (context: WidgetContext) => ReactNode;
+  ): ((context: WidgetContext) => ReactNode) | null;
 }
 
 /** Props of a widget component: its payload, the asset's bytes and tree mode it was read from, from
@@ -60,13 +60,7 @@ export function placeholder(schema: DescMessage): RegisteredWidget {
     schema,
     read: (wrapped) => {
       readPayload(wrapped, schema);
-      return (context) => (
-        <EmbedPlaceholder
-          key={context.path}
-          path={context.path}
-          reason={unregisteredTypeReason(schema.typeName)}
-        />
-      );
+      return null;
     },
   };
 }

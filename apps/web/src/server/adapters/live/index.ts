@@ -36,6 +36,7 @@ export function createAnalysisPorts(): AnalysisPorts {
       sharedSql(),
     ),
     workspace: createWorkspace(loadSheafConfig(), deriver),
+    documents: null,
   };
 }
 

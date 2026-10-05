@@ -19,6 +19,8 @@ import {
 } from "./errors";
 import type {
   AnalysisDataPlane,
+  DocumentFiles,
+  DocumentSeeding,
   ProjectMembership,
   WorkspaceRepository,
 } from "./ports";
@@ -26,14 +28,15 @@ import { damagedTip, readTip, unavailableTip } from "./workspace";
 
 // The authorization chokepoint (docs/design/workspace-model.md Authorization;
 // docs/design/security.md). Wraps the raw data plane and workspace repository and admits every
-// access only for the bound user: create and list name a Project the user must belong to, and a point
-// access must clear the analysis's Project-membership check. `userContext` is the sole
+// access only for the bound user: create, seed and list name a Project the user must belong to, and a
+// point access must clear the analysis's Project-membership check. `userContext` is the sole
 // constructor, so a route never reaches the data plane unscoped.
 
 export class AuthorizedBackend {
   constructor(
     private readonly data: AnalysisDataPlane,
     private readonly workspace: WorkspaceRepository,
+    private readonly documents: DocumentSeeding | null,
     private readonly membership: ProjectMembership,
     private readonly userEmail: string,
     private readonly pollTipBudgetMs: number,
@@ -53,6 +56,17 @@ export class AuthorizedBackend {
       projectId: input.projectId,
       userEmail: this.userEmail,
     });
+  }
+
+  /** Open `files` as a new Analysis that no run drives, in the Project the backend seeds documents
+   *  into, which the user must belong to. Raises on a backend that seeds none, the live one. */
+  async seedDocument(prompt: string, files: DocumentFiles): Promise<Analysis> {
+    if (this.documents === null) {
+      throw new Error("this backend does not seed documents");
+    }
+    const { projectId } = this.documents;
+    await this.requireMemberOf(projectId);
+    return this.documents.seedDocument(projectId, prompt, files);
   }
 
   async listAnalyses(projectId: string): Promise<Analysis[]> {

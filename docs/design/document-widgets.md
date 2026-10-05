@@ -243,6 +243,11 @@ asset's path and says the build does not draw the type (§"Drawability is checke
 it is shown"). It still parses the payload and checks it against its rules, so an asset written against the new type
 during component work fails as it would under the finished component.
 
+Component work is tried against example payloads, written in protobuf text format so a person can read and edit them. A
+local page on the fixture backend opens each example in a working document, drawn by the real component, where its ticks
+and notes work as they do in the workbench ([`widget-browser.md`](../runbooks/widget-browser.md)). A test holds every
+committed example to its type's rules, so an example that goes stale with its schema fails CI.
+
 | Change               | What it does to the schema                                       | What the registry maps the type to |
 | -------------------- | ---------------------------------------------------------------- | ---------------------------------- |
 | The contract change  | declares the message, with its widget mark and ownership options | the placeholder                    |

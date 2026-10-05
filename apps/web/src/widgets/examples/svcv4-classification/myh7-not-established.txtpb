@@ -1,0 +1,311 @@
+# proto-file: themis/widgets/models/svcv4_classification.proto
+# proto-message: themis.widgets.models.Svcv4Classification
+#
+# Class not established: the open input's other value lands in Pathogenic while the tally is
+# Likely pathogenic. Synthetic text; every number is the SVCv4 library's.
+
+framework {
+  name: "SVCv4"
+  status: "draft-phase3-pilot"
+  citations_repository: "populationgenomics/SVCv4-info"
+  citations_revision: "4e7050dc79f12ea80e81ce03e65013f0271ba8e2"
+  usage: "Evaluation only. Not a validated implementation, not for clinical or diagnostic use; output is not a clinical variant classification. Re-verify every value against the final published standard and the ClinGen Pilot Calculator (https://calculator.clinicalgenome.org/v4/pilot/ui/classification)."
+}
+routing {
+  variant {
+    transcript_hgvs: "NM_000257.4:c.1988G>A"
+    protein_hgvs: "NP_000248.2:p.(Arg663His)"
+    gene_symbol: "MYH7"
+    hgnc_id: "HGNC:7577"
+  }
+  consequence: CONSEQUENCE_MISSENSE
+  entity {
+    disease: "hypertrophic cardiomyopathy"
+    mondo_id: "MONDO:0005045"
+    inheritance: INHERITANCE_AUTOSOMAL_DOMINANT
+    mechanism: "gain of function"
+    validity_source: "ClinGen Gene Validity"
+    validity_classification: "Definitive"
+    gate_level: GATE_LEVEL_DEFINITIVE
+  }
+  routes {
+    family: "MIS"
+    label: "amino-acid (MIS_)"
+  }
+  rationale: "A synthetic record for the widget browser: the numbers are the library\'s, the text is invented."
+}
+codes {
+  code: "POP_FRQ"
+  family: "POP"
+  title: "Population frequency"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "0.0"
+  raw_points: "0.0"
+  cells {
+    cell_id: "POP_FRQ.bin.lt_1_5x"
+    description: "< 1.5x DAFT"
+    count: 1
+    points_each: "0.0"
+  }
+  rationale: "Synthetic reasoning for POP_FRQ."
+  confidence: CONFIDENCE_SETTLED
+}
+codes {
+  code: "POP_HMZ"
+  family: "POP"
+  title: "Homozygous observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "CLN_CCS"
+  family: "CLN"
+  title: "Case-control studies"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "CLN_AFF"
+  family: "CLN"
+  title: "Affected proband observations"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "4.75"
+  raw_points: "4.75"
+  cells {
+    cell_id: "CLN_AFF.ad.consistent_partial"
+    description: "CONSISTENT phenotype · with caveats"
+    count: 19
+    points_each: "0.25"
+  }
+  rationale: "Synthetic reasoning for CLN_AFF."
+  confidence: CONFIDENCE_LEANING
+}
+codes {
+  code: "CLN_DNV"
+  family: "CLN"
+  title: "De novo observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "CLN_ALT"
+  family: "CLN"
+  title: "Alternate cause of disease"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "CLN_UAF"
+  family: "CLN"
+  title: "Unaffected individual observations"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "LOC_PHE"
+  family: "LOC"
+  title: "Specific phenotype"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+}
+codes {
+  code: "LOC_SEG"
+  family: "LOC"
+  title: "Segregation with disease"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "1.0"
+  raw_points: "1.0"
+  cells {
+    cell_id: "LOC_SEG.ad.het_affected"
+    description: "co-segregation · autosomal dominant · heterozygous affected"
+    count: 1
+    points_each: "1.0"
+  }
+  rationale: "Synthetic reasoning for LOC_SEG."
+  confidence: CONFIDENCE_LEANING
+}
+codes {
+  code: "MIS_PRD"
+  family: "MIS"
+  title: "Amino-acid change prediction"
+  status: ASSESSMENT_STATUS_SCORED
+  points: "1.0"
+  raw_points: "1"
+  path_family: "MIS"
+  rationale: "Synthetic reasoning for MIS_PRD."
+  confidence: CONFIDENCE_SETTLED
+}
+codes {
+  code: "MIS_FXN"
+  family: "MIS"
+  title: "Functional assessment of the amino-acid change"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+  path_family: "MIS"
+}
+codes {
+  code: "MIS_INF"
+  family: "MIS"
+  title: "Informative variants"
+  status: ASSESSMENT_STATUS_NO_DATA
+  status_reason: "No data in this example."
+  path_family: "MIS"
+}
+paths {
+  family: "MIS"
+  selected: true
+  total: "1.0"
+  multiplier: "1.0"
+  exon_relevance: "All"
+}
+tally {
+  total: "6.75"
+  band: CLASSIFICATION_LIKELY_PATHOGENIC
+  final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+}
+open_values {
+  assumption: "The counted probands read as a phenotype specific to the gene"
+  codes: "CLN_AFF"
+  tally {
+    total: "11.5"
+    band: CLASSIFICATION_PATHOGENIC
+    final_class: CLASSIFICATION_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "A reported de novo counted, parentage unconfirmed"
+  codes: "CLN_DNV"
+  tally {
+    total: "7.75"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "This proband priced with no caveat"
+  codes: "CLN_AFF"
+  tally {
+    total: "7.00"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "One cohort read as four unrelated probands"
+  codes: "CLN_AFF"
+  tally {
+    total: "7.50"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "One more submission counted"
+  codes: "CLN_AFF"
+  tally {
+    total: "7.00"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "Three submissions read as stating no case"
+  codes: "CLN_AFF"
+  tally {
+    total: "6.00"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "One submission read as overlapping a cohort"
+  codes: "CLN_AFF"
+  tally {
+    total: "6.50"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "Published segregation read: at the locus cap"
+  codes: "LOC_SEG"
+  tally {
+    total: "9.75"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "A diagnostic yield over 82% admitted"
+  codes: "LOC_PHE"
+  tally {
+    total: "9.75"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "Segregation at the cap and the de novo counted"
+  codes: "CLN_DNV"
+  codes: "LOC_SEG"
+  tally {
+    total: "10.75"
+    band: CLASSIFICATION_PATHOGENIC
+    final_class: CLASSIFICATION_PATHOGENIC
+  }
+}
+sensitivity {
+  assumption: "A frequency threshold that moves nothing"
+  tally {
+    total: "6.75"
+    band: CLASSIFICATION_LIKELY_PATHOGENIC
+    final_class: CLASSIFICATION_LIKELY_PATHOGENIC
+  }
+}
+classification: CLASSIFICATION_NOT_ESTABLISHED
+bands {
+  name: "B"
+  classification: CLASSIFICATION_BENIGN
+  upper: "-4.0"
+  upper_inclusive: true
+}
+bands {
+  name: "LB"
+  classification: CLASSIFICATION_LIKELY_BENIGN
+  lower: "-4.0"
+  upper: "-1.0"
+  upper_inclusive: true
+}
+bands {
+  name: "VUS-low"
+  classification: CLASSIFICATION_VUS
+  lower: "-1.0"
+  upper: "2.0"
+}
+bands {
+  name: "VUS-mid"
+  classification: CLASSIFICATION_VUS
+  lower: "2.0"
+  lower_inclusive: true
+  upper: "4.0"
+}
+bands {
+  name: "VUS-high"
+  classification: CLASSIFICATION_VUS
+  lower: "4.0"
+  lower_inclusive: true
+  upper: "6.0"
+}
+bands {
+  name: "LP"
+  classification: CLASSIFICATION_LIKELY_PATHOGENIC
+  lower: "6.0"
+  lower_inclusive: true
+  upper: "10.0"
+}
+bands {
+  name: "P"
+  classification: CLASSIFICATION_PATHOGENIC
+  lower: "10.0"
+  lower_inclusive: true
+}

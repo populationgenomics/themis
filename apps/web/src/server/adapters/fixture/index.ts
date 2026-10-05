@@ -9,15 +9,24 @@ import { createContent as buildContent } from "./content";
 import { FixtureDataPlane } from "./data-plane";
 import { DevUserIdentity } from "./identity";
 import { FixtureLiterature, seedContentStore } from "./literature";
-import { FixtureMembership } from "./membership";
+import { FIXTURE_PROJECT, FixtureMembership } from "./membership";
 import { FixtureWorkspace } from "./workspace";
 
-/** A FRESH in-memory data plane and the workspace repositories its scripted runs wrote. The runtime
- *  composition root (`../index.ts`) memoizes one pair so a POST that creates an analysis and the
- *  following polls share the same in-memory state. */
+/** A FRESH in-memory data plane, the workspace repositories its scripted runs wrote, and document
+ *  seeding into the fixture's Project. The runtime composition root (`../index.ts`) memoizes one
+ *  set so a POST that creates an analysis and the following polls share the same in-memory state. */
 export function createAnalysisPorts(): AnalysisPorts {
   const workspace = new FixtureWorkspace();
-  return { dataPlane: new FixtureDataPlane(workspace), workspace };
+  const dataPlane = new FixtureDataPlane(workspace);
+  return {
+    dataPlane,
+    workspace,
+    documents: {
+      projectId: FIXTURE_PROJECT,
+      seedDocument: (projectId, prompt, files) =>
+        dataPlane.seedDocument(projectId, prompt, files),
+    },
+  };
 }
 
 /** The seeded fixture membership. */

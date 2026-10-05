@@ -32,6 +32,8 @@ import {
 import type {
   AnalysisDataPlane,
   CreateAnalysisInput,
+  DocumentFiles,
+  DocumentSeeding,
   ProjectMembership,
   WorkspaceRepository,
 } from "./ports";
@@ -188,6 +190,7 @@ function backend(extra: Record<string, string> = {}): {
     authz: new AuthorizedBackend(
       data,
       workspace,
+      null,
       membership,
       USER,
       POLL_TIP_BUDGET_MS,
@@ -383,6 +386,62 @@ describe("AuthorizedBackend create", () => {
       authz.createAnalysis({ inputs: INPUTS, projectId: "proj_b" }),
     ).rejects.toBeInstanceOf(ResourceNotFoundError);
     expect(data.creates).toEqual([]);
+  });
+});
+
+/** Seeding into one Project, recording what it was asked to seed. */
+class FakeSeeding implements DocumentSeeding {
+  readonly seeded: {
+    projectId: string;
+    prompt: string;
+    files: DocumentFiles;
+  }[] = [];
+  constructor(readonly projectId: string) {}
+  seedDocument(
+    projectId: string,
+    prompt: string,
+    files: DocumentFiles,
+  ): Analysis {
+    this.seeded.push({ projectId, prompt, files });
+    return create(AnalysisSchema, { id: "an_seeded", projectId });
+  }
+}
+
+function seedingBackend(documents: DocumentSeeding | null): AuthorizedBackend {
+  return new AuthorizedBackend(
+    new FakeDataPlane({}),
+    new FakeWorkspace(),
+    documents,
+    new FakeMembership({ [USER]: ["proj_a"] }),
+    USER,
+    POLL_TIP_BUDGET_MS,
+  );
+}
+
+describe("AuthorizedBackend seeding", () => {
+  const FILES: DocumentFiles = { "working_document.md": "# Seeded" };
+
+  test("seeds into the seeding's Project for a member", async () => {
+    const seeding = new FakeSeeding("proj_a");
+    const analysis = await seedingBackend(seeding).seedDocument("x", FILES);
+    expect(analysis.projectId).toBe("proj_a");
+    expect(seeding.seeded).toEqual([
+      { projectId: "proj_a", prompt: "x", files: FILES },
+    ]);
+  });
+
+  test("seeding into a non-member Project is not-found and seeds nothing", async () => {
+    const seeding = new FakeSeeding("proj_b");
+    await expect(
+      seedingBackend(seeding).seedDocument("x", FILES),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    expect(seeding.seeded).toEqual([]);
+  });
+
+  test("a backend with no seeding, the live one, refuses", async () => {
+    await expect(seedingBackend(null).seedDocument("x", FILES)).rejects.toThrow(
+      "does not seed documents",
+    );
   });
 });
 

@@ -1,0 +1,19 @@
+# proto-file: themis/widgets/models/checklist.proto
+# proto-message: themis.widgets.models.Checklist
+#
+# A checklist a curator has partly reviewed: two of three items ticked.
+
+items {
+  checked: true
+  id: "entity"
+  label: "The disease entity fits the presentation"
+}
+items {
+  checked: true
+  id: "frequency"
+  label: "The population frequency is read against the right threshold"
+}
+items {
+  id: "phenotype"
+  label: "The phenotype is read as consistent, not specific"
+}

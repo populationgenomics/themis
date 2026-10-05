@@ -36,6 +36,7 @@ import {
   timelineAt,
 } from "./timeline";
 import type { FixtureWorkspace } from "./workspace";
+import { AGENT, type SeedFiles } from "./workspace-seed";
 
 interface Entry {
   analysis: Analysis;
@@ -251,6 +252,24 @@ export class FixtureDataPlane implements AnalysisDataPlane {
       throw new ResourceNotFoundError(`analysis not found: ${analysisId}`);
     }
     return entry;
+  }
+
+  /** Mint an Analysis in `projectId` that no session drives, its repository one agent commit of
+   *  `files`: a working document and no conversation, which the widget browser opens its examples
+   *  in. The repository is the fixture's in-memory one, so a curator's ticks and notes land there
+   *  and go with the process. */
+  seedDocument(projectId: string, prompt: string, files: SeedFiles): Analysis {
+    const createdAt = new Date();
+    const entry = this.mint(projectId, freeForm(prompt), createdAt, true);
+    // The scripted run has nothing left to push over the seeded document.
+    entry.revealedDocVersion = FINAL_DOC_VERSION;
+    entry.publishedDocVersion = FINAL_DOC_VERSION;
+    this.workspace.seedCommits(
+      entry.analysis.id,
+      [{ files, author: AGENT, message: prompt }],
+      createdAt,
+    );
+    return entry.analysis;
   }
 
   async createAnalysis(input: CreateAnalysisInput): Promise<Analysis> {
