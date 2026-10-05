@@ -2,6 +2,7 @@
 
 import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { useId } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import { type Citation, CitationMark } from "@/components/workbench/citation";
 import {
   AssessmentStatus,
@@ -213,21 +214,35 @@ function Openness({
   const uncertain =
     code.confidence === Confidence.LEANING ||
     code.confidence === Confidence.OPEN;
+  const hover = [
+    label === "" ? "" : `Confidence: ${label}`,
+    reviewReason === undefined ? "" : `Needs review: ${reviewReason}`,
+  ].filter((part) => part !== "");
   return (
-    <span
-      title={label || undefined}
-      className={`inline-flex items-center gap-[5px] text-[12px] ${uncertain ? "text-amber-uncertainty-heading" : "text-ink-faint"}`}
+    // The dot names its reason and the label is always read, so the panel repeats nothing for a
+    // screen reader.
+    <Tooltip
+      describes={false}
+      content={
+        hover.length === 0
+          ? ""
+          : hover.map((part) => <div key={part}>{part}</div>)
+      }
     >
-      {reviewReason !== undefined && (
-        <span
-          role="img"
-          aria-label={`needs review: ${reviewReason}`}
-          title={`Needs review: ${reviewReason}`}
-          className="size-[7px] shrink-0 rounded-full bg-amber-uncertainty-icon"
-        />
-      )}
-      <span className="hidden @[560px]:inline">{label}</span>
-    </span>
+      {/* At least 24px wide, so the confidence is reachable where only an empty box shows it. */}
+      <span
+        className={`-my-[4px] inline-flex min-w-[24px] items-center gap-[5px] py-[4px] text-[12px] ${uncertain ? "text-amber-uncertainty-heading" : "text-ink-faint"}`}
+      >
+        {reviewReason !== undefined && (
+          <span
+            role="img"
+            aria-label={`needs review: ${reviewReason}`}
+            className="size-[7px] shrink-0 rounded-full bg-amber-uncertainty-icon"
+          />
+        )}
+        <span className="sr-only @[560px]:not-sr-only">{label}</span>
+      </span>
+    </Tooltip>
   );
 }
 

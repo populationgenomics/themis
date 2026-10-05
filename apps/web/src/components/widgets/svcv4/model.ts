@@ -422,6 +422,73 @@ export function needles(payload: Svcv4Classification): Needle[] {
   ];
 }
 
+/** The segment a pointer at `at` along the ruler reads, of `placed` in the order they are drawn: the
+ *  last one drawn under the pointer (a cut lies over the code it cut), else the nearest within
+ *  `reach` of its edge; undefined where none is. `left`, `share`, `at` and `reach` are in percent of
+ *  the ruler. */
+export function segmentAt<S extends { left: number; share: number }>(
+  placed: readonly S[],
+  at: number,
+  reach: number,
+): S | undefined {
+  let under: S | undefined;
+  let nearest: S | undefined;
+  let distance = Number.POSITIVE_INFINITY;
+  for (const each of placed) {
+    const right = each.left + each.share;
+    if (at >= each.left && at <= right) under = each;
+    const away = at < each.left ? each.left - at : at - right;
+    if (away < distance) {
+      nearest = each;
+      distance = away;
+    }
+  }
+  if (under !== undefined) return under;
+  return distance <= reach ? nearest : undefined;
+}
+
+/** What a pointer at `at` along the ruler reads: the needle nearest it, if within `reach`, and every
+ *  other needle at that same total, in `all`'s order (the tally first). Empty where no needle is in
+ *  reach. `at` and `reach` are in percent of the ruler, the unit `position` gives. */
+export function needlesAt(
+  all: readonly Needle[],
+  span: [number, number],
+  at: number,
+  reach: number,
+): Needle[] {
+  let nearest: Needle | undefined;
+  let distance = Number.POSITIVE_INFINITY;
+  for (const needle of all) {
+    const away = Math.abs(position(needle.total, span) - at);
+    if (away < distance) {
+      nearest = needle;
+      distance = away;
+    }
+  }
+  if (nearest === undefined || distance > reach) return [];
+  const total = nearest.total;
+  return all.filter((needle) => needle.total === total);
+}
+
+/** The band a total falls in, by the payload's own bounds and their inclusivity; undefined past the
+ *  bands the payload names. */
+export function bandAt(
+  payload: Svcv4Classification,
+  total: number,
+): Svcv4Classification["bands"][number] | undefined {
+  return payload.bands.find((band) => {
+    if (band.lower !== "") {
+      const lower = pointsOf(band.lower);
+      if (band.lowerInclusive ? total < lower : total <= lower) return false;
+    }
+    if (band.upper !== "") {
+      const upper = pointsOf(band.upper);
+      if (band.upperInclusive ? total > upper : total >= upper) return false;
+    }
+    return true;
+  });
+}
+
 /** The span of points the ruler draws: every stack end, every needle and every finite band edge,
  *  with a point's margin, and never narrower than the band edges nearest zero on either side. */
 export function domain(payload: Svcv4Classification): [number, number] {

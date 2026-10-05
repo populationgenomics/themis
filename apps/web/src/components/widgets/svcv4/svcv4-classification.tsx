@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   type Svcv4Classification,
   Svcv4ClassificationSchema,
@@ -130,12 +131,12 @@ export function Svcv4ClassificationWidget(
           <span className="font-mono text-[11px] tracking-[0.02em] text-ink-faint">
             {payload.framework?.name ?? "SVCv4"} classification
           </span>
-          <span
-            title={payload.framework?.usage}
-            className="rounded-tag border border-amber-uncertainty-border bg-amber-uncertainty-bg px-[5px] text-[11px] text-amber-uncertainty-heading"
-          >
-            draft framework, evaluation only
-          </span>
+          {/* The footer states the usage in full, so the panel repeats it for no reader. */}
+          <Tooltip content={payload.framework?.usage} describes={false}>
+            <span className="rounded-tag border border-amber-uncertainty-border bg-amber-uncertainty-bg px-[5px] text-[11px] text-amber-uncertainty-heading">
+              draft framework, evaluation only
+            </span>
+          </Tooltip>
           <span className="flex-1" />
           <ReviewedTick
             guard={record.reviewed}

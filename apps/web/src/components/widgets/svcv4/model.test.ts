@@ -9,6 +9,7 @@ import {
 import { fbn1Classification } from "@/widgets/svcv4-classification-fixture";
 import {
   alternativeMark,
+  bandAt,
   codeGroups,
   counted,
   decisiveMarks,
@@ -16,8 +17,11 @@ import {
   lettered,
   needleLabels,
   needles,
+  needlesAt,
   pointsOf,
+  position,
   reviewReason,
+  segmentAt,
   signedNumber,
   signedPoints,
   stacks,
@@ -276,6 +280,58 @@ describe("the needles' labels", () => {
     }
     const named = labels.flatMap((label) => label.marks);
     expect(named.sort()).toEqual(placed.map((needle) => needle.mark).sort());
+  });
+});
+
+describe("what a pointer on the ruler reads", () => {
+  test("the segment under the pointer, the last drawn where two overlap", () => {
+    const code = { label: "LOC_SEG", left: 10, share: 20 };
+    const cut = { label: "cap", left: 25, share: 5 };
+    expect(segmentAt([code, cut], 15, 2)?.label).toBe("LOC_SEG");
+    expect(segmentAt([code, cut], 27, 2)?.label).toBe("cap");
+  });
+
+  test("else the nearest within reach of its edge, and none beyond", () => {
+    const narrow = { label: "MIS_PRD", left: 50, share: 0.4 };
+    const wide = { label: "CLN_AFF", left: 20, share: 25 };
+    expect(segmentAt([wide, narrow], 51, 1.5)?.label).toBe("MIS_PRD");
+    expect(segmentAt([wide, narrow], 48.5, 2.5)?.label).toBe("MIS_PRD");
+    expect(segmentAt([wide, narrow], 46, 1.5)?.label).toBe("CLN_AFF");
+    expect(segmentAt([wide, narrow], 60, 1.5)).toBeUndefined();
+  });
+
+  test("every needle at the nearest total, the tally first, or nothing out of reach", () => {
+    const payload = fbn1Classification();
+    const all = needles(payload);
+    const span = domain(payload);
+    const tally = all[0];
+    const twin = { ...all[1], total: tally.total, mark: "Z" };
+    const withTwin = [...all, twin];
+    const read = needlesAt(withTwin, span, position(tally.total, span), 1);
+    expect(read.map((needle) => needle.kind)).toEqual(["tally", twin.kind]);
+    const beside = position(tally.total, span) + 0.5;
+    expect(needlesAt(withTwin, span, beside, 1)).toHaveLength(2);
+    expect(needlesAt(withTwin, span, beside, 0.1)).toEqual([]);
+  });
+
+  test("only the nearest total, however many totals are in reach", () => {
+    const payload = fbn1Classification();
+    const span = domain(payload);
+    const [tally, other] = needles(payload);
+    const near = { ...other, total: tally.total + 1, mark: "Y" };
+    const far = { ...other, total: tally.total + 2, mark: "Z" };
+    const pointer = position(tally.total + 0.8, span);
+    const read = needlesAt([tally, near, far], span, pointer, 100);
+    expect(read.map((needle) => needle.mark)).toEqual(["Y"]);
+  });
+
+  test("a band by its own bounds, an inclusive edge on its side", () => {
+    const payload = fbn1Classification();
+    expect(bandAt(payload, 6)?.name).toBe("LP");
+    expect(bandAt(payload, 5.99)?.name).toBe("VUS-high");
+    expect(bandAt(payload, 10)?.name).toBe("P");
+    expect(bandAt(payload, -4)?.name).toBe("B");
+    expect(bandAt(payload, 100)?.name).toBe("P");
   });
 });
 
