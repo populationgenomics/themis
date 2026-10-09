@@ -29,7 +29,6 @@ from collections.abc import Callable
 
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage, tasks_v2
-from google.cloud.sql import connector as sql_connector
 
 from themis.common import sql
 from themis.litcache import enqueue
@@ -155,7 +154,7 @@ def _crosswalk_connect_from_env(stack: contextlib.AsyncExitStack) -> Callable[[]
     instance = values[_CROSSWALK_INSTANCE_VAR]
     database = values[_CROSSWALK_DATABASE_VAR]
     db_user = values[_CROSSWALK_DB_USER_VAR]
-    dialer = sql_connector.Connector()
+    dialer = sql.lazy_connector()
     stack.callback(dialer.close)
 
     def connect() -> sql.Connection:

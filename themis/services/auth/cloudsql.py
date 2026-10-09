@@ -46,7 +46,7 @@ def engine(*, connection_name: str, database: str, db_user: str) -> sqlalchemy.E
     Its connector lives as long as the process: nothing in the service handles shutdown.
     """
     return sql_pool.cloud_sql_engine(
-        sql_pool.lazy_connector(),
+        sql.lazy_connector(),
         connection_name=connection_name,
         database=database,
         db_user=db_user,

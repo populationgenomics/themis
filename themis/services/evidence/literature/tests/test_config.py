@@ -233,6 +233,7 @@ def test_a_partial_crosswalk_config_fails_at_startup(monkeypatch: pytest.MonkeyP
 def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     dialled: list[tuple[str, str, str]] = []
     closed: list[bool] = []
+    built: list[dict[str, object]] = []
 
     class _FakeCursor:
         def execute(self, operation: str, args: object = ()) -> None:
@@ -252,6 +253,9 @@ def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeyp
             pass
 
     class _FakeConnector:
+        def __init__(self, **kwargs: object) -> None:
+            built.append(kwargs)
+
         def connect(self, connection_name: str, driver: str, **kwargs: object) -> _FakeConnection:
             del driver
             dialled.append((connection_name, str(kwargs['db']), str(kwargs['user'])))
@@ -274,6 +278,9 @@ def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeyp
         return found
 
     assert asyncio.run(build()) == {'doi:10.1/x': 'doc-1'}
+    # This service idles its CPU, so a background refresh would not run between requests
+    # (`sql.lazy_connector`). The strategy is settled at the composition root that dials.
+    assert [kwargs.get('refresh_strategy') for kwargs in built] == [sql_connector.RefreshStrategy.LAZY]
     instance, database, db_user = _CROSSWALK_ENV.values()
     assert dialled == [(instance, database, db_user)]
 

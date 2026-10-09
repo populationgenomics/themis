@@ -52,15 +52,6 @@ class DialError(Exception):
     """Opening a new connection failed; the database is unreachable or refused the login."""
 
 
-def lazy_connector() -> connector.Connector:
-    """A Cloud SQL connector that refreshes its certificate when a dial needs one.
-
-    Cloud Run throttles the CPU between requests, which stalls the connector's default background
-    refresh; the connector's README recommends the lazy strategy there.
-    """
-    return connector.Connector(refresh_strategy=connector.RefreshStrategy.LAZY)
-
-
 def cloud_sql_engine(
     dialer: connector.Connector,
     *,
@@ -73,7 +64,7 @@ def cloud_sql_engine(
     """A `pooled_engine` over IAM-authed connections to one Cloud SQL database.
 
     Args:
-        dialer: The connector connections are dialed through, normally a `lazy_connector` (its
+        dialer: The connector connections are dialed through, normally a `sql.lazy_connector` (its
             lifecycle is the caller's).
         connection_name: The `project:region:instance` string the connector dials.
         database: The application database name.
