@@ -219,7 +219,12 @@ describe("a fan-out of spawned threads", () => {
       const projected = cards(
         foldEvents([
           ev({ type: "session.thread_created", session_thread_id: THREAD }),
-          ev({ type, session_thread_id: THREAD }),
+          // Every idle carries a stop reason; the other statuses ignore it.
+          ev({
+            type,
+            session_thread_id: THREAD,
+            stop_reason: { type: "end_turn" },
+          }),
         ]).events,
       );
       expect(projected).toHaveLength(1);
@@ -295,7 +300,7 @@ describe("a fan-out of spawned threads", () => {
       events.flatMap((event) => (event.kind.case === "tool" ? event.id : [])),
     ).toEqual(["t_coordinator"]);
 
-    const body = foldThreadEvents([
+    const body = foldThreadEvents(THREAD, [
       ev({
         type: "agent.thread_message_received",
         id: "m_in",
@@ -320,7 +325,7 @@ describe("a fan-out of spawned threads", () => {
   test("at thread scope a stray cross-post marker does not vanish the row", () => {
     // The SDK promises `session_thread_id` empty on a thread's own events; if one
     // carries it anyway, the call is still this listing's own work and renders.
-    const body = foldThreadEvents([
+    const body = foldThreadEvents(THREAD, [
       ev({
         type: "agent.thread_message_received",
         id: "m_in",
@@ -339,7 +344,7 @@ describe("a fan-out of spawned threads", () => {
   });
 
   test("a thread body opens on its instruction and carries no card", () => {
-    const body = foldThreadEvents([
+    const body = foldThreadEvents(THREAD, [
       ev({
         type: "agent.thread_message_received",
         id: "m_in",
@@ -361,6 +366,176 @@ describe("a fan-out of spawned threads", () => {
     expect(body[0].kind.case === "user" && body[0].kind.value.text).toBe(
       "gather the evidence",
     );
+  });
+});
+
+// A refused turn ends in an idle whose stop reason says so, on the session's own idle for
+// the coordinator and on the thread's status for a spawned thread. A production session
+// was observed reporting the coordinator's twice — the session idles, and so does the
+// root thread — so the pair is the shape these properties are held against.
+
+const REFUSED = { type: "refusal" };
+const CYBER = {
+  type: "refusal",
+  category: "cyber",
+  explanation: "blocked under Anthropic's Usage Policy",
+};
+
+const refusals = (events: readonly ConversationEvent[]) =>
+  events.flatMap((event) =>
+    event.kind.case === "refusal" ? event.kind.value : [],
+  );
+
+describe("a refused turn", () => {
+  test("the coordinator's refusal is one line, however many idles report it", () => {
+    const { events } = foldEvents([
+      ev({ type: "agent.message", id: "m", content: text("checking") }),
+      ev({
+        type: "session.thread_status_idle",
+        id: "root_idle",
+        session_thread_id: ROOT,
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      }),
+      ev({
+        type: "session.status_idle",
+        id: "session_idle",
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      }),
+    ]);
+    expect(kinds(events)).toEqual(["assistant", "refusal"]);
+    expect(refusals(events)).toEqual([
+      expect.objectContaining({
+        category: "cyber",
+        explanation: "blocked under Anthropic's Usage Policy",
+      }),
+    ]);
+  });
+
+  test("the coordinator refused while a sub-agent still runs is drawn all the same", () => {
+    // The session idles only once every thread has, so here it never idles on the
+    // refusal: the child returns and wakes the root first.
+    const { events } = foldEvents([
+      ev({ type: "session.thread_created", session_thread_id: THREAD }),
+      ev({
+        type: "session.thread_status_idle",
+        id: "root_idle",
+        session_thread_id: ROOT,
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      }),
+      ev({
+        type: "session.thread_status_idle",
+        session_thread_id: THREAD,
+        stop_reason: { type: "end_turn" },
+      }),
+      ev({ type: "session.thread_status_running", session_thread_id: ROOT }),
+    ]);
+    expect(kinds(events)).toEqual(["subAgent", "refusal"]);
+  });
+
+  test("a refusal only the session's idle reports is drawn, and each turn's once", () => {
+    const sessionIdle = (id: string) =>
+      ev({
+        type: "session.status_idle",
+        id,
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      });
+    const { events } = foldEvents([
+      ev({
+        type: "session.thread_status_idle",
+        session_thread_id: ROOT,
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      }),
+      sessionIdle("first"),
+      // A second refused turn the root's idle did not report.
+      ev({ type: "user.message", id: "u", content: text("try again") }),
+      sessionIdle("second"),
+    ]);
+    expect(kinds(events)).toEqual(["refusal", "user", "refusal"]);
+    expect(events.at(-1)?.id).toBe("second");
+  });
+
+  test("an idle carrying no stop reason fails by name", () => {
+    expect(() =>
+      foldEvents([ev({ type: "session.status_idle", id: "i" })]),
+    ).toThrow("carries no stop_reason");
+  });
+
+  test("an idle that ended any other way draws nothing", () => {
+    for (const stop_reason of [
+      { type: "end_turn" },
+      { type: "requires_action", event_ids: ["e"] },
+      { type: "retries_exhausted" },
+      { type: "budget_reached" },
+    ]) {
+      const { events } = foldEvents([
+        ev({ type: "session.status_idle", id: "i", stop_reason }),
+      ]);
+      expect(events).toEqual([]);
+    }
+  });
+
+  test("a refusal upstream gives no details for is still a refusal", () => {
+    // The stop reason is what says the turn was refused; the details only elaborate.
+    const { events } = foldEvents([
+      ev({
+        type: "session.status_idle",
+        id: "i",
+        stop_reason: REFUSED,
+        stop_details: null,
+      }),
+    ]);
+    expect(refusals(events)).toHaveLength(1);
+    expect(refusals(events)[0].category).toBeUndefined();
+    expect(refusals(events)[0].explanation).toBeUndefined();
+  });
+
+  test("a refused sub-agent is a refused card, and the line is its own thread's", () => {
+    const refusedIdle = {
+      type: "session.thread_status_idle",
+      id: "child_idle",
+      session_thread_id: THREAD,
+      stop_reason: REFUSED,
+      stop_details: CYBER,
+    };
+    const { events } = foldEvents([
+      ev({ type: "session.thread_created", session_thread_id: THREAD }),
+      ev(refusedIdle),
+    ]);
+    expect(kinds(events)).toEqual(["subAgent"]);
+    expect(cards(events)[0].status).toBe(SubAgentStatus.REFUSED);
+
+    const body = foldThreadEvents(THREAD, [
+      ev({
+        type: "agent.thread_message_received",
+        id: "m_in",
+        from_session_thread_id: ROOT,
+        content: text("gather the evidence"),
+      }),
+      ev(refusedIdle),
+    ]);
+    expect(kinds(body)).toEqual(["user", "refusal"]);
+    expect(refusals(body)[0].category).toBe("cyber");
+    // Another thread's refusal is not this thread's line.
+    expect(foldThreadEvents("sthr_sibling", [ev(refusedIdle)])).toEqual([]);
+  });
+
+  test("a refused thread addressed again is running, not refused", () => {
+    const { events } = foldEvents([
+      ev({ type: "session.thread_created", session_thread_id: THREAD }),
+      ev({
+        type: "session.thread_status_idle",
+        session_thread_id: THREAD,
+        stop_reason: REFUSED,
+        stop_details: CYBER,
+      }),
+      ev({ type: "session.thread_status_running", session_thread_id: THREAD }),
+    ]);
+    expect(cards(events)[0].status).toBe(SubAgentStatus.RUNNING);
   });
 });
 

@@ -72,13 +72,27 @@ message ToolCall {
 
 // The display state of a spawned thread. RUNNING: working, and what a thread that has reported no
 // status yet reads as. IDLE: returned to the coordinator, awaiting its next instruction. DONE:
-// finished. The projection never emits 0, but a caller can still receive it — an unknown status
-// *name* decodes to 0 under a proto3-JSON parse — and renders it as its neutral unknown state.
+// finished. REFUSED: idle because its last response was refused under Anthropic's Usage Policy; the
+// thread's own stream carries the `refusal` line saying why. The projection never emits 0, but a
+// caller can still receive it — an unknown status *name* decodes to 0 under a proto3-JSON parse —
+// and renders it as its neutral unknown state.
 enum SubAgentStatus {
   SUB_AGENT_STATUS_UNSPECIFIED = 0;
   SUB_AGENT_STATUS_RUNNING = 1;
   SUB_AGENT_STATUS_IDLE = 2;
   SUB_AGENT_STATUS_DONE = 3;
+  SUB_AGENT_STATUS_REFUSED = 4;
+}
+
+// A turn that ended because the model's response was refused under Anthropic's Usage Policy — one
+// line of the stream of the thread that refused, where the turn stopped. Both fields are upstream's
+// and absent where upstream reports none. `category` is the policy category verbatim (`cyber`,
+// `bio`, …): upstream adds values over time, so it is an open string rather than an enum this build
+// would have to know. `explanation` is prose for a reader, never parsed. (conversation-view.md, "A
+// refused turn is a line of its own".)
+message Refusal {
+  optional string category = 1;
+  optional string explanation = 2;
 }
 
 // A thread the coordinator spawned, folded to one line of the stream: `prompt`, the coordinator's
@@ -100,7 +114,7 @@ message SubAgent {
 // listing's relative order kept between equal stamps; an event upstream left unstamped inherits the
 // stamp before it, or the first stamp after it where the unstamped run leads the stream. There is
 // no per-turn agent attribution; the `sub_agent` card is the attribution. A thinking variant is
-// deferred. (conversation-view.md, "The stream carries four kinds of line, ordered by their
+// deferred. (conversation-view.md, "The stream carries five kinds of line, ordered by their
 // stamps".)
 message ConversationEvent {
   string id = 1;
@@ -112,6 +126,7 @@ message ConversationEvent {
     Narration user = 3;
     ToolCall tool = 4;
     SubAgent sub_agent = 6;
+    Refusal refusal = 7;
   }
 }
 

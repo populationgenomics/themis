@@ -21,7 +21,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/workbench/models/workbench.proto.
  */
 export const file_themis_workbench_models_workbench: GenFile = /*@__PURE__*/
-  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJXCghEaWZmTGluZRI9CgRraW5kGAEgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lS2luZBIMCgR0ZXh0GAIgASgJIvYBCghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0EkEKCGxhbmd1YWdlGAUgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xMYW5ndWFnZRI5CgRkaWZmGAYgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lIqIBCghTdWJBZ2VudBIRCgl0aHJlYWRfaWQYASABKAkSQQoGc3RhdHVzGAIgASgOMjEudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN1YkFnZW50U3RhdHVzEhMKBnByb21wdBgDIAEoCUgAiAEBEhQKB3N1bW1hcnkYBCABKAlIAYgBAUIJCgdfcHJvbXB0QgoKCF9zdW1tYXJ5It8CChFDb252ZXJzYXRpb25FdmVudBIKCgJpZBgBIAEoCRIvCgtvY2N1cnJlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASQQoJYXNzaXN0YW50GAIgASgLMiwudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLk5hcnJhdGlvbkgAEjwKBHVzZXIYAyABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASOwoEdG9vbBgEIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sQ2FsbEgAEkAKCXN1Yl9hZ2VudBgGIAEoCzIrLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5TdWJBZ2VudEgAQg0KBGtpbmQSBbpIAggBIiMKB1Byb2plY3QSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSKkAwobVmFyaWFudENsYXNzaWZpY2F0aW9uSW5wdXRzEn4KCnRyYW5zY3JpcHQYASABKAlCarpIZ7oBXwoUdHJhbnNjcmlwdC5ub25fYmxhbmsSMnRyYW5zY3JpcHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMY/wEScgoGaGd2c19jGAIgASgJQmK6SF+6AVcKEGhndnNfYy5ub25fYmxhbmsSLmhndnNfYyBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxj/ARKQAQoQY2xpbmljYWxfY29udGV4dBgDIAEoCUJ2ukhzugFrChpjbGluaWNhbF9jb250ZXh0Lm5vbl9ibGFuaxI4Y2xpbmljYWxfY29udGV4dCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiKEAQoORnJlZUZvcm1JbnB1dHMScgoGcHJvbXB0GAEgASgJQmK6SF+6AVcKEHByb21wdC5ub25fYmxhbmsSLnByb21wdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxiQTiLNAQoOQW5hbHlzaXNJbnB1dHMSYAoWdmFyaWFudF9jbGFzc2lmaWNhdGlvbhgBIAEoCzI+LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5WYXJpYW50Q2xhc3NpZmljYXRpb25JbnB1dHNIABJGCglmcmVlX2Zvcm0YAiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guRnJlZUZvcm1JbnB1dHNIAEIRCghzY2VuYXJpbxIFukgCCAEixwEKCEFuYWx5c2lzEgoKAmlkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEgoKcHJvamVjdF9pZBgDIAEoCRIuCgpjcmVhdGVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJJCgZpbnB1dHMYBiABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAQQBVIGcHJvbXB0Io0BChVDcmVhdGVBbmFseXNpc1JlcXVlc3QSGwoKcHJvamVjdF9pZBgCIAEoCUIHukgEcgIQARJJCgZpbnB1dHMYAyABKAsyMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXNJbnB1dHNCBrpIA8gBAUoECAEQAlIGcHJvbXB0IiQKFkNyZWF0ZUFuYWx5c2lzUmVzcG9uc2USCgoCaWQYASABKAkiMgoTTGlzdEFuYWx5c2VzUmVxdWVzdBIbCgpwcm9qZWN0X2lkGAEgASgJQge6SARyAhABIlUKFExpc3RBbmFseXNlc1Jlc3BvbnNlEj0KCGFuYWx5c2VzGAEgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkFuYWx5c2lzIhUKE0xpc3RQcm9qZWN0c1JlcXVlc3QiVAoUTGlzdFByb2plY3RzUmVzcG9uc2USPAoIcHJvamVjdHMYASADKAsyKi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guUHJvamVjdCIrCgtQb2xsUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQASLEAQoMUG9sbFJlc3BvbnNlEkQKBmV2ZW50cxgBIAMoCzI0LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Db252ZXJzYXRpb25FdmVudBJOCg13b3Jrc3BhY2VfdGlwGAMgASgLMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLldvcmtzcGFjZVRpcEIGukgDyAEBSgQIAhADUhh3b3JraW5nX2RvY3VtZW50X3ZlcnNpb24izgEKDFdvcmtzcGFjZVRpcBInCgZjb21taXQYASABKAlCFbpIEnIQMg5eWzAtOWEtZl17NDB9JEgAEisKCW5vX2NvbW1pdBgCIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eUgAEi0KC3VuYXZhaWxhYmxlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SAASKQoHZGFtYWdlZBgEIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eUgAQg4KBXN0YXRlEgW6SAIIASJJCg1UaHJlYWRSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABEhoKCXRocmVhZF9pZBgCIAEoCUIHukgEcgIQASJWCg5UaHJlYWRSZXNwb25zZRJECgZldmVudHMYASADKAsyNC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQ29udmVyc2F0aW9uRXZlbnQimgEKDFN0ZWVyUmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQARJsCgR0ZXh0GAIgASgJQl66SFu6AVMKDnRleHQubm9uX2JsYW5rEix0ZXh0IG11c3QgY29udGFpbiBhIG5vbi13aGl0ZXNwYWNlIGNoYXJhY3RlchoTdGhpcy5tYXRjaGVzKCdcXFMnKXIDGJBOIg8KDVN0ZWVyUmVzcG9uc2UiMAoQSW50ZXJydXB0UmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQASITChFJbnRlcnJ1cHRSZXNwb25zZSI9Cg9Xb3JraW5nRG9jdW1lbnQSGAoHdmVyc2lvbhgBIAEoBUIHukgEGgIoARIQCghtYXJrZG93bhgCIAEoCSJaCg9Eb2N1bWVudFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESHQoHdmVyc2lvbhgCIAEoBUIHukgEGgIoAUgAiAEBQgoKCF92ZXJzaW9uIlgKEERvY3VtZW50UmVzcG9uc2USRAoIZG9jdW1lbnQYASABKAsyMi50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guV29ya2luZ0RvY3VtZW50KrIBCgxUb29sTGFuZ3VhZ2USHQoZVE9PTF9MQU5HVUFHRV9VTlNQRUNJRklFRBAAEhgKFFRPT0xfTEFOR1VBR0VfUFlUSE9OEAESFwoTVE9PTF9MQU5HVUFHRV9TSEVMTBACEhoKFlRPT0xfTEFOR1VBR0VfTUFSS0RPV04QAxIWChJUT09MX0xBTkdVQUdFX0pTT04QBBIcChhUT09MX0xBTkdVQUdFX1RZUEVTQ1JJUFQQBSqAAQoMRGlmZkxpbmVLaW5kEh4KGkRJRkZfTElORV9LSU5EX1VOU1BFQ0lGSUVEEAASGgoWRElGRl9MSU5FX0tJTkRfQ09OVEVYVBABEhoKFkRJRkZfTElORV9LSU5EX1JFTU9WRUQQAhIYChRESUZGX0xJTkVfS0lORF9BRERFRBADKoYBCg5TdWJBZ2VudFN0YXR1cxIgChxTVUJfQUdFTlRfU1RBVFVTX1VOU1BFQ0lGSUVEEAASHAoYU1VCX0FHRU5UX1NUQVRVU19SVU5OSU5HEAESGQoVU1VCX0FHRU5UX1NUQVRVU19JRExFEAISGQoVU1VCX0FHRU5UX1NUQVRVU19ET05FEANiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_empty, file_google_protobuf_timestamp]);
+  fileDesc("Cid0aGVtaXMvd29ya2JlbmNoL21vZGVscy93b3JrYmVuY2gucHJvdG8SIXRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaCIZCglOYXJyYXRpb24SDAoEdGV4dBgBIAEoCSIuCgpUb29sUmVzdWx0Eg4KBm91dHB1dBgBIAEoCRIQCghpc19lcnJvchgCIAEoCCJXCghEaWZmTGluZRI9CgRraW5kGAEgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lS2luZBIMCgR0ZXh0GAIgASgJIvYBCghUb29sQ2FsbBIMCgRuYW1lGAEgASgJEg4KBmludGVudBgCIAEoCRIPCgdjb21tYW5kGAMgASgJEj0KBnJlc3VsdBgEIAEoCzItLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Ub29sUmVzdWx0EkEKCGxhbmd1YWdlGAUgASgOMi8udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xMYW5ndWFnZRI5CgRkaWZmGAYgAygLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkRpZmZMaW5lIlcKB1JlZnVzYWwSFQoIY2F0ZWdvcnkYASABKAlIAIgBARIYCgtleHBsYW5hdGlvbhgCIAEoCUgBiAEBQgsKCV9jYXRlZ29yeUIOCgxfZXhwbGFuYXRpb24iogEKCFN1YkFnZW50EhEKCXRocmVhZF9pZBgBIAEoCRJBCgZzdGF0dXMYAiABKA4yMS50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guU3ViQWdlbnRTdGF0dXMSEwoGcHJvbXB0GAMgASgJSACIAQESFAoHc3VtbWFyeRgEIAEoCUgBiAEBQgkKB19wcm9tcHRCCgoIX3N1bW1hcnkingMKEUNvbnZlcnNhdGlvbkV2ZW50EgoKAmlkGAEgASgJEi8KC29jY3VycmVkX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJBCglhc3Npc3RhbnQYAiABKAsyLC50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guTmFycmF0aW9uSAASPAoEdXNlchgDIAEoCzIsLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5OYXJyYXRpb25IABI7CgR0b29sGAQgASgLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlRvb2xDYWxsSAASQAoJc3ViX2FnZW50GAYgASgLMisudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlN1YkFnZW50SAASPQoHcmVmdXNhbBgHIAEoCzIqLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5SZWZ1c2FsSABCDQoEa2luZBIFukgCCAEiIwoHUHJvamVjdBIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJIqQDChtWYXJpYW50Q2xhc3NpZmljYXRpb25JbnB1dHMSfgoKdHJhbnNjcmlwdBgBIAEoCUJqukhnugFfChR0cmFuc2NyaXB0Lm5vbl9ibGFuaxIydHJhbnNjcmlwdCBtdXN0IGNvbnRhaW4gYSBub24td2hpdGVzcGFjZSBjaGFyYWN0ZXIaE3RoaXMubWF0Y2hlcygnXFxTJylyAxj/ARJyCgZoZ3ZzX2MYAiABKAlCYrpIX7oBVwoQaGd2c19jLm5vbl9ibGFuaxIuaGd2c19jIG11c3QgY29udGFpbiBhIG5vbi13aGl0ZXNwYWNlIGNoYXJhY3RlchoTdGhpcy5tYXRjaGVzKCdcXFMnKXIDGP8BEpABChBjbGluaWNhbF9jb250ZXh0GAMgASgJQna6SHO6AWsKGmNsaW5pY2FsX2NvbnRleHQubm9uX2JsYW5rEjhjbGluaWNhbF9jb250ZXh0IG11c3QgY29udGFpbiBhIG5vbi13aGl0ZXNwYWNlIGNoYXJhY3RlchoTdGhpcy5tYXRjaGVzKCdcXFMnKXIDGJBOIoQBCg5GcmVlRm9ybUlucHV0cxJyCgZwcm9tcHQYASABKAlCYrpIX7oBVwoQcHJvbXB0Lm5vbl9ibGFuaxIucHJvbXB0IG11c3QgY29udGFpbiBhIG5vbi13aGl0ZXNwYWNlIGNoYXJhY3RlchoTdGhpcy5tYXRjaGVzKCdcXFMnKXIDGJBOIs0BCg5BbmFseXNpc0lucHV0cxJgChZ2YXJpYW50X2NsYXNzaWZpY2F0aW9uGAEgASgLMj4udGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLlZhcmlhbnRDbGFzc2lmaWNhdGlvbklucHV0c0gAEkYKCWZyZWVfZm9ybRgCIAEoCzIxLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5GcmVlRm9ybUlucHV0c0gAQhEKCHNjZW5hcmlvEgW6SAIIASLHAQoIQW5hbHlzaXMSCgoCaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRISCgpwcm9qZWN0X2lkGAMgASgJEi4KCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEkkKBmlucHV0cxgGIAEoCzIxLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5BbmFseXNpc0lucHV0c0IGukgDyAEBSgQIBBAFUgZwcm9tcHQijQEKFUNyZWF0ZUFuYWx5c2lzUmVxdWVzdBIbCgpwcm9qZWN0X2lkGAIgASgJQge6SARyAhABEkkKBmlucHV0cxgDIAEoCzIxLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5BbmFseXNpc0lucHV0c0IGukgDyAEBSgQIARACUgZwcm9tcHQiJAoWQ3JlYXRlQW5hbHlzaXNSZXNwb25zZRIKCgJpZBgBIAEoCSIyChNMaXN0QW5hbHlzZXNSZXF1ZXN0EhsKCnByb2plY3RfaWQYASABKAlCB7pIBHICEAEiVQoUTGlzdEFuYWx5c2VzUmVzcG9uc2USPQoIYW5hbHlzZXMYASADKAsyKy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guQW5hbHlzaXMiFQoTTGlzdFByb2plY3RzUmVxdWVzdCJUChRMaXN0UHJvamVjdHNSZXNwb25zZRI8Cghwcm9qZWN0cxgBIAMoCzIqLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Qcm9qZWN0IisKC1BvbGxSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABIsQBCgxQb2xsUmVzcG9uc2USRAoGZXZlbnRzGAEgAygLMjQudGhlbWlzLndvcmtiZW5jaC5tb2RlbHMud29ya2JlbmNoLkNvbnZlcnNhdGlvbkV2ZW50Ek4KDXdvcmtzcGFjZV90aXAYAyABKAsyLy50aGVtaXMud29ya2JlbmNoLm1vZGVscy53b3JrYmVuY2guV29ya3NwYWNlVGlwQga6SAPIAQFKBAgCEANSGHdvcmtpbmdfZG9jdW1lbnRfdmVyc2lvbiLOAQoMV29ya3NwYWNlVGlwEicKBmNvbW1pdBgBIAEoCUIVukgSchAyDl5bMC05YS1mXXs0MH0kSAASKwoJbm9fY29tbWl0GAIgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SAASLQoLdW5hdmFpbGFibGUYAyABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIABIpCgdkYW1hZ2VkGAQgASgLMhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5SABCDgoFc3RhdGUSBbpIAggBIkkKDVRocmVhZFJlcXVlc3QSHAoLYW5hbHlzaXNfaWQYASABKAlCB7pIBHICEAESGgoJdGhyZWFkX2lkGAIgASgJQge6SARyAhABIlYKDlRocmVhZFJlc3BvbnNlEkQKBmV2ZW50cxgBIAMoCzI0LnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Db252ZXJzYXRpb25FdmVudCKaAQoMU3RlZXJSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABEmwKBHRleHQYAiABKAlCXrpIW7oBUwoOdGV4dC5ub25fYmxhbmsSLHRleHQgbXVzdCBjb250YWluIGEgbm9uLXdoaXRlc3BhY2UgY2hhcmFjdGVyGhN0aGlzLm1hdGNoZXMoJ1xcUycpcgMYkE4iDwoNU3RlZXJSZXNwb25zZSIwChBJbnRlcnJ1cHRSZXF1ZXN0EhwKC2FuYWx5c2lzX2lkGAEgASgJQge6SARyAhABIhMKEUludGVycnVwdFJlc3BvbnNlIj0KD1dvcmtpbmdEb2N1bWVudBIYCgd2ZXJzaW9uGAEgASgFQge6SAQaAigBEhAKCG1hcmtkb3duGAIgASgJIloKD0RvY3VtZW50UmVxdWVzdBIcCgthbmFseXNpc19pZBgBIAEoCUIHukgEcgIQARIdCgd2ZXJzaW9uGAIgASgFQge6SAQaAigBSACIAQFCCgoIX3ZlcnNpb24iWAoQRG9jdW1lbnRSZXNwb25zZRJECghkb2N1bWVudBgBIAEoCzIyLnRoZW1pcy53b3JrYmVuY2gubW9kZWxzLndvcmtiZW5jaC5Xb3JraW5nRG9jdW1lbnQqsgEKDFRvb2xMYW5ndWFnZRIdChlUT09MX0xBTkdVQUdFX1VOU1BFQ0lGSUVEEAASGAoUVE9PTF9MQU5HVUFHRV9QWVRIT04QARIXChNUT09MX0xBTkdVQUdFX1NIRUxMEAISGgoWVE9PTF9MQU5HVUFHRV9NQVJLRE9XThADEhYKElRPT0xfTEFOR1VBR0VfSlNPThAEEhwKGFRPT0xfTEFOR1VBR0VfVFlQRVNDUklQVBAFKoABCgxEaWZmTGluZUtpbmQSHgoaRElGRl9MSU5FX0tJTkRfVU5TUEVDSUZJRUQQABIaChZESUZGX0xJTkVfS0lORF9DT05URVhUEAESGgoWRElGRl9MSU5FX0tJTkRfUkVNT1ZFRBACEhgKFERJRkZfTElORV9LSU5EX0FEREVEEAMqpAEKDlN1YkFnZW50U3RhdHVzEiAKHFNVQl9BR0VOVF9TVEFUVVNfVU5TUEVDSUZJRUQQABIcChhTVUJfQUdFTlRfU1RBVFVTX1JVTk5JTkcQARIZChVTVUJfQUdFTlRfU1RBVFVTX0lETEUQAhIZChVTVUJfQUdFTlRfU1RBVFVTX0RPTkUQAxIcChhTVUJfQUdFTlRfU1RBVFVTX1JFRlVTRUQQBGIGcHJvdG8z", [file_buf_validate_validate, file_google_protobuf_empty, file_google_protobuf_timestamp]);
 
 /**
  * An agent (coordinator or sub-agent) narration turn, or a user kickoff/steer turn: a GitHub-flavoured
@@ -148,6 +148,35 @@ export const ToolCallSchema: GenMessage<ToolCall> = /*@__PURE__*/
   messageDesc(file_themis_workbench_models_workbench, 3);
 
 /**
+ * A turn that ended because the model's response was refused under Anthropic's Usage Policy — one
+ * line of the stream of the thread that refused, where the turn stopped. Both fields are upstream's
+ * and absent where upstream reports none. `category` is the policy category verbatim (`cyber`,
+ * `bio`, …): upstream adds values over time, so it is an open string rather than an enum this build
+ * would have to know. `explanation` is prose for a reader, never parsed. (conversation-view.md, "A
+ * refused turn is a line of its own".)
+ *
+ * @generated from message themis.workbench.models.workbench.Refusal
+ */
+export type Refusal = Message<"themis.workbench.models.workbench.Refusal"> & {
+  /**
+   * @generated from field: optional string category = 1;
+   */
+  category?: string | undefined;
+
+  /**
+   * @generated from field: optional string explanation = 2;
+   */
+  explanation?: string | undefined;
+};
+
+/**
+ * Describes the message themis.workbench.models.workbench.Refusal.
+ * Use `create(RefusalSchema)` to create a new message.
+ */
+export const RefusalSchema: GenMessage<Refusal> = /*@__PURE__*/
+  messageDesc(file_themis_workbench_models_workbench, 4);
+
+/**
  * A thread the coordinator spawned, folded to one line of the stream: `prompt`, the coordinator's
  * first message to it; `summary`, the last message it returned; and where it stands. Each text is
  * absent until it lands, never empty — an empty string means a message that carried no text block,
@@ -184,7 +213,7 @@ export type SubAgent = Message<"themis.workbench.models.workbench.SubAgent"> & {
  * Use `create(SubAgentSchema)` to create a new message.
  */
 export const SubAgentSchema: GenMessage<SubAgent> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 4);
+  messageDesc(file_themis_workbench_models_workbench, 5);
 
 /**
  * One line of the projected conversation stream. A oneof over its variants, so kind-iff-payload is
@@ -193,7 +222,7 @@ export const SubAgentSchema: GenMessage<SubAgent> = /*@__PURE__*/
  * listing's relative order kept between equal stamps; an event upstream left unstamped inherits the
  * stamp before it, or the first stamp after it where the unstamped run leads the stream. There is
  * no per-turn agent attribution; the `sub_agent` card is the attribution. A thinking variant is
- * deferred. (conversation-view.md, "The stream carries four kinds of line, ordered by their
+ * deferred. (conversation-view.md, "The stream carries five kinds of line, ordered by their
  * stamps".)
  *
  * @generated from message themis.workbench.models.workbench.ConversationEvent
@@ -236,6 +265,12 @@ export type ConversationEvent = Message<"themis.workbench.models.workbench.Conve
      */
     value: SubAgent;
     case: "subAgent";
+  } | {
+    /**
+     * @generated from field: themis.workbench.models.workbench.Refusal refusal = 7;
+     */
+    value: Refusal;
+    case: "refusal";
   } | { case: undefined; value?: undefined };
 };
 
@@ -244,7 +279,7 @@ export type ConversationEvent = Message<"themis.workbench.models.workbench.Conve
  * Use `create(ConversationEventSchema)` to create a new message.
  */
 export const ConversationEventSchema: GenMessage<ConversationEvent> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 5);
+  messageDesc(file_themis_workbench_models_workbench, 6);
 
 /**
  * A Project the user belongs to — the access/data boundary an Analysis is bound to (GLOSSARY).
@@ -268,7 +303,7 @@ export type Project = Message<"themis.workbench.models.workbench.Project"> & {
  * Use `create(ProjectSchema)` to create a new message.
  */
 export const ProjectSchema: GenMessage<Project> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 6);
+  messageDesc(file_themis_workbench_models_workbench, 7);
 
 /**
  * The inputs of a variant-classification Analysis: which variant, on which transcript, in what
@@ -303,7 +338,7 @@ export type VariantClassificationInputs = Message<"themis.workbench.models.workb
  * Use `create(VariantClassificationInputsSchema)` to create a new message.
  */
 export const VariantClassificationInputsSchema: GenMessage<VariantClassificationInputs> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 7);
+  messageDesc(file_themis_workbench_models_workbench, 8);
 
 /**
  * The inputs of an Analysis a curator states in their own words — the scenario for work no structured
@@ -323,7 +358,7 @@ export type FreeFormInputs = Message<"themis.workbench.models.workbench.FreeForm
  * Use `create(FreeFormInputsSchema)` to create a new message.
  */
 export const FreeFormInputsSchema: GenMessage<FreeFormInputs> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 8);
+  messageDesc(file_themis_workbench_models_workbench, 9);
 
 /**
  * What an Analysis was asked to do: the scenario, and the inputs that scenario takes. Exactly one
@@ -356,7 +391,7 @@ export type AnalysisInputs = Message<"themis.workbench.models.workbench.Analysis
  * Use `create(AnalysisInputsSchema)` to create a new message.
  */
 export const AnalysisInputsSchema: GenMessage<AnalysisInputs> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 9);
+  messageDesc(file_themis_workbench_models_workbench, 10);
 
 /**
  * An Analysis: a collaborative working session bound to a Project (GLOSSARY). `session_id` is the
@@ -397,7 +432,7 @@ export type Analysis = Message<"themis.workbench.models.workbench.Analysis"> & {
  * Use `create(AnalysisSchema)` to create a new message.
  */
 export const AnalysisSchema: GenMessage<Analysis> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 10);
+  messageDesc(file_themis_workbench_models_workbench, 11);
 
 /**
  * The create request: the scenario inputs to run, and the Project the analysis lands in. Inputs
@@ -423,7 +458,7 @@ export type CreateAnalysisRequest = Message<"themis.workbench.models.workbench.C
  * Use `create(CreateAnalysisRequestSchema)` to create a new message.
  */
 export const CreateAnalysisRequestSchema: GenMessage<CreateAnalysisRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 11);
+  messageDesc(file_themis_workbench_models_workbench, 12);
 
 /**
  * The create reply: the minted analysis id, which the client puts in the URL.
@@ -442,7 +477,7 @@ export type CreateAnalysisResponse = Message<"themis.workbench.models.workbench.
  * Use `create(CreateAnalysisResponseSchema)` to create a new message.
  */
 export const CreateAnalysisResponseSchema: GenMessage<CreateAnalysisResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 12);
+  messageDesc(file_themis_workbench_models_workbench, 13);
 
 /**
  * The Project whose Analyses to list.
@@ -461,7 +496,7 @@ export type ListAnalysesRequest = Message<"themis.workbench.models.workbench.Lis
  * Use `create(ListAnalysesRequestSchema)` to create a new message.
  */
 export const ListAnalysesRequestSchema: GenMessage<ListAnalysesRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 13);
+  messageDesc(file_themis_workbench_models_workbench, 14);
 
 /**
  * The prior Analyses the session browser lists, newest first.
@@ -480,7 +515,7 @@ export type ListAnalysesResponse = Message<"themis.workbench.models.workbench.Li
  * Use `create(ListAnalysesResponseSchema)` to create a new message.
  */
 export const ListAnalysesResponseSchema: GenMessage<ListAnalysesResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 14);
+  messageDesc(file_themis_workbench_models_workbench, 15);
 
 /**
  * The request for the caller's Projects. Empty: the caller is the verified identity on the request,
@@ -496,7 +531,7 @@ export type ListProjectsRequest = Message<"themis.workbench.models.workbench.Lis
  * Use `create(ListProjectsRequestSchema)` to create a new message.
  */
 export const ListProjectsRequestSchema: GenMessage<ListProjectsRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 15);
+  messageDesc(file_themis_workbench_models_workbench, 16);
 
 /**
  * The Projects the user belongs to — the app-bar's Project selector.
@@ -515,7 +550,7 @@ export type ListProjectsResponse = Message<"themis.workbench.models.workbench.Li
  * Use `create(ListProjectsResponseSchema)` to create a new message.
  */
 export const ListProjectsResponseSchema: GenMessage<ListProjectsResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 16);
+  messageDesc(file_themis_workbench_models_workbench, 17);
 
 /**
  * The Analysis to poll.
@@ -534,7 +569,7 @@ export type PollRequest = Message<"themis.workbench.models.workbench.PollRequest
  * Use `create(PollRequestSchema)` to create a new message.
  */
 export const PollRequestSchema: GenMessage<PollRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 17);
+  messageDesc(file_themis_workbench_models_workbench, 18);
 
 /**
  * One poll tick. `events` is the whole projected stream every tick: replace by id, never append.
@@ -562,7 +597,7 @@ export type PollResponse = Message<"themis.workbench.models.workbench.PollRespon
  * Use `create(PollResponseSchema)` to create a new message.
  */
 export const PollResponseSchema: GenMessage<PollResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 18);
+  messageDesc(file_themis_workbench_models_workbench, 19);
 
 /**
  * Where a Poll found the workspace's collaborative branch. Exactly one member is set: read the state
@@ -618,7 +653,7 @@ export type WorkspaceTip = Message<"themis.workbench.models.workbench.WorkspaceT
  * Use `create(WorkspaceTipSchema)` to create a new message.
  */
 export const WorkspaceTipSchema: GenMessage<WorkspaceTip> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 19);
+  messageDesc(file_themis_workbench_models_workbench, 20);
 
 /**
  * The spawned thread whose own conversation to fetch. No field names a session: it is read off the
@@ -644,7 +679,7 @@ export type ThreadRequest = Message<"themis.workbench.models.workbench.ThreadReq
  * Use `create(ThreadRequestSchema)` to create a new message.
  */
 export const ThreadRequestSchema: GenMessage<ThreadRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 20);
+  messageDesc(file_themis_workbench_models_workbench, 21);
 
 /**
  * A spawned thread's own stream, in the same projection the coordinator's is in: the coordinator's
@@ -666,7 +701,7 @@ export type ThreadResponse = Message<"themis.workbench.models.workbench.ThreadRe
  * Use `create(ThreadResponseSchema)` to create a new message.
  */
 export const ThreadResponseSchema: GenMessage<ThreadResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 21);
+  messageDesc(file_themis_workbench_models_workbench, 22);
 
 /**
  * A curator turn appended to a running Analysis — an answer, a correction, a constraint the run must
@@ -693,7 +728,7 @@ export type SteerRequest = Message<"themis.workbench.models.workbench.SteerReque
  * Use `create(SteerRequestSchema)` to create a new message.
  */
 export const SteerRequestSchema: GenMessage<SteerRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 22);
+  messageDesc(file_themis_workbench_models_workbench, 23);
 
 /**
  * The steer reply. Empty: the turn is accepted, and the poll is what surfaces it and whatever the
@@ -709,7 +744,7 @@ export type SteerResponse = Message<"themis.workbench.models.workbench.SteerResp
  * Use `create(SteerResponseSchema)` to create a new message.
  */
 export const SteerResponseSchema: GenMessage<SteerResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 23);
+  messageDesc(file_themis_workbench_models_workbench, 24);
 
 /**
  * Halt the Analysis's current step: the run stops what it is doing and goes idle, ready for the
@@ -730,7 +765,7 @@ export type InterruptRequest = Message<"themis.workbench.models.workbench.Interr
  * Use `create(InterruptRequestSchema)` to create a new message.
  */
 export const InterruptRequestSchema: GenMessage<InterruptRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 24);
+  messageDesc(file_themis_workbench_models_workbench, 25);
 
 /**
  * The interrupt reply. Empty: the poll is what surfaces the halted step.
@@ -745,7 +780,7 @@ export type InterruptResponse = Message<"themis.workbench.models.workbench.Inter
  * Use `create(InterruptResponseSchema)` to create a new message.
  */
 export const InterruptResponseSchema: GenMessage<InterruptResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 25);
+  messageDesc(file_themis_workbench_models_workbench, 26);
 
 /**
  * A produced working document: its version and markdown body.
@@ -769,7 +804,7 @@ export type WorkingDocument = Message<"themis.workbench.models.workbench.Working
  * Use `create(WorkingDocumentSchema)` to create a new message.
  */
 export const WorkingDocumentSchema: GenMessage<WorkingDocument> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 26);
+  messageDesc(file_themis_workbench_models_workbench, 27);
 
 /**
  * The working document to fetch. `version` absent asks for the current document; naming a version
@@ -794,7 +829,7 @@ export type DocumentRequest = Message<"themis.workbench.models.workbench.Documen
  * Use `create(DocumentRequestSchema)` to create a new message.
  */
 export const DocumentRequestSchema: GenMessage<DocumentRequest> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 27);
+  messageDesc(file_themis_workbench_models_workbench, 28);
 
 /**
  * The working document as a produced/not-produced result. `document` unset is the not-produced
@@ -814,7 +849,7 @@ export type DocumentResponse = Message<"themis.workbench.models.workbench.Docume
  * Use `create(DocumentResponseSchema)` to create a new message.
  */
 export const DocumentResponseSchema: GenMessage<DocumentResponse> = /*@__PURE__*/
-  messageDesc(file_themis_workbench_models_workbench, 28);
+  messageDesc(file_themis_workbench_models_workbench, 29);
 
 /**
  * The syntax a tool call's `command` is written in. UNSPECIFIED where that text is not one lexable
@@ -897,8 +932,10 @@ export const DiffLineKindSchema: GenEnum<DiffLineKind> = /*@__PURE__*/
 /**
  * The display state of a spawned thread. RUNNING: working, and what a thread that has reported no
  * status yet reads as. IDLE: returned to the coordinator, awaiting its next instruction. DONE:
- * finished. The projection never emits 0, but a caller can still receive it — an unknown status
- * *name* decodes to 0 under a proto3-JSON parse — and renders it as its neutral unknown state.
+ * finished. REFUSED: idle because its last response was refused under Anthropic's Usage Policy; the
+ * thread's own stream carries the `refusal` line saying why. The projection never emits 0, but a
+ * caller can still receive it — an unknown status *name* decodes to 0 under a proto3-JSON parse —
+ * and renders it as its neutral unknown state.
  *
  * @generated from enum themis.workbench.models.workbench.SubAgentStatus
  */
@@ -922,6 +959,11 @@ export enum SubAgentStatus {
    * @generated from enum value: SUB_AGENT_STATUS_DONE = 3;
    */
   DONE = 3,
+
+  /**
+   * @generated from enum value: SUB_AGENT_STATUS_REFUSED = 4;
+   */
+  REFUSED = 4,
 }
 
 /**

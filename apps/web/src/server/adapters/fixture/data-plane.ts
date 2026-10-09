@@ -30,6 +30,7 @@ import {
   initialRunState,
   interrupted,
   type RunState,
+  refusedRunState,
   SCRIPTED_STAGES,
   steered,
   threadTimeline,
@@ -53,7 +54,7 @@ interface Entry {
 
 /** Where a seeded run's reveal starts, and whether a poll advances it. A number holds
  *  the run at that many released stages (docs/design/conversation-view.md). */
-type SeedReveal = "start" | "finished" | { heldAt: number };
+type SeedReveal = "start" | "finished" | "refused" | { heldAt: number };
 
 // The prior analyses the offline navigator browses. Nothing persists across a restart, so without
 // these the Projects and Project pages render empty and neither can be tried or reviewed. `agedHours`
@@ -124,6 +125,16 @@ const SEEDS: ReadonlyArray<{
       "NM_000257.4",
       "c.1988G>A",
       "Asymptomatic 29-year-old with a father diagnosed with hypertrophic cardiomyopathy at 44; cascade testing, normal echocardiogram.",
+    ),
+  },
+  {
+    projectId: FIXTURE_PROJECT,
+    agedHours: 3,
+    reveal: "refused",
+    inputs: variantClassification(
+      "NM_000548.5",
+      "c.1832G>A",
+      "Infant with cardiac rhabdomyomas on prenatal ultrasound and three hypomelanotic macules; no family history of tuberous sclerosis.",
     ),
   },
   {
@@ -212,6 +223,8 @@ export class FixtureDataPlane implements AnalysisDataPlane {
           finishedHistory(entry.analysis),
           createdAt,
         );
+      } else if (seed.reveal === "refused") {
+        entry.run = refusedRunState();
       } else if (seed.reveal !== "start") {
         entry.run = { ...entry.run, revealed: seed.reveal.heldAt, held: true };
       }

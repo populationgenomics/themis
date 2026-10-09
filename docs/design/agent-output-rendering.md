@@ -253,6 +253,10 @@ body language         the text, unlit
 diff line kind        the line with no sign and no colour
 ```
 
+A new kind of line in the stream is the same mismatch one level up: a member of the event's oneof the build has never
+seen. The parse drops the unknown member, so the event arrives with no kind at all, and the stream draws it as a muted
+line saying this version cannot show it, rather than losing everything around it.
+
 Each of these enums reserves 0 for "unspecified". The projection always sets the sub-agent status and the diff line
 kind, so it never sends 0 for either. For the body language, 0 is an ordinary value: a body with no language, drawn
 unlit.

@@ -69,7 +69,7 @@ wrong.
 ### The surface
 
 The conversation region is a stream with a composer under it, docked to one of the main window's four edges beside the
-tab area ([`document-pane.md`](document-pane.md)). Every line of the stream is one of four kinds.
+tab area ([`document-pane.md`](document-pane.md)). Every line of the stream is one of five kinds.
 
 ```
 ┌─ conversation region ───────────────────────────────────────────┐
@@ -101,6 +101,11 @@ tab area ([`document-pane.md`](document-pane.md)). Every line of the stream is o
 │     │  Read ClinGen's validity classification for this gene.    │ ← the thread's own stream, fetched
 │     │  ▸  fetch the ClinGen gene–disease record                 │   on expand: its instruction, its
 │     │  Definitive, last evaluated 2023-06.                      │   narration, its tool rows
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ REFUSED  cyber                                            │  │ ← refusal: where a turn stopped,
+│  │ This request triggered restrictions on violative cyber …  │  │   the policy category and upstream's
+│  └───────────────────────────────────────────────────────────┘  │   explanation
 │                                                                 │
 │                       ┌───────────────────────────────────────┐ │
 │                       ┊ Also check the splice predictions.    ┊ │ ← a sent turn, echoed until the
@@ -259,13 +264,13 @@ words it itself — naming the stop control beside it — because the upstream m
 has no use for. The alert clears when a later tick shows no call in flight, or when the curator presses stop: the
 condition it asserts is a live one, and stopping is the act it asked for.
 
-### The stream carries four kinds of line, ordered by their stamps
+### The stream carries five kinds of line, ordered by their stamps
 
-A conversation event is a oneof over four variants — assistant narration, a user turn, a tool call, a sub-agent card —
-so kind-iff-payload is structural, and the client surfaces it as a tagged union rather than checking a tag against a
-payload. All agent prose — narration and a card's summary, alongside the curator's own turns — renders through the one
-markdown surface, and never as HTML ([`agent-output-rendering.md`](agent-output-rendering.md) §"Agent text never becomes
-markup or a request"); how a tool row is drawn is that doc's too.
+A conversation event is a oneof over five variants — assistant narration, a user turn, a tool call, a sub-agent card, a
+refusal — so kind-iff-payload is structural, and the client surfaces it as a tagged union rather than checking a tag
+against a payload. All agent prose — narration and a card's summary, alongside the curator's own turns — renders through
+the one markdown surface, and never as HTML ([`agent-output-rendering.md`](agent-output-rendering.md) §"Agent text never
+becomes markup or a request"); how a tool row is drawn is that doc's too.
 
 The server is what orders the stream: the projection emits events by their stamp. Leaving the sort to the client would
 mean inventing an answer for an event the log left unstamped, then disagreeing with any other consumer of the same
@@ -288,12 +293,13 @@ latest status. It places the card where that thread's *first* event landed — w
 the real stream can deliver a status before a creation event or without one at all. It stamps the card at that instant
 and never again, so the card does not slide down the stream as the thread runs.
 
-Four upstream statuses fold to three display states, which is what a curator reads on the card. **Running**: the thread
-is working, and a thread that has reported no status yet reads this way too, as does one upstream has rescheduled, a
-reschedule being a transient retry. **Idle**: the thread has returned to the coordinator and is waiting for its next
-instruction. **Done**: the thread is finished. A status this build predates renders as a neutral unknown pill rather
-than as an error ([`agent-output-rendering.md`](agent-output-rendering.md) §"A value the tab's build does not know draws
-as unknown").
+Four upstream statuses fold to four display states — idle splitting by its stop reason — which is what a curator reads
+on the card. **Running**: the thread is working, and a thread that has reported no status yet reads this way too, as
+does one upstream has rescheduled, a reschedule being a transient retry. **Idle**: the thread has returned to the
+coordinator and is waiting for its next instruction. **Refused**: the thread is idle because its last response was
+refused (§"A refused turn is a line of its own"). **Done**: the thread is finished. A status this build predates renders
+as a neutral unknown pill rather than as an error ([`agent-output-rendering.md`](agent-output-rendering.md) §"A value
+the tab's build does not know draws as unknown").
 
 Both of the card's texts — what the thread was asked, what it returned — are *absent* until they land, rather than
 empty, and the card distinguishes not-yet-asked from asked-with-no-text rather than showing a blank line.
@@ -306,6 +312,48 @@ failure.
 
 Cards spawned in one fan-out sit tighter together than unrelated neighbours do, so a delegation to several threads reads
 as one act rather than as several unconnected ones.
+
+### A refused turn is a line of its own
+
+When the model's response is refused under Anthropic's Usage Policy, the turn stops, and nothing the agent produced says
+so: the narration before it reads like any pause. The run has not failed in a way a retry fixes, and the curator is the
+one who has to act — rephrase the request, or take that part of the analysis elsewhere — so the stream draws the refusal
+where the turn stopped, with the policy category and the explanation upstream gives.
+
+Upstream marks a refused turn by the stop reason on an idle event. Every thread reports its own idles: the coordinator
+runs on the **root thread** — the thread the session starts on, which nothing creates or addresses (Appendix) — and each
+spawned thread on its own. The session as a whole also idles, but only once every one of its threads has. So one refusal
+by the coordinator can reach the log twice, or only once.
+
+The coordinator's refusal line is drawn from the root thread's idle. The session's idle is the fallback, drawing a line
+only for a refused turn no root idle reported. The two cases that decide it:
+
+```
+coordinator refused, nothing else running
+  root thread   idle, stop reason refusal     → the refusal line
+  session       idle, stop reason refusal     → the same turn: no second line
+
+coordinator refused while a sub-agent still runs
+  root thread   idle, stop reason refusal     → the refusal line
+  sub-agent     idle, stop reason end_turn    → its reply wakes the root
+  root thread   running
+                                                the session never idles on the refusal
+```
+
+The first is what a production session was observed to send. The second is why the session's idle cannot be the source:
+drawn from it alone, that refusal would never appear.
+
+A spawned thread's refusal shows in two places. On the coordinator's stream it is the card's status, so the curator sees
+which delegation stopped without expanding anything; in the thread's own stream it is a refusal line, which is where
+they read why.
+
+The stop reason alone says a turn was refused; the policy category and explanation only elaborate, and upstream may omit
+them. A refusal without them is still drawn, stating that nothing more was given.
+
+The category travels as upstream's string rather than an enum, because upstream adds categories over time and a build
+that predates one should still show it. The explanation is upstream's prose, not agent output, and renders as plain
+text: the markdown surface makes links inert, and the explanation's pointer to the refusals documentation should stay
+readable.
 
 ### A sent turn is echoed until the poll carries it
 

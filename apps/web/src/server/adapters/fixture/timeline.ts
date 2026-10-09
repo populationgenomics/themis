@@ -58,11 +58,27 @@ export interface RunState {
    *  was never halted. The stages past it never play; a call the halt caught in
    *  flight closes with an error result. */
   scriptKept: number | null;
+  /** The script ends in a refusal once both threads are working: the literature
+   *  thread's turn is refused, the frequency thread returns, and then the coordinator's
+   *  own turn is refused. */
+  refused: boolean;
 }
 
 /** A run that has revealed nothing. */
 export function initialRunState(): RunState {
-  return { revealed: 0, interjections: [], held: false, scriptKept: null };
+  return {
+    revealed: 0,
+    interjections: [],
+    held: false,
+    scriptKept: null,
+    refused: false,
+  };
+}
+
+/** A run whose script ended in a refusal, every stage of it revealed. */
+export function refusedRunState(): RunState {
+  const state = { ...initialRunState(), refused: true };
+  return { ...state, revealed: stageCount(state) };
 }
 
 /** The state after one poll tick: one more stage released. Clamped, so a finished run
@@ -114,11 +130,12 @@ export function interrupted(state: RunState): RunState {
   // so a recount against a halted arrangement would resurrect cancelled script.
   const kept = Math.min(
     scriptStagesBelow(frontier, state),
-    state.scriptKept ?? SCRIPTED_STAGES,
+    state.scriptKept ?? scriptLength(state),
   );
   // A closure this halt creates sits just past the frontier; revealing it is the
   // halt's one immediate consequence.
-  const closureCreated = state.scriptKept === null && haltClosesCall(kept);
+  const closureCreated =
+    state.scriptKept === null && haltClosesCall(kept, state);
   return {
     ...state,
     held: false,
@@ -349,7 +366,7 @@ function toolEvent(args: {
 /** How far a spawned thread has got. `spawned` is the window between the thread being
  *  created and the coordinator's instruction landing — the card has no prompt to show
  *  yet. */
-type ThreadPhase = "spawned" | "working" | "returned";
+type ThreadPhase = "spawned" | "working" | "returned" | "refused";
 
 /** One sub-agent the scripted run delegates to. The card and the body it expands to are
  *  both derived from this, so what the fan-out says and what the thread did cannot
@@ -447,6 +464,26 @@ const SUB_AGENTS: readonly ThreadScript[] = [
   },
 ];
 
+/** The card's status at each phase but `returned`, where the thread's own final status
+ *  stands. */
+const PHASE_STATUS: Readonly<Partial<Record<ThreadPhase, SubAgentStatus>>> = {
+  spawned: SubAgentStatus.RUNNING,
+  working: SubAgentStatus.RUNNING,
+  refused: SubAgentStatus.REFUSED,
+};
+
+/** What the live API reports for a turn refused under the cyber policy, mirrored
+ *  verbatim. */
+const CYBER_REFUSAL = {
+  category: "cyber",
+  explanation:
+    "This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, see https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback.",
+};
+
+function refusalEvent(id: string): EventInit {
+  return { id, kind: { case: "refusal", value: CYBER_REFUSAL } };
+}
+
 /** A sub-agent card at one phase. Re-emitted under the same id as the thread advances,
  *  so it is replaced where it first appeared rather than repeating further down. */
 function subAgentEvent(script: ThreadScript, phase: ThreadPhase): EventInit {
@@ -456,8 +493,7 @@ function subAgentEvent(script: ThreadScript, phase: ThreadPhase): EventInit {
       case: "subAgent",
       value: {
         threadId: script.threadId,
-        status:
-          phase === "returned" ? script.finalStatus : SubAgentStatus.RUNNING,
+        status: PHASE_STATUS[phase] ?? script.finalStatus,
         prompt: phase === "spawned" ? undefined : script.prompt,
         summary: phase === "returned" ? script.summary : undefined,
       },
@@ -610,14 +646,30 @@ export const FANOUT_PARTIAL_REVEAL = 5;
  *  reason the reveal counts above are. */
 const PENDING_STAGE = 6;
 
+/** How many script stages a refused run plays before its refusal stage: both threads
+ *  spawned and working. */
+const REFUSED_SCRIPT_KEPT = FANOUT_SPAWNED_REVEAL + 1;
+
+/** The stage a refused run closes on: one thread refused, its sibling returned, then
+ *  the coordinator's own refusal. */
+const REFUSAL_STAGE: Stage = {
+  documentVersion: 0,
+  events: [
+    subAgentEvent(SUB_AGENTS[0], "refused"),
+    subAgentEvent(SUB_AGENTS[1], "returned"),
+    refusalEvent("ev-refusal"),
+  ],
+};
+
 /** What the live API writes into a tool call it halts, mirrored verbatim. */
 const INTERRUPTED_RESULT =
   "Tool execution was interrupted before completion. Please retry.";
 
 /** True when the halt caught the edit in flight: the kept script ends on the
- *  mid-step window, so a closing error-result stage follows it. */
-function haltClosesCall(scriptKept: number): boolean {
-  return scriptKept === PENDING_STAGE + 1;
+ *  mid-step window, so a closing error-result stage follows it. A refused run's
+ *  script never reaches the edit. */
+function haltClosesCall(scriptKept: number, state: RunState): boolean {
+  return !state.refused && scriptKept === PENDING_STAGE + 1;
 }
 
 /** How many stages one curator turn contributes: the turn, then the agent taking it
@@ -627,12 +679,17 @@ const INTERJECTION_STAGES = 2;
 /** How many leading stages carry the kickoff — the stages no curator turn precedes. */
 const KICKOFF_STAGE = 1;
 
+/** How many stages the unhalted script has: the whole of it, or a refused run's. */
+function scriptLength(state: RunState): number {
+  return state.refused ? REFUSED_SCRIPT_KEPT + 1 : SCRIPTED_STAGES;
+}
+
 /** How many stages the run has, script plus every turn taken so far. */
 function stageCount(state: RunState): number {
   const script =
     state.scriptKept === null
-      ? SCRIPTED_STAGES
-      : state.scriptKept + (haltClosesCall(state.scriptKept) ? 1 : 0);
+      ? scriptLength(state)
+      : state.scriptKept + (haltClosesCall(state.scriptKept, state) ? 1 : 0);
   return script + state.interjections.length * INTERJECTION_STAGES;
 }
 
@@ -680,11 +737,15 @@ function firstLine(text: string): string {
  *  the halt landed; a call caught in flight closes with the halt's error result, and
  *  the stages past the halt never play. Truncation cannot orphan an interjection:
  *  every recorded `at` sits at or below the frontier the halt was taken at. */
-function scriptStages(analysis: Analysis, scriptKept: number | null): Stage[] {
-  const stages = STAGES.map((stage) => stage(analysis));
+function scriptStages(analysis: Analysis, state: RunState): Stage[] {
+  const played = STAGES.map((stage) => stage(analysis));
+  const stages = state.refused
+    ? [...played.slice(0, REFUSED_SCRIPT_KEPT), REFUSAL_STAGE]
+    : played;
+  const { scriptKept } = state;
   if (scriptKept === null) return stages;
   const kept = stages.slice(0, scriptKept);
-  if (haltClosesCall(scriptKept)) {
+  if (haltClosesCall(scriptKept, state)) {
     kept.push({
       documentVersion: 0,
       events: [editSources({ output: INTERRUPTED_RESULT, isError: true })],
@@ -697,7 +758,7 @@ function scriptStages(analysis: Analysis, scriptKept: number | null): Stage[] {
  *  it arrived. Applied oldest first; each `at` indexed the list the earlier turns had
  *  already produced, and `steered` keeps them disjoint and ascending. */
 function mergedStages(analysis: Analysis, state: RunState): Stage[] {
-  const stages = scriptStages(analysis, state.scriptKept);
+  const stages = scriptStages(analysis, state);
   state.interjections.forEach((interjection, index) => {
     stages.splice(
       Math.min(interjection.at, stages.length),
@@ -768,8 +829,14 @@ export function threadTimeline(
     narration("user", `${threadId}-instruction`, prompt),
     ...script.working,
   ];
-  const stillWorking = card.kind.value.status === SubAgentStatus.RUNNING;
-  return stamped(stillWorking ? [working] : [working, script.returned]);
+  switch (card.kind.value.status) {
+    case SubAgentStatus.RUNNING:
+      return stamped([working]);
+    case SubAgentStatus.REFUSED:
+      return stamped([working, [refusalEvent(`${threadId}-refusal`)]]);
+    default:
+      return stamped([working, script.returned]);
+  }
 }
 
 /** The markdown for a produced document version (1-based). Throws on a version the

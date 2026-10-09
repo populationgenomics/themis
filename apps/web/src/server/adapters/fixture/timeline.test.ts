@@ -21,6 +21,7 @@ import {
   initialRunState,
   interrupted,
   type RunState,
+  refusedRunState,
   SCRIPTED_STAGES,
   steered,
   threadTimeline,
@@ -282,6 +283,22 @@ describe("the run's fan-out", () => {
       expect(lengths[n]).toBeGreaterThanOrEqual(lengths[n - 1]);
     }
     expect(lengths[lengths.length - 1]).toBeGreaterThan(0);
+  });
+
+  test("a refused run ends on the coordinator's refusal, and a refused card's body on its own", () => {
+    const state = refusedRunState();
+    const { events } = timelineAt(ANALYSIS, state);
+    expect(events.at(-1)?.kind.case).toBe("refusal");
+    const refused = cards(events).filter(
+      (card) => card.status === SubAgentStatus.REFUSED,
+    );
+    expect(refused.length).toBeGreaterThan(0);
+    for (const card of refused) {
+      const body = threadTimeline(ANALYSIS, state, card.threadId);
+      expect(body?.at(-1)?.kind.case).toBe("refusal");
+    }
+    // Fully revealed: a poll releases nothing further.
+    expect(timelineAt(ANALYSIS, afterPoll(state)).events).toEqual(events);
   });
 
   test("has no body for a thread it never spawned", () => {

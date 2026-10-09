@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { oidcFederationProvider } from "@anthropic-ai/sdk/lib/credentials/oidc-federation";
 import type {
   BetaManagedAgentsSessionEvent,
+  BetaManagedAgentsSessionStatusIdleEvent,
+  BetaManagedAgentsSessionThreadStatusIdleEvent,
   EventSendParams,
 } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
@@ -21,8 +23,9 @@ import type { AnthropicConfig } from "./config";
 // session's event log — folding the raw beta events into the projected conversation
 // stream: agent message → assistant, user message → user, a tool call
 // (prebuilt `agent.tool_use` or the custom `shell` tool's `agent.custom_tool_use`)
-// → a tool event paired with its later result, and each spawned thread → one
-// sub-agent card. Stateless: `listEvents` re-pages the whole log each poll (the
+// → a tool event paired with its later result, each spawned thread → one
+// sub-agent card, and an idle whose turn was refused → a refusal line.
+// Stateless: `listEvents` re-pages the whole log each poll (the
 // events API has no replay-since cursor); the client re-projects and the caller
 // replaces by id. `listThreadEvents` pages one spawned thread's own log the same way
 // (docs/design/conversation-view.md).
@@ -179,7 +182,7 @@ export class AnthropicClient {
       }
       throw error;
     }
-    return foldThreadEvents(raw);
+    return foldThreadEvents(threadId, raw);
   }
 }
 
@@ -195,9 +198,10 @@ export function foldEvents(
 
 /** The pure projection of one spawned thread's own paged log. */
 export function foldThreadEvents(
+  threadId: string,
   raw: readonly BetaManagedAgentsSessionEvent[],
 ): ConversationEvent[] {
-  return project(raw, { kind: "thread" });
+  return project(raw, { kind: "thread", threadId });
 }
 
 /** True when the API refused an event send because the session is awaiting responses
@@ -297,13 +301,51 @@ interface ThreadFold {
 }
 
 /** The display state a thread's status event puts its card in. A rescheduled thread is
- *  retrying a transient failure, so it is still running. */
-const THREAD_STATUS: Readonly<Record<string, SubAgentStatus>> = {
-  "session.thread_status_running": SubAgentStatus.RUNNING,
-  "session.thread_status_rescheduled": SubAgentStatus.RUNNING,
-  "session.thread_status_idle": SubAgentStatus.IDLE,
-  "session.thread_status_terminated": SubAgentStatus.DONE,
-};
+ *  retrying a transient failure, so it is still running; an idle whose turn was refused
+ *  is refused, not idle. */
+function threadStatus(
+  event: Extract<
+    BetaManagedAgentsSessionEvent,
+    {
+      type:
+        | "session.thread_status_running"
+        | "session.thread_status_rescheduled"
+        | "session.thread_status_idle"
+        | "session.thread_status_terminated";
+    }
+  >,
+): SubAgentStatus {
+  switch (event.type) {
+    case "session.thread_status_running":
+    case "session.thread_status_rescheduled":
+      return SubAgentStatus.RUNNING;
+    case "session.thread_status_idle":
+      return refusalOf(event) ? SubAgentStatus.REFUSED : SubAgentStatus.IDLE;
+    case "session.thread_status_terminated":
+      return SubAgentStatus.DONE;
+  }
+}
+
+/** The refusal an idle reports, or null for an idle whose turn ended any other way.
+ *  `stop_reason` is what says the turn was refused; `stop_details` only elaborates, and
+ *  upstream may leave it null, so a refusal without it is still a refusal — one with
+ *  nothing more to say. */
+function refusalOf(
+  event:
+    | BetaManagedAgentsSessionStatusIdleEvent
+    | BetaManagedAgentsSessionThreadStatusIdleEvent,
+): RefusalInit | null {
+  // Typed as always present; a log that breaks that fails by name, not as a TypeError.
+  if (!event.stop_reason) {
+    throw new Error(`idle event ${event.id} carries no stop_reason`);
+  }
+  if (event.stop_reason.type !== "refusal") return null;
+  const details = event.stop_details;
+  return {
+    category: details?.category ?? undefined,
+    explanation: details?.explanation ?? undefined,
+  };
+}
 
 /** The threads the coordinator spawned, each with its latest status, the first
  *  instruction sent to it and the last reply returned from it. A thread is spawned iff
@@ -349,7 +391,7 @@ function scanThreads(
       case "session.thread_status_idle":
       case "session.thread_status_terminated": {
         const fold = threads.get(event.session_thread_id);
-        if (fold) fold.status = THREAD_STATUS[event.type];
+        if (fold) fold.status = threadStatus(event);
         break;
       }
       default:
@@ -364,7 +406,7 @@ function scanThreads(
  *  onto it; a thread-scope listing is one spawned thread's own. */
 type Scope =
   | { kind: "session"; threads: ReadonlyMap<string, ThreadFold> }
-  | { kind: "thread" };
+  | { kind: "thread"; threadId: string };
 
 /** The variant an event is projected to — the init shape of the oneof, less the
  *  already-built-message form the init type also admits. */
@@ -372,6 +414,8 @@ type KindInit = Extract<
   MessageInitShape<typeof ConversationEventSchema>,
   { $typeName?: undefined }
 >["kind"];
+
+type RefusalInit = Extract<KindInit, { case: "refusal" }>["value"];
 
 /** A projected event with the total, stable key the stream is ordered by: the stamp it
  *  was given, and the position it was folded at, which breaks a tie between equal
@@ -392,6 +436,9 @@ function project(
   const results = collectToolResults(raw);
   const out: Ordered[] = [];
   const carded = new Set<string>();
+  // Set by the root's refused idle until the turn after it starts, so the session's
+  // idle reporting the same refusal draws no second line.
+  let coordinatorRefusalDrawn = false;
   // An event upstream left unstamped inherits the last stamp seen, so the key stays
   // total and it sorts where it was folded.
   let ms: number | null = null;
@@ -447,12 +494,50 @@ function project(
       case "session.thread_created":
         placeCard(event.session_thread_id);
         break;
+      // A spawned thread's status is card material at session scope. The root's idle is
+      // the coordinator's own turn ending, and at thread scope the listed thread's idle
+      // is its own: either, refused, is the line saying where the turn stopped.
+      case "session.thread_status_idle": {
+        const own =
+          scope.kind === "thread"
+            ? event.session_thread_id === scope.threadId
+            : !scope.threads.has(event.session_thread_id);
+        if (!own) {
+          placeCard(event.session_thread_id);
+          break;
+        }
+        const refusal = refusalOf(event);
+        if (!refusal) break;
+        push(event.id, { case: "refusal", value: refusal });
+        if (scope.kind === "session") coordinatorRefusalDrawn = true;
+        break;
+      }
       case "session.thread_status_running":
       case "session.thread_status_rescheduled":
-      case "session.thread_status_idle":
+        if (
+          scope.kind === "session" &&
+          !scope.threads.has(event.session_thread_id)
+        ) {
+          coordinatorRefusalDrawn = false;
+        }
+        placeCard(event.session_thread_id);
+        break;
       case "session.thread_status_terminated":
         placeCard(event.session_thread_id);
         break;
+      // The session idles once every thread has, so the coordinator's refusal is
+      // usually drawn from the root's idle already; this covers a log that carries only
+      // the session's. Its other stop reasons are the run's status, which the stream
+      // does not carry.
+      case "session.status_idle": {
+        if (scope.kind !== "session") break;
+        const refusal = refusalOf(event);
+        if (refusal && !coordinatorRefusalDrawn) {
+          push(event.id, { case: "refusal", value: refusal });
+        }
+        coordinatorRefusalDrawn = false;
+        break;
+      }
       // Both shapes carry the same name + input; the custom `shell` tool arrives as
       // custom_tool_use. `result` is absent until the paired result event lands.
       case "agent.tool_use":

@@ -43,6 +43,11 @@ const STATUS: Readonly<Partial<Record<SubAgentStatus, StatusStyle>>> = {
     pill: "border-status-done-border bg-status-done-bg text-status-done-fg",
     dot: "bg-status-done-dot",
   },
+  [SubAgentStatus.REFUSED]: {
+    label: "refused",
+    pill: "border-error-border bg-error-bg text-error-text",
+    dot: "bg-error-text",
+  },
 };
 
 /** A status this build predates names no state it can draw. */

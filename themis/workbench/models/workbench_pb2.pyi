@@ -34,6 +34,7 @@ class SubAgentStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SUB_AGENT_STATUS_RUNNING: _ClassVar[SubAgentStatus]
     SUB_AGENT_STATUS_IDLE: _ClassVar[SubAgentStatus]
     SUB_AGENT_STATUS_DONE: _ClassVar[SubAgentStatus]
+    SUB_AGENT_STATUS_REFUSED: _ClassVar[SubAgentStatus]
 TOOL_LANGUAGE_UNSPECIFIED: ToolLanguage
 TOOL_LANGUAGE_PYTHON: ToolLanguage
 TOOL_LANGUAGE_SHELL: ToolLanguage
@@ -48,6 +49,7 @@ SUB_AGENT_STATUS_UNSPECIFIED: SubAgentStatus
 SUB_AGENT_STATUS_RUNNING: SubAgentStatus
 SUB_AGENT_STATUS_IDLE: SubAgentStatus
 SUB_AGENT_STATUS_DONE: SubAgentStatus
+SUB_AGENT_STATUS_REFUSED: SubAgentStatus
 
 class Narration(_message.Message):
     __slots__ = ("text",)
@@ -87,6 +89,14 @@ class ToolCall(_message.Message):
     diff: _containers.RepeatedCompositeFieldContainer[DiffLine]
     def __init__(self, name: _Optional[str] = ..., intent: _Optional[str] = ..., command: _Optional[str] = ..., result: _Optional[_Union[ToolResult, _Mapping]] = ..., language: _Optional[_Union[ToolLanguage, str]] = ..., diff: _Optional[_Iterable[_Union[DiffLine, _Mapping]]] = ...) -> None: ...
 
+class Refusal(_message.Message):
+    __slots__ = ("category", "explanation")
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    EXPLANATION_FIELD_NUMBER: _ClassVar[int]
+    category: str
+    explanation: str
+    def __init__(self, category: _Optional[str] = ..., explanation: _Optional[str] = ...) -> None: ...
+
 class SubAgent(_message.Message):
     __slots__ = ("thread_id", "status", "prompt", "summary")
     THREAD_ID_FIELD_NUMBER: _ClassVar[int]
@@ -100,20 +110,22 @@ class SubAgent(_message.Message):
     def __init__(self, thread_id: _Optional[str] = ..., status: _Optional[_Union[SubAgentStatus, str]] = ..., prompt: _Optional[str] = ..., summary: _Optional[str] = ...) -> None: ...
 
 class ConversationEvent(_message.Message):
-    __slots__ = ("id", "occurred_at", "assistant", "user", "tool", "sub_agent")
+    __slots__ = ("id", "occurred_at", "assistant", "user", "tool", "sub_agent", "refusal")
     ID_FIELD_NUMBER: _ClassVar[int]
     OCCURRED_AT_FIELD_NUMBER: _ClassVar[int]
     ASSISTANT_FIELD_NUMBER: _ClassVar[int]
     USER_FIELD_NUMBER: _ClassVar[int]
     TOOL_FIELD_NUMBER: _ClassVar[int]
     SUB_AGENT_FIELD_NUMBER: _ClassVar[int]
+    REFUSAL_FIELD_NUMBER: _ClassVar[int]
     id: str
     occurred_at: _timestamp_pb2.Timestamp
     assistant: Narration
     user: Narration
     tool: ToolCall
     sub_agent: SubAgent
-    def __init__(self, id: _Optional[str] = ..., occurred_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., assistant: _Optional[_Union[Narration, _Mapping]] = ..., user: _Optional[_Union[Narration, _Mapping]] = ..., tool: _Optional[_Union[ToolCall, _Mapping]] = ..., sub_agent: _Optional[_Union[SubAgent, _Mapping]] = ...) -> None: ...
+    refusal: Refusal
+    def __init__(self, id: _Optional[str] = ..., occurred_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., assistant: _Optional[_Union[Narration, _Mapping]] = ..., user: _Optional[_Union[Narration, _Mapping]] = ..., tool: _Optional[_Union[ToolCall, _Mapping]] = ..., sub_agent: _Optional[_Union[SubAgent, _Mapping]] = ..., refusal: _Optional[_Union[Refusal, _Mapping]] = ...) -> None: ...
 
 class Project(_message.Message):
     __slots__ = ("id", "name")

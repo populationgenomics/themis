@@ -196,9 +196,10 @@ describe("the fixture's spawned threads", () => {
       const second = await data.pollEvents(run);
       // Held ⇔ polls change nothing — content, not length: a stage may only re-emit
       // ids — short of the final document. A finished run stalls too, but with the
-      // corrected revision out.
+      // corrected revision out, and a refused one with its refusal on the stream.
       const held =
         asJson(first) === asJson(second) &&
+        !first.events.some((event) => event.kind.case === "refusal") &&
         !(await atFinalDocument(workspace, run));
       if (!held) continue;
       released += 1;

@@ -85,6 +85,15 @@ describe("a collapsed sub-agent card", () => {
     expect(header(RETURNED, true)).not.toContain("line-clamp-3");
   });
 
+  test("draws every status this build knows as a named pill", () => {
+    for (const { number } of SubAgentStatusSchema.values) {
+      if (number === SubAgentStatus.UNSPECIFIED) continue;
+      expect(header({ ...RETURNED, status: number })).not.toContain(
+        ">unknown<",
+      );
+    }
+  });
+
   test("draws a status this build predates neutrally rather than throwing", () => {
     // A tab polling on its old bundle through a deploy is handed whatever the deployed
     // BFF projects, so a status added upstream reaches this component before a pill for

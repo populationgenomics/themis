@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import type { Citation } from "@/components/workbench/markdown";
 import { Markdown } from "@/components/workbench/markdown";
+import { RefusalRow } from "@/components/workbench/refusal-row";
 import { ToolCallRow } from "@/components/workbench/tool-call-row";
 import type { ConversationEvent, SubAgent } from "@/models/workbench";
 
@@ -34,8 +35,16 @@ export function StreamItem({
       return <Markdown text={event.kind.value.text} onCitation={onCitation} />;
     case "subAgent":
       return card(event.kind.value);
+    case "refusal":
+      return <RefusalRow refusal={event.kind.value} />;
     case undefined:
-      throw new Error(`conversation event ${event.id} has no kind`);
+      // The projection always sets a kind, so an unset one is a variant this build
+      // predates: the JSON parse drops the unknown member rather than failing.
+      return (
+        <p className="font-mono text-[11px] italic text-ink-faintest">
+          a line this version of the workbench cannot show — reload to see it
+        </p>
+      );
     default:
       // `noImplicitReturns` is off, so a variant added to the oneof and left out of the
       // switch above draws nothing at all; the assignment makes that a type error too.
