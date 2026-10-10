@@ -6,10 +6,13 @@ A runtime SA and an HTTP/2 gRPC service hosting every interface of the evidence 
 configured by its own `THEMIS_<INTERFACE>_*` env vars, so a further one adds an env block and
 whatever IAM it reads, not a service.
 
-Literature (docs/design/document-pane.md) reads the litcache fulltext bucket (object-viewer,
-read-only) to resolve a paper's rendering / PDF / associated-file object and locate a quote:
-`THEMIS_LITERATURE_BACKEND=live`. It holds one Cloud SQL login, `SELECT` on `litcache.crosswalk` alone,
-to resolve an external id to a `doc_id`; the table grant is the migration's, keyed on this login.
+Literature (docs/design/document-pane.md) reads the litcache fulltext bucket to resolve a paper's
+rendering / PDF / associated-file object and locate a quote: `THEMIS_LITERATURE_BACKEND=live`. It also
+brings in a paper the corpus does not hold (docs/design/evidence-fulltext.md), its one write, so it holds
+read-write on that bucket — the convert worker's role — and `INSERT` beside `SELECT` on
+`litcache.crosswalk` for the claim that paper's ids make. The table grants are migrations', keyed on the
+one Cloud SQL login below: there `INSERT` alone is what keeps every claim unaltered, where on the bucket
+the same property is the code's.
 
 It is also the conversion lane's producer (docs/design/evidence-fulltext.md), so it carries the
 `THEMIS_LITERATURE_CONVERT_*` trio and needs two grants the lane's own component cannot make: enqueue
@@ -47,8 +50,8 @@ class EvidenceService(pulumi.ComponentResource):
     Attributes:
         service_account_email: The runtime SA's email — the `run.invoker` member on the auth service,
             and the reader of the buckets the interfaces use.
-        db_user: The runtime SA's Cloud SQL IAM DB-user login — the crosswalk `SELECT` grant's
-            subject, fed to the migrate runner as `EVIDENCE_DB_USER`.
+        db_user: The runtime SA's Cloud SQL IAM DB-user login — the subject of the crosswalk's table
+            grants, `SELECT` and `INSERT`, fed to the migrate runner as `EVIDENCE_DB_USER`.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
         url: The service's ``run.app`` URL — what a caller dials, and the audience its ID token names.
     """
@@ -84,25 +87,33 @@ class EvidenceService(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         member = pulumi.Output.concat('serviceAccount:', service_account.email)
 
-        # Read-only wherever the image only reads: literature resolves objects and locates quotes in
-        # the litcache fulltext bucket (the cache warms via ingestion); gene_disease loads the four
-        # reference dumps from the resources bucket at startup (the weekly refresh job holds the write
-        # credential).
-        for label, bucket in (
-            ('fulltext', fulltext_bucket),
-            ('resources', resources_bucket),
-        ):
-            grants.BucketObjectReader(
-                'themis-evidence',
-                member=member,
-                bucket=bucket,
-                target=label,
-                prior=grants.Prior(f'themis-evidence-{label}-object-viewer', parent=self),
-                opts=child,
-            )
+        # Read-only where the image only reads: gene_disease loads the four reference dumps from the
+        # resources bucket at startup (the weekly refresh job holds the write credential).
+        grants.BucketObjectReader(
+            'themis-evidence',
+            member=member,
+            bucket=resources_bucket,
+            target='resources',
+            prior=grants.Prior('themis-evidence-resources-object-viewer', parent=self),
+            opts=child,
+        )
 
-        # The crosswalk login and its connect roles. The table grant (SELECT only) is the
-        # 0010_litcache_crosswalk_read_grant migration, keyed on this login.
+        # Read-write on the fulltext bucket, as the convert worker holds it (`convert.py`): literature
+        # resolves objects and locates quotes there, and MaybeIngestPapers commits a manifest for a paper
+        # the corpus does not hold. GCS IAM has no prefix scope, so this reaches the whole bucket; that
+        # the ingest writes only into a `doc_id` it minted, or adopted with no manifest committed, is the
+        # code's, not the grant's (docs/design/evidence-fulltext.md).
+        grants.BucketObjectReadWriter(
+            'themis-evidence',
+            member=member,
+            bucket=fulltext_bucket,
+            role='roles/storage.objectUser',
+            target='fulltext',
+            opts=child,
+        )
+
+        # The crosswalk login and its connect roles. The table grants are migrations', keyed on this
+        # login: 0010 the SELECT the lookup reads through, 0013 the INSERT the ingest's claim makes.
         db_user = sql.iam_db_user(
             'themis-evidence',
             project=project,

@@ -171,12 +171,14 @@ chosen canonical member, recorded as an edge in the manifests. The table is the 
 is rebuildable from the manifests, and a row claimed by an ingestion that never committed its manifest is harmless — it
 reads back as a paper the store does not hold.
 
-The evidence service holds the **read half only**. `MaybeIngestPapers` looks an identifier up and claims nothing, and
-the service's database role is granted `SELECT` and no more. The distinction is not fussiness: minting *claims*, so
-minting to answer a read would hand back a fresh `doc_id` naming no manifest — permanently unresolvable — and would
-leave a crosswalk claim on someone else's DOI. The same read-only posture holds for the store itself: nothing in this
-interface writes it, and ingestion and production write under their own identities. Confining the lookup to one rpc also
-confines the interface's only relational dependency to one method; every other rpc reads the store's objects alone.
+The **lookup** claims nothing. Minting *claims*, so minting to answer a read would hand back a fresh `doc_id` naming no
+manifest — permanently unresolvable — and would leave a crosswalk claim on someone else's DOI. `MaybeIngestPapers` does
+mint, for the ids the lookup missed, but only paired with the manifest commit that makes the claim resolvable, and only
+for an id an upstream answered for ([`evidence-fulltext.md`](evidence-fulltext.md)). That is the interface's one write,
+and its two halves are held differently: the crosswalk under `INSERT` alone, which cannot re-point or remove a claim,
+and the store under read-write, where the guarantee that a committed paper is never altered is the code's, not the
+grant's. Every other rpc reads the store's objects alone, which confines the interface's only relational dependency to
+this one method.
 
 The lookup answers only for identifiers captured at ingest, so a caller holding a PMCID for a paper stored under its DOI
 and PMID misses even though the store has it. Closing that gap means resolving identifiers against one another in front

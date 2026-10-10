@@ -46,8 +46,9 @@ def test_litcache_crosswalk_read_grant_renders_and_splits_cleanly() -> None:
     grant = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'litcache_crosswalk_read_grant')
     rendered = migrate.render(grant.sql, {'EVIDENCE_DB_USER': 'themis-evidence@cpg-themis-dev.iam'})
     assert '${' not in rendered
-    # The whole grant set, so an added write privilege fails here: the read service resolves ids and
-    # never mints one, and an INSERT would claim a doc_id naming no manifest.
+    # The whole grant set this migration makes, so a privilege added *to it* fails here. The INSERT the
+    # ingest needs is 0013's: a migration the ledger has applied is hash-pinned and cannot be edited,
+    # so a further grant is a further file (`docs/design/migrations.md`).
     assert [line for line in rendered.splitlines() if line.startswith('GRANT')] == [
         'GRANT USAGE ON SCHEMA litcache TO "themis-evidence@cpg-themis-dev.iam";',
         'GRANT SELECT ON litcache.crosswalk TO "themis-evidence@cpg-themis-dev.iam";',
