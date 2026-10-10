@@ -30,7 +30,7 @@ jobs:
           enable-cache: true
       # Bun + apps/web deps: the protobuf-es pass uses the app's local protoc-gen-es plugin.
       - uses: ./.github/actions/setup-web
-      - run: uv run --group codegen python -m tools.schema.regen
+      - run: uv run --group codegen --python 3.13 python -m tools.schema.regen
       # The committed artifacts must equal what the orchestrator just produced.
       # `git add -A` stages edits, new files, and deletions; a non-empty staged
       # diff means a .proto (or a tool) changed without regenerating.
@@ -38,6 +38,6 @@ jobs:
         run: |-
           git add -A
           if ! git diff --cached --exit-code; then
-            echo "::error::Schema artifacts are stale. Run 'bun install --cwd apps/web && uv run --group codegen python -m tools.schema.regen' and commit the result."
+            echo "::error::Schema artifacts are stale. Run 'bun install --cwd apps/web && uv run --group codegen --python 3.13 python -m tools.schema.regen' and commit the result."
             exit 1
           fi

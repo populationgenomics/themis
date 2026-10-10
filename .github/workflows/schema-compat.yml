@@ -40,4 +40,4 @@ jobs:
           else
             echo "ref=HEAD^" >> "$GITHUB_OUTPUT"
           fi
-      - run: uv run --locked --no-default-groups --group schema_compat python -m tools.schema.buf_compat --baseline-ref "${{ steps.baseline.outputs.ref }}"
+      - run: uv run --locked --no-default-groups --group schema_compat --python 3.13 python -m tools.schema.buf_compat --baseline-ref "${{ steps.baseline.outputs.ref }}"
