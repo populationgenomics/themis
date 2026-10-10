@@ -35,7 +35,7 @@ from apache_beam.utils import shared
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
-from themis.litcache import crosswalk, ingest_beam, pipeline
+from themis.litcache import crosswalk, identity, ingest_beam, pipeline
 from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).parent.parent / 'fixtures' / 'litcache'
@@ -134,6 +134,16 @@ def test_pair_seed_keys_ignores_keys_outside_the_prefix() -> None:
 
     assert [r.bucket_key for r in pairing.refs] == ['a.json']
     assert pairing.unpaired == []
+
+
+def test_seeds_sharing_a_claim_key_but_not_a_pmid_resolve_apart() -> None:
+    by_doi = identity.determine_identity('10.1%2Fabc.json', identity.DoclingOrigin(filename=None, binary_hash=None))
+    by_pmid = identity.determine_identity(
+        '30000001.json', identity.DoclingOrigin(filename='10.1%2Fabc.pdf', binary_hash=None)
+    )
+    assert by_doi.claim_key == by_pmid.claim_key
+
+    assert ingest_beam._resolve_request(by_doi).join_key != ingest_beam._resolve_request(by_pmid).join_key
 
 
 def test_build_pipeline_rejects_non_positive_limit() -> None:
@@ -543,6 +553,49 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
 
 
 _BOOK_PMID = '30000010'
+
+
+def _unresolvable_with_efetch_transport() -> httpx2.MockTransport:
+    """The unresolvable transport, with efetch answering every PMID with an empty set."""
+    unresolvable = _unresolvable_transport()
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if 'efetch' in request.url.path:
+            return httpx2.Response(200, content=b'<?xml version="1.0"?><PubmedArticleSet></PubmedArticleSet>')
+        return unresolvable.handle_request(request)
+
+    return httpx2.MockTransport(handler)
+
+
+def test_seeds_sharing_a_claim_key_are_dead_lettered_apart(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    token = request.node.name
+    docling = json.loads((_NONOA / 'docling.json').read_bytes())
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.ghost.json').upload_from_string(json.dumps(docling))
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.ghost.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    # Keyed by a PMID, and naming the first seed's DOI in its Docling origin: the same claim key.
+    docling['origin']['filename'] = '10.5555%2Fsynthetic.ghost.pdf'
+    gcs_bucket.blob('ingest/30000009.json').upload_from_string(json.dumps(docling))
+    gcs_bucket.blob('ingest/30000009.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _BUCKETS[token] = gcs_bucket
+    try:
+        with test_pipeline.TestPipeline(options=_options()) as root:
+            ingest_beam.build_pipeline(
+                root,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=_forbidden_conn,
+                licence=_licence(),
+                now=_NOW,
+                fetchers_factory=_no_fetchers,
+                transport_factory=_unresolvable_with_efetch_transport,
+            )
+
+        records = _dead_letters(gcs_bucket)
+        assert sorted(str(r['key']) for r in records) == ['10.5555%2Fsynthetic.ghost.json', '30000009.json']
+        assert {r['claim_key'] for r in records} == {'doi:10.5555/synthetic.ghost'}
+    finally:
+        _BUCKETS.pop(token, None)
 
 
 def _precondition_failing_efetch_transport() -> httpx2.MockTransport:

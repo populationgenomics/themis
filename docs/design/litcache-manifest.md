@@ -323,13 +323,34 @@ anything in the directory, so re-deriving it refreshes the bibliographic record 
 Which changes that refresh serves, and which need the corpus rebuilt, is decided with the record
 ([The bibliographic record](#the-bibliographic-record-metadatapb)).
 
+The obvious place to write `metadata.pb` is with the other objects, before the manifest commits, so that a reader never
+finds a manifest without its record. That order is safe for the content-addressed objects because each is named by its
+content: two writers storing the same bytes produce one object, and two storing different bytes produce two.
+`metadata.pb` is named by the `doc_id` alone, and two seeds reach the same `doc_id` when they share an identifier. Say
+one seed is keyed by a DOI, and a second seed, keyed by the PMID of a different paper, names that DOI in its Docling
+origin by mistake. The crosswalk gives both one `doc_id`. Resolution is keyed by the identifiers each seed carries
+rather than by the DOI they share, so the second seed gets its PMID's PubMed record. If both writers pass the manifest
+check before either commits, the create-only commit stops the second manifest but not the second record, and whichever
+manifest commits can end up beside the other seed's record with nothing to notice it.
+
+So `metadata.pb` is written after the commit, and only from a record of the paper the manifest describes. The writer
+whose commit wins writes it straight away. Any other writer that finds the manifest committed, by the manifest check or
+by losing the commit, writes the record only when the paper is missing one and the ids its seed claimed are the ones the
+manifest records, since only then is its record the one a metadata refresh would resolve. That check covers the loser
+that is really the winner, too: a commit whose response is lost is retried by the storage client and fails as if another
+writer had won. Whichever of the two seeds above loses claims ids the other's manifest does not record, so it writes
+nothing.
+
+The cost is a window in which a committed paper has no record, a state the reader already handles by titling the paper
+with its DOI or PMID. If the writer stops inside that window, the record stays missing until the paper is next ingested,
+and a metadata refresh fills any paper still missing its record.
+
 ## The bibliographic record: `metadata.pb`
 
 Beside `manifest.pb`, at the paper's root rather than under a content hash, sits `metadata.pb`: the paper's bibliography
 — title, authors, journal, abstract, the identifiers its index lists. The manifest says what we hold of a paper and
-under what terms; `metadata.pb` says what the paper is. It is write-once and regenerated wholesale from its source,
-never edited in place ([`proto.md`](proto.md), bucket 1). This section decides what the record is, and how a reader
-tells.
+under what terms; `metadata.pb` says what the paper is. It is regenerated wholesale from its source, never edited in
+place ([`proto.md`](proto.md), bucket 1). This section decides what the record is, and how a reader tells.
 
 **The record is kept whole, in the schema its index publishes.** A paper's metadata is stored as the record its index
 published, in that index's own schema, rather than as a subset of its fields chosen at write time. A subset carries only

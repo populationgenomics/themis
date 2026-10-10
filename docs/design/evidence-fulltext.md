@@ -30,9 +30,9 @@ literature interface serves one canonical one ([`literature-evidence-layer.md`](
 **full-text store** this lane reads and writes is the same single bucket that interface serves papers from; this doc is
 the writing side of it.
 
-**Why a paper can lack text.** The bulk ingestion pipeline writes a paper's directory and commits its manifest last,
-with whatever renderings it produced already in it — so a paper it finished is servable the moment it exists. What it
-cannot finish is the rest: a paper whose only source is a PDF, including every paper a human deposited under their own
+**Why a paper can lack text.** The bulk ingestion pipeline writes a paper's directory and commits its manifest only
+after writing whatever renderings it produced — so a paper it finished is servable the moment it exists. What it cannot
+finish is the rest: a paper whose only source is a PDF, including every paper a human deposited under their own
 institutional access. Those are real, and a caller must be able to tell them from a paper that is simply absent.
 
 **The two production routes**, which differ by orders of magnitude in cost but not in shape:

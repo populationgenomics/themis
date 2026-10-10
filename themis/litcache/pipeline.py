@@ -5,7 +5,8 @@ between them (the runtime wrapper, `themis.litcache.ingest_beam`, wires the batc
 
 - `extract_identity` — the local, network-free first half: classify identity
   (`themis.litcache.identity`) from the seed's docling origin + embedded pdf DOI. Its
-  `claim_key` is the key the batched resolution and the write half join on.
+  `claim_key`, with its PMID and DOI, keys the batched resolution the write half joins
+  on.
 - `ingest_paper` — the write half, given the paper's pre-resolved metadata: claim a
   `doc_id` (`themis.litcache.crosswalk`) → skip if the manifest already exists →
   fetch the OA body (`themis.litcache.oa`) → convert (`themis.litcache.convert`) →
@@ -137,8 +138,7 @@ def extract_identity(seed: SeedObject) -> identity.Identity:
     otherwise content-addressed deposit), never overriding or competing with an
     explicit id — publisher-populated pdf metadata is not reliable enough to override
     what a deposit explicitly declares. No network or database: identity is a pure
-    function of the seed, and its `claim_key` is the key batched resolution and
-    `ingest_paper` join on.
+    function of the seed.
 
     Args:
         seed: The paper's seed bytes (`bucket_key`, docling json, pdf).
@@ -177,7 +177,9 @@ def ingest_paper(
     Idempotent and resume-safe: the claimed `doc_id` is reused across re-runs (the
     crosswalk row survives), and a paper whose manifest already exists is skipped
     before any fetch or conversion work. A crash before the manifest write leaves no
-    manifest, so the next run re-completes the paper under the same `doc_id`.
+    manifest, so the next run re-completes the paper under the same `doc_id`; a crash
+    between the commit and `metadata.pb` leaves the record to the skip, which writes it
+    when this paper's ids are the manifest's (`writer.fill_absent_metadata`).
 
     Bibliographic metadata is resolved upstream (`resolve.resolve_batch`) and passed
     in; this half never calls the resolver ladder. The OA fetch reads the `pmcid` off
@@ -221,6 +223,9 @@ def ingest_paper(
 
     existing = _load_manifest(bucket, doc_id)
     if existing is not None:
+        writer.fill_absent_metadata(
+            bucket, doc_id, existing, _manifest_external_ids(ident, resolved), resolved.metadata
+        )
         return IngestResult(doc_id=doc_id, minted=mint_result.minted, written=False, manifest=existing)
 
     _claim_accession(mint, ident, resolved)

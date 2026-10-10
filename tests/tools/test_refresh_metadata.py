@@ -109,7 +109,7 @@ def test_a_complete_refresh_exits_zero(gcs_bucket: gcs.Bucket, monkeypatch: pyte
 
     async def one(requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.ResolvedPaper]:
         return {
-            r.claim_key: resolve.ResolvedPaper(
+            r.join_key: resolve.ResolvedPaper(
                 metadata=_metadata('1'), external_ids=litcache_pb2.ExternalIds(pmid='1'), publisher=None
             )
             for r in requests

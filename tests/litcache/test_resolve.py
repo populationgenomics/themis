@@ -181,11 +181,23 @@ def _resolve_batch(handler: _Handler, requests: list[resolve.ResolveRequest]) ->
     return asyncio.run(run())
 
 
-def _resolved(outcomes: dict[str, resolve.Outcome], claim_key: str) -> resolve.ResolvedPaper:
-    """The paper under `claim_key`, which the test expects resolved."""
-    outcome = outcomes[claim_key]
+def _resolved(outcomes: dict[str, resolve.Outcome], join_key: str) -> resolve.ResolvedPaper:
+    """The paper under `join_key`, which the test expects resolved."""
+    outcome = outcomes[join_key]
     assert isinstance(outcome, resolve.ResolvedPaper), outcome
     return outcome
+
+
+def test_resolve_batch_rejects_a_join_key_naming_two_identifier_sets() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError(f'resolved despite the collision: {request.url}')
+
+    requests = [
+        resolve.ResolveRequest(join_key='shared', pmid=None, doi=_DOI),
+        resolve.ResolveRequest(join_key='shared', pmid=_PMID, doi=_DOI),
+    ]
+    with pytest.raises(ValueError, match='two identifier sets'):
+        _resolve_batch(handler, requests)
 
 
 def test_resolve_batch_resolves_a_pmid_via_efetch() -> None:
@@ -193,7 +205,7 @@ def test_resolve_batch_resolves_a_pmid_via_efetch() -> None:
         assert 'efetch' in request.url.path
         return httpx2.Response(200, content=_EFETCH_XML)
 
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k1', pmid=_PMID, doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k1', pmid=_PMID, doi=_DOI)])
     assert set(resolved) == {'k1'}
     assert _resolved(resolved, 'k1').publisher is None
     assert _resolved(resolved, 'k1').external_ids.pmcid == 'PMC5664429'
@@ -236,7 +248,7 @@ def _doi_handler(*, idconv_pmc: bool, openalex: list[dict[str, object]]) -> _Han
 def test_resolve_batch_pmc_doi_routes_idconv_pmid_into_efetch() -> None:
     # In PMC: idconv gives the pmid → batched efetch yields the PubMed-native record.
     handler = _doi_handler(idconv_pmc=True, openalex=[])
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid=None, doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k', pmid=None, doi=_DOI)])
     assert set(resolved) == {'k'}
     assert _resolved(resolved, 'k').publisher is None  # efetch path, not OpenAlex
     assert _resolved(resolved, 'k').external_ids.pmid == _PMID
@@ -246,7 +258,7 @@ def test_resolve_batch_pmc_doi_routes_idconv_pmid_into_efetch() -> None:
 def test_resolve_batch_pubmed_not_pmc_doi_routes_openalex_pmid_into_efetch() -> None:
     # Not in PMC, but in PubMed: OpenAlex supplies the pmid → efetch yields the record.
     handler = _doi_handler(idconv_pmc=False, openalex=[_oa_work(_DOI, pmid=_PMID)])
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid=None, doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k', pmid=None, doi=_DOI)])
     assert set(resolved) == {'k'}
     assert _resolved(resolved, 'k').publisher is None  # PubMed-native via efetch, not the OpenAlex record
     assert _resolved(resolved, 'k').external_ids.pmid == _PMID
@@ -255,7 +267,7 @@ def test_resolve_batch_pubmed_not_pmc_doi_routes_openalex_pmid_into_efetch() -> 
 def test_resolve_batch_non_pubmed_doi_uses_the_openalex_record() -> None:
     # No pmid anywhere (a preprint): OpenAlex's own record becomes the metadata.
     handler = _doi_handler(idconv_pmc=False, openalex=[_oa_work(_DOI, pmid=None, title='A Preprint')])
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid=None, doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k', pmid=None, doi=_DOI)])
     assert set(resolved) == {'k'}
     assert _resolved(resolved, 'k').publisher == 'Pub X'  # from the OpenAlex record
     paper = _record(_resolved(resolved, 'k').metadata)
@@ -272,8 +284,8 @@ def test_resolve_batch_charges_a_drifted_openalex_record_to_its_paper_alone() ->
     resolved = _resolve_batch(
         handler,
         [
-            resolve.ResolveRequest(claim_key='fine', pmid=None, doi=_DOI),
-            resolve.ResolveRequest(claim_key='drifted', pmid=None, doi=_DOI_UNKNOWN),
+            resolve.ResolveRequest(join_key='fine', pmid=None, doi=_DOI),
+            resolve.ResolveRequest(join_key='drifted', pmid=None, doi=_DOI_UNKNOWN),
         ],
     )
     assert set(resolved) == {'fine', 'drifted'}
@@ -304,8 +316,8 @@ def test_resolve_batch_batches_pmids_into_one_efetch_call() -> None:
         return httpx2.Response(200, content=_EFETCH_XML)
 
     requests = [
-        resolve.ResolveRequest(claim_key='a', pmid=_PMID, doi=None),
-        resolve.ResolveRequest(claim_key='b', pmid='11111111', doi=None),
+        resolve.ResolveRequest(join_key='a', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='b', pmid='11111111', doi=None),
     ]
     resolved = _resolve_batch(handler, requests)
     assert efetch_calls == 1  # both PMIDs ride one efetch call
@@ -321,8 +333,8 @@ def test_resolve_batch_charges_a_failed_precondition_to_its_paper_alone() -> Non
         return httpx2.Response(200, content=_oa_set_with_accessionless_book())
 
     requests = [
-        resolve.ResolveRequest(claim_key='journal', pmid=_PMID, doi=None),
-        resolve.ResolveRequest(claim_key='chapter', pmid=_BOOK_PMID, doi='10.1234/synthetic.chapter'),
+        resolve.ResolveRequest(join_key='journal', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='chapter', pmid=_BOOK_PMID, doi='10.1234/synthetic.chapter'),
     ]
     outcomes = _resolve_batch(handler, requests)
 
@@ -348,14 +360,14 @@ def test_resolve_batch_doi_whose_discovered_pmid_fails_the_precondition_fails_it
             return httpx2.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
         raise AssertionError(f'unexpected request: {request.url}')
 
-    outcomes = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid=None, doi=_DOI)])
+    outcomes = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k', pmid=None, doi=_DOI)])
     assert isinstance(outcomes['k'], resolve.RecordPreconditionFailure)
 
 
 def test_resolve_batch_omits_the_unresolvable() -> None:
     # idconv errors (not in PMC) and OpenAlex knows nothing: a full miss, not raised.
     handler = _doi_handler(idconv_pmc=False, openalex=[])
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='gone', pmid=None, doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='gone', pmid=None, doi=_DOI)])
     assert resolved == {}
 
 
@@ -382,8 +394,8 @@ def test_resolve_batch_partial_one_doi_resolves_one_absent() -> None:
     resolved = _resolve_batch(
         handler,
         [
-            resolve.ResolveRequest(claim_key='hit', pmid=None, doi=_DOI),
-            resolve.ResolveRequest(claim_key='miss', pmid=None, doi=_DOI_UNKNOWN),
+            resolve.ResolveRequest(join_key='hit', pmid=None, doi=_DOI),
+            resolve.ResolveRequest(join_key='miss', pmid=None, doi=_DOI_UNKNOWN),
         ],
     )
     assert set(resolved) == {'hit'}  # the unknown DOI is absent, not a raised failure
@@ -409,6 +421,6 @@ def test_resolve_batch_pmid_miss_then_doi_resolves_via_batch() -> None:
             return httpx2.Response(200, content=json.dumps({'resultList': {'result': []}}).encode())
         raise AssertionError(f'unexpected request: {request.url}')
 
-    resolved = _resolve_batch(handler, [resolve.ResolveRequest(claim_key='k', pmid='99999999', doi=_DOI)])
+    resolved = _resolve_batch(handler, [resolve.ResolveRequest(join_key='k', pmid='99999999', doi=_DOI)])
     assert set(resolved) == {'k'}
     assert _resolved(resolved, 'k').external_ids.pmid == _PMID  # resolved via the DOI batch after the PMID miss

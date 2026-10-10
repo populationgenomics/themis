@@ -155,9 +155,11 @@ def test_committed_manifest_parses_and_records_revisions_and_hashes(gcs_bucket: 
     assert manifest.renderings[_MARKDOWN_HASH].from_revision == _PDF_HASH
 
 
-def test_manifest_write_is_the_last_write(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A crash on the manifest write leaves every other artifact but no manifest,
-    # so a re-run treats the paper as uncached.
+def test_a_crash_on_the_commit_leaves_no_manifest_and_no_record(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A crash on the manifest write leaves the content-addressed bodies but neither the
+    # manifest nor the record, so a re-run treats the paper as uncached.
     real_blob = gcs_bucket.blob
 
     def failing_blob(name: str) -> gcs.Blob:
@@ -177,7 +179,7 @@ def test_manifest_write_is_the_last_write(gcs_bucket: gcs.Bucket, monkeypatch: p
 
     paper_dir = posixpath.join('papers', _DOC_ID)
     assert not real_blob(posixpath.join(paper_dir, 'manifest.pb')).exists()
-    assert real_blob(posixpath.join(paper_dir, 'metadata.pb')).exists()
+    assert not real_blob(posixpath.join(paper_dir, 'metadata.pb')).exists()
     assert real_blob(posixpath.join(paper_dir, _pdf_path())).exists()
 
 
@@ -215,14 +217,8 @@ def test_skips_an_already_committed_paper(gcs_bucket: gcs.Bucket) -> None:
     assert not gcs_bucket.blob(changed_path).exists()
 
 
-def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
-    # First writer commits. A second writer whose skip-check is forced to miss (the
-    # exists()-then-write window) reaches the create-only commit; if_generation_match=0
-    # loses to the existing manifest, so it adopts the winner rather than clobbering it.
-    writer.write_paper(gcs_bucket, _paper())
-    manifest_key = posixpath.join('papers', _DOC_ID, 'manifest.pb')
-    committed = _read(gcs_bucket, manifest_key)
-
+def _miss_the_skip_check(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the manifest skip-check to miss, as a writer racing inside the exists()-then-write window does."""
     real_blob = gcs_bucket.blob
 
     def skip_check_misses(name: str) -> gcs.Blob:
@@ -232,6 +228,16 @@ def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatc
         return blob
 
     monkeypatch.setattr(gcs_bucket, 'blob', skip_check_misses)
+
+
+def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
+    # First writer commits. A second writer whose skip-check is forced to miss (the
+    # exists()-then-write window) reaches the create-only commit; if_generation_match=0
+    # loses to the existing manifest, so it adopts the winner rather than clobbering it.
+    writer.write_paper(gcs_bucket, _paper())
+    manifest_key = posixpath.join('papers', _DOC_ID, 'manifest.pb')
+    committed = _read(gcs_bucket, manifest_key)
+    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
     changed_bytes = b'DIFFERENT'
     changed = _paper(
@@ -246,6 +252,73 @@ def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatc
 
     assert result.written is False
     assert _read(gcs_bucket, manifest_key) == committed  # winner's manifest untouched
+
+
+def test_a_lost_commit_race_writes_no_record(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Two seeds sharing an identifier claim one doc_id; the loser resolved another paper's
+    # record, and it must not land beside the winner's manifest.
+    writer.write_paper(gcs_bucket, _paper())
+    gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()  # the winner, between its commit and its record
+    _miss_the_skip_check(gcs_bucket, monkeypatch)
+
+    loser = _paper(
+        external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'), metadata=_metadata('30000001')
+    )
+    result = writer.write_paper(gcs_bucket, loser)
+
+    assert result.written is False
+    assert not gcs_bucket.blob(writer.metadata_path(_DOC_ID)).exists()
+
+
+def test_a_commit_whose_response_was_lost_still_writes_the_record(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The client retries a commit whose response was lost; the retry fails the precondition
+    # against the writer's own manifest, so the writer sees a lost race.
+    writer.write_paper(gcs_bucket, _paper())
+    gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()
+    _miss_the_skip_check(gcs_bucket, monkeypatch)
+
+    result = writer.write_paper(gcs_bucket, _paper())
+
+    assert result.written is False
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+
+
+def test_a_record_lost_after_the_commit_is_filled_by_the_same_paper(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()  # a crash between the commit and the record
+
+    result = writer.write_paper(gcs_bucket, _paper())
+
+    assert result.written is False
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+
+
+def test_a_record_lost_after_the_commit_is_not_filled_by_another_paper(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()
+
+    other = _paper(
+        external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'), metadata=_metadata('30000001')
+    )
+    writer.write_paper(gcs_bucket, other)
+
+    assert not gcs_bucket.blob(writer.metadata_path(_DOC_ID)).exists()
+
+
+def test_the_fill_keeps_a_present_record(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+
+    writer.write_paper(gcs_bucket, _paper(metadata=_metadata('30000001')))
+
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+
+
+def test_the_fill_rejects_a_manifest_naming_another_doc_id(gcs_bucket: gcs.Bucket) -> None:
+    manifest = litcache_pb2.Manifest(doc_id='another-doc-id', external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    with pytest.raises(ValueError, match='another-doc-id'):
+        writer.fill_absent_metadata(gcs_bucket, _DOC_ID, manifest, manifest.external_ids, _metadata())
 
 
 def test_content_addresses_a_fetched_blob_and_records_unfetched_files(gcs_bucket: gcs.Bucket) -> None:

@@ -9,18 +9,19 @@ graph, talking to GCS (`google.cloud.storage.Bucket`) and Cloud SQL (the crosswa
 mint) from inside the workers:
 
 1. `_ExtractIdentityFn` — per paper, local: read the seed and classify identity, emit
-   `(claim_key, _PaperWork)`. The seed bytes are not carried forward (a pdf is MBs); the
-   write stage re-reads them, so only the `SeedRef` + `Identity` are shuffled. An
-   unreadable seed (e.g. a truncated docling json) is dead-lettered by its seed key
-   (counted `paper_failed`) rather than aborting the run.
+   `(join_key, _PaperWork)`, the key naming the identifiers the paper is resolved by. The
+   seed bytes are not carried forward (a pdf is MBs); the write stage re-reads them, so
+   only the `SeedRef` + `Identity` are shuffled. An unreadable seed (e.g. a truncated
+   docling json) is dead-lettered by its seed key (counted `paper_failed`) rather than
+   aborting the run.
 2. `_ResolveBatchFn` — resolution, batched: every paper's identifier is keyed to one
    shard so `GroupByKey` funnels the whole seed to one worker, which resolves it in bulk
    (`resolve.resolve_batch`, which chunks the ids into per-call batches internally). One
    key ⇒ no fan-out ⇒ the global NCBI request rate is bounded regardless of the job's
    worker count; batching keeps the call count tiny (⌈ids/200⌉), so serial resolution is
-   cheap. Emits `(claim_key, resolve.Outcome)`.
+   cheap. Emits `(join_key, resolve.Outcome)`.
 3. `_WritePaperFn` — per paper, the write half: `CoGroupByKey` joins each paper's work
-   with its resolution on `claim_key`; the worker re-reads the seed and runs
+   with its resolution on `join_key`; the worker re-reads the seed and runs
    `ingest_paper`. Per-paper failure is isolated, not fatal: a paper with no resolution
    (counted `paper_unresolved`), a paper whose record fails the store's precondition
    (counted `paper_precondition_failed`, the failed precondition recorded as the reason), a
@@ -263,21 +264,29 @@ def dead_letter_paths(now: datetime.datetime) -> tuple[str, str]:
 
 
 def _write_dead_letter(
-    bucket: gcs.Bucket, *, prefix: str, key: str, reason: str, pmid: str | None = None, doi: str | None = None
+    bucket: gcs.Bucket,
+    *,
+    prefix: str,
+    key: str,
+    reason: str,
+    claim_key: str | None = None,
+    pmid: str | None = None,
+    doi: str | None = None,
 ) -> None:
     """Record a paper that could not be ingested under the run's dead-letter prefix.
 
     Args:
         bucket: The cache bucket to write the record to.
         prefix: The run's record prefix, from `dead_letter_paths`.
-        key: The paper's identifier — its `claim_key` once identity is known, or the seed
-            object key when extraction itself failed; url-encoded, it names the record blob.
+        key: The seed's `bucket_key`; url-encoded, it names the record blob. Seeds sharing a
+            claim key are ingested apart, so the claim key cannot name it.
         reason: Why it was dead-lettered — the exception (`type: message`),
             `'metadata unresolved'`, or `'precondition failed: <reason>'`.
+        claim_key: The paper's claim key, when identity was classified.
         pmid: The paper's PMID, when identity was classified.
         doi: The paper's DOI, when identity was classified.
     """
-    record = {'key': key, 'pmid': pmid, 'doi': doi, 'reason': reason}
+    record = {'key': key, 'claim_key': claim_key, 'pmid': pmid, 'doi': doi, 'reason': reason}
     name = prefix + urllib.parse.quote(key, safe='') + '.json'
     bucket.blob(name).upload_from_string(json.dumps(record), content_type='application/json')
 
@@ -285,7 +294,7 @@ def _write_dead_letter(
 class _ExtractIdentityFn(beam.DoFn):
     """Read a seed pair and classify its identity — the local, network-free stage.
 
-    Builds the bucket per worker; emits `(claim_key, _PaperWork)` without the seed
+    Builds the bucket per worker; emits `(join_key, _PaperWork)` without the seed
     bytes (the write stage re-reads them). An unreadable seed is dead-lettered rather
     than crashing the stage. Counts `papers_seen` and `paper_failed`.
     """
@@ -340,22 +349,31 @@ class _ExtractIdentityFn(beam.DoFn):
             )
             self._failed.inc()
             return
-        yield ident.claim_key, _PaperWork(ref=ref, ident=ident)
+        yield _resolve_request(ident).join_key, _PaperWork(ref=ref, ident=ident)
+
+
+def _resolve_request(ident: identity.Identity) -> resolve.ResolveRequest:
+    """The request a paper is resolved by, keyed by its claim key and the identifiers it carries.
+
+    Two seeds can share a claim key (a DOI) and differ in PMID; the identifiers in the key give
+    each its own outcome rather than one answering both.
+    """
+    by_scheme = {eid.scheme: eid.value for eid in ident.external_ids}
+    pmid, doi = by_scheme.get('pmid'), by_scheme.get('doi')
+    return resolve.ResolveRequest(join_key=json.dumps([ident.claim_key, pmid, doi]), pmid=pmid, doi=doi)
 
 
 def _to_resolve_request(keyed_work: tuple[str, _PaperWork]) -> tuple[int, resolve.ResolveRequest]:
     """Key a paper's identifiers to the single resolution shard for batching."""
-    claim_key, work = keyed_work
-    by_scheme = {eid.scheme: eid.value for eid in work.ident.external_ids}
-    request = resolve.ResolveRequest(claim_key=claim_key, pmid=by_scheme.get('pmid'), doi=by_scheme.get('doi'))
-    return _RESOLVE_SHARD_KEY, request
+    _join_key, work = keyed_work
+    return _RESOLVE_SHARD_KEY, _resolve_request(work.ident)
 
 
 class _ResolveBatchFn(beam.DoFn):
     """Resolve the collected papers' bibliographic metadata in bulk.
 
     Runs `resolve.resolve_batch` over the `GroupByKey` group (it chunks the ids into
-    per-call batches), emitting `(claim_key, outcome)` for each paper it settles: a
+    per-call batches), emitting `(join_key, outcome)` for each paper it settles: a
     `ResolvedPaper`, a `RecordPreconditionFailure` for a record that fails the store's
     precondition, or a `SchemaDriftFailure` for a record its mirror does not hold (an unresolved
     paper is absent — the write stage dead-letters all three). The
@@ -498,21 +516,22 @@ class _WritePaperFn(beam.DoFn):
     def _mint(self, external_ids: Iterable[str]) -> crosswalk.MintResult:
         return self._mint_conn.mint(external_ids)
 
-    def _dead_letter(self, ident: identity.Identity, *, reason: str) -> None:
-        """Record an identified paper that could not be written, keyed by its `claim_key`."""
-        by_scheme = {eid.scheme: eid.value for eid in ident.external_ids}
+    def _dead_letter(self, work: _PaperWork, *, reason: str) -> None:
+        """Record an identified paper that could not be written, keyed by its seed."""
+        by_scheme = {eid.scheme: eid.value for eid in work.ident.external_ids}
         _write_dead_letter(
             self._bucket,
             prefix=self._dead_letter_prefix,
-            key=ident.claim_key,
+            key=work.ref.bucket_key,
             reason=reason,
+            claim_key=work.ident.claim_key,
             pmid=by_scheme.get('pmid'),
             doi=by_scheme.get('doi'),
         )
 
     @override
     def process(self, joined: tuple[str, dict[str, list[object]]]) -> Iterator[str]:
-        _claim_key, grouped = joined
+        _join_key, grouped = joined
         works = [work for work in grouped['work'] if isinstance(work, _PaperWork)]
         outcomes = [
             r
@@ -524,15 +543,15 @@ class _WritePaperFn(beam.DoFn):
             if outcome is None:
                 # No metadata resolvable: dead-letter the paper (record it for review)
                 # and carry on, rather than failing the bundle and aborting the run.
-                self._dead_letter(work.ident, reason='metadata unresolved')
+                self._dead_letter(work, reason='metadata unresolved')
                 self._unresolved.inc()
                 continue
             if isinstance(outcome, resolve.RecordPreconditionFailure):
-                self._dead_letter(work.ident, reason=f'precondition failed: {outcome.reason}')
+                self._dead_letter(work, reason=f'precondition failed: {outcome.reason}')
                 self._precondition_failed.inc()
                 continue
             if isinstance(outcome, resolve.SchemaDriftFailure):
-                self._dead_letter(work.ident, reason=f'schema drift: {outcome.reason}')
+                self._dead_letter(work, reason=f'schema drift: {outcome.reason}')
                 self._schema_drift.inc()
                 continue
             # Outside the handler, as in the identity stage: a failed seed read is transient
@@ -555,8 +574,8 @@ class _WritePaperFn(beam.DoFn):
                     file_sources=self._file_sources,
                 )
             except Exception as exc:  # noqa: BLE001 — isolate one bad paper; the reason is recorded, not swallowed
-                _LOG.warning('write half failed for %s, dead-lettering: %r', work.ident.claim_key, exc)
-                self._dead_letter(work.ident, reason=f'{type(exc).__name__}: {exc}')
+                _LOG.warning('write half failed for %s, dead-lettering: %r', work.ref.bucket_key, exc)
+                self._dead_letter(work, reason=f'{type(exc).__name__}: {exc}')
                 self._failed.inc()
                 continue
             (self._minted if result.minted else self._adopted).inc()

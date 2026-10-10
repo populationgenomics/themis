@@ -29,15 +29,16 @@ probes for its manifest ([`pipeline.ingest_paper`](../../themis/litcache/pipelin
   mints a fresh uuid4 only when none is ([`crosswalk.py`](../../themis/litcache/crosswalk.py)). A re-run of a cached
   paper adopts; it counts as `doc_id_adopted`.
 - **Manifest** — `papers/{doc_id}/manifest.pb` present ⇒ the paper is returned as-is, before any fetch or conversion; it
-  counts as `paper_skipped`. No overwrite, no new source revision, no new rendering. `writer.write_paper` repeats the
-  check and commits create-only (`if_generation_match=0`), so even a race cannot replace a manifest
+  counts as `paper_skipped`. No overwrite, no new source revision, no new rendering; the one write is a missing
+  `metadata.pb`, created when the seed's ids are the manifest's own. `writer.write_paper` repeats the check and commits
+  create-only (`if_generation_match=0`), so even a race cannot replace a manifest
   ([`writer.py`](../../themis/litcache/writer.py)).
 
-So a plain re-run over the whole seed is idempotent and does one thing: it completes the papers that have no manifest —
-those dead-lettered last time (unresolved metadata, a record failing the store's precondition or its mirror, a
-write-half exception, an oversized pdf) and those a crash left claimed but uncommitted. Each is re-done under the
-`doc_id` its crosswalk row already holds. Nothing else changes — though a skip is not free: the write stage downloads a
-paper's seed json and pdf before it learns the manifest exists
+So a plain re-run over the whole seed is idempotent and, beside that missing-record fill, does one thing: it completes
+the papers that have no manifest — those dead-lettered last time (unresolved metadata, a record failing the store's
+precondition or its mirror, a write-half exception, an oversized pdf) and those a crash left claimed but uncommitted.
+Each is re-done under the `doc_id` its crosswalk row already holds. Nothing else changes — though a skip is not free:
+the write stage downloads a paper's seed json and pdf before it learns the manifest exists
 ([`ingest_beam._WritePaperFn`](../../themis/litcache/ingest_beam.py)), so a full re-run still moves the whole seed.
 
 There is no flag that forces reprocessing. To redo a committed paper, remove its directory and re-run:
@@ -69,8 +70,10 @@ rest), in this process, with no Dataflow. Delete before you refresh, and as soon
 deployed: the evidence service's `describe_paper`
 ([`literature/litcache.py`](../../themis/services/evidence/literature/litcache.py)), the record's only reader, titles a
 paper with no `metadata.pb` by its DOI or PMID, but raises `CorruptMetadataError` on one that does not read as an
-envelope — and a pre-envelope record may instead decode as an envelope carrying nonsense. The bucket is versioned with a
-30-day noncurrent window, so the deletion is recoverable for that long.
+envelope — and a pre-envelope record may instead decode as an envelope carrying nonsense. Until the refresh has
+finished, run no ingestion job built before the new record shape: its skip writes a missing record for any paper whose
+seed's ids are the manifest's, in the shape it was built with, and the refresh never replaces a record that exists. The
+bucket is versioned with a 30-day noncurrent window, so the deletion is recoverable for that long.
 
 ```sh
 gcloud storage rm "gs://$FULLTEXT/papers/**/metadata.pb"

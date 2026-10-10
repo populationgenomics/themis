@@ -156,8 +156,8 @@ def write_dead_letter_summary(bucket: gcs.Bucket, *, records_prefix: str, summar
 
     The run writes one JSON record per dead-lettered paper under `records_prefix`;
     this concatenates them into a single JSON-lines blob at `summary_path` for later
-    analysis. Each line is an object with `key` (the paper's `claim_key`, or its seed
-    object key when extraction failed before identity), `pmid`, `doi`, and the failure
+    analysis. Each line is an object with `key` (the seed's `bucket_key`), `claim_key`,
+    `pmid` and `doi` (null when extraction failed before identity), and the failure
     `reason` — the shape `ingest_beam._write_dead_letter` emits. Each record is already a
     single line (`json.dumps` escapes newlines), so they are joined verbatim without
     re-parsing.

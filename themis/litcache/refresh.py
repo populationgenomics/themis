@@ -3,8 +3,9 @@
 The record is the one artifact re-creatable after the manifest commit
 (`docs/design/litcache-manifest.md` § Path layout): deleting a paper's `metadata.pb`
 and re-deriving it refreshes the bibliographic record while keeping every conversion
-the paper holds — where the ingestion pipeline, which keys its skip on the manifest,
-would leave the gap in place.
+the paper holds. The ingestion pipeline's skip fills an absent record only for a seed
+whose ids are the manifest's own (`writer.fill_absent_metadata`); the refresh fills the
+rest from the manifest's identifiers.
 
 `plan` selects and prepares: a paper is due when its manifest exists and its
 `metadata.pb` does not, and each due paper becomes the resolver request its manifest's
@@ -35,7 +36,7 @@ from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger(__name__)
 
-# Resolves a batch of requests to each settled paper's outcome, keyed by `claim_key`; a
+# Resolves a batch of requests to each settled paper's outcome, keyed by `join_key`; a
 # paper no rung resolves is absent (`resolve.resolve_batch` over its live clients, or a stub).
 Resolver = Callable[[Sequence[resolve.ResolveRequest]], Awaitable[Mapping[str, resolve.Outcome]]]
 
@@ -73,7 +74,7 @@ class Plan:
     Attributes:
         manifests: Every manifest found under `papers/`.
         due: One resolver request per paper whose `metadata.pb` is absent, keyed
-            (`claim_key`) by its directory's `doc_id`, in `doc_id` order, capped by
+            (`join_key`) by its directory's `doc_id`, in `doc_id` order, capped by
             the caller's limit.
         failures: Due papers a refresh cannot attempt — an unreadable manifest, a
             `doc_id` that disagrees with its directory, no pmid and no doi.
@@ -112,7 +113,7 @@ def _prepare(doc_id: str, data: bytes) -> resolve.ResolveRequest | Failure:
     doi = ids.doi if ids.HasField('doi') else None
     if pmid is None and doi is None:
         return Failure(doc_id=doc_id, reason='manifest names no pmid and no doi')
-    return resolve.ResolveRequest(claim_key=doc_id, pmid=pmid, doi=doi)
+    return resolve.ResolveRequest(join_key=doc_id, pmid=pmid, doi=doi)
 
 
 def plan(bucket: gcs.Bucket, *, limit: int | None = None, download_window: int = DEFAULT_DOWNLOAD_WINDOW) -> Plan:
@@ -228,12 +229,12 @@ async def refresh(
     for chunk in _chunks(found.due, chunk_size):
         outcomes = await resolver(chunk)
         for request in chunk:
-            outcome = outcomes.get(request.claim_key)
+            outcome = outcomes.get(request.join_key)
             if isinstance(outcome, resolve.ResolvedPaper):
-                writer.write_metadata(bucket, request.claim_key, outcome.metadata)
-                refreshed.append(request.claim_key)
+                writer.write_metadata(bucket, request.join_key, outcome.metadata)
+                refreshed.append(request.join_key)
             else:
-                failures.append(Failure(doc_id=request.claim_key, reason=_failure_reason(request, outcome)))
+                failures.append(Failure(doc_id=request.join_key, reason=_failure_reason(request, outcome)))
     _LOG.info('refreshed %d of %d due paper(s); %d failure(s)', len(refreshed), len(found.due), len(failures))
     return RefreshReport(manifests=found.manifests, refreshed=refreshed, failures=failures)
 

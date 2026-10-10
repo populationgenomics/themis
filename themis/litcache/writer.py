@@ -10,27 +10,26 @@ assembles the `Manifest` (see `docs/design/litcache-manifest.md`).
 
 Layout written under `papers/{doc_id}/`:
 
-    manifest.pb                         # the commit, written last
-    metadata.pb                         # bibliographic (a PaperMetadata envelope)
+    manifest.pb                         # the commit
+    metadata.pb                         # bibliographic (a PaperMetadata envelope), after the commit
     sources/{handle}/{hex}.{ext}        # raw source bytes, content-addressed
     renderings/{hex}.md                 # rendering markdown, keyed by its hash
     renderings/{hex}.docling.json       # structured docling output (converter=docling)
     figures/{hash}.{ext}                # content-addressed blobs
     supplementary/{hash}.{ext}
 
-The manifest write is the commit point: everything else is written first, then
-the manifest. A crash before the manifest leaves no manifest, so a re-run sees
-the paper as uncached and re-completes it, reusing the claimed `doc_id`.
+The manifest write is the commit point: every content-addressed object is written
+first, then the manifest. A crash before the manifest leaves no manifest, so a re-run
+sees the paper as uncached and re-completes it, reusing the claimed `doc_id`.
 Content-addressed writes are idempotent (identical bytes map to one name, and a
 GCS upload is atomic), so a re-put is a no-op. `write_paper` skips a paper whose
 manifest already exists; that manifest is the resumability checkpoint, not the
 crosswalk row. The commit itself is create-only (`if_generation_match=0`), so if two
 workers race past the skip check the first to commit wins and the loser adopts it.
 
-`metadata.pb` is the one artifact re-creatable after the commit (`write_metadata`, an
-idempotent overwrite; `themis.litcache.refresh` drives it) — the manifest holds no hash
-of it and its bytes derive from the paper's identifiers, not from the directory. See
-`docs/design/litcache-manifest.md` § Path layout.
+`metadata.pb` is written after the commit, by the writer whose commit won. A committed
+paper without one is filled by `fill_absent_metadata` or `themis.litcache.refresh`
+(`docs/design/litcache-manifest.md` § Path layout).
 
 `add_rendering` and `add_source_and_rendering` are the paths that mutate a
 committed paper. Both use a generation-matched read-modify-write, so a concurrent
@@ -49,6 +48,7 @@ from collections.abc import Sequence
 
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
+from google.cloud.storage import retry as gcs_retry
 from google.protobuf import timestamp_pb2
 
 from themis.common import storage
@@ -75,6 +75,10 @@ _BLOB_DIRS: dict[litcache_pb2.AssociatedFileRole, str] = {
     litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_FIGURE: 'figures',
     litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY: 'supplementary',
 }
+
+
+# The default policy retries only a generation-matched upload; rewriting the paper's own record is idempotent.
+_RETRY_UNCONDITIONALLY = gcs_retry.ConditionalRetryPolicy(gcs_retry.DEFAULT_RETRY, lambda: True, [])
 
 
 def paper_dir(doc_id: str) -> str:
@@ -245,8 +249,10 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
     """Write `paper`'s directory and commit it with the manifest.
 
     Skips (and returns the existing manifest) when the paper's manifest already
-    exists. Otherwise writes the sources, renderings, metadata, and blobs, then
-    writes the manifest last as the commit.
+    exists. Otherwise writes the sources, renderings, and blobs, commits the manifest, and
+    then writes `metadata.pb`; a writer that loses the commit adopts the winner's manifest.
+    A call that finds a manifest committed, by the skip or by losing the commit, writes
+    `metadata.pb` only through `fill_absent_metadata`.
 
     Args:
         bucket: The cache bucket to write into.
@@ -263,16 +269,18 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             converter, two renderings with the same markdown hash, a source with
             an unknown media type, a blob with an unknown role or a name without an
             extension, or `metadata` that is not a `PaperMetadata` envelope meeting its
-            constraints (`paper_metadata.parse`).
+            constraints (`paper_metadata.parse`). On the skip, `metadata` is checked only
+            when the ids let it be written (`fill_absent_metadata`).
     """
     root = paper_dir(paper.doc_id)
     manifest_key = manifest_path(paper.doc_id)
     manifest_blob = bucket.blob(manifest_key)
     if manifest_blob.exists():
         existing = litcache_pb2.Manifest.FromString(manifest_blob.download_as_bytes())
+        fill_absent_metadata(bucket, paper.doc_id, existing, paper.external_ids, paper.metadata)
         return WriteResult(manifest=existing, written=False)
 
-    write_metadata(bucket, paper.doc_id, paper.metadata)
+    _validate_metadata(paper.metadata)
     sources = [_write_source(bucket, root, s) for s in paper.sources]
     revision_hashes = {src.handle: {rev.hash for rev in src.revisions} for src in sources}
     renderings = _write_renderings(bucket, root, revision_hashes, paper.renderings)
@@ -294,17 +302,56 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
         manifest_blob.upload_from_string(manifest.SerializeToString(), if_generation_match=0)
     except api_exceptions.PreconditionFailed:
         existing = litcache_pb2.Manifest.FromString(bucket.blob(manifest_key).download_as_bytes())
+        # also reached by our own commit, when its response was lost and the client retried it
+        fill_absent_metadata(bucket, paper.doc_id, existing, paper.external_ids, paper.metadata)
         return WriteResult(manifest=existing, written=False)
+    write_metadata(bucket, paper.doc_id, paper.metadata)
     return WriteResult(manifest=manifest, written=True)
+
+
+def fill_absent_metadata(
+    bucket: gcs.Bucket,
+    doc_id: str,
+    manifest: litcache_pb2.Manifest,
+    external_ids: litcache_pb2.ExternalIds,
+    metadata: bytes,
+) -> None:
+    """Write a committed paper's `metadata.pb` if it has none and `external_ids` are its manifest's.
+
+    The ids decide whether `metadata` is this paper's record: a caller that reached the
+    `doc_id` through a shared identifier carries other ids, and writes nothing. The write is
+    create-only, so a record that lands first is kept.
+
+    Args:
+        bucket: The cache bucket.
+        doc_id: The paper whose directory `manifest` was read from.
+        manifest: The paper's committed manifest.
+        external_ids: The identifiers `metadata` was resolved under: the ids the caller's
+            paper claimed, as its manifest would record them.
+        metadata: The caller's `metadata.pb` bytes, a serialized `PaperMetadata` envelope.
+
+    Raises:
+        ValueError: If `manifest` names a `doc_id` other than its directory's, or `external_ids`
+            are the manifest's and `metadata` is not a `PaperMetadata` envelope meeting its
+            constraints (`paper_metadata.parse`).
+    """
+    if manifest.doc_id != doc_id:
+        raise ValueError(f'manifest in {doc_id} names doc_id {manifest.doc_id!r}')
+    if external_ids != manifest.external_ids:
+        return
+    _validate_metadata(metadata)
+    try:
+        bucket.blob(metadata_path(doc_id)).upload_from_string(metadata, if_generation_match=0)
+    except api_exceptions.PreconditionFailed:
+        return
 
 
 def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
     """Write `doc_id`'s `metadata.pb`, replacing whatever is there.
 
-    Called by `write_paper` before the commit, and by a metadata refresh after it. An
-    overwrite, not a create: the manifest neither names nor hashes this object, so
-    there is no generation for a concurrent writer to invalidate and nothing a re-run
-    can leave inconsistent.
+    Nothing is compared, so `metadata` has to be the paper's own record; a caller that
+    may hold another paper's, having reached the `doc_id` through a shared identifier,
+    uses `fill_absent_metadata`.
 
     Args:
         bucket: The cache bucket.
@@ -316,7 +363,7 @@ def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
             (`paper_metadata.parse`).
     """
     _validate_metadata(metadata)
-    bucket.blob(metadata_path(doc_id)).upload_from_string(metadata)
+    bucket.blob(metadata_path(doc_id)).upload_from_string(metadata, retry=_RETRY_UNCONDITIONALLY)
 
 
 _MANIFEST_RMW_ATTEMPTS = 5

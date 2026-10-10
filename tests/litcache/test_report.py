@@ -124,16 +124,23 @@ def test_write_dead_letter_summary_consolidates_records(gcs_bucket: gcs.Bucket) 
     # Records come from the real producer, so the shape this summary documents is pinned to
     # what the pipeline writes rather than to a hand-written copy that can drift from it.
     prefix, summary_path = ingest_beam.dead_letter_paths(_NOW)
-    ingest_beam._write_dead_letter(gcs_bucket, prefix=prefix, key='10.1/a', reason='metadata unresolved', doi='10.1/a')
-    # an extract-stage failure is keyed by the seed object, before identity is known
-    ingest_beam._write_dead_letter(gcs_bucket, prefix=prefix, key='ingest/b.json', reason='ValueError: boom')
+    ingest_beam._write_dead_letter(
+        gcs_bucket,
+        prefix=prefix,
+        key='10.1%2Fa.json',
+        reason='metadata unresolved',
+        claim_key='doi:10.1/a',
+        doi='10.1/a',
+    )
+    # an extract-stage failure has no identity yet
+    ingest_beam._write_dead_letter(gcs_bucket, prefix=prefix, key='b.json', reason='ValueError: boom')
 
     count = report.write_dead_letter_summary(gcs_bucket, records_prefix=prefix, summary_path=summary_path)
 
     assert count == 2
     body = gcs_bucket.blob(summary_path).download_as_bytes().decode('utf-8')
     records = [json.loads(line) for line in body.splitlines()]
-    assert {r['key'] for r in records} == {'10.1/a', 'ingest/b.json'}
+    assert {r['key']: r['claim_key'] for r in records} == {'10.1%2Fa.json': 'doi:10.1/a', 'b.json': None}
     assert {r['reason'] for r in records} == {'metadata unresolved', 'ValueError: boom'}
 
 

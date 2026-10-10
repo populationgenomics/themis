@@ -79,7 +79,7 @@ def _dry_run(bucket: gcs.Bucket, *, limit: int | None) -> int:
     root = f'gs://{bucket.name}/{refresh.PAPERS_PREFIX}'
     print(f'{found.manifests} manifest(s) under {root}; {len(found.due)} due for refresh')
     for request in found.due:
-        print(f'  {request.claim_key}: pmid={request.pmid!r} doi={request.doi!r}')
+        print(f'  {request.join_key}: pmid={request.pmid!r} doi={request.doi!r}')
     if found.failures:
         listing = refresh.render_failures(found.failures)
         print(f'\n{len(found.failures)} due paper(s) a refresh cannot attempt:\n{listing}', file=sys.stderr)

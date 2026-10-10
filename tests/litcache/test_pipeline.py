@@ -45,9 +45,13 @@ _BUCKET_KEY = '10.9999%2Fsynthetic.nonoa.json'
 # An empty fetcher ladder closes the OA branch, so a non-OA test stays offline (the
 # DOI key is otherwise fetchable and would hit the live litfetch ladder).
 _NO_OA: list[litfetch.Fetcher] = []
-# The write half never consumes the resolved metadata on the cross-paper-link path (it
-# adopts the canonical, whose manifest exists, and returns before conversion).
-_UNUSED_RESOLVED = resolve.ResolvedPaper(metadata=b'', external_ids=litcache_pb2.ExternalIds(), publisher=None)
+# On the cross-paper-link path the write half adopts the canonical, whose manifest and record
+# exist, and returns before conversion; the record is a valid envelope that is never written.
+_LINK_RECORD = litcache_pb2.PaperMetadata()
+_LINK_RECORD.pubmed.article.medline_citation.pmid.value = '30000009'
+_UNUSED_RESOLVED = resolve.ResolvedPaper(
+    metadata=_LINK_RECORD.SerializeToString(), external_ids=litcache_pb2.ExternalIds(), publisher=None
+)
 
 
 class _BodyFetcher:
@@ -258,6 +262,55 @@ def test_ingests_a_nonoa_paper_end_to_end(conn: pg8000.dbapi.Connection, gcs_buc
     assert not paper.HasField('pubmed')
     assert paper.crossref.title[0] == 'Synthetic Non-OA Fixture'
     assert _doc_id_for(conn, 'doi:10.9999/synthetic.nonoa') == result.doc_id
+
+
+def test_a_re_run_fills_a_committed_papers_absent_record(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
+    transport = _transport(_NONOA_CROSSREF)
+    first = _ingest_via_transport(gcs_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=transport)
+    record_key = writer.metadata_path(first.doc_id)
+    expected = gcs_bucket.blob(record_key).download_as_bytes()
+    gcs_bucket.blob(record_key).delete()  # a crash between the commit and the record
+
+    second = _ingest_via_transport(gcs_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=transport)
+
+    assert second.written is False
+    assert gcs_bucket.blob(record_key).download_as_bytes() == expected
+
+
+def test_a_seed_reaching_the_doc_id_through_a_shared_id_fills_no_record(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    first = _ingest_via_transport(
+        gcs_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
+    )
+    gcs_bucket.blob(writer.metadata_path(first.doc_id)).delete()  # a crash between the commit and the record
+
+    # The second seed is keyed by another paper's PMID, and its Docling origin names the first seed's DOI.
+    docling = json.loads((_NONOA / 'docling.json').read_bytes())
+    docling['origin']['filename'] = '10.9999%2Fsynthetic.nonoa.pdf'
+    seed = pipeline.SeedObject(
+        bucket_key='30000001.json', docling_json=json.dumps(docling).encode(), pdf=(_NONOA / 'source.pdf').read_bytes()
+    )
+    ident = pipeline.extract_identity(seed)
+    record = litcache_pb2.PaperMetadata()
+    record.pubmed.article.medline_citation.pmid.value = '30000001'
+    resolved = resolve.ResolvedPaper(
+        metadata=record.SerializeToString(), external_ids=litcache_pb2.ExternalIds(pmid='30000001'), publisher=None
+    )
+    second = pipeline.ingest_paper(
+        gcs_bucket,
+        functools.partial(crosswalk.mint, conn),
+        seed,
+        ident,
+        resolved,
+        _licence(),
+        now=_NOW,
+        fetchers=_NO_OA,
+    )
+
+    assert second.doc_id == first.doc_id
+    assert second.written is False
+    assert not gcs_bucket.blob(writer.metadata_path(first.doc_id)).exists()
 
 
 def test_re_run_is_idempotent_and_skips(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:

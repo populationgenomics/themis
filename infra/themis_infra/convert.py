@@ -6,8 +6,8 @@ which runs the litcache producer (OA XML → markdown, else PDF LLM-OCR) off any
 
 The evidence service is the producer: `MaybeIngestPapers` creates one `doc_id`-named task per paper it
 resolved to PENDING. Its two grants on this lane are the program's, since neither the queue nor the
-invoker knows its caller. The bulk ingestion pipeline puts nothing here — it commits the manifest last
-with its renderings in it, so a paper it ingested is READY the moment it exists.
+invoker knows its caller. The bulk ingestion pipeline puts nothing here — it commits the manifest after
+its renderings, so a paper it ingested is READY the moment it exists.
 
 - `conversion_queue` — the Cloud Tasks queue. Its concurrency cap is the load-bearing knob (each
   dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper

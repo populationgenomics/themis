@@ -187,16 +187,17 @@ async def resolve_metadata(*, pmid: str | None, doi: str | None, http_client: ht
 
 @dataclasses.dataclass(frozen=True)
 class ResolveRequest:
-    """One paper's identifiers to resolve, tagged by the key results join back on.
+    """One paper's identifiers to resolve, tagged by the key its outcome is returned under.
 
     Attributes:
-        claim_key: The key results join back on; the result map is keyed by it
-            (ingestion: the identity claim key; a metadata refresh: the `doc_id`).
+        join_key: The key the outcome is returned under (ingestion: the seed's claim key and
+            identifiers; a metadata refresh: the `doc_id`). Requests sharing a key share one
+            outcome, so they must carry the same identifiers.
         pmid: The paper's PMID, or `None`.
         doi: The paper's DOI, or `None`.
     """
 
-    claim_key: str
+    join_key: str
     pmid: str | None
     doi: str | None
 
@@ -247,7 +248,7 @@ async def resolve_batch(
 
     Unlike `resolve_metadata`, a paper resolvable by no path is simply absent from the
     result — the caller's `unknown`, surfaced when the write stage finds no entry for
-    its `claim_key`, never raised here (a batch is not failed by one unresolvable
+    its `join_key`, never raised here (a batch is not failed by one unresolvable
     member). Likewise a paper efetch answers with a record that fails the store's
     precondition is a `RecordPreconditionFailure` in the result, not raised: the fault is that
     record's alone, and the DOI path is not tried in its place. Likewise a paper whose OpenAlex
@@ -261,7 +262,7 @@ async def resolve_batch(
             NCBI / Europe PMC / OpenAlex lookups on.
 
     Returns:
-        A mapping of `claim_key` → the paper's outcome: a `ResolvedPaper`, a
+        A mapping of `join_key` → the paper's outcome: a `ResolvedPaper`, a
         `RecordPreconditionFailure` carrying the reason, or a `SchemaDriftFailure` naming the
         key. A paper resolved through efetch (directly or via a discovered pmid) carries
         efetch's harvested cross-ids; the non-PubMed residual carries OpenAlex's doi/pmid/pmcid.
@@ -269,10 +270,11 @@ async def resolve_batch(
     Raises:
         httpx2.HTTPStatusError: On a non-404 transport failure (transient; the caller
             retries the batch).
-        ValueError: If an efetch answer does not read as one record per PMID
-            (`efetch.parse_set`) — then the parse itself is not trustworthy, and the
-            chunk fails rather than any one paper.
+        ValueError: If two requests share a `join_key` but not their identifiers. Also if an
+            efetch answer does not read as one record per PMID (`efetch.parse_set`): the parse
+            itself is then not trustworthy, so the chunk fails rather than any one paper.
     """
+    _check_join_keys(requests)
     outcomes: dict[str, Outcome] = {}
 
     pmids = sorted({r.pmid for r in requests if r.pmid is not None})
@@ -282,13 +284,23 @@ async def resolve_batch(
     for request in requests:
         outcome = _efetch_outcome(efetched, request.pmid)
         if outcome is not None:
-            outcomes[request.claim_key] = outcome
+            outcomes[request.join_key] = outcome
         elif request.doi is not None:
             doi_requests.append(request)
 
     if doi_requests:
         outcomes.update(await _resolve_doi_batch(doi_requests, http_client=http_client, session=session))
     return outcomes
+
+
+def _check_join_keys(requests: Sequence[ResolveRequest]) -> None:
+    """Raise if two requests share a `join_key` but not their identifiers: one outcome would answer both."""
+    identifiers: dict[str, tuple[str | None, str | None]] = {}
+    for request in requests:
+        carried = (request.pmid, request.doi)
+        first = identifiers.setdefault(request.join_key, carried)
+        if first != carried:
+            raise ValueError(f'join key {request.join_key!r} names two identifier sets: {first} and {carried}')
 
 
 async def _resolve_doi_batch(
@@ -327,16 +339,16 @@ async def _resolve_doi_batch(
             continue
         outcome = _efetch_outcome(efetched, cross_ids[request.doi].pmid)
         if outcome is not None:
-            outcomes[request.claim_key] = outcome
+            outcomes[request.join_key] = outcome
             continue
         work = parsed.works.get(request.doi)
         if work is not None:
             pmcid = cross_ids[request.doi].pmcid or openalex.bare_pmcid(work)
-            outcomes[request.claim_key] = ResolvedPaper(
+            outcomes[request.join_key] = ResolvedPaper(
                 metadata=openalex.to_metadata(work),
                 external_ids=litcache_pb2.ExternalIds(doi=request.doi, pmid=openalex.bare_pmid(work), pmcid=pmcid),
                 publisher=openalex.publisher(work),
             )
         elif request.doi in parsed.drifted:
-            outcomes[request.claim_key] = SchemaDriftFailure(reason=parsed.drifted[request.doi])
+            outcomes[request.join_key] = SchemaDriftFailure(reason=parsed.drifted[request.doi])
     return outcomes

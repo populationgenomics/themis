@@ -57,11 +57,11 @@ def _stub_resolver(records: Mapping[str, bytes | resolve.Outcome]) -> refresh.Re
                 continue
             record = records[r.pmid]
             if isinstance(record, bytes):
-                outcomes[r.claim_key] = resolve.ResolvedPaper(
+                outcomes[r.join_key] = resolve.ResolvedPaper(
                     metadata=record, external_ids=litcache_pb2.ExternalIds(pmid=r.pmid), publisher=None
                 )
             else:
-                outcomes[r.claim_key] = record
+                outcomes[r.join_key] = record
         return outcomes
 
     return resolver
@@ -88,7 +88,7 @@ def test_plan_selects_only_committed_papers_without_metadata(gcs_bucket: gcs.Buc
     found = refresh.plan(gcs_bucket)
 
     assert found.manifests == 2
-    assert [r.claim_key for r in found.due] == [_A]
+    assert [r.join_key for r in found.due] == [_A]
     assert found.failures == []
 
 
@@ -108,7 +108,7 @@ def test_plan_limit_takes_the_first_due_in_doc_id_order(gcs_bucket: gcs.Bucket) 
 
     found = refresh.plan(gcs_bucket, limit=2)
 
-    assert [r.claim_key for r in found.due] == [_A, _B]
+    assert [r.join_key for r in found.due] == [_A, _B]
 
 
 def test_plan_reports_a_manifest_whose_doc_id_disagrees_with_its_directory(gcs_bucket: gcs.Bucket) -> None:
@@ -139,7 +139,7 @@ def test_plan_carries_a_doi_only_paper_as_a_doi_request(gcs_bucket: gcs.Bucket) 
 
     found = refresh.plan(gcs_bucket)
 
-    assert found.due == [resolve.ResolveRequest(claim_key=_A, pmid=None, doi='10.1000/x')]
+    assert found.due == [resolve.ResolveRequest(join_key=_A, pmid=None, doi='10.1000/x')]
 
 
 def test_plan_limit_is_not_consumed_by_a_paper_that_cannot_be_prepared(gcs_bucket: gcs.Bucket) -> None:
@@ -149,7 +149,7 @@ def test_plan_limit_is_not_consumed_by_a_paper_that_cannot_be_prepared(gcs_bucke
 
     found = refresh.plan(gcs_bucket, limit=1)
 
-    assert [r.claim_key for r in found.due] == [_B]
+    assert [r.join_key for r in found.due] == [_B]
     assert [f.doc_id for f in found.failures] == [_A]
 
 
@@ -162,9 +162,9 @@ def test_plan_reads_every_window_and_tops_a_limited_run_up_across_them(gcs_bucke
     found = refresh.plan(gcs_bucket, download_window=2)
     limited = refresh.plan(gcs_bucket, limit=3, download_window=2)
 
-    assert [r.claim_key for r in found.due] == [_B, _C, _D, _E]
+    assert [r.join_key for r in found.due] == [_B, _C, _D, _E]
     assert [f.doc_id for f in found.failures] == [_A]
-    assert [r.claim_key for r in limited.due] == [_B, _C, _D]
+    assert [r.join_key for r in limited.due] == [_B, _C, _D]
     assert [f.doc_id for f in limited.failures] == [_A]
 
 
@@ -179,9 +179,9 @@ def test_plan_limit_stops_a_window_short_so_a_paper_past_the_cap_is_never_read(g
     limited = refresh.plan(gcs_bucket, limit=2, download_window=2)
     found = refresh.plan(gcs_bucket, download_window=2)
 
-    assert [r.claim_key for r in limited.due] == [_B, _C]
+    assert [r.join_key for r in limited.due] == [_B, _C]
     assert [f.doc_id for f in limited.failures] == [_A]
-    assert [r.claim_key for r in found.due] == [_B, _C, _E]
+    assert [r.join_key for r in found.due] == [_B, _C, _E]
     assert [f.doc_id for f in found.failures] == [_A, _D]
 
 
@@ -303,7 +303,7 @@ def test_refresh_keeps_earlier_chunks_when_a_later_one_fails_and_resumes(gcs_buc
     serve = _stub_resolver(records)
 
     async def fail_on_b(requests: Sequence[resolve.ResolveRequest]) -> Mapping[str, resolve.Outcome]:
-        if any(r.claim_key == _B for r in requests):
+        if any(r.join_key == _B for r in requests):
             raise ConnectionError('efetch unreachable')
         return await serve(requests)
 
