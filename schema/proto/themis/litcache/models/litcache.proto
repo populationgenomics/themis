@@ -22,6 +22,7 @@ enum SourceKind {
   SOURCE_KIND_UPLOAD = 5;
   SOURCE_KIND_SEED = 6;
   SOURCE_KIND_EUROPE_PMC_BOOKSHELF = 7;  // a Bookshelf chapter's BITS XML: Europe PMC's bookXML endpoint, by accession
+  SOURCE_KIND_UNPAYWALL = 8;  // an open-access PDF at the best OA location Unpaywall lists for the DOI
 }
 
 // Scraped html is converted to xml upstream and enters as media_type xml under a distinct

@@ -47,8 +47,12 @@ lane under load — a caller resolving a variant's literature arrives with a bat
 
 - **Open-access XML → markdown.** A ladder of open-access sources is walked for the paper's identifiers by `litfetch`, a
   first-party library outside this repo; a served XML body is converted structurally. Seconds.
-- **PDF → markdown.** With no XML to be had, the PDF is transcribed by a vision model. Minutes, and it costs model spend
-  per attempt.
+- **PDF → markdown.** With no XML to be had, a PDF is transcribed by a vision model. Minutes, and it costs model spend
+  per attempt. The PDF is the one the paper already holds or, for a paper that holds none, the copy at the best
+  open-access location Unpaywall lists. An older open-access paper outside PubMed Central's open-access subset typically
+  has only such a copy. It is taken only when Unpaywall reports the paper open, and it carries the terms Unpaywall
+  states for that location, because a PDF carries none in its bytes. Publishers' own hosts mostly refuse a client that
+  is not a browser, so in practice the copies taken are those that repositories and preprint servers host.
 
 **Three constraints bound the design.** Cloud Run allocates CPU only while a request is being processed, so work spawned
 to continue after the response is throttled and in-process background work is not reliable. Cloud Tasks will hold a

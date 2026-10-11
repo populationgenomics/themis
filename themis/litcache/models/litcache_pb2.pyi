@@ -24,6 +24,7 @@ class SourceKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SOURCE_KIND_UPLOAD: _ClassVar[SourceKind]
     SOURCE_KIND_SEED: _ClassVar[SourceKind]
     SOURCE_KIND_EUROPE_PMC_BOOKSHELF: _ClassVar[SourceKind]
+    SOURCE_KIND_UNPAYWALL: _ClassVar[SourceKind]
 
 class SourceFormat(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -57,6 +58,7 @@ SOURCE_KIND_BIORXIV: SourceKind
 SOURCE_KIND_UPLOAD: SourceKind
 SOURCE_KIND_SEED: SourceKind
 SOURCE_KIND_EUROPE_PMC_BOOKSHELF: SourceKind
+SOURCE_KIND_UNPAYWALL: SourceKind
 SOURCE_FORMAT_UNSPECIFIED: SourceFormat
 SOURCE_FORMAT_XML: SourceFormat
 SOURCE_FORMAT_PDF: SourceFormat
