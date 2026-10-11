@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import pathlib
 
 import litdown
 import pytest
@@ -25,6 +26,10 @@ from themis.litcache.models import litcache_pb2
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
 _PDF_BYTES = b'%PDF-1.7 seed'
+# A loadable PDF, for the located path: it probes the PDF's text layer before committing it.
+_LOCATED_PDF = (
+    pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache' / 'nonoa' / 'source.pdf'
+).read_bytes()
 _PDF_HASH = hashlib.sha256(_PDF_BYTES).hexdigest()
 # A JATS body litdown renders to non-blank markdown (the OA success path's real converter input).
 _JATS = (
@@ -111,6 +116,29 @@ def _returning(result: oa.OaSource | None, captured: dict[str, ids.ArticleIds] |
 
 async def _boom(*_args: object, **_kwargs: object) -> oa.OaSource | None:
     raise AssertionError('fetch must not be called')
+
+
+def _located_pdf() -> oa.OaPdf:
+    return oa.OaPdf(
+        content=_LOCATED_PDF,
+        access=oa.AccessTerms(
+            licence='cc-by',
+            licence_basis=litcache_pb2.LicenceBasis.LICENCE_BASIS_ASSERTED,
+            access=litcache_pb2.Access(free_to_read=litcache_pb2.FreeToRead()),
+        ),
+        origin_url='https://example.org/paper.pdf',
+    )
+
+
+def _pdf_returning(result: oa.OaPdf | None) -> produce.PdfFetcher:
+    async def fetch_pdf(_article_ids: ids.ArticleIds) -> oa.OaPdf | None:
+        return result
+
+    return fetch_pdf
+
+
+async def _pdf_boom(_article_ids: ids.ArticleIds) -> oa.OaPdf | None:
+    raise AssertionError('fetch_pdf must not be called')
 
 
 def _ocr_returning(
@@ -290,6 +318,137 @@ def test_produce_records_no_full_text_when_no_xml_and_no_pdf(gcs_bucket: gcs.Buc
     assert marker.kind is outcome.OutcomeKind.NO_FULL_TEXT
 
 
+def test_produce_commits_a_located_pdf_and_its_ocr_when_the_paper_holds_no_pdf(gcs_bucket: gcs.Bucket) -> None:
+    # An id-only paper: no XML on the ladder and no PDF of its own, so an open-access PDF is located,
+    # transcribed, and committed as the paper's pdf lineage together with its rendering.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+    captured: dict[str, bytes] = {}
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=_pdf_returning(_located_pdf()),
+            convert_pdf=_ocr_returning('# OCR of the located pdf\n', captured=captured),
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.READY
+    assert captured['pdf'] == _LOCATED_PDF
+    manifest = _load_manifest(gcs_bucket)
+    (source,) = manifest.sources
+    assert source.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF
+    assert source.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ASSERTED
+    (revision,) = source.revisions
+    located_hash = hashlib.sha256(_LOCATED_PDF).hexdigest()
+    assert revision.hash == located_hash
+    assert revision.kind == litcache_pb2.SourceKind.SOURCE_KIND_UNPAYWALL
+    assert revision.origin_url == 'https://example.org/paper.pdf'
+    assert revision.HasField('has_text_layer')
+    assert (
+        gcs_bucket.blob(
+            writer.source_revision_path(_DOC_ID, source.handle, located_hash, source.media_type)
+        ).download_as_bytes()
+        == _LOCATED_PDF
+    )
+    (rendering,) = manifest.renderings.values()
+    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    assert (rendering.from_source, rendering.from_revision) == (source.handle, located_hash)
+
+
+def test_produce_prefers_the_held_pdf_to_locating_one(gcs_bucket: gcs.Bucket) -> None:
+    # A paper that holds a PDF transcribes that one; nothing is located.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=_pdf_boom,
+            convert_pdf=_ocr_returning('# OCR\n'),
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.READY
+
+
+def test_produce_records_no_full_text_when_no_pdf_is_located(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=_pdf_returning(None),
+            convert_pdf=_ocr_boom,
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.NO_FULL_TEXT
+    assert not _load_manifest(gcs_bucket).sources
+
+
+def test_produce_records_failed_when_the_located_pdf_will_not_transcribe(gcs_bucket: gcs.Bucket) -> None:
+    # A permanent OCR failure on a located PDF settles FAILED, and the PDF is not committed without text.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+
+    async def refuse(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise ocr.OcrError('refused')
+
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=_pdf_returning(_located_pdf()),
+            convert_pdf=refuse,
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.FAILED
+    assert not _load_manifest(gcs_bucket).sources
+
+
+def test_produce_records_failed_on_an_oversized_located_pdf(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+
+    async def fetch_pdf(_article_ids: ids.ArticleIds) -> oa.OaPdf | None:
+        raise oa.OaSourceError('serves more than 104857600 bytes')
+
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=fetch_pdf,
+            convert_pdf=_ocr_boom,
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+    assert readiness is outcome.Readiness.FAILED
+
+
+def test_produce_propagates_a_transient_locate_failure_for_retry(gcs_bucket: gcs.Bucket) -> None:
+    # Unpaywall or the PDF host still failing after retries is not "no full text": no marker is written.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+
+    async def fetch_pdf(_article_ids: ids.ArticleIds) -> oa.OaPdf | None:
+        raise oa.UpstreamUnavailableError('Unpaywall answered 503')
+
+    with pytest.raises(oa.UpstreamUnavailableError):
+        asyncio.run(
+            produce.produce_full_text(
+                gcs_bucket,
+                _DOC_ID,
+                fetch=_returning(None),
+                fetch_pdf=fetch_pdf,
+                convert_pdf=_ocr_boom,
+                now=lambda: _CAPTURED_AT,
+            )
+        )
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+
+
 def test_produce_records_no_full_text_on_an_empty_ocr(gcs_bucket: gcs.Bucket) -> None:
     # A blank transcription is not committed as a rendering; the paper is terminal NO_FULL_TEXT.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
@@ -403,7 +562,14 @@ def test_produce_records_failed_on_a_permanent_oa_error_without_a_pdf(gcs_bucket
         raise oa.OaSourceError('served body of an unknown source kind')
 
     readiness = asyncio.run(
-        produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
+        produce.produce_full_text(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=fetch,
+            fetch_pdf=_pdf_returning(None),
+            convert_pdf=_ocr_boom,
+            now=lambda: _CAPTURED_AT,
+        )
     )
     assert readiness is outcome.Readiness.FAILED
     marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
@@ -424,7 +590,12 @@ def test_produce_records_failed_on_an_unparseable_oa_body(
     monkeypatch.setattr(litdown, 'convert', _unparseable)
     readiness = asyncio.run(
         produce.produce_full_text(
-            gcs_bucket, _DOC_ID, fetch=_returning(_oa_source()), convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(_oa_source()),
+            fetch_pdf=_pdf_returning(None),
+            convert_pdf=_ocr_boom,
+            now=lambda: _CAPTURED_AT,
         )
     )
     assert readiness is outcome.Readiness.FAILED

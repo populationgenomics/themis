@@ -17,19 +17,27 @@ A non-XML body (a PDF the ladder served, which litfetch would OCR) does not take
 OA branch: litcache already holds the seed Docling json, a higher-fidelity source
 than OCR, so `fetch_oa_source` returns `None` and the caller renders that instead.
 Only an XML body opens the OA branch.
+
+A paper with no XML and no PDF of its own — one ingested by id rather than from the
+seed — can still have an openly hosted PDF: `fetch_oa_pdf` fetches the one at the
+best open-access location Unpaywall lists, for the producer to transcribe.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import mimetypes
 import posixpath
+import re
 import urllib.parse
 from collections.abc import Sequence
 
+import httpx2
 import litfetch
 from litfetch import artifacts, ids, resolvers, source_metadata
 
+from themis.common import constants
 from themis.litcache import identity
 from themis.litcache.models import litcache_pb2
 
@@ -63,6 +71,30 @@ _SOURCE_KINDS: dict[str, litcache_pb2.SourceKind] = {
     'biorxiv': litcache_pb2.SourceKind.SOURCE_KIND_BIORXIV,
     'europe_pmc_bookshelf': litcache_pb2.SourceKind.SOURCE_KIND_EUROPE_PMC_BOOKSHELF,
 }
+
+_UNPAYWALL_API = 'https://api.unpaywall.org/v2'
+
+# A DOI's shape; anything else is not looked up, so nothing but a DOI reaches the request path.
+_DOI_RE = re.compile(r'10\.\d{4,9}/[^\s?#]+')
+
+# Statuses that a later attempt could clear. litfetch's own Unpaywall and download calls report
+# these as "nothing found", which the producer would record as a settled NO_FULL_TEXT, so
+# `fetch_oa_pdf` makes both requests itself.
+_TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+
+# The copies whose text is the reviewed article; a `submittedVersion` predates peer review.
+_REVIEWED_VERSIONS = frozenset({'publishedVersion', 'acceptedVersion'})
+
+# The PDF download's own attempts and backoff, since it streams outside the session's retrying GET.
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_BACKOFF_SECONDS = 0.5
+
+# Well above any real paper; a located URL is a third party's, so the read is bounded.
+_PDF_MAX_BYTES = 100 * 1024 * 1024
+
+# The PDF header may follow up to 1 KB of leading bytes; an HTML landing page answered with 200 has none.
+_PDF_MAGIC = b'%PDF-'
+_PDF_HEADER_WINDOW = 1024
 
 
 @dataclasses.dataclass(frozen=True)
@@ -101,6 +133,30 @@ class OaSource:
     kind: litcache_pb2.SourceKind
     access: AccessTerms
     origin_url: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class OaPdf:
+    """An openly hosted PDF of the paper plus the access terms Unpaywall states for that copy.
+
+    Attributes:
+        content: The PDF bytes — the transcriber's input and the `pdf` source's stored bytes.
+        access: The licence / basis / access of Unpaywall's best open-access location, the location
+            the PDF was fetched from. A PDF carries no terms in its bytes, so the basis is asserted.
+        origin_url: The URL the PDF was fetched from.
+    """
+
+    content: bytes
+    access: AccessTerms
+    origin_url: str
+
+
+class UpstreamUnavailableError(Exception):
+    """An upstream gave an answer a later attempt could improve on.
+
+    That is a 429 or 5xx after retries, or an Unpaywall record that does not parse. Raised so the
+    caller retries later rather than recording the paper as having no full text.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -346,3 +402,115 @@ async def fetch_oa_source(
         access=from_source_metadata(source_metadata.extract_source_metadata(blob)),
         origin_url=blob.file.uri,
     )
+
+
+async def _unpaywall_record(doi: str, session: litfetch.Session) -> dict[str, object] | None:
+    """The Unpaywall record for `doi`, or `None` when Unpaywall holds none.
+
+    A 200 whose body is not a JSON object is treated as transient, like a 5xx: Unpaywall serves a
+    maintenance page that way.
+    """
+    response = await session.get(
+        f'{_UNPAYWALL_API}/{urllib.parse.quote(doi, safe="/")}', params={'email': constants.CONTACT_EMAIL}
+    )
+    if response.status_code in _TRANSIENT_STATUS:
+        raise UpstreamUnavailableError(f'Unpaywall answered {response.status_code} for {doi}')
+    if response.status_code != 200:
+        return None
+    try:
+        record = response.json()
+    except ValueError as e:
+        raise UpstreamUnavailableError(f'Unpaywall answered a body that is not JSON for {doi}') from e
+    if not isinstance(record, dict):
+        raise UpstreamUnavailableError(f'Unpaywall answered a non-object record for {doi}')
+    return record
+
+
+async def _stream_pdf(url: str, session: litfetch.Session) -> bytes | None:
+    """One attempt at the PDF at `url`; `None` when the host refuses it or serves something else."""
+    async with session.client.stream('GET', url, follow_redirects=True) as response:
+        # A bot challenge answers 403 or 503 alike, and no retry gets past it.
+        if response.headers.get('cf-mitigated') == 'challenge':
+            return None
+        if response.status_code in _TRANSIENT_STATUS:
+            raise UpstreamUnavailableError(f'{url} answered {response.status_code}')
+        if response.status_code != 200:
+            return None
+        content = bytearray()
+        async for chunk in response.aiter_bytes():
+            content += chunk
+            if len(content) > _PDF_MAX_BYTES:
+                raise OaSourceError(f'{url} serves more than {_PDF_MAX_BYTES} bytes')
+    if _PDF_MAGIC not in content[:_PDF_HEADER_WINDOW]:
+        return None
+    return bytes(content)
+
+
+async def _download_pdf(url: str, session: litfetch.Session) -> bytes | None:
+    """The PDF at `url`, retrying a transient failure; `None` when this copy cannot be had.
+
+    A redirect loop, an undecodable body, or a URL httpx2 cannot request is a property of the
+    location, not of the moment, so it is a settled absence rather than a retry.
+    """
+    for attempt in range(_DOWNLOAD_ATTEMPTS):
+        try:
+            return await _stream_pdf(url, session)
+        except (httpx2.TooManyRedirects, httpx2.DecodingError, httpx2.InvalidURL, httpx2.UnsupportedProtocol):
+            return None
+        except (UpstreamUnavailableError, httpx2.TransportError):
+            if attempt == _DOWNLOAD_ATTEMPTS - 1:
+                raise
+        await asyncio.sleep(_DOWNLOAD_BACKOFF_SECONDS * 2**attempt)
+    raise AssertionError('unreachable: the last attempt returns or raises')
+
+
+async def fetch_oa_pdf(article_ids: ids.ArticleIds, *, session: litfetch.Session | None = None) -> OaPdf | None:
+    """Fetch the PDF at the paper's best open-access location, with the terms Unpaywall states for it.
+
+    Only Unpaywall's best location is taken, because its terms describe that copy and no other, and
+    only when that copy is the reviewed article (published or accepted). A paper Unpaywall does not
+    report open (`closed`, or no status) is not fetched.
+
+    Args:
+        article_ids: The identifier bundle. Unpaywall keys on the DOI, so a bundle without a
+            well-formed one returns `None`.
+        session: The litfetch session to request on; `None` opens one identified by the project's
+            contact address.
+
+    Returns:
+        The `OaPdf`, or `None` when the paper has no DOI, Unpaywall has no record or reports it
+        closed, lists no PDF or only a submitted version, or the host refuses the PDF or serves
+        something else.
+
+    Raises:
+        UpstreamUnavailableError: If Unpaywall or the PDF's host still answers 429 or a 5xx after
+            retries, or Unpaywall's record is unreadable. Transient; the caller retries.
+        httpx2.TransportError: If a request still fails at the transport layer after retries.
+            Transient.
+        OaSourceError: If the PDF exceeds the size bound. Permanent for this copy.
+    """
+    if article_ids.doi is None or not _DOI_RE.fullmatch(article_ids.doi):
+        return None
+    if session is None:
+        async with litfetch.Session(contact=constants.CONTACT_EMAIL) as owned:
+            return await fetch_oa_pdf(article_ids, session=owned)
+    record = await _unpaywall_record(article_ids.doi, session)
+    if record is None:
+        return None
+    oa_status = record.get('oa_status')
+    best = record.get('best_oa_location')
+    if oa_status not in _FREE_TO_READ_TOKENS or not isinstance(best, dict):
+        return None
+    if best.get('version') not in _REVIEWED_VERSIONS:
+        return None
+    url = best.get('url_for_pdf')
+    if not isinstance(url, str) or not url:
+        return None
+    content = await _download_pdf(url, session)
+    if content is None:
+        return None
+    licence = best.get('license')
+    terms = artifacts.SourceMetadata(
+        licence=licence if isinstance(licence, str) else None, access=str(oa_status), basis='unpaywall'
+    )
+    return OaPdf(content=content, access=from_source_metadata(terms), origin_url=url)

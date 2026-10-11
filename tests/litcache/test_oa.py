@@ -15,6 +15,7 @@ import datetime
 import pathlib
 from collections.abc import Mapping
 
+import httpx2
 import litfetch
 import pytest
 from litfetch import artifacts, ids
@@ -350,3 +351,194 @@ def test_real_oa_fixture_is_free_to_read_artifact() -> None:
     assert terms.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
     assert _access_kind(terms) == 'free_to_read'
     assert 'creativecommons.org/licenses/by/4.0' in terms.licence
+
+
+_DOI_ONLY = ids.ArticleIds(doi='10.1000/abc')
+_PDF_URL = 'https://repo.example.org/p.pdf'
+_PDF = b'%PDF-1.4 located'
+
+
+def _unpaywall(
+    oa_status: str | None,
+    *,
+    url_for_pdf: str | None = _PDF_URL,
+    licence: str | None = 'cc-by',
+    version: str = 'publishedVersion',
+) -> dict:
+    best = None if url_for_pdf is None else {'url_for_pdf': url_for_pdf, 'license': licence, 'version': version}
+    return {'doi': '10.1000/abc', 'oa_status': oa_status, 'best_oa_location': best}
+
+
+def _fetch_with(routes: Mapping[str, httpx2.Response | list[httpx2.Response]]) -> oa.OaPdf | None:
+    """Run `fetch_oa_pdf` over a session whose requests are answered from `routes` by host + path.
+
+    A list answers successive requests to its key in order.
+    """
+    queues = {key: list(answer) if isinstance(answer, list) else None for key, answer in routes.items()}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        key = f'{request.url.host}{request.url.path}'
+        queue = queues.get(key)
+        if queue is not None:
+            return queue.pop(0)
+        answer = routes.get(key, httpx2.Response(404))
+        assert isinstance(answer, httpx2.Response)
+        return answer
+
+    async def run() -> oa.OaPdf | None:
+        async with litfetch.Session(
+            client_factory=lambda: httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+            retry=litfetch.RetryPolicy(max_attempts=1),
+        ) as session:
+            return await oa.fetch_oa_pdf(_DOI_ONLY, session=session)
+
+    return asyncio.run(run())
+
+
+_UNPAYWALL_KEY = 'api.unpaywall.org/v2/10.1000/abc'
+_PDF_KEY = 'repo.example.org/p.pdf'
+
+
+def test_fetch_oa_pdf_takes_the_best_location_with_its_asserted_terms() -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('green')),
+            _PDF_KEY: httpx2.Response(200, content=_PDF),
+        }
+    )
+    assert located is not None
+    assert located.content == _PDF
+    assert located.origin_url == _PDF_URL
+    assert located.access.licence == 'cc-by'
+    assert located.access.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ASSERTED
+    assert located.access.access.HasField('free_to_read')
+
+
+def test_fetch_oa_pdf_records_an_open_copy_with_no_stated_licence_as_such() -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('bronze', licence=None)),
+            _PDF_KEY: httpx2.Response(200, content=_PDF),
+        }
+    )
+    assert located is not None
+    assert located.access.licence == ''
+    assert located.access.access.HasField('free_to_read')
+
+
+@pytest.mark.parametrize('oa_status', ['closed', None])
+def test_fetch_oa_pdf_takes_nothing_unpaywall_does_not_report_open(oa_status: str | None) -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall(oa_status)),
+            _PDF_KEY: httpx2.Response(200, content=_PDF),
+        }
+    )
+    assert located is None
+
+
+@pytest.mark.parametrize(
+    'routes',
+    [
+        {},  # Unpaywall holds no record
+        {_UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold', url_for_pdf=None))},
+        {_UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')), _PDF_KEY: httpx2.Response(403)},
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')),
+            _PDF_KEY: httpx2.Response(200, content=b'<!doctype html><title>Just a moment...</title>'),
+        },
+    ],
+    ids=['no-record', 'no-pdf-listed', 'host-refuses', 'landing-page'],
+)
+def test_fetch_oa_pdf_finds_nothing(routes: Mapping[str, httpx2.Response]) -> None:
+    assert _fetch_with(routes) is None
+
+
+def test_fetch_oa_pdf_accepts_a_pdf_header_after_leading_bytes() -> None:
+    body = b'\xef\xbb\xbf\r\n' + _PDF
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')),
+            _PDF_KEY: httpx2.Response(200, content=body),
+        }
+    )
+    assert located is not None
+    assert located.content == body
+
+
+@pytest.mark.parametrize(
+    'routes',
+    [
+        {_UNPAYWALL_KEY: httpx2.Response(503)},
+        {_UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')), _PDF_KEY: [httpx2.Response(429)] * 3},
+    ],
+    ids=['unpaywall-unavailable', 'pdf-host-rate-limited'],
+)
+def test_fetch_oa_pdf_raises_on_a_transient_status_so_the_lane_retries(routes: Mapping[str, httpx2.Response]) -> None:
+    with pytest.raises(oa.UpstreamUnavailableError):
+        _fetch_with(routes)
+
+
+def test_fetch_oa_pdf_refuses_a_pdf_over_the_size_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(oa, '_PDF_MAX_BYTES', 8)
+    with pytest.raises(oa.OaSourceError, match='more than'):
+        _fetch_with(
+            {
+                _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')),
+                _PDF_KEY: httpx2.Response(200, content=_PDF),
+            }
+        )
+
+
+@pytest.fixture(autouse=True)
+def _no_download_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(oa, '_DOWNLOAD_BACKOFF_SECONDS', 0)
+
+
+def test_fetch_oa_pdf_retries_a_transient_download_failure() -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')),
+            _PDF_KEY: [httpx2.Response(503), httpx2.Response(200, content=_PDF)],
+        }
+    )
+    assert located is not None
+
+
+def test_fetch_oa_pdf_takes_no_submitted_version() -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('green', version='submittedVersion')),
+            _PDF_KEY: httpx2.Response(200, content=_PDF),
+        }
+    )
+    assert located is None
+
+
+def test_fetch_oa_pdf_treats_a_bot_challenge_as_a_refusal() -> None:
+    located = _fetch_with(
+        {
+            _UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('bronze')),
+            _PDF_KEY: httpx2.Response(503, headers={'cf-mitigated': 'challenge'}),
+        }
+    )
+    assert located is None
+
+
+def test_fetch_oa_pdf_treats_a_redirect_loop_as_a_refusal() -> None:
+    loop = httpx2.Response(302, headers={'Location': _PDF_URL})
+    assert _fetch_with({_UNPAYWALL_KEY: httpx2.Response(200, json=_unpaywall('gold')), _PDF_KEY: [loop] * 50}) is None
+
+
+def test_fetch_oa_pdf_treats_an_unreadable_unpaywall_record_as_transient() -> None:
+    with pytest.raises(oa.UpstreamUnavailableError, match='not JSON'):
+        _fetch_with({_UNPAYWALL_KEY: httpx2.Response(200, content=b'<html>maintenance</html>')})
+
+
+@pytest.mark.parametrize('doi', ['not-a-doi', '10.1000/abc?x=1'])
+def test_fetch_oa_pdf_looks_up_only_a_well_formed_doi(doi: str) -> None:
+    assert asyncio.run(oa.fetch_oa_pdf(ids.ArticleIds(doi=doi))) is None
+
+
+def test_fetch_oa_pdf_needs_a_doi() -> None:
+    assert asyncio.run(oa.fetch_oa_pdf(ids.ArticleIds(pmid='1'))) is None

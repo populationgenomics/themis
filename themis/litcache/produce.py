@@ -10,9 +10,12 @@ path:
   the PDF is transcribed to markdown by the injected converter and committed
   with `add_rendering` (rendering-only — the PDF source is already in the manifest). Minutes; this is
   why the async worker exists.
+- **Located PDF LLM-OCR** when the manifest carries no PDF either — a paper ingested by id: the PDF at
+  the best open-access location Unpaywall lists is transcribed the same way, and the PDF and its
+  rendering are committed together with `add_source_and_rendering`.
 
-When neither path yields text (no fetchable id, the ladder serves nothing, no PDF, or a conversion is
-empty), it records the terminal `.fetch_outcome` NO_FULL_TEXT marker instead. When a conversion fails
+When no path yields text (no fetchable id, the ladder serves nothing, no PDF is held or located, or a
+conversion is empty), it records the terminal `.fetch_outcome` NO_FULL_TEXT marker instead. When a conversion fails
 *permanently* — an OCR refusal / truncation, or an OA body that is unparseable or of an unknown kind
 (which first falls through to the PDF, often the better source) — it records a terminal FAILED marker
 rather than raising, so the worker settles the paper (2xx) instead of retrying to the same dead end.
@@ -23,7 +26,7 @@ calls this; the evidence service only reports readiness and asks for it. Keeping
 conversion out of the request handler is what keeps the evidence image lean (architecture B) and leaves
 the door open to inline the fast OA path later without a wire change.
 
-The fetcher, resolver, and PDF converter are injected so the path runs offline in tests — a fake
+The fetchers, resolver, and PDF converter are injected so the path runs offline in tests — a fake
 `fetch` returns a canned `OaSource` (or `None`) and a fake `convert_pdf` returns canned markdown, so
 no network is touched.
 """
@@ -41,11 +44,13 @@ from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import resolvers
 
-from themis.litcache import identity, oa, ocr, outcome, writer
+from themis.litcache import identity, oa, ocr, outcome, pdf, writer
 from themis.litcache.models import litcache_pb2
 
 # The fetched XML lands as its own lineage; the litdown rendering is produced from it.
 _XML_HANDLE = 'xml'
+# A located PDF lands in the lineage a seed PDF would: the paper holds no other.
+_PDF_HANDLE = 'pdf'
 _LITDOWN_VERSION = importlib.metadata.version('litdown')
 
 # ExternalIds' fields, each an id whose name is its `identity.ExternalId` scheme; read off the
@@ -54,6 +59,7 @@ _LITDOWN_VERSION = importlib.metadata.version('litdown')
 _ID_FIELDS = tuple(field.name for field in litcache_pb2.ExternalIds.DESCRIPTOR.fields)
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
+PdfFetcher = Callable[..., Awaitable[oa.OaPdf | None]]
 
 
 class PaperNotInCorpusError(Exception):
@@ -66,11 +72,11 @@ class PaperNotInCorpusError(Exception):
 
 
 class _PermanentSourceError(Exception):
-    """An OA body could not be turned into text and a retry would not help.
+    """An OA body or located PDF could not be turned into text and a retry would not help.
 
-    Raised for a served body of an unknown source kind / no access terms, or XML litdown cannot parse.
-    Internal: the producer falls through to the PDF, then settles FAILED — it never escapes as a
-    retryable error.
+    Raised for a served body of an unknown source kind / no access terms, XML litdown cannot parse, or
+    a located PDF over the size bound. Internal: after an OA body the producer falls through to
+    the PDF; either way it settles FAILED — it never escapes as a retryable error.
     """
 
 
@@ -145,16 +151,13 @@ def _pdf_source(manifest: litcache_pb2.Manifest) -> litcache_pb2.Source | None:
 
 
 def _ocr_rendering(
-    source: litcache_pb2.Source,
-    revision: litcache_pb2.Revision,
-    result: ocr.OcrRendering,
-    created_at: datetime.datetime,
+    handle: str, revision_hash: str, result: ocr.OcrRendering, created_at: datetime.datetime
 ) -> litcache_pb2.Rendering:
     created = timestamp_pb2.Timestamp()
     created.FromDatetime(created_at)
     return litcache_pb2.Rendering(
-        from_source=source.handle,
-        from_revision=revision.hash,
+        from_source=handle,
+        from_revision=revision_hash,
         converter=litcache_pb2.Converter.CONVERTER_LLM_OCR,
         converter_version=result.converter_version,
         model=result.model,
@@ -201,17 +204,59 @@ async def _produce_from_oa(
     return True
 
 
+async def _produce_from_located_pdf(
+    bucket: gcs.Bucket,
+    doc_id: str,
+    manifest: litcache_pb2.Manifest,
+    fetch_pdf: PdfFetcher,
+    convert_pdf: ocr.PdfConverter,
+    now: Callable[[], datetime.datetime],
+) -> bool:
+    """Locate an open-access PDF, OCR it, and commit both; return whether a rendering was committed."""
+    article_ids = oa.article_ids(_external_ids(manifest.external_ids))
+    if article_ids is None:
+        return False
+    try:
+        located = await fetch_pdf(article_ids)
+    except oa.OaSourceError as e:
+        raise _PermanentSourceError(str(e)) from e
+    if located is None:
+        return False
+    result = await convert_pdf(located.content)
+    if not result.markdown.strip():
+        return False
+    captured = now()
+    source = writer.SourceInput(
+        handle=_PDF_HANDLE,
+        media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF,
+        kind=litcache_pb2.SourceKind.SOURCE_KIND_UNPAYWALL,
+        data=located.content,
+        licence=located.access.licence,
+        licence_basis=located.access.licence_basis,
+        access=located.access.access,
+        captured_at=captured,
+        origin_url=located.origin_url,
+        has_text_layer=pdf.probe_has_text_layer(located.content),
+    )
+    rendering = _ocr_rendering(_PDF_HANDLE, hashlib.sha256(located.content).hexdigest(), result, captured)
+    writer.add_source_and_rendering(
+        bucket, doc_id, source, writer.RenderingInput(rendering=rendering, markdown=result.markdown)
+    )
+    return True
+
+
 async def _produce_from_pdf(
     bucket: gcs.Bucket,
     doc_id: str,
     manifest: litcache_pb2.Manifest,
+    fetch_pdf: PdfFetcher,
     convert_pdf: ocr.PdfConverter,
     now: Callable[[], datetime.datetime],
 ) -> bool:
-    """OCR the manifest's PDF source to markdown and commit it; return whether one was committed."""
+    """OCR the manifest's PDF source, else a located one, and commit it; return whether one was committed."""
     source = _pdf_source(manifest)
     if source is None:
-        return False
+        return await _produce_from_located_pdf(bucket, doc_id, manifest, fetch_pdf, convert_pdf, now)
     revision = _current_revision(source)
     pdf_bytes = bucket.blob(
         writer.source_revision_path(doc_id, source.handle, revision.hash, source.media_type)
@@ -222,7 +267,9 @@ async def _produce_from_pdf(
     writer.add_rendering(
         bucket,
         doc_id,
-        writer.RenderingInput(rendering=_ocr_rendering(source, revision, result, now()), markdown=result.markdown),
+        writer.RenderingInput(
+            rendering=_ocr_rendering(source.handle, revision.hash, result, now()), markdown=result.markdown
+        ),
     )
     return True
 
@@ -233,6 +280,7 @@ async def produce_full_text(
     *,
     resolver: resolvers.Resolver | None = None,
     fetch: Fetcher = oa.fetch_oa_source,
+    fetch_pdf: PdfFetcher = oa.fetch_oa_pdf,
     convert_pdf: ocr.PdfConverter,
     now: Callable[[], datetime.datetime] = _utcnow,
 ) -> outcome.Readiness:
@@ -241,8 +289,9 @@ async def produce_full_text(
     Reads the manifest (which must exist — this runs for a known paper). A rendering already present
     is a no-op READY. Otherwise it tries the OA ladder (build the litfetch id bundle from
     `manifest.external_ids`, fetch the XML body, litdown-convert, commit source + rendering); failing
-    that, if the manifest carries a PDF source it OCRs the PDF to markdown and commits a rendering.
-    When neither path yields text it records a NO_FULL_TEXT terminal marker.
+    that, if the manifest carries a PDF source it OCRs the PDF to markdown and commits a rendering;
+    if it carries none, it locates an open-access PDF and commits that PDF with its OCR rendering.
+    When no path yields text it records a NO_FULL_TEXT terminal marker.
 
     Args:
         bucket: The cache bucket holding the paper.
@@ -250,13 +299,15 @@ async def produce_full_text(
         resolver: The litfetch id resolver `fetch` uses to fill missing ids; defaults to
             `oa.default_resolver` (doi/pmid → pmcid).
         fetch: The OA body fetcher; defaults to `oa.fetch_oa_source`. Injected so tests run offline.
+        fetch_pdf: The open-access PDF locator, tried when the manifest holds no PDF; defaults to
+            `oa.fetch_oa_pdf`. Injected so tests run offline.
         convert_pdf: The PDF → markdown LLM-OCR converter. Injected so
             tests run offline (the real one calls Anthropic).
         now: The clock for captured/created/marker timestamps. Injected for determinism.
 
     Returns:
         The resulting `Readiness`: READY when a rendering is present or was committed, NO_FULL_TEXT
-        when neither the OA ladder nor a PDF source yielded any full text, FAILED when a conversion
+        when neither the OA ladder nor a held or located PDF yielded any full text, FAILED when a conversion
         failed permanently and will not be retried — a permanent OA anomaly (unknown source kind / no
         access terms / unparseable XML, which first falls through to the PDF) or an OCR refusal /
         truncation.
@@ -266,8 +317,9 @@ async def produce_full_text(
         google.api_core.exceptions.NotFound: If an object the manifest names is absent (a seed
             revision blob, say). Operational, so it propagates and stays retryable.
         Exception: A transient failure from the converter's provider (rate limit, overload,
-            connection) or from the OA fetch propagates, so the worker returns 5xx and Cloud Tasks
-            retries; permanent OA and OCR failures are caught and recorded FAILED, not raised.
+            connection), from the OA fetch, or from locating a PDF (`oa.UpstreamUnavailableError`)
+            propagates, so the worker returns 5xx and Cloud Tasks retries; permanent OA and OCR
+            failures are caught and recorded FAILED, not raised.
         writer.ConcurrentWriteError: The manifest write lost its generation race the whole retry budget
             (contention — retryable).
     """
@@ -293,8 +345,11 @@ async def produce_full_text(
         # it rather than escaping; only settle FAILED below if the PDF path yields nothing either.
         oa_failure = str(e)
     try:
-        if await _produce_from_pdf(bucket, doc_id, manifest, convert_pdf, now):
+        if await _produce_from_pdf(bucket, doc_id, manifest, fetch_pdf, convert_pdf, now):
             return outcome.Readiness.READY
+    except _PermanentSourceError as e:
+        error = str(e) if oa_failure is None else f'{oa_failure}; {e}'
+        return _record_failed(bucket, doc_id, now(), error=error)
     except ocr.OcrError as e:
         # A permanent OCR failure (refusal / truncation): settle FAILED so the worker returns 2xx and
         # the paper goes terminal, rather than raising → 500 → Cloud Tasks re-billing the model on every
