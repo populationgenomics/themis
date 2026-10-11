@@ -26,6 +26,10 @@ import httpx2
 # Each value states why the host is admitted: what our calls ask of it, and that it holds nothing it
 # would serve on. A host absent from this mapping cannot be reached (`admitting_client`).
 _ADMITTED: Mapping[str, str] = {
+    'api.crossref.org': (
+        'Crossref. Resolves one DOI to the bibliographic record its registrant deposited; depositing '
+        'is a separate authenticated API we hold no credential for.'
+    ),
     'api.mavedb.org': (
         'MaveDB. Looks up published multiplexed-assay scores by variant URN or ClinGen allele id; '
         'submission is a separate authenticated surface we hold no credential for.'

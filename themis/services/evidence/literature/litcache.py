@@ -13,10 +13,12 @@ paper is reported unknown-not-checked, never a false "not located".
 Readiness and provenance are derived from the layout, never stored: readiness by
 ``litcache.outcome``, provenance from the lineage the canonical rendering was produced from.
 
-The bucket is read-only: the store never writes to it (the cache warms via the ingestion pipeline and
-the convert worker). Its one write of any kind is ``request_conversions``, which asks
-``litcache.enqueue`` for a conversion task per paper; what this adapter adds is deciding which of the
-Cloud Tasks failures the servicer should offer a caller a retry for. An
+``ingest_papers`` is the one method that writes the bucket, committing a manifest for a paper the
+corpus does not hold; otherwise the cache warms via the ingestion pipeline and the convert worker.
+``request_conversions`` writes only the queue. Neither owns its mechanism — ``litcache.ingest``
+resolves the id upstream, mints, and commits, and ``litcache.enqueue`` creates the conversion task —
+so what this adapter adds is the crosswalk connection the ingest runs on and, to both, the decision
+of which failures the servicer should offer a caller a retry for. An
 associated file the manifest lists without a ``path`` is not yet fetched; resolving it raises
 ``MissingContentError`` rather than fetching-and-writing (deferred — the seeded papers have every
 file fetched). PDF quote location (anchorite page regions) is not implemented; ``locate`` for a PDF raises
@@ -32,15 +34,27 @@ import contextlib
 import dataclasses
 import logging
 import mimetypes
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import anchorite
+import httpx2
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage
 from google.protobuf import message as _message
 
 from themis.common import sql
-from themis.litcache import crosswalk, enqueue, outcome, paper_metadata, writer
+from themis.litcache import (
+    crosswalk,
+    efetch,
+    enqueue,
+    identity,
+    ingest,
+    mirror,
+    outcome,
+    paper_metadata,
+    resolve,
+    writer,
+)
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
@@ -83,6 +97,30 @@ _FILE_ROLE = {
 }
 
 
+# Postgres's `insufficient_privilege`, which pg8000 reports in the mapping it carries as `args[0]`.
+_INSUFFICIENT_PRIVILEGE = '42501'
+
+
+def _denied_for_want_of_a_grant(error: Exception) -> bool:
+    """Whether `error` is a store refusing the write because this deployment holds no grant for it.
+
+    A fact about the deployment rather than an outage: the crosswalk `INSERT` comes from a migration
+    and the bucket's write from the stack, and no retry provisions either. Matched on the
+    SQLSTATE rather than the exception type, since pg8000 raises one `DatabaseError` for everything.
+    """
+    if isinstance(error, api_exceptions.Forbidden):
+        return True
+    detail = error.args[0] if error.args else None
+    return isinstance(detail, Mapping) and detail.get('C') == _INSUFFICIENT_PRIVILEGE
+
+
+# Faults of one upstream record that no retry clears: a record failing the store's id precondition,
+# one its mirror does not fit, and one the writer refuses to keep. Each is typed where it is raised,
+# so a bare `ValueError` — which a truncated JSON body raises on its way through the ladder — is left
+# to the broad catch below and answered as the outage it is.
+_UNINGESTABLE = (efetch.RecordPreconditionError, mirror.SchemaDriftError, ingest.UnstorableRecordError)
+
+
 @dataclasses.dataclass(frozen=True)
 class _Paper:
     """A paper's parsed litcache record: its manifest and the canonical rendering (if any)."""
@@ -97,13 +135,17 @@ class Store:
     def __init__(
         self,
         bucket: storage.Bucket,
+        http_client: httpx2.AsyncClient,
         *,
         connect: Callable[[], sql.Connection] | None = None,
         enqueuer: enqueue.Enqueuer | None = None,
+        resolve_metadata: ingest.MetadataResolver = resolve.resolve_metadata,
     ) -> None:
         self._bucket = bucket
+        self._http_client = http_client
         self._connect = connect
         self._enqueuer = enqueuer
+        self._resolve_metadata = resolve_metadata
 
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
         paper, metadata = await asyncio.to_thread(self._read_for_describe, doc_id)
@@ -195,6 +237,64 @@ class Store:
             return {}  # no dial for an empty batch; `crosswalk.lookup` rejects one outright
         return await asyncio.to_thread(self._lookup, list(external_ids))
 
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        if self._connect is None:
+            raise literature_backend.IngestNotConfiguredError('no crosswalk is configured')
+        # Serial, not gathered: each id costs one upstream metadata call, and PubMed and Crossref both
+        # pace an unkeyed caller, so a fan-out buys latency back as 429s. The servicer's per-call bound
+        # on how many papers one request may ingest is what keeps the serial cost answerable.
+        # Folded on the crosswalk's own key, not byte-exactly, so two spellings of one DOI cost one
+        # upstream call — and every spelling the caller sent is answered with the paper that call
+        # found, as `crosswalk.lookup` answers each of them on the read path.
+        candidates: dict[str, list[str]] = {}
+        for external_id in external_ids:
+            scheme, _, _value = external_id.partition(':')
+            if scheme in literature_backend.INGESTABLE_SCHEMES:
+                candidates.setdefault(crosswalk.normalise_key(external_id), []).append(external_id)
+        ingested: dict[str, str] = {}
+        for spellings in candidates.values():
+            scheme, _, value = spellings[0].partition(':')
+            result = await self._ingest_one(identity.ExternalId(scheme=scheme, value=value))
+            if result is not None:
+                ingested.update(dict.fromkeys(spellings, result.doc_id))
+        return ingested
+
+    async def _ingest_one(self, external_id: identity.ExternalId) -> ingest.IngestResult | None:
+        try:
+            return await ingest.ingest_unknown_paper(
+                self._bucket,
+                self._lookup,
+                self._mint,
+                external_id,
+                http_client=self._http_client,
+                resolve_metadata=self._resolve_metadata,
+            )
+        except literature_backend.IngestNotConfiguredError:
+            raise  # permanent, and already the port's own type — not an outage to retry
+        except literature_backend.CrosswalkNotConfiguredError as e:
+            # The same permanent condition under the read path's name; retried as an outage it would
+            # spend the caller's whole budget on a deployment nothing about retrying provisions.
+            raise literature_backend.IngestNotConfiguredError(str(e)) from e
+        except _UNINGESTABLE as e:
+            # An upstream holds a record this store cannot keep. Terminal for the id, so it is charged
+            # to that id alone rather than failing the batch around it — the whole call would otherwise
+            # fail on every retry, and the ids beside it would never be resolved either.
+            _logger.warning('%s names a record this store cannot hold; not ingested: %s', external_id.key, e)
+            return None
+        except Exception as e:
+            # Deliberately broad, for the reason `_lookup` is: the upstream ladder, the Cloud SQL
+            # dial, and the manifest commit raise from unrelated hierarchies (httpx2, pg8000, the
+            # connector, api-core), and reading any of them as "no such paper" would write a real
+            # paper off permanently. A clean miss is not an exception — it is a `None` return.
+            if _denied_for_want_of_a_grant(e):
+                # The refusal names the server's source file and routine, or the upload URL and the
+                # service account, so it goes to the log; the caller gets the condition alone.
+                _logger.exception('the ingest write was refused for want of a grant')
+                raise literature_backend.IngestNotConfiguredError(
+                    'this deployment holds no grant for the write the ingest makes'
+                ) from e
+            raise literature_backend.IngestUnavailableError(str(e)) from e
+
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         # One to two GCS reads per distinct id: READY derives from the manifest alone, but anything
         # else probes the sidecar too. Gathered so a batch runs concurrently, not serially.
@@ -217,7 +317,7 @@ class Store:
 
     # --- GCS reads (synchronous; called via asyncio.to_thread) -----------------------------------
 
-    def _lookup(self, external_ids: Sequence[str]) -> dict[str, str]:
+    def _lookup(self, external_ids: Iterable[str]) -> dict[str, str]:
         """One crosswalk read, on a connection opened and closed per call.
 
         A fresh connection per call, not a pooled one: the lookup is rare next to the GCS reads, and
@@ -235,6 +335,21 @@ class Store:
             # Admin API, DBAPI), and mistaking any of them for "this paper is not in the store" is
             # the failure this method exists to prevent.
             raise literature_backend.CrosswalkUnavailableError(str(e)) from e
+
+    def _mint(self, external_ids: Iterable[str]) -> crosswalk.MintResult:
+        """One crosswalk mint, on a connection opened and closed per call, as `_lookup` dials.
+
+        Blocking; `ingest.ingest_unknown_paper` calls it inside its own `asyncio.to_thread`.
+
+        Raises:
+            IngestNotConfiguredError: no crosswalk is wired (permanent).
+            Exception: whatever the dial or the transaction raises — several unrelated hierarchies, all
+                classified by `_ingest_one`'s broad catch rather than here.
+        """
+        if self._connect is None:
+            raise literature_backend.IngestNotConfiguredError('no crosswalk is configured')
+        with contextlib.closing(self._connect()) as conn:
+            return crosswalk.mint(conn, external_ids)
 
     def _readiness(self, doc_id: str) -> literature_pb2.FullTextState:
         return _READINESS_STATE[outcome.read_readiness(self._bucket, doc_id)]

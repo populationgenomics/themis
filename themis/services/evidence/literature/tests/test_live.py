@@ -32,6 +32,7 @@ _LOCATED = literature_pb2.LocateResponse(offsets=literature_pb2.TextOffsets(star
 _VALIDATED = literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
 _RESOLVED_IDS = {'doi:10.1/x': 'doc-1'}
 _READINESS = {'doc-1': literature_pb2.FULL_TEXT_STATE_READY}
+_INGESTED = {'doi:10.1/fresh': 'doc-9'}
 _HITS = europe_pmc.SearchHits(records=[], total_matched=11)
 _FETCHED = pubmed.FetchedArticles(articles=[], book_articles=[], pmids_without_record=['111'])
 _VARIANT_CENSUS = variants.VariantCensus(entities=(), total_entities=4)
@@ -86,6 +87,11 @@ class _RecordingStore(litcache_store.Store):
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         self.calls.append(('full_text_readiness', list(doc_ids)))
         return _READINESS
+
+    @override
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        self.calls.append(('ingest_papers', list(external_ids)))
+        return _INGESTED
 
     @override
     async def request_conversions(self, doc_ids: Sequence[str]) -> None:
@@ -155,6 +161,14 @@ _FORWARDS: list[tuple[str, _Forward, object, tuple[object, ...]]] = [
         lambda b: b.full_text_readiness(['doc-1', 'doc-2']),
         _READINESS,
         ('full_text_readiness', ['doc-1', 'doc-2']),
+    ),
+    (
+        # Ingestion runs through a view, as the conversions that follow it do; the abstract method an
+        # adapter implements is `ingest_papers`, which the view names and the store answers.
+        'ingest_papers',
+        lambda b: b.view_for(authz.AUTH).ingest_papers(['doi:10.1/fresh']),
+        _INGESTED,
+        ('ingest_papers', ['doi:10.1/fresh']),
     ),
     (
         # Conversions are requested through a view; the abstract half an adapter implements is

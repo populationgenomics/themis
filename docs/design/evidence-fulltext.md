@@ -8,9 +8,12 @@ this reads and writes), [`document-pane.md`](document-pane.md) (the surface a re
 ## Overview
 
 A paper can be in the full-text store and still have no text to read: ingestion records the paper, but converting a
-publisher's XML or transcribing a PDF is separate work, and for a PDF it is minutes of it. This doc decides how that
-text gets produced, and how a caller finds out whether it exists yet.
+publisher's XML or transcribing a PDF is separate work, and for a PDF it is minutes of it. A caller may also hold an
+identifier for a paper the store has never seen at all. This doc decides how that text gets produced, how a paper nobody
+has deposited gets into the store to be produced from, and how a caller finds out whether its text exists yet.
 
+- **An identifier nobody has deposited is a paper to bring in, not a miss.** One rpc resolves the id upstream, mints a
+  `doc_id` and commits a manifest carrying the ids alone — which is a paper this lane then produces like any other.
 - **Readiness is derived, not stored.** Whether a paper's text is servable is read off the store's layout on each ask.
   There is no status store, no job table, and nothing to keep in step with the objects.
 - **Production never runs on a request path.** Every miss is reported as pending and settles out of band, so a caller
@@ -34,6 +37,11 @@ the writing side of it.
 after writing whatever renderings it produced — so a paper it finished is servable the moment it exists. What it cannot
 finish is the rest: a paper whose only source is a PDF, including every paper a human deposited under their own
 institutional access. Those are real, and a caller must be able to tell them from a paper that is simply absent.
+
+**What creates a paper with nothing in it.** Neither route into the store that existed before this lane does: the bulk
+pipeline commits a rendering with the manifest, and a hand deposit arrives with its PDF already transcribed. The id-only
+manifest that on-demand ingestion commits (Design) is what produces papers with no text at all, which is what puts this
+lane under load — a caller resolving a variant's literature arrives with a batch.
 
 **The two production routes**, which differ by orders of magnitude in cost but not in shape:
 
@@ -132,6 +140,131 @@ The consequence for the read surface is the *no production on the serving path* 
 [`literature-evidence-layer.md`](literature-evidence-layer.md): a request that triggered production would have to wait
 for it or lie about it. "This paper's text is not in the store" is a fact a run can act on immediately; a request that
 hangs for minutes is not.
+
+### An id the corpus does not hold is ingested, not written off
+
+The agent holds a DOI or a PMID; only the document pane holds a `doc_id`. `MaybeIngestPapers` closes that gap with a
+read-only crosswalk lookup ([`literature-evidence-layer.md`](literature-evidence-layer.md)) — and then, for the ids that
+miss, closes the larger gap the rpc is named for: a paper nobody has deposited is brought into the store, so the
+reader's next call finds it. That rpc is the one that does it because it is already resolving each id and reading that
+paper's readiness; bringing in the misses is a step appended to a call doing most of the work already.
+
+Bringing one in is two writes to two stores, and the order is what makes it safe. The mint claims the paper's ids in one
+transaction, minting a `doc_id` or adopting the one an incumbent id already holds; the manifest commit follows. Both are
+idempotent, so no distributed transaction is needed: a crash between them leaves a claimed `doc_id` with no manifest,
+and the re-run adopts that same `doc_id` and completes. A mint *alone* would leave a `doc_id` naming no manifest —
+permanently unresolvable, and a claim on someone else's DOI; pairing it with the commit is what answers that, and the
+pairing is one function rather than a sequence each caller assembles, because the reconcile sweep will want it too.
+
+Each step's failure is marked with what it costs: one id, or the whole call.
+
+```mermaid
+sequenceDiagram
+    participant C as caller
+    participant E as evidence service
+    participant X as crosswalk
+    participant U as PubMed or Crossref
+    participant B as full-text bucket
+    C->>E: MaybeIngestPapers(ids)
+    E->>X: lookup
+    Note right of X: unreachable: whole call, UNAVAILABLE
+    loop each id the lookup missed, at most 10
+        E->>U: resolve the id's record
+        Note right of U: no such paper: this id, UNKNOWN_PAPER<br/>a record the store cannot keep: this id, UNKNOWN_PAPER<br/>did not answer: whole call, UNAVAILABLE
+        E->>X: mint: claim the ids, or adopt an orphaned claim
+        Note right of X: no INSERT grant: whole call, FAILED_PRECONDITION
+        Note over E,B: a crash here leaves a claim and no manifest —<br/>the re-run adopts the same doc_id and completes
+        E->>B: commit the id-only manifest, then metadata.pb
+        Note right of B: no write grant: whole call, FAILED_PRECONDITION
+    end
+    E->>B: readiness of every resolved doc_id (a new paper is PENDING)
+    E->>C: each id's doc_id and readiness, a conversion enqueued for each PENDING paper
+```
+
+The paper that lands has its ids in the manifest and its bibliographic record beside it, and no source bytes and no
+rendering at all. That is enough, and it is why this closes so cheaply: the producer is keyed on a `doc_id` and builds
+its open-access fetch from the manifest's own external ids, so a manifest holding only the ids is the whole input to the
+open-access ladder that fills the paper in. The paper is therefore PENDING the moment it exists, which is the condition
+the enqueue fires on.
+
+**The mint is gated on the id existing upstream.** The caller is an agent, and an agent can compose a plausible PMID
+that names no paper. A mint is permanent — a claim and a manifest for a work that never existed, which no re-run undoes
+— so the id is resolved against its upstream first and only what resolves is minted. The probe is the **metadata
+ladder**, a different ladder from the open-access one above: PubMed efetch for a PMID, else Crossref for a DOI — one
+small record, no full text. What recommends it over a merely cheaper probe is that it separates a miss from an outage —
+a paper nobody published is a distinct, typed answer, and an upstream that did not answer propagates — where a bare id
+resolver reports both as nothing found, and a caller cannot tell which it got. It pays for itself twice besides: the
+record becomes the paper's metadata, and the cross-ids it harvests are minted alongside the requested one, so the same
+work asked for later by its DOI adopts this `doc_id` instead of minting a second. The metadata ladder keys on a PMID or
+a DOI, so a **PMCID** reaches neither of its two rungs and an id spelled that way is a settled miss — the same gap as
+the lookup's *identifiers captured at ingest*, from the other side.
+
+**The path adds to the corpus and never alters it — by grant on the crosswalk, by code on the bucket.** Two grants make
+this the service's real boundary change, every other thing it does being a read: `INSERT` on the crosswalk, and
+read-write on the full-text bucket. On the crosswalk the grant is the guarantee. `INSERT` cannot re-point or remove an
+existing claim, and the mint adopts an incumbent rather than overwriting it, so the widest a wrong call reaches is a new
+row for an id nothing else holds. On the bucket it is not. The service holds `objectUser`, as the convert worker does,
+because the writer re-puts `metadata.pb` — a retry after a lost response replaces the bytes it has just written — and a
+create-only role answers a replace with a 403. What stops a claim that should not be made is not either grant but the
+upstream check above it.
+
+That makes the bucket's blast radius two different things. What the grant reaches is the whole bucket, since GCS IAM has
+no prefix scope. What the *agent* reaches is one `doc_id` directory: the ingest writes only into a `doc_id` it minted,
+or adopted with no manifest committed, and claims nothing for a paper already committed. The residual is a compromise of
+the evidence process itself, not anything a caller can steer. The case an agent could steer — causing a malicious PDF to
+be ingested — is untouched by this choice: the service never fetches a paper's bytes, the convert worker does and
+already holds the same role, and what such a PDF could do to a reader is governed by treating a rendering as untrusted
+data, not by IAM.
+
+A missing grant is FAILED_PRECONDITION, not an outage. Retrying cannot add a grant, any more than it can wire a
+crosswalk. The store reads the condition off the refusal itself — Postgres answers `insufficient_privilege` and the
+bucket a 403 — so a grant withdrawn after startup is answered the same way as one never made.
+
+The refusal fails the whole batch, including the ids that did resolve. So the grants deploy before the code, and of the
+four ways the two can be deployed, only one costs a caller anything:
+
+| Deployed        | An id the corpus does not hold     | An id it holds, in the same batch |
+| --------------- | ---------------------------------- | --------------------------------- |
+| neither         | UNKNOWN_PAPER                      | resolved                          |
+| the grants only | UNKNOWN_PAPER                      | resolved                          |
+| the code only   | FAILED_PRECONDITION, for the batch | lost with the batch               |
+| both            | ingested, and PENDING              | resolved                          |
+
+Deploying the grants first means the third row is never deployed. It is still what a caller sees if a grant is withdrawn
+later.
+
+On the bucket, "never alters" is a rule the code keeps, and it is one rule: **this path never rewrites a committed
+manifest, and so claims an id only in the same operation that writes the manifest naming it.** A claim without one is a
+crosswalk row a rebuild deletes, since a rebuild replaces the table with the inversion of the manifests — so the caller
+would be told an id resolves and then find it does not. Two cases follow, and the ingest reports both rather than
+repairing either. An id whose paper the store already holds under a different id claims nothing: the caller gets the
+`doc_id` it asked for, but the crosswalk does not learn the id it asked by, so the next call pays the upstream probe
+again. And ids that bridge two separately-held `doc_id`s reveal a work the store holds twice; the canonical one is
+served and the equivalence edge stays unwritten, because writing it means rewriting a committed manifest. Both are
+repairs for a sweep, off the request path, alongside the papers nothing re-finds.
+
+**How much one call may bring in.** Resolving a known id costs a crosswalk row and a GCS read; ingesting an unknown one
+costs an upstream call on the request path, and PubMed and Crossref both pace an unkeyed caller, so those calls are
+serial. Different cost, so a second and much tighter bound sits inside the request bound, on how many of a batch's ids
+may be ones the store does not hold and this service could ingest. Over it the call is refused rather than ingesting a
+prefix — the surplus reported as an unknown paper would be indistinguishable from an id upstream does not know, and the
+caller would never ask again. That count depends on corpus state, so a caller cannot construct a valid request by
+inspection; it splits the batch when refused. This bounds one call and not a session: a caller that loops still ingests
+without limit, which is the ceiling Open questions leaves open.
+
+Failure semantics follow the rule this lane keeps relearning — never let a transient failure look like a terminal fact,
+or the converse. A crosswalk or an upstream that cannot be reached is UNAVAILABLE for the **whole call**, never a per-id
+miss: an outage affects the batch, and a caller reading it per-id writes every one of those papers off as absent. A
+deployment that wires no crosswalk is FAILED_PRECONDITION rather than UNAVAILABLE, since gRPC retries UNAVAILABLE by
+default and no number of retries configures one.
+
+The converse is the one that bites here. An upstream can hold a record this store cannot keep — one that fails the
+precondition on its identifiers, or that its mirror does not fit — and that is terminal for the id, not an outage. It is
+charged to that id alone and the rest of the batch lands, because a batch failing whole on it would fail the same way on
+every retry and the ids beside it would never be resolved either. What the caller is told is that the store has no such
+paper, which is true of the store and not of the literature: readiness has no state for "the index holds this and we
+cannot", and adding one is a contract change. The adapter logs which it was, so the gap is answerable from the service's
+own record rather than only from the caller's.
 
 ### The conversion lane: a queue and a worker of its own
 
@@ -305,6 +438,16 @@ killed.
   job rather than a request. Whether to build for that now or wait until one appears is undecided.
 - **The submit-side upload door** — the user-facing path for handing the system a document it could not otherwise reach,
   and what it does about identity, licence and duplicate detection.
+- **A ceiling per caller, not per call.** The ingest bound is on one request, and nothing bounds a caller that loops:
+  each pass may bring in ten more papers, each a permanent corpus entry and a conversion that spends model budget. The
+  agent choosing those ids is itself steerable by the evidence text it reads, so the bound that matters is per session
+  rather than per call, and `MaybeIngestPapers` is where it could sit — it already resolves the context the spend is
+  charged to. The queue's concurrency cap limits the rate of that spend and not its total.
+- **What an ingested paper is worth keeping.** Bringing papers in by identifier makes the corpus grow with whatever a
+  caller asks about, and nothing prunes it: a paper minted for a query nobody repeats stays, with a rendering that cost
+  a conversion. The crosswalk holds no irreplaceable state and is rebuildable from the manifests, so retiring a paper is
+  possible; deciding *which* is a policy question this lane does not answer, and it sharpens the more the agent is
+  exposed to.
 - **Facts stated only in a figure.** Both routes produce text, so a fact a paper states only in a figure image is
   unreachable by either, and a better text model does not close that — reading figures is its own production step. The
   store already models a paper's figure files; whether and when a figure-reading pass joins the lane is undecided.

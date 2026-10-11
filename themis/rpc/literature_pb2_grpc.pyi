@@ -7,9 +7,10 @@ object for a rendering, the PDF, or an associated file, serves the rendering's t
 citation's quote within a chosen representation (offsets in markdown; a page region in a PDF). The
 discovery group reaches the live indexes — Europe PMC for keyword search, PubMed for the
 bibliographic records behind a batch of PMIDs, NCBI's LitVar2 for the variant entity census — and
-every outbound call is the service's own, since the agent holds no credential and no egress. This
-proto is the source of truth; `regen` (buf generate) emits the themis/rpc/literature stubs — the
-server subclasses the servicer base, a caller uses the stub.
+every outbound call is the service's own, since the agent holds no credential and no egress. Every
+rpc but MaybeIngestPapers only reads; that one is also the corpus's door, bringing in a paper it
+does not hold. This proto is the source of truth; `regen` (buf generate) emits the
+themis/rpc/literature stubs — the server subclasses the servicer base, a caller uses the stub.
 
 Two callers reach this service: the web tier's backend, for the browser's paper display, and the
 sandbox agent, which searches the indexes, resolves the identifiers it holds to doc_ids, reads the
@@ -80,20 +81,26 @@ class LiteratureStub:
     serving slot for the whole wait.
     """
     MaybeIngestPapers: _grpc.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]
-    """Resolve external ids to papers, report each one's full-text readiness, and start production for
-    the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
-    not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
-    unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-    Resolving ids against upstream sources litcache has never seen is the shape the name still grows
-    into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    """Resolve external ids to papers, bring in the ones the corpus does not hold, report each one's
+    full-text readiness, and start production for the papers that need it. An id litcache has already
+    ingested resolves to its doc_id. One it has not is resolved against its upstream — PubMed for a
+    PMID, Crossref for a DOI — and, if a paper answers, minted a doc_id and given a manifest carrying
+    its ids and bibliographic record; the paper is then PENDING and its full text is produced like any
+    other. The upstream check is what makes the mint safe: a mint is permanent, so an id nobody
+    published must claim no doc_id. An id no upstream holds, and a PMCID (neither rung keys on one),
+    come back with an empty doc_id and UNKNOWN_PAPER. `Maybe` is load-bearing — a call may resolve
+    nothing, ingest nothing and produce nothing.
 
-    This one spends money, so it is the rpc whose implementation reads the caller it was admitted as
-    (docs/design/rpc-authorization.md): the conversion is charged to the Analysis a session names, or to
-    the caller's own account. Admission is the interceptor's, before the body runs;
-    a caller the contract does not admit is PERMISSION_DENIED whether or not the batch would spend.
+    This one spends money — a permanent crosswalk claim for a paper it brings in, Anthropic tokens on
+    the conversion it starts. Admission is the interceptor's, before the body runs; a caller the
+    contract does not admit is PERMISSION_DENIED whether or not the batch would spend. What is not yet
+    done is charging either spend to what the call was made for: the implementation discards the
+    context it was admitted with, so nothing records who caused one (docs/design/rpc-authorization.md,
+    and the open question in docs/design/evidence-fulltext.md).
 
-    A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
-    outage affects the batch, and a caller reading it per-id would write papers off permanently.
+    A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
+    miss: an outage affects the batch, and a caller reading it per-id would write papers off
+    permanently.
     """
     GetMarkdown: _grpc.UnaryUnaryMultiCallable[_literature_pb2.GetMarkdownRequest, _literature_pb2.GetMarkdownResponse]
     """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
@@ -171,20 +178,26 @@ class LiteratureAsyncStub(LiteratureStub):
     serving slot for the whole wait.
     """
     MaybeIngestPapers: _aio.UnaryUnaryMultiCallable[_literature_pb2.MaybeIngestPapersRequest, _literature_pb2.MaybeIngestPapersResponse]  # type: ignore[assignment]
-    """Resolve external ids to papers, report each one's full-text readiness, and start production for
-    the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
-    not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
-    unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-    Resolving ids against upstream sources litcache has never seen is the shape the name still grows
-    into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+    """Resolve external ids to papers, bring in the ones the corpus does not hold, report each one's
+    full-text readiness, and start production for the papers that need it. An id litcache has already
+    ingested resolves to its doc_id. One it has not is resolved against its upstream — PubMed for a
+    PMID, Crossref for a DOI — and, if a paper answers, minted a doc_id and given a manifest carrying
+    its ids and bibliographic record; the paper is then PENDING and its full text is produced like any
+    other. The upstream check is what makes the mint safe: a mint is permanent, so an id nobody
+    published must claim no doc_id. An id no upstream holds, and a PMCID (neither rung keys on one),
+    come back with an empty doc_id and UNKNOWN_PAPER. `Maybe` is load-bearing — a call may resolve
+    nothing, ingest nothing and produce nothing.
 
-    This one spends money, so it is the rpc whose implementation reads the caller it was admitted as
-    (docs/design/rpc-authorization.md): the conversion is charged to the Analysis a session names, or to
-    the caller's own account. Admission is the interceptor's, before the body runs;
-    a caller the contract does not admit is PERMISSION_DENIED whether or not the batch would spend.
+    This one spends money — a permanent crosswalk claim for a paper it brings in, Anthropic tokens on
+    the conversion it starts. Admission is the interceptor's, before the body runs; a caller the
+    contract does not admit is PERMISSION_DENIED whether or not the batch would spend. What is not yet
+    done is charging either spend to what the call was made for: the implementation discards the
+    context it was admitted with, so nothing records who caused one (docs/design/rpc-authorization.md,
+    and the open question in docs/design/evidence-fulltext.md).
 
-    A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
-    outage affects the batch, and a caller reading it per-id would write papers off permanently.
+    A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
+    miss: an outage affects the batch, and a caller reading it per-id would write papers off
+    permanently.
     """
     GetMarkdown: _aio.UnaryUnaryMultiCallable[_literature_pb2.GetMarkdownRequest, _literature_pb2.GetMarkdownResponse]  # type: ignore[assignment]
     """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
@@ -295,20 +308,26 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         request: _literature_pb2.MaybeIngestPapersRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_literature_pb2.MaybeIngestPapersResponse, _abc.Awaitable[_literature_pb2.MaybeIngestPapersResponse]]:
-        """Resolve external ids to papers, report each one's full-text readiness, and start production for
-        the papers that need it. An id litcache has already ingested resolves to its doc_id; one it has
-        not comes back with an empty doc_id and UNKNOWN_PAPER. It never mints — a mint claims, so an
-        unknown id would take a doc_id that names no manifest and a crosswalk claim on that DOI.
-        Resolving ids against upstream sources litcache has never seen is the shape the name still grows
-        into. `Maybe` is load-bearing either way — a call may resolve nothing and produce nothing.
+        """Resolve external ids to papers, bring in the ones the corpus does not hold, report each one's
+        full-text readiness, and start production for the papers that need it. An id litcache has already
+        ingested resolves to its doc_id. One it has not is resolved against its upstream — PubMed for a
+        PMID, Crossref for a DOI — and, if a paper answers, minted a doc_id and given a manifest carrying
+        its ids and bibliographic record; the paper is then PENDING and its full text is produced like any
+        other. The upstream check is what makes the mint safe: a mint is permanent, so an id nobody
+        published must claim no doc_id. An id no upstream holds, and a PMCID (neither rung keys on one),
+        come back with an empty doc_id and UNKNOWN_PAPER. `Maybe` is load-bearing — a call may resolve
+        nothing, ingest nothing and produce nothing.
 
-        This one spends money, so it is the rpc whose implementation reads the caller it was admitted as
-        (docs/design/rpc-authorization.md): the conversion is charged to the Analysis a session names, or to
-        the caller's own account. Admission is the interceptor's, before the body runs;
-        a caller the contract does not admit is PERMISSION_DENIED whether or not the batch would spend.
+        This one spends money — a permanent crosswalk claim for a paper it brings in, Anthropic tokens on
+        the conversion it starts. Admission is the interceptor's, before the body runs; a caller the
+        contract does not admit is PERMISSION_DENIED whether or not the batch would spend. What is not yet
+        done is charging either spend to what the call was made for: the implementation discards the
+        context it was admitted with, so nothing records who caused one (docs/design/rpc-authorization.md,
+        and the open question in docs/design/evidence-fulltext.md).
 
-        A crosswalk that cannot be reached is UNAVAILABLE for the whole call, never a per-id miss: an
-        outage affects the batch, and a caller reading it per-id would write papers off permanently.
+        A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
+        miss: an outage affects the batch, and a caller reading it per-id would write papers off
+        permanently.
         """
 
     @_abc_1.abstractmethod

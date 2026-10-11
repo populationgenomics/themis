@@ -11,10 +11,10 @@ interface-scoped one; every ``THEMIS_LITERATURE_*`` value below it is this inter
 
 Two trios are all-or-nothing, and for the same reason: a half-configured capability fails per request
 instead of at deploy, so a partial set is a ``SystemExit``. Set together, the
-``THEMIS_LITERATURE_CROSSWALK_*`` vars wire external-id resolution and the
-``THEMIS_LITERATURE_CONVERT_*`` vars wire the conversion lane ``MaybeIngestPapers`` enqueues onto;
-unset together, each leaves its capability off and the rpc answers FAILED_PRECONDITION to a call that
-would have needed it.
+``THEMIS_LITERATURE_CROSSWALK_*`` vars wire both halves of external-id handling — resolving an id and
+minting one the corpus does not hold — and the ``THEMIS_LITERATURE_CONVERT_*`` vars wire the conversion
+lane ``MaybeIngestPapers`` enqueues onto; unset together, each leaves its capability off and the rpc
+answers FAILED_PRECONDITION to a call that would have needed it.
 
 Malformed input is a ``SystemExit`` at startup, never a backend that serves an empty store: "no such
 paper" from an unseeded store is indistinguishable from a paper the store genuinely does not hold.
@@ -138,7 +138,10 @@ def _live_backend_from_env(deps: deps_mod.Deps) -> live_mod.LiveBackend:
     except api_exceptions.NotFound as e:
         raise SystemExit(f'{_BUCKET_VAR} {bucket_name!r} does not exist or is not readable') from e
     store = litcache.Store(
-        bucket, connect=_crosswalk_connect_from_env(deps.stack), enqueuer=_enqueuer_from_env(deps.stack)
+        bucket,
+        deps.http_client,
+        connect=_crosswalk_connect_from_env(deps.stack),
+        enqueuer=_enqueuer_from_env(deps.stack),
     )
     return live_mod.LiveBackend(store, discovery_mod.Indexes(deps.http_client))
 

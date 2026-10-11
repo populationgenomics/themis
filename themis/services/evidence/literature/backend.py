@@ -2,11 +2,11 @@
 
 One ``abc.ABC`` for the interface, spanning both of the data boundaries behind it: the full-text
 store — naming the GCS object for a paper's rendering, PDF or associated file, serving the canonical
-rendering's text, locating a citation's quote within a representation, asking for a full text it does
-not hold yet — and the live indexes — keyword search, bibliographic records, the LitVar2 entity
-census. The servicer depends on the port, never on a concrete backend, so the same server runs
-offline (``fixture.FixtureBackend``, in memory) and deployed (``live.LiveBackend``, over GCS, the
-crosswalk and the public indexes).
+rendering's text, locating a citation's quote within a representation, bringing in a paper it does
+not hold, asking for a full text it does not hold yet — and the live indexes — keyword search,
+bibliographic records, the LitVar2 entity census. The servicer depends on the port, never on a
+concrete backend, so the same server runs offline (``fixture.FixtureBackend``, in memory) and
+deployed (``live.LiveBackend``, over GCS, the crosswalk and the public indexes).
 
 Port methods are ``async``: the servicer runs on ``grpc.aio``, so an adapter offloads its blocking
 I/O (GCS, anchorite, Cloud SQL) to a thread and issues its HTTP calls on the shared client, rather
@@ -23,6 +23,7 @@ import dataclasses
 from collections.abc import Sequence
 
 from themis.clients.auth import context as auth_context
+from themis.litcache import ingest
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import variants
 from themis.services.evidence.upstreams import europe_pmc, pubmed
@@ -37,6 +38,10 @@ _TRUNCATION_MARKER = (
     '{dropped} were dropped. Nothing beyond this point is part of the captured snapshot, so it '
     'cannot be quoted or cited.]**'
 )
+
+# Re-exported so the servicer can filter on it without reaching into litcache: the schemes an unknown
+# paper can be ingested under, which is what the metadata ladder can resolve.
+INGESTABLE_SCHEMES = ingest.RESOLVABLE_SCHEMES
 
 
 class UnknownPaperError(Exception):
@@ -83,6 +88,24 @@ class CrosswalkUnavailableError(Exception):
 
     Whole-batch by construction, never a per-id miss. A caller that read an outage as "this id is
     not in the store" would write papers off permanently on a transient failure.
+    """
+
+
+class IngestNotConfiguredError(Exception):
+    """This deployment cannot ingest a paper — the servicer maps this to FAILED_PRECONDITION.
+
+    Permanent, like ``CrosswalkNotConfiguredError``: without a crosswalk there is nothing to mint
+    into, and no number of retries provisions one.
+    """
+
+
+class IngestUnavailableError(Exception):
+    """Ingestion could not be carried out, and repeating it might succeed — UNAVAILABLE.
+
+    Whole-batch, never per-id. An upstream that did not answer is not a paper that does not exist:
+    reporting it per-id would write the paper off as absent from the corpus for good, and the caller
+    would have no reason to ask again. Repeating the call is cheap — a paper whose ids did get minted
+    is resolved by the lookup ahead of the ingest next time.
     """
 
 
@@ -177,6 +200,10 @@ class LiteratureView:
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         return await self._backend.full_text_readiness(doc_ids)
 
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        """Bring each id this view admits an ingest for into the corpus — see the port's method."""
+        return await self._backend.ingest_papers(external_ids)
+
     async def request_conversions(self, doc_ids: Sequence[str]) -> None:
         """Ask for a full text for each of these papers this view admits a conversion for.
 
@@ -259,12 +286,50 @@ class LiteratureBackend(abc.ABC):
     async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
         """Look each scheme-qualified external id up in the crosswalk, returning the ids it knows.
 
-        A read, never a mint: minting *claims*, so an id the store has never ingested would take a
-        ``doc_id`` naming no manifest. An id absent from the result is a genuine miss.
+        A read, never a mint: this method claims nothing, so it never leaves a ``doc_id`` naming no
+        manifest. An id absent from the result is a genuine miss — ``ingest_papers`` is what acts on
+        one.
+
+        Args:
+            external_ids: Scheme-qualified ``{scheme}:{value}`` keys. The result is a fresh mapping the
+                caller owns, so it may extend it with whatever ``ingest_papers`` then brings in.
 
         Raises:
             CrosswalkNotConfiguredError: this deployment wires no crosswalk (permanent).
             CrosswalkUnavailableError: the crosswalk could not be reached (whole-batch, transient).
+        """
+        ...
+
+    @abc.abstractmethod
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        """Bring each id that names a real paper into the corpus, and return the ``doc_id`` it took.
+
+        Callers pass the ids ``resolve_external_ids`` missed. Each is resolved against its upstream
+        first and only then minted, so an id nobody published claims no ``doc_id`` and writes no
+        manifest — a mint is permanent, and no re-run undoes one made for a paper that never existed.
+        A paper that lands here has ids and bibliographic metadata but no rendering, so it reads
+        PENDING and the conversion lane produces its full text.
+
+        Idempotent: an id already minted resolves to the same ``doc_id``, and a paper already
+        committed is not rewritten — an id naming one is answered with its ``doc_id`` and claims
+        nothing, so the corpus gains no crosswalk row that no manifest names.
+
+        Args:
+            external_ids: The scheme-qualified ids ``resolve_external_ids`` did not resolve.
+
+        Returns:
+            A mapping of external id to ``doc_id``, holding only the ids that were ingested. An id
+            absent from the result named no paper upstream, names a scheme the metadata ladder cannot
+            resolve (``litcache.ingest.RESOLVABLE_SCHEMES``), or named a record the store cannot hold
+            — all settled facts about that id, never a failure to reach anything. The third is
+            reported as the first two are, because readiness has no state for "the index holds this
+            and we cannot": a caller is told the store has no such paper, which is true of the store
+            and not of the literature. The adapter logs which it was.
+
+        Raises:
+            IngestNotConfiguredError: this deployment cannot ingest (permanent).
+            IngestUnavailableError: an upstream or the crosswalk could not be reached (whole-batch,
+                transient).
         """
         ...
 

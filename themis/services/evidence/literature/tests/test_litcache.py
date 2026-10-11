@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import json
 import time
 import typing
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -17,12 +18,16 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 import grpc
 import grpc.aio
 import httpx2
+import pg8000.dbapi
+import pg8000.exceptions
 import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage, tasks_v2
 from google.protobuf import timestamp_pb2
+from pubmed_proto import pubmed_pb2
 
-from themis.litcache import enqueue
+from themis.common import sql
+from themis.litcache import efetch, enqueue, ingest, mirror, paper_metadata, resolve, writer
 from themis.litcache import outcome as litcache_outcome
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2, literature_pb2_grpc
@@ -146,8 +151,13 @@ def _seed_paper(
     return rendering_hash
 
 
+# The reads under test issue no HTTP call, so the client is never touched; the ingest tests below pass
+# a real one alongside a fake metadata ladder.
+_NO_HTTP = typing.cast('httpx2.AsyncClient', None)
+
+
 def _store(bucket: storage.Bucket) -> litcache_store.Store:
-    return litcache_store.Store(bucket)
+    return litcache_store.Store(bucket, _NO_HTTP)
 
 
 def test_describe_prefers_markdown_when_xml_derived(gcs_bucket: storage.Bucket) -> None:
@@ -386,7 +396,8 @@ def _run_over_grpc[T](
 
     async def run() -> T:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
-            backend = live_mod.LiveBackend(litcache_store.Store(bucket), discovery_mod.Indexes(http_client))
+            store = litcache_store.Store(bucket, http_client)
+            backend = live_mod.LiveBackend(store, discovery_mod.Indexes(http_client))
             servicer = servicer_mod.Servicer(backend)
             async with in_process_grpc.serving(
                 lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
@@ -685,7 +696,7 @@ class _FakeTasksClient:
 def _conversion_backend(client: _FakeTasksClient) -> litcache_store.Store:
     """A backend whose only reachable collaborator is the tasks client — the bucket is never touched."""
     enqueuer = enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', client), _CONVERT_TARGET)
-    return litcache_store.Store(typing.cast('storage.Bucket', None), enqueuer=enqueuer)
+    return litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP, enqueuer=enqueuer)
 
 
 def test_a_conversion_request_names_a_task_per_distinct_paper() -> None:
@@ -699,12 +710,12 @@ def test_a_conversion_request_names_a_task_per_distinct_paper() -> None:
 def test_an_empty_batch_reaches_no_queue() -> None:
     # Nothing to convert must not be an error even where no queue is wired, or a deployment without
     # the lane could not answer for a corpus that happens to be entirely settled.
-    backend = litcache_store.Store(typing.cast('storage.Bucket', None))
+    backend = litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP)
     asyncio.run(backend.request_conversions([]))
 
 
 def test_an_unwired_lane_is_a_permanent_condition() -> None:
-    backend = litcache_store.Store(typing.cast('storage.Bucket', None))
+    backend = litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP)
     with pytest.raises(literature_backend.ConversionNotConfiguredError):
         asyncio.run(backend.request_conversions([_DOC]))
 
@@ -822,3 +833,257 @@ def test_a_server_error_no_retry_repairs_is_permanent(error: Exception) -> None:
     client = _FakeTasksClient(raises=error)
     with pytest.raises(literature_backend.ConversionEnqueueFailedError):
         asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
+
+
+# --- Ingesting a paper the corpus does not hold ---------------------------------------------------
+
+_FRESH_PMID = 'pmid:29089047'
+_FRESH_DOI = 'doi:10.1038/s41586-020-2649-2'
+_UNPUBLISHED_DOI = 'doi:10.1/nobody-published-this'
+
+
+def _raising(error: Exception) -> ingest.MetadataResolver:
+    """A metadata ladder that fails a given way for every id."""
+
+    async def resolve_metadata(**_kwargs: object) -> resolve.ResolvedPaper:
+        raise error
+
+    return resolve_metadata
+
+
+def _store_over(resolver: ingest.MetadataResolver) -> litcache_store.Store:
+    """A store whose ladder is `resolver`; it fails before the bucket or the crosswalk is reached."""
+    return litcache_store.Store(
+        typing.cast('storage.Bucket', None),
+        _NO_HTTP,
+        connect=lambda: typing.cast('sql.Connection', None),
+        resolve_metadata=resolver,
+    )
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        efetch.RecordPreconditionError('two Bookshelf accessions'),
+        mirror.SchemaDriftError('crossref', 'unknown key "foo"'),
+        ingest.UnstorableRecordError('not a PaperMetadata envelope'),
+    ],
+    ids=['precondition', 'schema-drift', 'unstorable-record'],
+)
+def test_a_record_the_store_cannot_hold_is_charged_to_its_own_id(
+    error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Terminal for that id, so the batch around it must survive: failing whole would fail the same way
+    # on every retry, and the ids beside it would never be resolved either.
+    with caplog.at_level('WARNING', logger=litcache_store.__name__):
+        assert asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_PMID])) == {}
+    assert _FRESH_PMID in caplog.text  # the gap is answerable from the service's own record
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        json.JSONDecodeError('Expecting value', '', 0),
+        UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid start byte'),
+    ],
+    ids=['truncated-body', 'undecodable-body'],
+)
+def test_a_malformed_upstream_body_is_an_outage_not_a_settled_miss(error: Exception) -> None:
+    # Both subclass `ValueError`, which the ladder raises on its way through `response.json()`. Read
+    # as a fact about the paper they would write it off on a fault a retry clears.
+    with pytest.raises(literature_backend.IngestUnavailableError):
+        asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_DOI]))
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        # The payload a real refusal carries, read off Postgres 16 through pg8000: SQLSTATE 42501.
+        pg8000.exceptions.DatabaseError(
+            {'C': '42501', 'M': 'permission denied for table crosswalk', 'F': 'aclchk.c', 'R': 'aclcheck_error'}
+        ),
+        api_exceptions.Forbidden('themis-evidence@p.iam does not have storage.objects.create access'),
+    ],
+    ids=['crosswalk-insert', 'bucket-create'],
+)
+def test_a_write_this_deployment_holds_no_grant_for_is_a_permanent_condition(error: Exception) -> None:
+    # The grants come from a migration and from the stack, so no retry provisions one. Reported as an
+    # outage the caller would retry into it for as long as the deployment lacks them.
+    with pytest.raises(literature_backend.IngestNotConfiguredError) as exc:
+        asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_DOI]))
+    # The message reaches the caller — the browser and the sandbox agent — so it carries the condition
+    # and not the refusal: no server source location, no service account, no table name.
+    for detail in ('aclchk', 'crosswalk', 'themis-evidence@', 'storage.objects'):
+        assert detail not in str(exc.value)
+
+
+def test_a_database_error_that_is_not_a_refused_grant_stays_an_outage() -> None:
+    # The match is on the one SQLSTATE: pg8000 raises `DatabaseError` for everything, and a
+    # serialization failure is the transient case that must keep its retry.
+    error = pg8000.exceptions.DatabaseError({'C': '40001', 'M': 'could not serialize access'})
+    with pytest.raises(literature_backend.IngestUnavailableError):
+        asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_DOI]))
+
+
+def test_an_upstream_that_did_not_answer_still_fails_the_whole_batch() -> None:
+    # The converse, and the reason the classification above is narrow: an outage is not a paper that
+    # does not exist, and reading it per-id would write the paper off for good.
+    request = httpx2.Request('GET', 'https://api.crossref.org/works/x')
+    error = httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(503, request=request))
+    with pytest.raises(literature_backend.IngestUnavailableError):
+        asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_DOI]))
+
+
+def _resolving(known: Sequence[str]) -> ingest.MetadataResolver:
+    """A metadata ladder that holds `known` (as `{scheme}:{value}` keys) and nothing else."""
+
+    async def resolve_metadata(*, pmid: str | None, doi: str | None, **_kwargs: object) -> resolve.ResolvedPaper:
+        asked = f'pmid:{pmid}' if pmid is not None else f'doi:{doi}'
+        if asked not in known:
+            raise resolve.MetadataUnresolvedError(pmid=pmid, doi=doi)
+        article = pubmed_pb2.PubmedArticle()
+        article.medline_citation.article.article_title.value = f'The paper behind {asked}'
+        scheme, _, value = asked.partition(':')
+        return resolve.ResolvedPaper(
+            # The envelope the real ladder answers with: `metadata.pb` is a `PaperMetadata`, and the
+            # writer keeps nothing else. A bare record here would exercise a shape no rung produces.
+            metadata=paper_metadata.to_canonical_bytes(
+                litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(article=article))
+            ),
+            external_ids=litcache_pb2.ExternalIds(**{scheme: value}),
+            publisher=None,
+        )
+
+    return resolve_metadata
+
+
+def _ingesting_store(
+    bucket: storage.Bucket,
+    connect: Callable[[], pg8000.dbapi.Connection],
+    *,
+    known_upstream: Sequence[str],
+    tasks: _FakeTasksClient | None = None,
+) -> litcache_store.Store:
+    """The store over a real crosswalk and bucket, with only the upstream ladder faked."""
+    enqueuer = (
+        enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', tasks), _CONVERT_TARGET)
+        if tasks is not None
+        else None
+    )
+    return litcache_store.Store(
+        bucket,
+        _NO_HTTP,
+        connect=connect,
+        enqueuer=enqueuer,
+        resolve_metadata=_resolving(known_upstream),
+    )
+
+
+def test_ingesting_an_id_upstream_holds_mints_it_and_commits_a_manifest(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
+    backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
+    ingested = asyncio.run(backend.ingest_papers([_FRESH_PMID]))
+
+    doc_id = ingested[_FRESH_PMID]
+    assert asyncio.run(backend.resolve_external_ids([_FRESH_PMID])) == {_FRESH_PMID: doc_id}
+    assert gcs_bucket.blob(writer.manifest_path(doc_id)).exists()
+    # PENDING is what the readiness plane must report for it, or nothing downstream converts it.
+    assert asyncio.run(backend.full_text_readiness([doc_id])) == {doc_id: literature_pb2.FULL_TEXT_STATE_PENDING}
+
+
+def test_ingesting_an_id_nobody_published_mints_nothing(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
+    backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
+    assert asyncio.run(backend.ingest_papers([_UNPUBLISHED_DOI])) == {}
+    assert asyncio.run(backend.resolve_external_ids([_UNPUBLISHED_DOI])) == {}
+    assert not list(gcs_bucket.list_blobs(prefix='papers/'))
+
+
+def test_every_spelling_of_one_id_is_answered_with_the_paper_it_reached(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    del conn  # requested for the per-test crosswalk truncation; the store dials its own
+    # The fold is for the upstream call, not for the answer: a caller that sent two spellings of one
+    # DOI gets both back. One reported UNKNOWN_PAPER would be written off as a paper nobody published.
+    store = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_DOI])
+    spellings = [_FRESH_DOI, _FRESH_DOI.upper().replace('DOI:', 'doi:')]
+
+    ingested = asyncio.run(store.ingest_papers(spellings))
+
+    assert sorted(ingested) == sorted(spellings)
+    assert len(set(ingested.values())) == 1, 'one paper, so one doc_id under both spellings'
+
+
+def test_a_pmcid_miss_is_not_ingested_and_does_not_fail_the_batch(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
+    # The metadata ladder has no PMCID rung, so the adapter drops it rather than handing litcache an id
+    # it would refuse — and the ingestable id beside it still lands.
+    backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
+    ingested = asyncio.run(backend.ingest_papers(['pmcid:PMC7759461', _FRESH_PMID]))
+    assert list(ingested) == [_FRESH_PMID]
+
+
+def test_an_unreachable_upstream_is_reported_as_transient_not_as_an_absent_paper(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
+    request = httpx2.Request('GET', 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi')
+
+    async def resolve_metadata(**_kwargs: object) -> resolve.ResolvedPaper:
+        raise httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(503, request=request))
+
+    backend = litcache_store.Store(gcs_bucket, _NO_HTTP, connect=crosswalk_connect, resolve_metadata=resolve_metadata)
+    with pytest.raises(literature_backend.IngestUnavailableError):
+        asyncio.run(backend.ingest_papers([_FRESH_DOI]))
+
+
+def test_ingesting_without_a_crosswalk_is_a_permanent_condition(gcs_bucket: storage.Bucket) -> None:
+    backend = litcache_store.Store(gcs_bucket, _NO_HTTP)
+    with pytest.raises(literature_backend.IngestNotConfiguredError):
+        asyncio.run(backend.ingest_papers([_FRESH_DOI]))
+
+
+def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    gcs_bucket: storage.Bucket,
+) -> None:
+    """The whole lane, end to end: an id in no corpus comes back with a doc_id and a queued task."""
+    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
+    tasks = _FakeTasksClient()
+    store = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID], tasks=tasks)
+
+    async def run() -> literature_pb2.MaybeIngestPapersResponse:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
+            servicer = servicer_mod.Servicer(live_mod.LiveBackend(store, discovery_mod.Indexes(http_client)))
+            async with in_process_grpc.serving(
+                lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
+                interceptors=(authz.InjectMetadata(authz.ADMITTED),),
+                server_interceptors=authz.server_interceptors(),
+            ) as channel:
+                return await literature_pb2_grpc.LiteratureStub(channel).MaybeIngestPapers(
+                    literature_pb2.MaybeIngestPapersRequest(external_ids=[_FRESH_PMID])
+                )
+
+    response = asyncio.run(run())
+    readiness = {r.external_id: (r.doc_id, r.state) for r in response.readiness}
+    doc_id, state = readiness[_FRESH_PMID]
+    assert state == literature_pb2.FULL_TEXT_STATE_PENDING
+    assert tasks.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}']
+    assert gcs_bucket.blob(writer.manifest_path(doc_id)).exists()

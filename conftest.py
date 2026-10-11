@@ -2,11 +2,16 @@
 
 One home for finding the Docker daemon, the probe that gates on reaching it, and the
 fake-gcs-server wiring, so tests across themis don't each re-derive the daemon check or stand up
-their own emulator. Testcontainers is imported lazily inside the fixture that needs it, so this
-module stays cheap for tests that don't.
+their own emulator. The fake-gcs wiring imports testcontainers inside the fixture that needs it, so a
+test that wants neither container pays for neither.
 
 `recorded_spans` is the other shared fixture: OpenTelemetry's tracer provider is process-global and
 can be installed once, so the one in-memory recorder every span test reads is installed here.
+
+The litcache Postgres fixtures are a plugin rather than fixtures here: two test trees use them, and a
+`conftest.py` is visible only below its own directory. Registering the plugin has to happen in the root
+`conftest.py` — pytest rejects `pytest_plugins` anywhere else — and that import is eager, so every
+session pays for `testcontainers.postgres` whether or not it starts one.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ from opentelemetry.sdk.trace import sampling
 from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.testing import docker_env
+
+pytest_plugins = ('themis.testing.litcache_db',)
 
 _READY_TIMEOUT_S = 30
 

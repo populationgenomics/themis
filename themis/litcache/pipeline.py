@@ -62,7 +62,7 @@ import litfetch
 from google.cloud import storage as gcs
 
 from themis.common import storage
-from themis.litcache import convert, crosswalk, identity, oa, pdf, resolve, writer
+from themis.litcache import convert, crosswalk, identity, ingest, oa, pdf, resolve, writer
 from themis.litcache.models import litcache_pb2
 
 # Source-lineage handles: the rendering's `from_source` and the on-disk
@@ -321,11 +321,10 @@ def _manifest_external_ids(ident: identity.Identity, resolved: resolve.ResolvedP
     `_claim_accession` minted — which is what keeps the crosswalk rebuildable from the
     manifests alone.
     """
-    by_scheme = {eid.scheme: eid.value for eid in ident.external_ids}
-    present = {scheme: by_scheme[scheme] for scheme in ('doi', 'pmid', 'pmcid') if scheme in by_scheme}
+    external_ids = ingest.manifest_external_ids(ident.external_ids)
     if resolved.external_ids.HasField('bookid'):
-        present['bookid'] = resolved.external_ids.bookid
-    return litcache_pb2.ExternalIds(**present)
+        external_ids.bookid = resolved.external_ids.bookid
+    return external_ids
 
 
 def _load_manifest(bucket: gcs.Bucket, doc_id: str) -> litcache_pb2.Manifest | None:
@@ -348,6 +347,10 @@ def _link_equivalence(bucket: gcs.Bucket, linked_doc_ids: Sequence[str]) -> None
     that parses the current manifest and sets only the `equivalence` field, so a
     newer writer's other fields (and any unknown fields) round-trip untouched.
 
+    The bulk ingester's, not the on-demand path's: the request path only ever creates a
+    paper and never rewrites a committed one, so a link it discovers is reported for a
+    later sweep rather than repaired inline (`themis.litcache.ingest`).
+
     Args:
         bucket: The cache bucket.
         linked_doc_ids: The incumbent `doc_id`s `mint` reported (the link seeds).
@@ -357,6 +360,8 @@ def _link_equivalence(bucket: gcs.Bucket, linked_doc_ids: Sequence[str]) -> None
             a claim row whose paper never committed) — an edge to a manifest-less
             `doc_id` is the inconsistency `rebuild` rejects, so fail loud and let
             the orphan's own re-ingestion heal it before the link is retried.
+        themis.common.storage.StaleGenerationError: If a member's rewrite lost its
+            generation race the whole attempt budget (contention — retryable).
     """
     component = _equivalence_closure(bucket, linked_doc_ids)
     canonical = min(component)

@@ -38,10 +38,21 @@ def lookup_key(external_id: str) -> str:
     paper. The rest pass as written; the crosswalk canonicalises its own keys on both mint and
     lookup (`themis.litcache.crosswalk.normalise_key`).
 
+    A DOI is refused here for a second reason. Its slashes survive into the Crossref path the
+    metadata ladder builds for it, so a value carrying a relative path segment resolves to the record
+    of a different work — and the ingest behind this mints the id as the caller spelled it, which
+    would claim an identifier of the caller's choosing against another paper's record. Refusing it is
+    the boundary's, where the answer is INVALID_ARGUMENT rather than a settled fact about the store.
+
     Raises:
-        ValueError: A `pmid:` value that is not a PMID.
+        ValueError: A `pmid:` value that is not a PMID, or a `doi:` value carrying a relative path
+            segment.
     """
     scheme, _, value = external_id.partition(':')
+    if scheme == 'doi':
+        if {'.', '..'} & set(value.split('/')):
+            raise ValueError(f'{external_id!r} is not a DOI: a "." or ".." segment names a different work')
+        return external_id
     if scheme != 'pmid':
         return external_id
     return f'pmid:{pmids.pmid_key(value)}'

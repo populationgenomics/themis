@@ -11,6 +11,7 @@ import urllib.parse
 import httpx2
 import pytest
 
+from themis.litcache import resolve
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence import upstreams
 from themis.services.evidence.upstreams import destinations
@@ -85,3 +86,31 @@ def test_a_completed_call_is_logged_with_what_was_asked(caplog: pytest.LogCaptur
         _get(client, 'https://rest.ensembl.org/vep/human/hgvs/NM_1.1%3Ac.1A%3EG')
     assert 'rest.ensembl.org/vep/human/hgvs/NM_1.1%3Ac.1A%3EG' in caplog.text
     assert '200' in caplog.text
+
+
+def test_the_metadata_ladder_reaches_both_its_rungs_through_the_register() -> None:
+    """The ingest path's upstreams are litcache's, so the walk above — over `upstreams` — misses them.
+
+    `MaybeIngestPapers` resolves an id the corpus lacks through `resolve.resolve_metadata`, whose two
+    rungs are dialled from `themis.litcache`, on this client. Driving the real ladder against a
+    transport that answers nothing is what catches a rung whose host left the register: an unadmitted
+    one raises before the transport is reached.
+    """
+    asked: list[str] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        asked.append(request.url.host)
+        # Each rung's own "nothing indexed under this id": an empty set from efetch, a 404 from
+        # Crossref. Anything else stops the ladder before the second rung is dialled.
+        if request.url.host == 'eutils.ncbi.nlm.nih.gov':
+            return httpx2.Response(200, content=b'<PubmedArticleSet/>')
+        return httpx2.Response(404)
+
+    async def run() -> None:
+        async with destinations.admitting_client(timeout=_TIMEOUT, transport=httpx2.MockTransport(answer)) as client:
+            with pytest.raises(resolve.MetadataUnresolvedError):
+                await resolve.resolve_metadata(pmid='29089047', doi='10.1038/s41586-020-2649-2', http_client=client)
+
+    asyncio.run(run())
+    # Both rungs, so neither host's absence from the register can hide behind the other answering.
+    assert set(asked) == {'eutils.ncbi.nlm.nih.gov', 'api.crossref.org'}

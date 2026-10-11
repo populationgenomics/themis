@@ -181,17 +181,16 @@ grant's. Every other rpc reads the store's objects alone, which confines the int
 this one method.
 
 The lookup answers only for identifiers captured at ingest, so a caller holding a PMCID for a paper stored under its DOI
-and PMID misses even though the store has it. Closing that gap means resolving identifiers against one another in front
-of the lookup, which puts a network round trip on a request path; it is deferred because ingestion captures a DOI and a
-PMID for most papers.
+and PMID misses even though the store has it — and the ingest behind the lookup cannot cover that miss either, its
+ladder keying on a PMID or a DOI. Closing the gap means resolving identifiers against one another in front of both,
+which puts a network round trip on a request path; it is deferred because ingestion captures a DOI and a PMID for most
+papers.
 
-That gap is the shape the rpc's *name* reserves. A renamed rpc is a broken one for every deployed caller, so the name is
-chosen for where the call is going rather than for what it does today, and `Maybe` is load-bearing either way — such a
-call may resolve nothing and produce nothing.
+`Maybe` is load-bearing in the name: such a call may resolve nothing, bring in nothing and produce nothing.
 
-Production is not reserved in the same way: a paper that comes back unsettled has its conversion enqueued by the same
-call. Resolution only ever *starts* production and never waits for it — the queue and the producer behind that enqueue
-are [`evidence-fulltext.md`](evidence-fulltext.md)'s. The *no production on the serving path* rule above is untouched by
+Production follows from the same call: a paper that comes back unsettled has its conversion enqueued by it. Resolution
+only ever *starts* production and never waits for it — the queue and the producer behind that enqueue are
+[`evidence-fulltext.md`](evidence-fulltext.md)'s. The *no production on the serving path* rule above is untouched by
 that, because what it bars is a request that serves a paper waiting on its text, and nothing here waits.
 
 **One spelling per identifier, folded at the boundary that owns it.** The crosswalk folds the case of the schemes whose
@@ -439,9 +438,9 @@ the one thing that distinguishes it is the recorded access disposition, which su
 
 A deposit is idempotent by construction, so the whole mirror can be re-run safely: the mint adopts incumbents, every
 write is content-addressed, and an existing rendering short-circuits the conversion. It runs under the ingestion
-identity, not the service's, which is what keeps the evidence service read-only. So the mirror, not the bucket, is the
-authoritative copy: everything the store holds for such a paper derives from it, and recovery is re-running the deposit
-rather than restoring the bucket. No tooling in the tree drives a deposit yet.
+identity, not the service's, so a deposit's PDF and rendering are no part of what the service may write. So the mirror,
+not the bucket, is the authoritative copy: everything the store holds for such a paper derives from it, and recovery is
+re-running the deposit rather than restoring the bucket. No tooling in the tree drives a deposit yet.
 
 ### Offline or real, never half of each
 

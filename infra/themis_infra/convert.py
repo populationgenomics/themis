@@ -4,10 +4,11 @@ Architecture B (`docs/design/evidence-fulltext.md`): all fetch/convert work live
 so the evidence read image stays lean. A Cloud Task pushes `POST /convert {"doc_id"}` to the worker,
 which runs the litcache producer (OA XML → markdown, else PDF LLM-OCR) off any request path.
 
-The evidence service is the producer: `MaybeIngestPapers` creates one `doc_id`-named task per paper it
-resolved to PENDING. Its two grants on this lane are the program's, since neither the queue nor the
-invoker knows its caller. The bulk ingestion pipeline puts nothing here — it commits the manifest after
-its renderings, so a paper it ingested is READY the moment it exists.
+The evidence service is the producer: `MaybeIngestPapers` creates one `doc_id`-named task per paper
+that comes back PENDING, whether it was already in the corpus or brought in by that same call. Its two
+grants on this lane are the program's, since neither the queue nor the invoker knows its caller. The
+bulk ingestion pipeline puts nothing here — it commits the manifest after its renderings, so a paper it
+ingested is READY the moment it exists.
 
 - `conversion_queue` — the Cloud Tasks queue. Its concurrency cap is the load-bearing knob (each
   dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper

@@ -15,9 +15,10 @@ not locate is a modelled ``not_located`` result, not an error, and so is a paper
 cannot serve, an id the store holds no paper for, and
 an entity set the index holds nothing for.
 
-``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: the papers it resolves
-to PENDING get a conversion requested through the backend, so its failures split three ways — retry
-(UNAVAILABLE), fix the deployment (FAILED_PRECONDITION), or page someone (INTERNAL). It is also the one
+``MaybeIngestPapers`` is the one rpc that starts work rather than only reading: an id the corpus does
+not hold is brought into it, and every paper that comes back PENDING gets a conversion requested
+through the backend, so its failures split three ways — retry (UNAVAILABLE), fix the deployment
+(FAILED_PRECONDITION), or page someone (INTERNAL). It is also the one
 rpc whose implementation does more with the call's context than hand it to the port: the spend it
 starts is charged to what the call was made for (rpc-authorization.md).
 
@@ -91,6 +92,10 @@ _AGREEMENT = {
 _MAX_DOC_IDS = 100
 # The same bound on the external-id path: each id costs a crosswalk row and then a readiness read.
 _MAX_EXTERNAL_IDS = 100
+# A tighter bound on how many of those ids one call may *ingest* (`evidence-fulltext.md`). Counted after
+# the crosswalk lookup and over the ingestable schemes only, so what it admits depends on corpus state
+# rather than on the request alone.
+_MAX_INGESTS = 10
 
 
 class Servicer(literature_pb2_grpc.LiteratureServicer):
@@ -269,6 +274,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
             # goes to the log, not to a caller that reaches the browser and the sandbox agent.
             _logger.exception('crosswalk lookup failed')
             await authored_status.abort(context, grpc.StatusCode.UNAVAILABLE, 'crosswalk unavailable')
+        await self._ingest_unknown(view, lookup_keys, doc_ids, context)
         # Two external ids can name one paper (a DOI and its PMID), so collapse after resolution —
         # where the reads are — and report both ids against the doc_id they share.
         states = await view.full_text_readiness(list(dict.fromkeys(doc_ids.values())))
@@ -286,6 +292,52 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
             ]
         )
 
+    async def _ingest_unknown(
+        self,
+        view: literature_backend.LiteratureView,
+        lookup_keys: Mapping[str, str],
+        doc_ids: dict[str, str],
+        context: grpc.aio.ServicerContext,
+    ) -> None:
+        """Bring the ids the crosswalk missed into the corpus, adding what landed to ``doc_ids``.
+
+        Through ``view``, as the conversions that follow are: the mint is a permanent claim and the
+        upstream probe ahead of it a cost of its own, so both are the seam a later narrowing acts on.
+        Charging them to what the call was made for is not yet done — ``view_for`` discards the
+        context, so nothing records who caused the spend (rpc-authorization.md).
+
+        Each id is a paced upstream call, so the batch is bounded by the rpc's deadline as well as by
+        ``_MAX_INGESTS`` — a caller that has stopped waiting must not leave one running.
+        """
+        # An id whose scheme cannot be resolved upstream is not a candidate, so it neither counts
+        # against the bound nor reaches the backend (`backend.INGESTABLE_SCHEMES`).
+        unknown = [
+            key
+            for key in dict.fromkeys(lookup_keys.values())
+            if key not in doc_ids and key.partition(':')[0] in literature_backend.INGESTABLE_SCHEMES
+        ]
+        if not unknown:
+            return
+        if len(unknown) > _MAX_INGESTS:
+            await authored_status.abort(
+                context,
+                grpc.StatusCode.INVALID_ARGUMENT,
+                f'at most {_MAX_INGESTS} papers may be ingested per request; {len(unknown)} of these '
+                f'{len(lookup_keys)} external_ids are not in the corpus and could be ingested',
+            )
+        try:
+            doc_ids.update(await view.ingest_papers(unknown))
+        except literature_backend.IngestNotConfiguredError as e:
+            await authored_status.abort(
+                context, grpc.StatusCode.FAILED_PRECONDITION, f'ingestion is not configured: {e}'
+            )
+        except literature_backend.IngestUnavailableError:
+            # Whole-call, for the reason a crosswalk outage is: an upstream that did not answer is not
+            # a paper that does not exist, and a caller reading it per-id would write the paper off.
+            # The detail names the upstream and the instance connection name, so it goes to the log.
+            _logger.exception('ingesting an unknown paper failed')
+            await authored_status.abort(context, grpc.StatusCode.UNAVAILABLE, 'the papers could not be ingested')
+
     async def _request_conversions(
         self,
         view: literature_backend.LiteratureView,
@@ -302,6 +354,11 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         leaves the paper PENDING, which is indistinguishable from one whose conversion is under way, so
         a caller told "PENDING" would have no reason to ask again. Repeating the call is the remedy, and
         the ``doc_id``-keyed task name makes it free for the papers already queued.
+
+        Args:
+            view: The call's view of the corpus, which the conversions are placed through.
+            states: Each resolved paper's readiness.
+            context: The rpc's context, aborted when a conversion could not be asked for.
         """
         # READY and the two terminal states need nothing; UNKNOWN_PAPER has no manifest, so there is
         # nothing for the producer to read and no task to name.

@@ -5,8 +5,9 @@ applies — one interceptor gating every rpc of every interface, resolving the s
 through the same auth service and every caller's ID token against the same certificates — so an
 image-wide `THEMIS_AUTHORIZER_BACKEND` selects the authorizer the server is built with, and no
 interface reads it. And the nine database-backed interfaces reach public HTTP upstreams, as does
-`literature`'s discovery half, so they share one `httpx2.AsyncClient`: a client each would be ten
-connection pools against overlapping hosts.
+`literature` — its discovery half, and the ingest path that resolves an unknown id against PubMed
+or Crossref — so they share one `httpx2.AsyncClient`: a client each would be ten connection pools
+against overlapping hosts.
 
 Everything else stays the interface's own — which adapter its port builds, and the vars that
 configure it (`services.md`, "One deployment, several interfaces").
@@ -41,7 +42,7 @@ class Deps:
         http_client: The client every live upstream call is issued on, held open for the server's
             lifetime by `stack`. It reaches only the hosts `upstreams.destinations` admits.
         stack: Owns whatever an interface's own adapter holds open for the server's lifetime — the
-            GCS client and Cloud SQL connector `literature`'s corpus half builds. Nothing in the data
+            GCS client and Cloud SQL connector `literature` builds. Nothing in the data
             plane handles SIGTERM, so it unwinds on a startup failure, not on a Cloud Run stop.
     """
 

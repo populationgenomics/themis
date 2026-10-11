@@ -90,9 +90,9 @@ image-wide. A per-interface copy would be the same value written once per interf
 inconsistently. Its fixture seed is one var per *image* for the same reason, each image seeding the bindings its own
 callers present; the shared factory is told which var the JSON came from, so it names that var when it rejects it.
 (`literature`'s rpcs split by caller: the eight the agent calls resolve a session for the data cutoff, and the one that
-enqueues a conversion also for attributing its cost — see [`evidence-fulltext.md`](evidence-fulltext.md) — while the
-three the browser calls, a paper's description, its content location and a quote's position, resolve none: the corpus is
-shared across analyses and nothing is gated per reader.)
+brings in a paper and enqueues its conversion also for attributing what both cost — see
+[`evidence-fulltext.md`](evidence-fulltext.md) — while the three the browser calls, a paper's description, its content
+location and a quote's position, resolve none: the corpus is shared across analyses and nothing is gated per reader.)
 
 Nothing in the data plane handles SIGTERM, so the exit stack unwinds on a startup failure, not on a Cloud Run stop — do
 not register work there that has to run before the process dies until graceful drain exists.

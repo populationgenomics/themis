@@ -294,6 +294,17 @@ class FixtureBackend(literature_backend.LiteratureBackend):
         }
 
     @override
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        # The seed is the whole corpus and there is no upstream to resolve against, so nothing can be
+        # brought into it. Logged rather than passed over in silence: an offline caller watching an id
+        # stay UNKNOWN_PAPER has to be able to see that nothing was ever going to ingest it.
+        if external_ids:
+            _logger.info(
+                'fixture backend ingests nothing; %d id(s) stay unknown: %s', len(external_ids), list(external_ids)
+            )
+        return {}
+
+    @override
     async def full_text_readiness(self, doc_ids: Sequence[str]) -> dict[str, literature_pb2.FullTextState]:
         # The seed models no conversion queue, so a PENDING paper never advances.
         result: dict[str, literature_pb2.FullTextState] = {}

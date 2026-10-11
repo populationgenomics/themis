@@ -170,7 +170,7 @@ def determine_identity(bucket_key: str, origin: DoclingOrigin, *, extra_candidat
     external_ids = tuple(sorted(ids.values(), key=lambda e: e.key))
     return Identity(
         external_ids=external_ids,
-        claim_key=_claim_key(external_ids),
+        claim_key=claim_key(external_ids),
         binary_hash=origin.binary_hash,
         content_addressed=content_addressed,
     )
@@ -206,7 +206,22 @@ def _classify(decoded: str) -> ExternalId | None:
     return None
 
 
-def _claim_key(external_ids: tuple[ExternalId, ...]) -> str:
+def claim_key(external_ids: Sequence[ExternalId]) -> str:
+    """The precedence-primary mint key of a paper's ids — the manifest's `claim_key`.
+
+    Precedence is `doi` > `pmcid` > `pmid` > `pii` > `binhash`, so the same paper resolves to the same
+    claim key however its ids were discovered; an unrecognised scheme sorts last.
+
+    Args:
+        external_ids: The paper's ids, non-empty.
+
+    Returns:
+        The `{scheme}:{value}` key of the highest-precedence id.
+
+    Raises:
+        ValueError: If `external_ids` is empty (`min` has nothing to choose).
+    """
+
     def precedence(eid: ExternalId) -> int:
         if eid.scheme in _SCHEME_PRECEDENCE:
             return _SCHEME_PRECEDENCE.index(eid.scheme)

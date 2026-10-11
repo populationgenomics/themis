@@ -1,9 +1,16 @@
-"""Shared Postgres container + litcache schema for the crosswalk and rebuild tests.
+"""A throwaway Postgres carrying the litcache crosswalk schema, as a pytest plugin.
 
-The container applies the litcache migration once via the migrate runner's own
-discover/render/split (the deploy path runs the same migration) — the tests don't create
-the schema themselves. Per-test fixtures truncate the crosswalk for isolation. Connects
-with pg8000, the same driver the Cloud SQL connector uses in deploy.
+Registered from the repo-root `conftest.py`, so the fixtures reach every test tree: the crosswalk and
+ingestion tests under `tests/litcache/` mint against them, and so do the evidence service's literature
+tests, whose backend mints too. A `conftest.py` is visible only below its own directory, which is why
+this is a plugin rather than one.
+
+The schema is built by the migrate runner's own discover/render/split — the deploy path runs the same
+statements — so no test hand-writes DDL that could drift from the migration. Only
+`0003_litcache_crosswalk` is applied: a later migration is applied by the test that is about it, so
+its effect is observable rather than assumed.
+
+Connections are pg8000, the driver the Cloud SQL connector uses in deploy.
 """
 
 from __future__ import annotations
@@ -31,8 +38,8 @@ def _connect(container: testcontainers.postgres.PostgresContainer) -> pg8000.dba
     )
 
 
-def _apply_litcache_migration(conn: pg8000.dbapi.Connection) -> None:
-    sql = next(m.sql for m in migrate.discover(_MIGRATIONS) if m.name == 'litcache_crosswalk')
+def _apply_migration(conn: pg8000.dbapi.Connection, name: str) -> None:
+    sql = next(m.sql for m in migrate.discover(_MIGRATIONS) if m.name == name)
     with contextlib.closing(conn.cursor()) as cur:
         for statement in migrate.split_statements(migrate.render(sql, {})):
             cur.execute(statement)
@@ -41,12 +48,13 @@ def _apply_litcache_migration(conn: pg8000.dbapi.Connection) -> None:
 
 @pytest.fixture(scope='session')
 def postgres_container(docker_daemon: None) -> Iterator[testcontainers.postgres.PostgresContainer]:
+    """A session-lived Postgres holding `litcache.crosswalk`."""
     del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
     with testcontainers.postgres.PostgresContainer(
         'postgres:16', username='test', password='test', dbname='litcache'
     ) as container:
         with contextlib.closing(_connect(container)) as conn:
-            _apply_litcache_migration(conn)
+            _apply_migration(conn, 'litcache_crosswalk')
         yield container
 
 

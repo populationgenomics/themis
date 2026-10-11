@@ -16,6 +16,7 @@ import httpx2
 import pytest
 
 from themis.common import authored_status
+from themis.litcache import crosswalk
 from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.literature import backend as literature_backend
@@ -30,9 +31,12 @@ from themis.testing import in_process_grpc
 DOC_XML = 'doc-xml'  # a source-XML-derived markdown rendering + a PDF
 DOC_OCR = 'doc-ocr'  # a PDF whose only rendering is a lossy OCR (no markdown)
 DOC_BARE = 'doc-bare'  # claimed, nothing fetched yet — neither representation
+DOC_FRESH = 'doc-fresh'  # what an ingested paper takes: a manifest, no rendering
 DOI_XML = 'doi:10.1/xml'
 PMID_XML = 'pmid:12345'
 DOI_OCR = 'doi:10.1/ocr'
+DOI_UNKNOWN = 'doi:10.1/never-seen'  # in no corpus and, for the fixture, no upstream either
+PMCID_UNKNOWN = 'pmcid:PMC9999999'  # a miss the metadata ladder has no rung for
 QUOTE_MD = 'markedly reduced ATP sensitivity'  # verbatim in MARKDOWN_XML: located, not seeded
 QUOTE_PDF = 'a quote locatable in the pdf'
 MARKDOWN_XML = '# An XML-derived paper\n\nThe channel showed markedly reduced ATP sensitivity.\n'
@@ -431,13 +435,12 @@ def test_a_doi_resolves_under_any_spelling() -> None:
     assert _paper_readiness(response) == {spelled: (DOC_XML, literature_pb2.FULL_TEXT_STATE_READY)}
 
 
-def test_an_id_the_store_does_not_know_is_an_empty_doc_id() -> None:
-    # A miss is per-id and modelled: an empty doc_id with UNKNOWN_PAPER, never a call-level error and
-    # never a minted doc_id that would name no manifest.
-    response = _run(
-        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=['doi:10.1/never-seen']))
-    )
-    assert _paper_readiness(response) == {'doi:10.1/never-seen': ('', literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER)}
+def test_an_id_no_upstream_holds_is_an_empty_doc_id() -> None:
+    # A miss is per-id and modelled: an empty doc_id with UNKNOWN_PAPER, never a call-level error. The
+    # fixture ingests nothing, which is what an id upstream does not know looks like — no doc_id was
+    # minted for a paper that would then name no manifest.
+    response = _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_UNKNOWN])))
+    assert _paper_readiness(response) == {DOI_UNKNOWN: ('', literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER)}
 
 
 @pytest.mark.parametrize(
@@ -790,6 +793,174 @@ def test_the_fixture_backend_converts_nothing_and_says_so(caplog: pytest.LogCapt
     assert DOC_OCR in caplog.text
 
 
+class _IngestingBackend(fixture_mod.FixtureBackend):
+    """A backend whose upstream holds the named papers, so an unknown id can be brought in.
+
+    Stands in for the litcache store: ingesting adds the paper to the seeded corpus with no
+    rendering, which is what a freshly-committed manifest reads as.
+    """
+
+    def __init__(self, papers: Mapping[str, fixture_mod.SeededPaper], upstream: Mapping[str, str]) -> None:
+        super().__init__(papers, RECORDS, ENTITIES)
+        self._upstream = dict(upstream)
+        self.ingested: list[list[str]] = []
+        self.requested: list[list[str]] = []
+
+    @override
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        self.ingested.append(list(external_ids))
+        minted = {i: self._upstream[i] for i in external_ids if i in self._upstream}
+        for external_id, doc_id in minted.items():
+            self._papers[doc_id] = fixture_mod.SeededPaper(title=external_id, external_ids=(external_id,))
+            self._crosswalk[crosswalk.normalise_key(external_id)] = doc_id
+        return minted
+
+    @override
+    async def place_conversions(self, doc_ids: Sequence[str]) -> None:
+        self.requested.append(list(doc_ids))
+
+
+class _FailingIngestBackend(fixture_mod.FixtureBackend):
+    """A backend whose ingest fails a given way, to pin the status mapping."""
+
+    def __init__(self, papers: Mapping[str, fixture_mod.SeededPaper], error: Exception) -> None:
+        super().__init__(papers, RECORDS, ENTITIES)
+        self._error = error
+
+    @override
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
+        del external_ids
+        raise self._error
+
+
+def test_an_unknown_id_upstream_holds_is_ingested_and_its_conversion_requested() -> None:
+    # The chain in one call: a miss becomes a doc_id, and the paper it created is PENDING, which is the
+    # state the enqueue fires on.
+    backend = _IngestingBackend(SEED, {DOI_UNKNOWN: DOC_FRESH})
+    response = _run(
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_UNKNOWN])),
+        backend=backend,
+    )
+    assert backend.ingested == [[DOI_UNKNOWN]]
+    assert backend.requested == [[DOC_FRESH]]
+    assert _paper_readiness(response) == {DOI_UNKNOWN: (DOC_FRESH, literature_pb2.FULL_TEXT_STATE_PENDING)}
+
+
+def test_an_id_no_upstream_holds_is_neither_minted_nor_converted() -> None:
+    # An id nobody published gets no doc_id, so there is nothing to convert.
+    backend = _IngestingBackend(SEED, {})
+    response = _run(
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_UNKNOWN])),
+        backend=backend,
+    )
+    assert backend.ingested == [[DOI_UNKNOWN]]
+    assert backend.requested == []
+    assert _paper_readiness(response) == {DOI_UNKNOWN: ('', literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER)}
+
+
+def test_an_id_already_in_the_corpus_is_not_offered_for_ingestion() -> None:
+    # Only the misses are offered: a resolved id would pay an upstream round trip for a known answer.
+    backend = _IngestingBackend(SEED, {DOI_UNKNOWN: DOC_FRESH})
+    _run(
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML])),
+        backend=backend,
+    )
+    assert backend.ingested == []
+
+
+def test_a_miss_the_metadata_ladder_has_no_rung_for_is_not_offered_for_ingestion() -> None:
+    # Handing litcache a scheme its ladder cannot resolve would raise there, so the id is filtered out
+    # here and comes back as the miss it is.
+    backend = _IngestingBackend(SEED, {})
+    response = _run(
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[PMCID_UNKNOWN])),
+        backend=backend,
+    )
+    assert backend.ingested == []
+    assert _paper_readiness(response) == {PMCID_UNKNOWN: ('', literature_pb2.FULL_TEXT_STATE_UNKNOWN_PAPER)}
+
+
+@pytest.mark.parametrize(
+    'external_id',
+    [
+        'doi:10.1/../../works/10.5555/12345678',
+        'doi:10.1/./xml',
+        'doi:../10.1/xml',
+    ],
+)
+def test_a_doi_that_names_another_work_through_its_path_is_invalid_argument(external_id: str) -> None:
+    # A DOI's slashes survive into the Crossref path the ingest resolves it on, so a relative segment
+    # fetches a different work's record — and the ingest mints the id as it was spelled, which would
+    # claim an identifier of the caller's choosing against that record. Refused, not resolved.
+    backend = _IngestingBackend(SEED, {})
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[external_id])),
+            backend=backend,
+        )
+    assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert backend.ingested == []
+
+
+def test_more_papers_to_ingest_than_the_bound_is_invalid_argument() -> None:
+    # Refused whole rather than ingesting a prefix, since the surplus reported UNKNOWN_PAPER would be
+    # indistinguishable from an id upstream does not know.
+    external_ids = [f'doi:10.1/fresh-{i}' for i in range(servicer_mod._MAX_INGESTS + 1)]
+    backend = _IngestingBackend(SEED, {})
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=external_ids)),
+            backend=backend,
+        )
+    assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert backend.ingested == []
+
+
+def test_a_batch_of_known_ids_is_not_bound_by_the_ingest_ceiling() -> None:
+    # The bound counts what it bounds: resolved ids cost no upstream call and are not counted.
+    known = {f'doi:10.1/known-{i}': f'doc-known-{i}' for i in range(servicer_mod._MAX_INGESTS + 1)}
+    seed = {
+        doc_id: fixture_mod.SeededPaper(
+            title=doc_id, external_ids=(external_id,), markdown_gcs_uri='gs://corpus/x.md', markdown_text='text'
+        )
+        for external_id, doc_id in known.items()
+    }
+    response = _run(
+        lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=list(known))),
+        backend=_IngestingBackend(seed, {}),
+    )
+    assert {r.doc_id for r in response.readiness} == set(known.values())
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (literature_backend.IngestNotConfiguredError('no crosswalk'), grpc.StatusCode.FAILED_PRECONDITION),
+        (literature_backend.IngestUnavailableError('pubmed is down'), grpc.StatusCode.UNAVAILABLE),
+    ],
+)
+def test_an_ingest_failure_maps_to_the_status_that_matches_its_remedy(
+    error: Exception, expected: grpc.StatusCode
+) -> None:
+    # Whole-call, never a per-id empty doc_id: a caller reading an outage per-id would write the paper
+    # off for good.
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_UNKNOWN])),
+            backend=_FailingIngestBackend(SEED, error),
+        )
+    assert exc.value.code() is expected
+
+
+def test_the_fixture_backend_ingests_nothing_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    # The offline corpus is the whole corpus and has no upstream, so an unknown id stays unknown; a
+    # caller watching one has to be able to see that nothing was ever going to ingest it.
+    backend = fixture_mod.FixtureBackend(SEED, RECORDS, ENTITIES)
+    with caplog.at_level('INFO', logger=fixture_mod.__name__):
+        assert asyncio.run(backend.view_for(authz.AUTH).ingest_papers([DOI_UNKNOWN])) == {}
+    assert DOI_UNKNOWN in caplog.text
+
+
 def test_get_markdown_serves_the_rendering_text() -> None:
     result = _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id=DOC_XML)))
     assert result.WhichOneof('result') == 'content'
@@ -1034,6 +1205,10 @@ class _IndexOnlyBackend(literature_backend.LiteratureBackend):
 
     @override
     async def resolve_external_ids(self, external_ids: Sequence[str]) -> dict[str, str]:
+        raise AssertionError('no store call is exercised here')
+
+    @override
+    async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
         raise AssertionError('no store call is exercised here')
 
     @override
