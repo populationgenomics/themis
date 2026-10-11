@@ -25,10 +25,6 @@ HOOK_NAME = 'pre-receive'
 # One task per pack, so in-flight memory is bounded by concurrency x pack size.
 DEFAULT_SYNC_CONCURRENCY = 16
 
-# Carried by every git run against a mirror, here and wherever one is served: `pack-objects` ignores replace refs, so
-# a git honouring them would check other objects than the ones the mirror stores.
-MIRROR_GIT_ENV = {'GIT_NO_REPLACE_OBJECTS': '1'}
-
 # The directory `themis` lives in, baked into the generated hook below as its import path.
 _IMPORT_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -76,10 +72,17 @@ class SyncState:
         return cls(generation=payload['generation'], store=payload['store'])
 
 
+def _injects_config(name: str) -> bool:
+    """Whether `name` is a variable through which git takes config above the repository's own."""
+    return name in {'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT'} or name.startswith(
+        ('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_')
+    )
+
+
 def _git_environment() -> dict[str, str]:
     return {
         'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
-        **{name: value for name, value in os.environ.items() if name.startswith('GIT_')},
+        **{name: value for name, value in os.environ.items() if name.startswith('GIT_') and not _injects_config(name)},
     }
 
 
@@ -88,11 +91,11 @@ def git(
 ) -> bytes:
     """Run a git command, returning stdout.
 
-    The command gets `PATH`, git's own `GIT_*` variables, `env` and then `MIRROR_GIT_ENV`, nothing
-    else of the caller's environment: a mirror's git indexes packs and reads refs that a pusher
-    composed, and the process that runs it holds credentials git has no use for. The `GIT_*`
-    variables carry through because inside a hook they name the quarantine the pushed objects wait
-    in. `MIRROR_GIT_ENV` goes last, so neither can turn replace refs back on.
+    The command gets `PATH`, git's own `GIT_*` variables and `env`, nothing else of the caller's
+    environment: a mirror's git indexes packs and reads refs that a pusher composed, and the process
+    that runs it holds credentials git has no use for. The `GIT_*` variables carry through because
+    inside a hook they name the quarantine the pushed objects wait in. Those that pass config on
+    the command line's behalf are dropped, so nothing inherited outranks the mirror's own config.
 
     Args:
         args: The git subcommand and its arguments.
@@ -109,7 +112,7 @@ def git(
         input=stdin,
         capture_output=True,
         check=False,
-        env={**_git_environment(), **(env or {}), **MIRROR_GIT_ENV},
+        env={**_git_environment(), **(env or {})},
     )
     if result.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {result.stderr.decode(errors="replace")}')
@@ -157,7 +160,8 @@ class BareRepo:
         # Off by default in git; with it on, receive-pack refuses a malformed object before the
         # pre-receive hook is invoked at all.
         git('config', 'receive.fsckObjects', 'true', cwd=self.path)
-        # `MIRROR_GIT_ENV` for a git that does not come through `git()` or a server's environment.
+        # Replace refs off for every git that opens the mirror: `pack-objects` ignores them, so a git
+        # honouring them would check other objects than the ones the mirror stores.
         git('config', 'core.useReplaceRefs', 'false', cwd=self.path)
         self._installed_dir.mkdir(exist_ok=True)
         self._write_hook()

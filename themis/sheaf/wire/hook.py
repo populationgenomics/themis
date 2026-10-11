@@ -43,8 +43,7 @@ def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str
     Scrubbed on purpose: the hook holds the store credential and reads a pack the client composed,
     so it must not inherit the host's secrets, and only the variables named here reach it. A server
     hands this to the `git` it spawns — `http-backend`, `upload-pack`, `receive-pack` — and adds
-    whatever that command itself needs. It carries `bare.MIRROR_GIT_ENV`, so the served git and
-    everything it runs, this hook included, ignore replace refs.
+    whatever that command itself needs.
     """
     # STORAGE_EMULATOR_HOST is the storage SDK's own contract for redirecting the client, and
     # carrying it through is what lets the whole path run against an emulator. Unset in
@@ -56,7 +55,6 @@ def environment(repo: bare.BareRepo, protection: protect.Protection) -> dict[str
         'PATH': os.environ.get('PATH', '/usr/bin:/bin'),
         SYNC_STATE_ENV: str(repo.sync_state_path),
         GIT_DIR_ENV: str(repo.path),
-        **bare.MIRROR_GIT_ENV,
     }
 
 

@@ -405,24 +405,39 @@ def test_branches_tags_and_stranded_work_may_be_pushed(
     assert sheaf.Store(backend, REPO).read().refs[ref] == tip
 
 
-def test_the_mirrors_git_reads_objects_past_a_replace_ref(backend: sheaf.LocalBackend, tmp_path: pathlib.Path) -> None:
-    """Either defence alone keeps a replace ref in the mirror from standing one object in for another.
-
-    `MIRROR_GIT_ENV` covers every git sheaf spawns; the mirror's config covers a git spawned without it.
-    """
-    mirror = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
-    mirror.sync()
+def _replaced_blob(mirror: bare.BareRepo) -> str:
+    """Write a blob and a replace ref standing another in for it; return the replaced blob's id."""
     real = mirror.git('hash-object', '-w', '--stdin', stdin=b'real\n').decode().strip()
     stand_in = mirror.git('hash-object', '-w', '--stdin', stdin=b'stand-in\n').decode().strip()
     mirror.git('update-ref', f'refs/replace/{real}', stand_in)
-    honoured = ('-c', 'core.useReplaceRefs=true')
+    # A git told to honour replace refs reads the stand-in, so the reads the tests make are not vacuous.
+    assert conftest.run_git('-c', 'core.useReplaceRefs=true', 'cat-file', 'blob', real, cwd=mirror.path).stdout == (
+        'stand-in\n'
+    )
+    return real
 
-    # Neither defence: the replace ref is live, so the two reads below are not vacuous.
-    assert conftest.run_git(*honoured, 'cat-file', 'blob', real, cwd=mirror.path).stdout == 'stand-in\n'
-    # The mirror's config alone: no GIT_NO_REPLACE_OBJECTS in a client's environment.
+
+def test_any_git_opening_the_mirror_reads_objects_past_a_replace_ref(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path
+) -> None:
+    # A git spawned with no special environment or arguments: the mirror's own config is what holds.
+    mirror = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
+    mirror.sync()
+    real = _replaced_blob(mirror)
     assert conftest.run_git('cat-file', 'blob', real, cwd=mirror.path).stdout == 'real\n'
-    # The environment alone, over a config that would honour the ref.
-    assert mirror.git(*honoured, 'cat-file', 'blob', real) == b'real\n'
+
+
+def test_the_mirrors_git_takes_no_inherited_config_above_the_mirrors_own(
+    backend: sheaf.LocalBackend, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mirror = bare.BareRepo(sheaf.Store(backend, REPO), tmp_path / 'bare')
+    mirror.sync()
+    real = _replaced_blob(mirror)
+    monkeypatch.setenv('GIT_CONFIG_PARAMETERS', "'core.usereplacerefs'='true'")
+    monkeypatch.setenv('GIT_CONFIG_COUNT', '1')
+    monkeypatch.setenv('GIT_CONFIG_KEY_0', 'core.useReplaceRefs')
+    monkeypatch.setenv('GIT_CONFIG_VALUE_0', 'true')
+    assert mirror.git('cat-file', 'blob', real) == b'real\n'
 
 
 def test_every_push_writes_a_reflog_entry_that_keeps_its_tip_reachable(

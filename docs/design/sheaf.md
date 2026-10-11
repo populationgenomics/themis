@@ -265,9 +265,10 @@ push make the hook check one commit while the store keeps another. The agent fir
 pointing at a harmless commit, then pushes the forged commit, which writes a protected path. Every git command the hook
 runs reads the harmless stand-in and passes it, but `pack-objects` ignores replace refs and stores the forged commit.
 Two defences close the two steps. A push may write only branches, tags, and the refs under `refs/stranded/` where the
-sandbox worker keeps work the store refused on its branch, so the first push is refused. And every git run against the
-mirror ignores replace refs, because a writer that publishes through the storage protocol without passing a hook can
-still store any ref, and every sync copies the store's refs into the mirror.
+sandbox worker keeps work the store refused on its branch, so the first push is refused. And the mirror's own config
+turns replace refs off, so every git that opens it reads the objects it stores. The second defence is needed because a
+writer that publishes through the storage protocol without passing a hook can still store any ref, and every sync copies
+the store's refs into the mirror.
 
 Incoming objects are validated by git, not by the hook. That validation is off by default in receive-pack, and the
 default is wrong here: the hook is host-side code holding the store credential, and it walks a pack the sandbox
