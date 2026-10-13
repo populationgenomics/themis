@@ -442,6 +442,10 @@ identity, not the service's, so a deposit's PDF and rendering are no part of wha
 not the bucket, is the authoritative copy: everything the store holds for such a paper derives from it, and recovery is
 re-running the deposit rather than restoring the bucket. No tooling in the tree drives a deposit yet.
 
+A curator can also hand over the papers one Analysis needs, by dropping their PDFs on the Analysis's list of the
+literature it used. That route settles which paper each PDF is against an index record before anything is claimed, and
+its design is [`supplied-papers.md`](supplied-papers.md).
+
 ### Offline or real, never half of each
 
 Behind the servicer sits one port, however many places its answers come from: the live backend reads two sources, the
