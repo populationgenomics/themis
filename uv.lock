@@ -1608,8 +1608,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
+    { name = "h11" },
+    { name = "truststore" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -2573,10 +2573,10 @@ resolution-markers = [
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version >= '3.14'" },
-    { name = "python-dateutil", marker = "python_full_version >= '3.14'" },
-    { name = "pytz", marker = "python_full_version >= '3.14'" },
-    { name = "tzdata", marker = "python_full_version >= '3.14'" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "pytz" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -2618,9 +2618,9 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version < '3.14'" },
-    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
-    { name = "tzdata", marker = "(python_full_version < '3.14' and sys_platform == 'emscripten') or (python_full_version < '3.14' and sys_platform == 'win32')" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
 wheels = [
@@ -2790,11 +2790,11 @@ wheels = [
 
 [[package]]
 name = "postern"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/86/94/c69797023887fd337476adc4be7cecbfb49e3a21a5fe5943c8688e047a34/postern-0.4.0.tar.gz", hash = "sha256:512e6a6439c944e947cbd247845dfcc23d458702ddca3771213d04b05c761c6e", size = 99176, upload-time = "2026-08-26T03:47:55.012Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/1a/357e29fd88e6a114dda989a4a3bc4f89fd189937569e663d216b55a0a189/postern-0.5.0.tar.gz", hash = "sha256:56061d1f307da7fa4e7125b6e66ad400e2b443528d1a6b01b0284e63939f03ab", size = 153192, upload-time = "2026-10-14T08:27:35.246Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/88/edf34e90b8cf34173dde3b62902351a2b75d18c7df22c75d4c0c94238114/postern-0.4.0-py3-none-any.whl", hash = "sha256:66e425786c3a065b7bb4ecd1ec07e93abf8b6d1a7602ec762e4067521b202ce4", size = 59756, upload-time = "2026-08-26T03:47:53.266Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/ed/4ceda5b47c952621551a853406980b4ee9b4e1747ee21ae2669986164e45/postern-0.5.0-py3-none-any.whl", hash = "sha256:4091e394d4ac8c10c23150550d469e00d5b4badab10ab467c1b37e2e6764e635", size = 85685, upload-time = "2026-10-14T08:27:33.945Z" },
 ]
 
 [package.optional-dependencies]
@@ -3642,8 +3642,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -4347,7 +4347,7 @@ lint = [
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "pillow" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
@@ -4399,7 +4399,7 @@ sandbox-worker = [
     { name = "grpcio" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-instrumentation-grpc" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
@@ -4482,7 +4482,7 @@ test = [
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "pillow" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.4.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
