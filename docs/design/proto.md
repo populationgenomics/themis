@@ -336,8 +336,8 @@ A change the gate refuses to an at-rest contract, such as a field whose type or 
 expand/contract change. The new form lands as a new field beside the old one, and readers accept either. Every stored
 artifact is then rewritten into the new field, and only after that is the old field retired, with its number and name
 reserved. A store whose records are immutable, as a sheaf repository's pushed revisions are, never reaches that last
-step, so its readers accept the old field for good. The litcache store takes this route, with a metadata refresh or a
-full rebuild as the rewrite ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+step, so its readers accept the old field for good. The litcache store takes this route; which run does the rewrite
+depends on what changed ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 ### Retiring an RPC or a message
 

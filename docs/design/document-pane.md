@@ -164,7 +164,7 @@ rendering the paper** resolves offsets and applies the visual highlight locally 
 
 ### Representation: markdown vs PDF
 
-A paper tab prefers **markdown when an XML-derived rendering exists** (`Rendering.from_source = jats-xml`), because that
+A paper tab prefers **markdown when an XML-derived rendering exists** (its source is the `xml` lineage), because that
 text is high-fidelity. When the only rendering is **LLM-OCR of a PDF** (lossy), the tab defaults to **PDF**. The toggle
 is always available. The citation (id + quote) is the durable anchor; the highlight is **recomputed per representation**
 on toggle (an XML-derived markdown and a PDF text layer differ in whitespace/hyphenation/ligatures, so a location valid

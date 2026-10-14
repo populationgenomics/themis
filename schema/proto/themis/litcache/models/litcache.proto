@@ -85,7 +85,7 @@ message Revision {
 // across a lineage's revisions; the converter is not part of the lineage (a Rendering
 // records it).
 message Source {
-  string handle = 1;  // lineage identity, stable across updates: "pdf" | "jats-xml" | "scraped-html"
+  string handle = 1;  // lineage identity, stable across updates: "pdf" | "xml"
   SourceFormat media_type = 2;
   string licence = 3;  // raw, as litfetch returned it (not an SPDX id)
   LicenceBasis licence_basis = 4;
@@ -93,8 +93,8 @@ message Source {
   repeated Revision revisions = 6 [(buf.validate.field).repeated.min_items = 1];
 }
 
-// Markdown derived from one revision via one route. Content-addressed at renderings/{hex}.md
-// (the Manifest.renderings key is that hash).
+// The deprecated Manifest.renderings entry. Retained because an at-rest message is never deleted;
+// a rendering is now a Record whose construction is a RenderingConstruction.
 message Rendering {
   option (buf.validate.message).cel = {
     id: "rendering.model_iff_llm_ocr"
@@ -108,6 +108,35 @@ message Rendering {
   string converter_version = 4;  // the converter tool/harness version
   optional string model = 5;  // free-text LLM id (e.g. "claude-opus-4-8"); set iff converter is llm_ocr
   google.protobuf.Timestamp created_at = 6;
+}
+
+// How a rendering was made: markdown converted from the one source revision its Record names as a dep.
+message RenderingConstruction {
+  option (buf.validate.message).cel = {
+    id: "rendering_construction.model_iff_llm_ocr"
+    message: "model must be set iff converter is CONVERTER_LLM_OCR (=3)"
+    expression: "(this.converter == 3) == (this.model != '')"
+  };
+
+  Converter converter = 1;
+  string converter_version = 2;  // the converter tool/harness version
+  optional string model = 3;  // free-text LLM id (e.g. "claude-opus-4-8"); set iff converter is llm_ocr
+}
+
+// One derived artifact of the paper: what it was made from and how. Keyed in Manifest.records by
+// the sha256 hex of its bytes, which are content-addressed in the paper's directory at a path its
+// construction kind determines. Bytes that are produced again keep their key; the record then
+// holds the deps and construction of the run that most recently produced them.
+message Record {
+  // The hashes this artifact was derived from: a Revision.hash, or the key of another record. A
+  // dep's role is read from what it resolves to — a source revision, or a record's construction kind.
+  repeated string deps = 1;
+  google.protobuf.Timestamp created_at = 2;  // when the run that produced these bytes most recently finished
+  oneof construction {
+    option (buf.validate.oneof).required = true;
+
+    RenderingConstruction rendering = 10;
+  }
 }
 
 message ExternalIds {
@@ -136,22 +165,45 @@ enum AssociatedFileRole {
   ASSOCIATED_FILE_ROLE_SUPPLEMENTARY = 2;
 }
 
+// One file the paper's publisher lists beside the article. Append-only: a reissued file is a new entry with the same
+// name and a later captured_at, never an edit, so a record whose dep is the old hash keeps resolving.
 message AssociatedFile {
   AssociatedFileRole role = 1;
   string name = 2;
   optional string source_url = 3;
   optional string path = 4;  // content-addressed bytes' location (supplementary/{hex}.{ext}); absent until fetched
+  string hash = 5;  // sha256 hex digest of the fetched bytes, the stem of `path`; empty until fetched
+  google.protobuf.Timestamp captured_at = 6;  // when these bytes were fetched; unset until fetched
 }
 
 message Manifest {
+  // Every ref names a record this manifest holds.
+  option (buf.validate.message).cel = {
+    id: "manifest.refs_resolve"
+    message: "every ref must name a key of records"
+    expression: "this.refs.all(name, this.refs[name] in this.records)"
+  };
+  // Every record is derived from something the manifest holds: a source revision, or another record.
+  option (buf.validate.message).cel = {
+    id: "manifest.deps_resolve"
+    message: "every record needs a dep, and each dep must be a held revision hash, a fetched file's hash, or another record's key"
+    expression: "this.records.all(k, this.records[k].deps.size() > 0 && this.records[k].deps.all(d, d != k && (d in this.records || this.sources.exists(s, s.revisions.exists(r, r.hash == d)) || this.files.exists(f, f.hash != '' && f.hash == d))))"
+  };
+
   string doc_id = 1;  // uuid4, == directory name
   ExternalIds external_ids = 2;
   string claim_key = 3;  // precedence-primary external id, e.g. "doi:10.…"
   Equivalence equivalence = 4;
   Retraction retraction = 5;
-  repeated Source sources = 6;  // primary-artifact lineages (pdf, jats-xml, …)
-  map<string, Rendering> renderings = 7;  // key = the markdown's content hash (sha256 hex)
+  repeated Source sources = 6;  // primary-artifact lineages (pdf, xml)
+  // Superseded by records and refs. Read only by the rewrite that copies each entry into records;
+  // retired once every stored manifest has been rewritten.
+  map<string, Rendering> renderings = 7 [deprecated = true];
   repeated AssociatedFile files = 8;  // every KNOWN supplementary file, even un-fetched (lazy fetch)
+  map<string, Record> records = 9;  // key = the derived artifact's content hash (sha256 hex)
+  // The current record of each kind, by name: `markdown` names the rendering a reader is served.
+  // Moved by the run that produces a record it prefers to the one named; never edited by hand.
+  map<string, string> refs = 10;
 }
 
 // PubMed's record for a PMID, in the one of its two kinds the index files it under: a journal

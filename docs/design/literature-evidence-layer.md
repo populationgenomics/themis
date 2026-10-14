@@ -72,9 +72,9 @@ store. Its concrete name belongs to the infrastructure that creates it
 environment ([`config.py`](../../themis/services/evidence/literature/config.py)). The per-paper layout inside it — one
 directory per paper, holding the captured sources, the converted renderings, the figures and supplementary files, and a
 manifest that records what each lineage is and under what terms it was obtained — is **litcache**'s, and is
-[`litcache-manifest.md`](litcache-manifest.md)'s subject. Sources and renderings are written additively, each
-content-addressed by its own bytes: a re-fetch adds a revision, a re-conversion adds a rendering. So a citation against
-a rendering resolves to the exact bytes it was made against for as long as the paper exists.
+[`litcache-manifest.md`](litcache-manifest.md)'s subject. Sources and derived artifacts such as renderings are written
+additively, each content-addressed by its own bytes: a re-fetch adds a revision, a re-conversion adds a rendering. So a
+citation against a rendering resolves to the exact bytes it was made against for as long as the paper exists.
 
 ## Non-goals
 
@@ -206,7 +206,10 @@ A paper can accumulate several renderings of its text — one converted from pub
 older one from a superseded converter. The read surface serves exactly one of them, the **canonical rendering**, picked
 by converter fidelity first (a rendering derived from source XML beats a transcription of a PDF) and recency on a tie.
 One choice, made in one place, is what lets the agent's read, the quote matcher and the document pane agree on which
-text a paper *is*; without it a quote validated against one rendering could fail to locate in another.
+text a paper *is*; without it a quote validated against one rendering could fail to locate in another. The place is the
+write: the run that produces a rendering moves the manifest's `markdown` ref to it when it outranks the one named, and
+every reader follows the ref
+([`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use)).
 
 Two further per-paper facts cross the wire, and neither is stored anywhere:
 

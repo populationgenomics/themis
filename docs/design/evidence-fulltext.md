@@ -76,9 +76,9 @@ not an implementation detail.
 
 Three rules, evaluated against the paper's own directory:
 
-- the manifest lists a rendering ⇒ **READY**. A rendering is committed into the manifest only after its bytes are
-  written, so a non-empty rendering list *is* the text-is-present signal — no second probe, and no window in which the
-  manifest promises bytes that are not there;
+- the manifest's `markdown` ref is set ⇒ **READY**. A rendering is committed into the manifest only after its bytes are
+  written, and the ref lands in the same write, so the ref *is* the text-is-present signal — no second probe, and no
+  window in which the manifest promises bytes that are not there;
 - a terminal marker is present ⇒ its recorded reason, **NO_FULL_TEXT** or **FAILED**;
 - neither ⇒ **PENDING**.
 

@@ -1,321 +1,253 @@
-# Design: litcache manifest — per-source revisions, content-addressed renderings, the quote-reference model
+# Design: the litcache manifest
 
-**Status:** current **Related:** [`proto.md`](proto.md) (serialization + the litcache proto),
-[`literature-evidence-layer.md`](literature-evidence-layer.md) (the full-text store and the interface that serves it),
-[`../plans/literature-cache.md`](../plans/literature-cache.md) (the S0 build plan).
+**Related:** [`proto.md`](proto.md) (how at-rest records are serialised, and how their schemas may change),
+[`evidence-fulltext.md`](evidence-fulltext.md) (how a paper's text is produced, and how readiness is read off the
+store), [`literature-evidence-layer.md`](literature-evidence-layer.md) (the interface that serves the store to the agent
+and the browser), [`../plans/literature-cache.md`](../plans/literature-cache.md) (the build plan).
 
 ## Overview
 
-The litcache manifest's structural model: a paper's primary vs supplementary files as per-source lineages with
-append-only revisions, content-addressed renderings, and the quote-durable cite the KU layer anchors against. Serialized
-as a binary proto (`manifest.pb`); the JSON shown below is a *rendering*, not the at-rest artifact — `Access` is a proto
-`oneof` over the four access variants (access-iff-`publisher` structural), the residual constraints protovalidate
-options (see [`proto.md`](proto.md)).
+Themis's full-text store keeps each paper as a directory in a bucket, named by the paper's `doc_id`. Most of what a
+directory holds is bytes named by their own content hash: the PDF and XML a paper was fetched as, and the markdown made
+from them. A name of that kind says what the bytes are, but not whether they belong to the paper. One object in each
+directory says that: the manifest. A paper exists for every reader once its manifest is committed, and it holds exactly
+what the manifest names.
 
-Beside the manifest, `metadata.pb` holds the paper's bibliographic record inside a typed envelope, `PaperMetadata`, with
-one field per index a paper can be resolved from — PubMed, Crossref, OpenAlex — each holding that index's record whole
-and in the index's own schema; PubMed's field says which of its two record kinds, a journal article or a Bookshelf book
-or chapter, the bytes are, and a summary in one shape is derived on read, never stored
+The manifest records two kinds of thing. It records what was *captured*: the source files, each a lineage of revisions
+that carries its own licence. And it records what was *derived* from them. Today the only derived artifact is a
+rendering, the markdown a reader quotes. The extractions that come next read a rendering and feed each other. A variant
+set is extracted from a rendering, a pedigree is built from variant sets, and a case report is written from a pedigree
+and the text.
+
+That chain is what shapes the design. Every derived artifact is recorded the same way, as a *record* keyed by the hash
+of its bytes, naming the hashes it was made from and how it was made. A chain of any depth is then a path from record to
+record. A paper can also hold several candidates at one level, such as a rendering converted from the publisher's XML
+and an older one transcribed from a PDF. So the manifest holds *refs* as well: one name per kind, each pointing at the
+record a reader should use. The run that produces a record moves the ref when the new record is the better one. The
+choice is therefore made once, when the record is written, and every reader follows the same name.
+
+Beside the manifest sits `metadata.pb`, the paper's bibliographic record as each index published it
 ([The bibliographic record](#the-bibliographic-record-metadatapb)).
 
 ## Background
 
-The manifest must capture, as simply as the domain allows:
+### A paper's directory, and why it needs a manifest
 
-1. **Which files are the primary paper artifact** (pdf, jats-xml, or an xml conversion of scraped html) vs which are
-   **supplementary** (figures, tables, data files).
-1. **Primary artifacts may be updated** under stable identifiers -- a PMC reissue (`PMC2992036.1` -> `.2`), a publisher
-   erratum -- without the DOI/PMID/PMCID changing.
-1. **Artifacts are rendered into markdown** via various routes; the **source + route determine the fidelity** of the
-   markdown -- a faithful reproduction (xml→litdown) or approximate (pdf→ocr).
-1. **Primary artifacts refer to secondary ones** -- jats-xml links figure images by href.
-1. The system **persists verbatim quotes against markdown**. A quote (a) **may reference an older revision** of a file
-   and (b) **must be upgradeable** to the current revision.
-1. **Licensing recorded at the level it actually exists** -- per source lineage (a PMC-OA `jats-xml` and a publisher
-   `pdf` of the same paper routinely carry different terms; terms are stable across re-fetches of one file).
+A paper's files are *content-addressed*: each is stored under a name made from the sha256 of its bytes. That has three
+consequences the rest of the design leans on. Writing the same bytes twice produces one object, so a write can be
+repeated safely. An object never changes after it is written, since different bytes would have a different name. And a
+reference to an object by its hash is also a check that the bytes are the ones meant.
 
-The update axis is **per file**, not per paper: a corrected figure or a reissued xml changes one artifact. Licence, too,
-is **per file lineage**, not per paper. The model puts both on the file lineage.
+What a content-addressed name cannot say is whether the bytes belong to the paper. A writer that crashes halfway through
+storing a paper leaves objects behind, and they look exactly like the objects of a finished paper. So one object in the
+directory is named by its role rather than its content: `manifest.pb`. It is written last, and only if no manifest is
+there yet, so the first writer to finish wins and a second learns it lost. Readers go to the manifest and nowhere else.
+An object no manifest names is inert, which is what makes a crashed write harmless.
 
-## Decision
+The manifest is a binary protobuf, defined in
+[`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto). The examples below show it as JSON for
+reading only.
 
-The manifest carries `sources` (primary-artifact lineages) and a content-addressed `renderings` map. No paper-wide
-snapshot axis.
+### What the manifest has to say
 
-1. **`Source` is a primary-artifact lineage**, keyed by a stable `handle` (`"pdf"`, `"jats-xml"`, `"scraped-html"` --
-   lineage identity, distinct from `media_type` since two lineages can share a media type). It carries `licence` /
-   `licence_basis` / `access` and an **append-only `revisions[]`**.
-1. **`Revision` is one fetched byte-set** of that lineage: `{hash, origin_url?, kind, captured_at, has_text_layer?}`.
-   **Current = latest `captured_at`** -- the recency signal is the timestamp, never array order.
-1. **`renderings` is a content-addressed map** keyed by the markdown's content hash (a bare sha256 hex digest). Value =
-   `{from_source (handle), from_revision (hash), converter, converter_version, created_at}`. The key is identity +
-   integrity at once; the blob lives at `renderings/{hex}.md` (no `path` field). Re-rendering appends a
-   `renderings[new_hash]` entry; old hashes still resolve old cites (req 5a); dedup is free; resolution is O(1).
-1. **Fidelity is a read-path policy, not a stored field** (req 3). A rendering records only the raw facts: its
-   `from_source` (hence `media_type`) and `converter`. Whether a route is high-fidelity (xml→litdown -- safe to quote,
-   and worth showing a reader in place of the pdf) or approximate (pdf→ocr) is a preference over
-   `(media_type, converter)` applied at read time, curator-overridable -- not a `quality_tag` baked into the manifest,
-   which would only relabel `media_type`. Nor a provenance/verification axis: every quote is human-checked regardless,
-   so a per-quote trust flag carries no signal.
-1. **No stored default rendering.** The canonical rendering is *derived* at read time: the highest-fidelity route (the
-   `(media_type, converter)` preference above) on the latest revision of that source. A stored hash would conflate the
-   stable **route** choice with **revision** recency and go stale on every re-render. The manifest records facts (what
-   renderings exist, from what); the read tool applies the preference policy. Cite resolution never consults a default
-   -- an anchor's `document_id` is the exact rendering hash served, recorded in the KU record.
-1. **`files` (supplementary) is a list** doubling as the lazy-fetch registry of known-but-unfetched files (which have
-   **no hash yet**, so `path` absent until fetched). Primary→secondary links (req 4) resolve by href→name at render
-   time; a `references` index is materialised only if the read path needs it -- deferred.
-1. **Everything fetched/derived is content-addressed**, path derived from handle/hash/media-type: sources at
-   `sources/{handle}/{hex}.{ext}`, renderings at `renderings/{hex}.md`, supplementary at `supplementary/{hex}.{ext}`.
+A paper's primary artifact can change while its identifiers stay the same. PubMed Central reissues an article's XML as
+`PMC2992036.1` and later `PMC2992036.2`, and a publisher corrects a PDF without minting a new DOI. The change is to one
+file, not to the paper as a whole: a corrected XML leaves the PDF beside it untouched.
 
-### Licence lives on the source lineage
+Licence varies the same way, file by file. The JATS XML a paper is fetched as from PubMed Central's open-access subset
+can carry a CC-BY licence inside it, while a PDF of the same paper supplied by a person's institutional access carries
+none. A licence recorded once for the whole paper would be wrong for one of the two.
 
-`licence` (raw, as litfetch returned it -- not an SPDX id), `licence_basis`, and `access` sit on `Source`: they describe
-where a source came from and under what terms -- constant across its revisions, varying between the pdf and the xml of
-one paper. `licence_basis` records **where the licence string came from**, not how trustworthy it is: `artifact` = read
-out of the fetched bytes (a JATS `<license>` element, Elsevier metadata); `asserted` = the bytes carry no licence, so an
-access authority supplies it (Unpaywall's OA determination for the work) or we assert the work's resolved terms onto a
-retained seed pdf that embeds none. litfetch returns both the raw string and the basis; litcache stores them verbatim.
-Supplementary `files` carry no licence for now (not served as standalone evidence); add it if that changes.
+A paper's text reaches a reader as markdown, and there is more than one way to make it. Converting the publisher's XML
+reproduces the paper faithfully. Transcribing a PDF with a vision model gets close, and an older converter got less
+close. So the route a rendering took decides how far it can be trusted, and a paper can hold renderings made by several
+routes at once.
 
-## Quote-reference model
+Quotes are stored against a rendering's bytes, because quoting is done on text. A quote made last month may refer to a
+rendering made from a revision the store has since replaced, and it has to keep resolving. It also has to be upgradeable
+to the current revision, by finding the same words in the newer text.
 
-The cite model the KU layer (deferred) anchors against. The manifest side (rendering hashes) is settled; the anchor and
-offsets-cache shapes below are provisional (see [Reference / anchor types](#reference--anchor-types)).
+### Derived artifacts depend on each other
 
-- **Durable anchor** (write-once, in the KU record): `{paper_id, document_id, quote, exact}`, where `document_id` is a
-  **rendering hash** (you quote text, which is a rendering). No offsets -- they go stale on re-render; the verbatim
-  `quote` is the durable boundary-side anchor. The quote is not immortal -- if the source text itself changes it may no
-  longer appear -- but it degrades *detectably* (`exact -> fuzzy -> unlocatable`), where offsets would silently
-  misalign; and a re-alignment that still finds the text keeps the anchor usable.
-- **Exported quote-stripped** as `{paper_id, document_id, ref_id}` (the quote stays in the KU record; stripping keeps
-  shares free of copyrightable text).
-- **Resolved-offsets cache** (derived, recomputable, mutable): `(ref, rendering) -> spans`, with
-  `status: exact | fuzzy | unlocatable`. Any `start`/offset hint lives **only here**, never in the durable anchor.
-  Re-alignment moves the status either way -- a `fuzzy` hit can recover to `exact` against a better rendering, caught
-  before it degrades to `unlocatable`.
-- **Resolution walk:** `document_id` (rendering hash) -> `renderings[hash]` -> `from_source` (handle) + `from_revision`
-  -> `Source.revisions[hash]` bytes -> re-align the quote (bbox via the pdf character layer iff `has_text_layer`; else
-  map into the xml/text).
-- **Upgrade across revisions (req 5b):** quote -> rendering -> `(from_source, converter)`; look up that source's
-  **latest** revision; if newer than `from_revision`, re-render the same route over the latest revision and realign the
-  verbatim quote (exact -> fuzzy -> unlocatable). `unlocatable` is the explicit "source changed under me" signal.
-- **Two mint paths, one model:** the KU extractor aligns its quote offline. Agent cite-back: the read tool serves
-  markdown **bundled with** its rendering hash; on the agent's quote it **verifies verbatim** against the served bytes
-  (rejecting hallucinated quotes), mints `{paper, document, quote}`, and seeds the offsets cache for free (rendering
-  known and current).
+Renderings are the first artifact the store derives, and they will not be the last. Each extraction that follows reads
+something the store already holds and produces something a later step reads in turn. A rendering is made from a source
+revision, a variant set is extracted from a rendering, a pedigree is built from variant sets, and a case report is
+written from a pedigree together with the paper's text, so it depends on two artifacts of different kinds.
 
-## Schema
+At any level a paper can hold more than one candidate: two renderings, or two variant sets extracted with different
+prompts. A step can read only one of them, and which one it read is part of what it produced. A variant set extracted
+from an approximate rendering is a different result from one extracted from the faithful one.
 
-Hand-authored proto in `schema/proto/themis/litcache/models/litcache.proto` (`Source`, `Revision`, `Rendering`, `Access`
-and the enums; `Manifest`, `AssociatedFile`) — the source of truth ([`proto.md`](proto.md)); shown here to keep the
-structural model legible. Enums are proto-canonical (`UPPER_SNAKE`, name-prefixed, `*_UNSPECIFIED = 0` sentinel that is
-never a valid domain value); declared-field invariants are protovalidate options.
+## Design
 
-```proto
-// The lineage parts.
-enum LicenceBasis {
-  LICENCE_BASIS_UNSPECIFIED = 0;
-  LICENCE_BASIS_ARTIFACT = 1;  // read from the fetched bytes (JATS <license>, Elsevier metadata)
-  LICENCE_BASIS_ASSERTED = 2;  // bytes carry no licence, so an access authority supplies it (e.g.
-                               // Unpaywall's OA determination), or we assert the work's resolved
-                               // terms onto a retained seed pdf that carries none
-}
+### Captured files are lineages of revisions
 
-enum SourceKind {
-  SOURCE_KIND_UNSPECIFIED = 0;
-  SOURCE_KIND_PMC_OA_S3 = 1; SOURCE_KIND_EUROPE_PMC = 2; SOURCE_KIND_ELSEVIER_OA = 3;
-  SOURCE_KIND_BIORXIV = 4; SOURCE_KIND_UPLOAD = 5; SOURCE_KIND_SEED = 6;
-  SOURCE_KIND_EUROPE_PMC_BOOKSHELF = 7;
-}
-// Scraped html is converted to xml upstream and enters as media_type xml under a distinct
-// handle (e.g. "scraped-html") — so html is not a media type here.
-enum SourceFormat { SOURCE_FORMAT_UNSPECIFIED = 0; SOURCE_FORMAT_XML = 1; SOURCE_FORMAT_PDF = 2; }
-// llm-ocr (vision-model OCR of the pdf) is the preferred pdf route; docling is the legacy
-// fallback, retained so its existing renderings still resolve.
-enum Converter {
-  CONVERTER_UNSPECIFIED = 0; CONVERTER_LITDOWN = 1; CONVERTER_DOCLING = 2; CONVERTER_LLM_OCR = 3;
-}
+The obvious way to record what a paper was fetched as is one entry per paper: its PDF, its XML. That breaks on the first
+reissue, because there is then a second XML with the same role and nowhere to put it. A paper-wide snapshot, where each
+change produces a new version of the whole record, breaks the other way: it records a change to the XML as a change to
+the PDF too.
 
-// Access disposition of a lineage. A oneof, so publisher exists iff the variant is `licensed` —
-// access-iff-publisher holds structurally; protovalidate requires exactly one variant.
-message FreeToRead {}
-message Licensed { string publisher = 1 [(buf.validate.field).string.min_len = 1]; }
-message InstitutionCaptured {}
-message UnknownAccess {}
-message Access {
-  oneof kind {
-    option (buf.validate.oneof).required = true;
-    FreeToRead free_to_read = 1;
-    Licensed licensed = 2;
-    InstitutionCaptured institution_captured = 3;
-    UnknownAccess unknown = 4;
-  }
-}
+So each captured artifact is a *lineage*, named by a stable handle such as `xml` or `pdf`, and a lineage holds an
+append-only list of *revisions*, one per fetched byte-set. A lineage's current revision is the one captured most
+recently, judged by its capture time and never by its position in the list. A reissue appends a revision to the `xml`
+lineage and leaves the `pdf` lineage alone. The handles in use are `pdf` and `xml`, one per media type. The handle is an
+open namespace rather than the media type, because two lineages could share a media type: XML converted from a scraped
+web page would enter as XML under a handle of its own.
 
-// One fetched byte-set of a lineage. Blob at sources/{handle}/{hex}.{ext}; current = latest captured_at.
-message Revision {
-  string hash = 1;                 // sha256 hex digest of the raw bytes
-  optional string origin_url = 2;  // external provenance; omitted for seed/upload
-  SourceKind kind = 3;
-  google.protobuf.Timestamp captured_at = 4;  // recency signal — NOT array order
-  optional bool has_text_layer = 5;  // pdf only: recoverable text layer (pypdfium2 glyphs) — enables quote→bbox
-}
+Licence and access sit on the lineage, because that is the level at which they vary. They hold across all of a lineage's
+revisions and differ between a paper's lineages. A lineage also records where its licence string came from. It was
+either read out of the fetched bytes, as a JATS `<license>` element is, or asserted by an access authority because the
+bytes carry none. The store keeps the raw string as the fetcher returned it, without mapping it onto an SPDX identifier.
 
-// A primary-artifact lineage. `handle` is stable identity across updates.
-message Source {
-  string handle = 1;               // lineage identity, an open id namespace: "pdf" | "jats-xml" | "scraped-html"
-  SourceFormat media_type = 2;
-  string licence = 3;              // raw, as litfetch returned it (not an SPDX id)
-  LicenceBasis licence_basis = 4;
-  Access access = 5 [(buf.validate.field).required = true];
-  repeated Revision revisions = 6 [(buf.validate.field).repeated.min_items = 1];  // append-only, by captured_at
-}
+Each revision records where its bytes came from: the open-access source that served them, the seed corpus, a person's
+upload, or the open-access location Unpaywall lists for the paper. The last is how a paper ingested by its identifier
+alone comes to hold a PDF. Take the preprint `doi:10.21203/rs.3.rs-4272138/v1`. No source serves its XML, so the
+conversion lane fetched the PDF at Unpaywall's best open-access location and recorded it as the one revision of a `pdf`
+lineage. A PDF carries no licence in its bytes, so the lineage's terms are the ones Unpaywall states for that same
+location, `cc-by` and free to read, recorded as asserted. Unpaywall's terms describe one copy of a paper, which is why
+they are taken only with the copy they describe.
 
-// Markdown derived from one revision via one route. Blob at renderings/{hex}.md.
-message Rendering {
-  option (buf.validate.message).cel = {  // model set iff converter is CONVERTER_LLM_OCR
-    id: "rendering.model_iff_llm_ocr"
-    expression: "(this.converter == 3) == (this.model != '')"
-  };
-  string from_source = 1;          // Source.handle (open id namespace, not an enum)
-  string from_revision = 2;        // the Revision.hash it rendered
-  Converter converter = 3;
-  string converter_version = 4;    // the converter tool/harness version
-  optional string model = 5;       // free-text LLM id, e.g. "claude-opus-4-8"; set iff converter is llm_ocr
-  google.protobuf.Timestamp created_at = 6;
-}
+Because the terms belong to the lineage, a revision joins a lineage only on that lineage's terms. A PDF obtained on
+different terms from a PDF the paper already holds, such as an open-access copy beside one captured through
+institutional access, is a lineage of its own under a handle of its own.
+
+Two lineages can therefore hold the same bytes. Say a curator supplies a PDF, captured through their library, and the
+identical file is later found at an open-access location. The same revision hash then sits in both lineages, under
+different terms. A record's dep names bytes, not a lineage, so a rendering transcribed from that PDF resolves to both.
+That needs no tie-break, because the bytes are the same: the least restrictive terms of any lineage holding them apply
+to them, and to everything derived from them. Free to read outranks every other access, so in the example the rendering
+is open access, whichever lineage the transcription read its bytes from. Nothing yet reads more than whether a text is
+open, so the order among the restricted kinds of access waits until something does.
+
+Supplementary files, such as figures and data tables, are recorded in a separate list that doubles as the register of
+files known but not yet fetched. A paper can list hundreds of them: one paper in the dev corpus lists 340, and more than
+half of all papers list some. A known file has a name but no content hash until it is fetched. A fetched file records
+the sha256 of its bytes and when it was fetched, and its bytes sit content-addressed beside the paper's other files.
+
+The hash is what lets a derived artifact name a supplementary file as its input, as a variant set extracted from a
+supplementary spreadsheet does. That only works if the hash stays listed for as long as anything depends on it. So the
+list is append-only. When a publisher reissues `mmc1.xlsx` with a corrected row, the corrected file is a second
+`mmc1.xlsx` entry with a later capture time, and the first entry stays. A variant set extracted from the first version
+still names bytes the manifest lists.
+
+A file's role is read from the XML rather than recorded. The publisher's original file name is kept, and the XML refers
+to files by that name: in a sample of 1,680 papers, 98.5% of their files are referenced, two thirds inside a figure and
+a quarter as supplementary material. A figure that the XML refers to by `href` is matched to the list by name when the
+XML is rendered.
+
+### Every derived artifact is a record, keyed by its bytes
+
+The obvious way to record a new kind of derived artifact is a map of its own on the manifest, the way renderings were
+recorded until now: a map from each rendering's hash to how it was made. Each kind would then be fully typed, and a
+reader of variant sets would never see a pedigree. That works for one level. It breaks at the second, because the
+artifacts depend on each other across kinds. Each per-kind map has to invent its own way of naming its inputs.
+Renderings named theirs by a lineage handle plus a revision hash. A reader following a case report back to the words it
+cites would have to learn every kind's scheme on the way down, and every new kind would add a map and a write path of
+its own.
+
+So every derived artifact is a *record* in one map on the manifest, keyed by the sha256 of the artifact's bytes. A
+record holds three things: the hashes it was derived from (its *deps*), when it was produced, and how it was made (its
+*construction*). The construction is a choice with one arm per kind. A rendering's arm names its converter, the
+converter's version, and the model where a vision model transcribed a PDF. A dep is a bare hash. Its role is read from
+what it resolves to: a source revision, a fetched supplementary file, or a record whose construction says what kind it
+is.
+
+Every extraction takes this shape, however many inputs it reads. A knowledge-unit extraction is one document of units,
+with the rendering it read as its dep. A variant extraction is likewise one document, with the rendering and any
+supplementary spreadsheet it read as its deps. A written description of a figure has two: the figure's image, and the
+PDF revision its bounding box was found in. The artifact's bytes sit beside the manifest, content-addressed at a path
+its kind determines, exactly as a rendering's markdown always has.
+
+The chain from the Background then looks like this, with toy hashes:
+
+```mermaid
+flowchart RL
+    R1["revision r1<br/>xml lineage"]
+    R2["revision r2<br/>pdf lineage"]
+    M1["record m1<br/>rendering: llm-ocr"]
+    M2["record m2<br/>rendering: litdown"]
+    V1["record v1<br/>variant set"]
+    P1["record p1<br/>pedigree"]
+    C1["record c1<br/>case report"]
+    M1 -->|dep| R2
+    M2 -->|dep| R1
+    V1 -->|dep| M1
+    P1 -->|dep| V1
+    C1 -->|dep| P1
+    C1 -->|dep| M1
 ```
 
-```proto
-// The manifest: sources + a content-addressed renderings map.
-enum AssociatedFileRole {
-  ASSOCIATED_FILE_ROLE_UNSPECIFIED = 0;
-  ASSOCIATED_FILE_ROLE_FIGURE = 1;
-  ASSOCIATED_FILE_ROLE_SUPPLEMENTARY = 2;
-}
-message AssociatedFile {
-  AssociatedFileRole role = 1;
-  string name = 2;
-  optional string source_url = 3;
-  optional string path = 4;        // supplementary/{hex}.{ext}; absent until fetched
-}
-message Manifest {
-  string doc_id = 1;               // uuid4, == directory name
-  ExternalIds external_ids = 2;
-  string claim_key = 3;
-  Equivalence equivalence = 4;
-  Retraction retraction = 5;
-  repeated Source sources = 6;             // primary artifacts
-  map<string, Rendering> renderings = 7;   // key = markdown content hash (sha256 hex)
-  repeated AssociatedFile files = 8;       // supplementary registry (lazy fetch)
-}
-```
+Following a case report back to its text is now one walk: `c1` names `m1`, and `m1` names revision `r2` of the PDF
+lineage. The walk is the same whatever kinds it passes through.
 
-**Bare sha256 hex everywhere.** The `hash` fields, the `renderings` map keys, and the on-disk filename stems are all the
-same bare sha256 hex digest -- no prefix, no transform between manifest and path. sha256 is the fixed content-address
-algorithm, defined once in `litcache/hashing.py`; a future migration would version the manifest and mark the algorithm
-on both the fields and the filenames together.
+A new kind needs a new arm in the manifest's schema, which is a contract change and is reviewed as one. That is the
+right place for the review, because the construction is the part of a record a later reader relies on to judge it.
 
-## Example manifest
+A dep does not say which input it was, so a reader that needs to know resolves it. A case report that read both the
+paper's rendering and a supplementary file's rendering tells them apart by following each one step further, to the
+source it was made from.
 
-An extraction under this model. The pdf is a seed (no embedded licence, so `licence_basis: asserted`); the xml carries a
-JATS `<license>` (`artifact`) -- illustrating per-source `licence_basis` variation. Single revision each. The second
-rendering (llm-ocr of the pdf, carrying `model`) is **fabricated** to show the shape and the preference order in play.
+Keying by bytes has a cost of its own. Two runs that produce identical bytes produce one record, and the record keeps
+only the deps and construction of the run that finished most recently. A rendering re-made by a newer converter version
+that happens to output the same markdown therefore records the newer version and loses the older. That is the right
+answer for the store's readers. A quote cites bytes, and identical text is the same text to everything that reads it.
 
-```json
-{
-  "doc_id": "bed7486a-69e9-4a5a-b4f3-a4de08341ab0",
-  "external_ids": {
-    "doi": "10.1186/1471-2156-11-102",
-    "pmid": "21070663",
-    "pmcid": null,
-    "arxiv": null,
-    "biorxiv": null,
-    "bookid": null
-  },
-  "claim_key": "doi:10.1186/1471-2156-11-102",
-  "equivalence": { "edges": [], "canonical_doc_id": "bed7486a-69e9-4a5a-b4f3-a4de08341ab0" },
-  "retraction": { "retracted": false, "source": null, "date": null },
-  "sources": [
-    {
-      "handle": "pdf",
-      "media_type": "pdf",
-      "licence": "http://creativecommons.org/licenses/by/2.0",
-      "licence_basis": "asserted",
-      "access": { "access": "free-to-read" },
-      "revisions": [
-        {
-          "hash": "be1f931f0cc02dcd505851469627ddc80bdfa25773eb98548d94f35e45344891",
-          "origin_url": null,
-          "kind": "seed",
-          "captured_at": "2026-06-29T06:01:23.412321Z",
-          "has_text_layer": null
-        }
-      ]
-    },
-    {
-      "handle": "jats-xml",
-      "media_type": "xml",
-      "licence": "http://creativecommons.org/licenses/by/2.0",
-      "licence_basis": "artifact",
-      "access": { "access": "free-to-read" },
-      "revisions": [
-        {
-          "hash": "647ab726d771e3cb112145093a6211be9d2e548ac7b0ece469af7625f0f1ea1a",
-          "origin_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC2992036.1/PMC2992036.1.xml",
-          "kind": "pmc_oa_s3",
-          "captured_at": "2026-06-29T06:01:23.412321Z",
-          "has_text_layer": null
-        }
-      ]
-    }
-  ],
-  "renderings": {
-    "dd4306e549f89ed2b95b25f3eb6ee2f6fc813a90ac55392c2cab2ff1ae0724a7": {
-      "from_source": "jats-xml",
-      "from_revision": "647ab726d771e3cb112145093a6211be9d2e548ac7b0ece469af7625f0f1ea1a",
-      "converter": "litdown",
-      "converter_version": "0.3.0",
-      "created_at": "2026-06-29T06:01:23.412321Z"
-    },
-    "1111111111111111111111111111111111111111111111111111111111111111": {
-      "from_source": "pdf",
-      "from_revision": "be1f931f0cc02dcd505851469627ddc80bdfa25773eb98548d94f35e45344891",
-      "converter": "llm-ocr",
-      "converter_version": "1.0.0",
-      "model": "claude-opus-4-8",
-      "created_at": "2026-06-29T06:01:23.412321Z"
-    }
-  },
-  "files": [
-    {
-      "role": "supplementary",
-      "name": "1471-2156-11-102-1.jpg",
-      "source_url": "https://pmc-oa-opendata.s3.amazonaws.com/PMC2992036.1/1471-2156-11-102-1.jpg",
-      "path": "supplementary/a156b981e30d5234b7a8320f62ccddd21816b9dfacafc5634d75ccb272559877.jpg"
-    }
-  ]
-}
-```
+### A ref names the record a reader should use
 
-(`files` truncated to one of seven; the rest are identical in shape.)
+Several records of one kind can sit side by side, and a reader needs one of them. The obvious way to pick it is at read
+time: rank the candidates on each read and serve the best. That is how the canonical rendering was chosen until now, by
+converter fidelity with recency breaking a tie. It has real virtues. A re-render can never leave the choice stale,
+because nothing stored records the choice. And a change to the ranking takes effect on the next deploy.
 
-## Path layout
+It breaks at the second level of the chain. Which rendering a variant set was extracted from is part of the variant set,
+so the choice of rendering has to be made before the extraction runs and recorded with what it produced. Read-time
+ranking also puts the ranking in every reader. One reader ranks renderings by converter, another ranks variant sets by
+prompt version, and each has to agree with the writers about what "better" means. The read surface depends on that
+agreement: the agent's read, the quote matcher and the document pane have to serve the same text, or a quote validated
+against one rendering fails to locate in another ([`literature-evidence-layer.md`](literature-evidence-layer.md)).
 
-Two records at the paper's root; everything else content-addressed, flat per artifact:
+So the manifest stores the choice, as a map of *refs* from a name to a record's key. The run that produces a record
+moves the ref when its record is better than the one named. Each kind has its own rule for "better"; for an extraction
+it might be the newer prompt version. For a rendering it is the fidelity ranking: a rendering converted from source XML
+is preferred to a PDF transcription, a vision-model transcription is preferred to the older converter, and recency
+breaks a tie. The record and the ref that names it land in one write, and the manifest's schema refuses a ref that names
+no record it holds. Nobody moves a ref by hand.
+
+Names are simple. A kind's name refers to the paper itself: `markdown` names the rendering a reader is served, and
+`variants` names the current variant set. A supplementary file's record of the same kind is named after the file, as in
+`markdown/table-s2.docx`. Each question a reader asks then has a direct answer from the one manifest it has already
+read. It looks up the paper's text by name. It reaches each supplementary file's text by walking the manifest's list of
+files and looking up each file's name. And it finds every rendering ever made by filtering the records by kind.
+
+A stored ref can point at a record built on an input that has since been replaced. Take the figure above. Rendering
+`m2`, converted from the XML, lands after `m1`, so its run moves `markdown` from `m1` to `m2`. The `variants` ref still
+names `v1`, which was extracted from `m1`. Nothing is wrong with that. Rendering `m1` is still held, so `v1` and
+everything built on it stays consistent, and every quote in it still resolves. But `v1` is no longer built on the
+current text, and that is visible: a record is current when each of its deps is the record its kind's ref names, and
+`v1`'s dep is not. Records that are not current are the extraction lane's work, found by reading the store rather than
+recorded anywhere else. A reader that needs a consistent chain, such as a variant together with the words it cites,
+follows deps down from the record it starts at rather than looking up the current ref at each level.
+
+The cost of storing the choice is the read-time design's virtue turned around. A change to the ranking reaches existing
+refs only when something recomputes them, where a read-time ranking would have applied it on deploy.
+
+### Path layout
+
+The manifest and the bibliographic record sit at the paper's root, named by role. Everything else is content-addressed,
+under a directory for its kind:
 
 ```
 manifest.pb
 metadata.pb
 sources/pdf/<rev-hex>.pdf
-sources/jats-xml/<rev-hex>.xml
+sources/xml/<rev-hex>.xml
 renderings/<md-hex>.md
 supplementary/<hex>.jpg
 ```
 
-A second revision appends `sources/jats-xml/<new-rev-hex>.xml`; a re-render appends `renderings/<new-md-hex>.md`. Old
-blobs persist, so old cites keep resolving.
+A second revision appends `sources/xml/<new-rev-hex>.xml`, and a re-render appends `renderings/<new-md-hex>.md`. Old
+objects persist, so old quotes keep resolving. Every hash in the manifest and every filename stem is the same bare
+sha256 hex digest, with no prefix and no transform between the two.
 
 `metadata.pb` sits beside the manifest and is the one artifact that may be regenerated after the commit: the manifest
 holds no hash of it, and its bytes derive from the paper's identifiers through the resolver ladder rather than from
@@ -344,6 +276,46 @@ nothing.
 The cost is a window in which a committed paper has no record, a state the reader already handles by titling the paper
 with its DOI or PMID. If the writer stops inside that window, the record stays missing until the paper is next ingested,
 and a metadata refresh fills any paper still missing its record.
+
+### Renderings move into records by rewriting every manifest once
+
+Until now the manifest held renderings in a map of their own, and every committed manifest still holds them there.
+[`proto.md`](proto.md#schema-evolution) sets the rule for a change of that kind to a stored record. The new form lands
+as a new field beside the old one, every stored record is rewritten into it, and only then is the old field retired. The
+usual way across the gap is for every reader to accept either form for a while, and for every writer to fill both.
+
+Here that period would be code written only to be deleted. The manifests live in one bucket, and the only code that
+reads or writes them is code this repository deploys. So the gap is crossed by ordering the steps instead:
+
+1. Every manifest writer pauses: the conversion queue is paused, and no ingestion runs. A metadata refresh writes only
+   `metadata.pb`, so it can run throughout.
+1. A rewrite copies each manifest's renderings into records, and sets its `markdown` ref by the fidelity ranking. It
+   also fills each fetched supplementary file's hash from the path its bytes are stored at, which already names them, so
+   no file is fetched or moved. It leaves the old map in place, so readers still running the previous code keep working.
+1. Readers and writers that use only records and refs deploy. The rewrite then runs again, to catch any manifest a
+   writer touched despite the pause.
+1. Writers resume. Once a check finds no manifest whose renderings are missing from its records, the old field is
+   retired, with its number and name reserved.
+
+One manifest's renderings, before and after the rewrite:
+
+```json
+"renderings": {
+  "dd4306e5…": { "from_source": "xml", "from_revision": "647ab726…", "converter": "litdown", "converter_version": "0.3.0" }
+}
+```
+
+```json
+"records": {
+  "dd4306e5…": { "deps": ["647ab726…"], "rendering": { "converter": "litdown", "converter_version": "0.3.0" } }
+},
+"refs": { "markdown": "dd4306e5…" }
+```
+
+Every quote survives the move, because a record's key is the same markdown hash the old map used. The rewrite replaces
+each manifest with a read-modify-write conditional on the manifest's generation, so a manifest a writer touches during
+the run is read again rather than overwritten. The bucket keeps each object's earlier generations for 30 days, which is
+the way back. The cost is the pause: conversions wait in the queue for as long as it lasts, rather than run.
 
 ## The bibliographic record: `metadata.pb`
 
@@ -381,9 +353,9 @@ condition that a variant analysis cites routinely. PubMed's schema gives the two
 journal, a book record off a document with a book. Protobuf's wire format carries field numbers, not a type, so bytes
 read as the wrong message may decode without error into a record that means nothing, and a store that can hold either
 has to write down which one it holds. The envelope's `pubmed` field is therefore a message of its own, `PubmedRecord`,
-whose `oneof` has an arm per kind and requires exactly one set — the structural move `Access` makes above. The
-exclusivity is PubMed's own rule, a PMID names one record, stated in the type; it is why the two kinds are arms of one
-field where other indexes are fields of their own.
+whose `oneof` has an arm per kind and requires exactly one set — the structural move the access disposition on a lineage
+makes too. The exclusivity is PubMed's own rule, a PMID names one record, stated in the type; it is why the two kinds
+are arms of one field where other indexes are fields of their own.
 
 **A mirror is loaded strictly, so a lagging mirror fails the paper rather than thinning the record.** Crossref and
 OpenAlex publish JSON, and neither publishes a schema a generator consumes the way `pubmed-proto` consumes NLM's DTD:
@@ -449,20 +421,47 @@ to additive, so every record written from main parses under the current schema. 
 the kind the gate refuses, is different. [`migrations.md`](migrations.md#how-it-runs) lets a destructive change skip the
 expand/contract shape only in an environment that holds no data worth keeping and no users to fail, and a store whose
 corpus is kept is not such an environment. A destructive change here is therefore an expand/contract change, as
-[`proto.md`](proto.md#schema-evolution) sets out for every at-rest contract, and the step that rewrites every record
-before the old field is retired is a metadata refresh or a full rebuild. Changing what a field means in place is never
-open. Protobuf bytes carry field numbers and wire types, not names or meanings, so a record written before the change
-would decode without error into the new meaning.
+[`proto.md`](proto.md#schema-evolution) sets out for every at-rest contract. The step that rewrites every record before
+the old field is retired is a metadata refresh, a full rebuild, or, for a change to the manifest's shape that leaves the
+conversions alone, a rewrite of the manifests themselves
+([Renderings move into records](#renderings-move-into-records-by-rewriting-every-manifest-once)). Changing what a field
+means in place is never open. Protobuf bytes carry field numbers and wire types, not names or meanings, so a record
+written before the change would decode without error into the new meaning.
 
-## Reference / anchor types
+## Quote-reference model
 
-Concrete shapes for the cite model. These live in KU records and a derived cache, not `Manifest`, and are **provisional
--- the KU layer is deferred**: `ref_id`, the `status` values, and the span type are not yet frozen.
+The cite model the knowledge-unit layer anchors against. The manifest side is settled: a quote names a rendering by its
+record's key, the hash of the markdown it was taken from. The anchor and the offsets cache below are provisional.
+
+- **Durable anchor** (write-once, in the knowledge-unit record): `{paper_id, document_id, quote, exact}`, where
+  `document_id` is a rendering's key. It holds no offsets, because offsets go stale on a re-render. The verbatim `quote`
+  is the durable anchor instead. A quote is not immortal, since the source text itself can change, but it degrades
+  detectably (`exact -> fuzzy -> unlocatable`) where offsets would silently point at the wrong words.
+- **Exported without the quote** as `{paper_id, document_id, ref_id}`. The quote stays in the knowledge-unit record, so
+  a share carries no copyrightable text.
+- **Resolved-offsets cache** (derived, recomputable, mutable): `(ref, rendering) -> spans`, with a status of `exact`,
+  `fuzzy` or `unlocatable`. Any offset hint lives only here, never in the durable anchor. Re-aligning can move the
+  status either way: a `fuzzy` hit can recover to `exact` against a better rendering.
+- **Resolution walk:** the rendering's key → its record → the record's dep, a source revision → that revision's bytes →
+  re-align the quote. A PDF with a text layer gives a bounding box from its characters; otherwise the quote maps into
+  the XML or text.
+- **Upgrade across revisions:** from the rendering's record, find the lineage its dep belongs to and that lineage's
+  latest revision. If it is newer, re-render by the same route over the latest revision and re-align the verbatim quote.
+  `unlocatable` is the explicit signal that the source changed under the quote.
+- **Two ways a quote is minted, one model:** the knowledge-unit extractor aligns its quotes offline. When the agent
+  cites, the read tool serves markdown together with its rendering's key, verifies the agent's quote verbatim against
+  the served bytes (rejecting a quote the text does not contain), and mints `{paper, document, quote}`. That also seeds
+  the offsets cache, since the rendering is known and current.
+
+### Reference and anchor types
+
+Concrete shapes for the cite model. These live in knowledge-unit records and a derived cache, not in the manifest, and
+are provisional: `ref_id`, the status values and the span type are not yet frozen.
 
 ```proto
 message SourceAnchor {
   string paper_id = 1;     // doc_id
-  string document_id = 2;  // a rendering hash
+  string document_id = 2;  // a rendering's record key
   string quote = 3;        // verbatim, against the rendering's bytes
   bool exact = 4;          // false once only fuzzy realignment held
 }
@@ -474,43 +473,50 @@ message SharedAnchor {     // exported form — quote stripped
 message ResolvedSpan { int32 start = 1; int32 end = 2; }
 message OffsetsCacheEntry {
   string ref_id = 1;
-  string rendering = 2;    // rendering hash the spans were computed against
+  string rendering = 2;    // rendering key the spans were computed against
   repeated ResolvedSpan spans = 3;
   string status = 4;       // "exact" | "fuzzy" | "unlocatable" — a proto-canonical enum once frozen
 }
 ```
 
-## Implementation state
+## Alternatives considered
 
-Shipped: the proto schema (`schema/proto/themis/litcache/models/litcache.proto`) + generated stubs, and the `Access`
-boundary validator. The cache writer, the readers, and the KU layer that anchors against the quote-reference model are
-staged in the build plan ([`../plans/literature-cache.md`](../plans/literature-cache.md)).
+- **A derived artifact stored beside the paper under a name computed from its input, outside the manifest.** A variant
+  set extracted from rendering `m1` with prompt version 3 would live at a name made from `m1` and `3`, and its existence
+  would mean it is done. That needs no write to the manifest, no schema change per kind, and no contention between an
+  extraction and anything else writing the paper. It lost at the first level holding two candidates. The next step's
+  input is then a choice rather than a computation, and a name computed from one particular input cannot record which
+  candidate was chosen. Nothing would list what exists either, short of listing the bucket.
+- **Refs in an object of their own beside the manifest.** Refs would then never contend with writes to the records. It
+  lost because recording an artifact and moving the ref that names it could no longer happen in one write, so a ref
+  could briefly name a record the manifest does not hold. Nor could one check confirm that every ref resolves.
+- **A record keyed by its bytes, its deps and its construction together.** Every distinct way of producing the same
+  bytes would then keep its own record, and no construction would ever be overwritten. It lost because no reader would
+  answer differently: a quote cites bytes, and two routes to identical text yield the same text.
 
 ## Open questions
 
-- **Supplementary updates & licence.** `files` has no revision history and no licence. A corrected figure or a CC0 data
-  file with its own terms would need both. Deferred until a case lands.
-- **Materialising primary->secondary refs (req 4).** Left to render-time href matching; a `references` index on the
-  rendering/revision is additive if the read path needs it.
-- **Renderings nesting.** Kept flat (top-level map, `from_source`/`from_revision` fields) rather than nested under their
-  `Source`/`Revision`. Structural nesting is more coherent but deepens the tree and hampers enumeration. Every stored
-  manifest is written flat and the compat gate holds `litcache.proto` to additive changes, so moving the map is closed:
-  nesting could only arrive beside it, as new fields the writer fills alongside the flat ones, or through an
-  expand/contract change over the stored manifests.
-- **Fidelity preference over `(media_type, converter)`.** The canonical rendering (and the markdown-vs-pdf display
-  choice) ranks: xml over pdf; among pdf routes, **llm-ocr over docling**. Where the order lives (read-path config,
-  curator-overridable) and how model identity factors in (prefer a newer `model`?) are unspecified.
-- **`model` as a conditional-required field.** `model?` is optional in the schema but required iff
-  `converter == llm-ocr`; the writer enforces it. Expressing the invariant structurally would mean splitting `Rendering`
-  into a converter-discriminated union (cf. `Access`), which duplicates four common fields across variants for one
-  conditional field -- not worth it. Revisit if more converter-specific fields appear. The compat gate refuses moving
-  the fields `Rendering` already carries into the arms of a new union, so the split would be additive at most (a
-  per-converter message beside the common fields, holding only fields new with it); moving the released fields is an
-  expand/contract change over the stored manifests.
+- **A writer that loses the commit.** Ingestion claims a paper's ids before it converts the paper and commits the
+  manifest minutes later. If an ingest of the same paper commits in between, the slower writer's create-only commit
+  fails, and its renderings are never named. When that paper is not open access, the conversion lane cannot reach the
+  PDF the slower writer held, and it settles the paper with no text. The proposed remedy is for a writer that loses the
+  commit to add its records to the winning manifest, in one read-modify-write. It would do that only when the ids it
+  claimed do not contradict the manifest's, which keeps a writer that reached the `doc_id` through a shared identifier
+  from adding another paper's work.
+- **Licence on supplementary files.** A supplementary file carries no licence of its own, so it is read under the
+  paper's. A data file published under different terms, CC0 beside a CC-BY article say, would need its own, which is a
+  new optional field when something needs it.
+- **Materialising references from primary to secondary artifacts.** They are matched by name at render time. An index of
+  them is an additive change if the read path ever needs one.
+- **Where the fidelity ranking lives, and how a model counts in it.** Writers now apply the ranking when they move the
+  `markdown` ref. Whether a newer model outranks an older one on the same converter is not yet settled.
+- **Converter-specific fields on a rendering.** A rendering's construction requires a model exactly when the converter
+  is a vision model, enforced by a constraint on the message. If more converter-specific fields appear, they could
+  arrive as a per-converter choice beside the common fields. Moving the common fields into that choice would be an
+  expand/contract change.
 - **A Bookshelf accession at the door.** Whether `MaybeIngestPapers` accepts `bookid:` beside `doi:`, `pmid:` and
-  `pmcid:` is the door's question, held in
-  [`literature-evidence-layer.md`](literature-evidence-layer.md#open-questions).
-- **Cross-work quote fallback for entitlement.** A KU anchored to a work an unentitled reader can't see (a licensed
-  paper) could be surfaced against an *equivalent ingested work* they can -- e.g. a preprint linked by an equivalence
-  edge -- by realigning the same verbatim quote into that work's rendering. The machinery already exists (equivalence
-  edges + quote realignment); whether to expose it, and how entitlement composes across a class, is unspecified.
+  `pmcid:` is held in [`literature-evidence-layer.md`](literature-evidence-layer.md#open-questions).
+- **Falling back to an equivalent work for entitlement.** A knowledge unit anchored to a work a reader is not entitled
+  to see, such as a licensed paper, could be shown against an equivalent work they can see, such as a preprint linked to
+  it by an equivalence edge, by re-aligning the same quote into that work's rendering. The pieces exist. Whether to
+  expose it, and how entitlement composes across a set of equivalent works, is open.

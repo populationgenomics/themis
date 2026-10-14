@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/litcache/models/litcache.proto.
  */
 export const file_themis_litcache_models_litcache: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCLBAQoLRXh0ZXJuYWxJZHMSEAoDZG9pGAEgASgJSACIAQESEQoEcG1pZBgCIAEoCUgBiAEBEhIKBXBtY2lkGAMgASgJSAKIAQESEgoFYXJ4aXYYBCABKAlIA4gBARIUCgdiaW9yeGl2GAUgASgJSASIAQESEwoGYm9va2lkGAYgASgJSAWIAQFCBgoEX2RvaUIHCgVfcG1pZEIICgZfcG1jaWRCCAoGX2FyeGl2QgoKCF9iaW9yeGl2QgkKB19ib29raWQiNgoLRXF1aXZhbGVuY2USDQoFZWRnZXMYASADKAkSGAoQY2Fub25pY2FsX2RvY19pZBgCIAEoCSJuCgpSZXRyYWN0aW9uEhYKCXJldHJhY3RlZBgBIAEoCEgAiAEBEhMKBnNvdXJjZRgCIAEoCUgBiAEBEhEKBGRhdGUYAyABKAlIAogBAUIMCgpfcmV0cmFjdGVkQgkKB19zb3VyY2VCBwoFX2RhdGUipQEKDkFzc29jaWF0ZWRGaWxlEkEKBHJvbGUYASABKA4yMy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkFzc29jaWF0ZWRGaWxlUm9sZRIMCgRuYW1lGAIgASgJEhcKCnNvdXJjZV91cmwYAyABKAlIAIgBARIRCgRwYXRoGAQgASgJSAGIAQFCDQoLX3NvdXJjZV91cmxCBwoFX3BhdGginQQKCE1hbmlmZXN0Eg4KBmRvY19pZBgBIAEoCRJCCgxleHRlcm5hbF9pZHMYAiABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkV4dGVybmFsSWRzEhEKCWNsYWltX2tleRgDIAEoCRJBCgtlcXVpdmFsZW5jZRgEIAEoCzIsLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRXF1aXZhbGVuY2USPwoKcmV0cmFjdGlvbhgFIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuUmV0cmFjdGlvbhI4Cgdzb3VyY2VzGAYgAygLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2USTQoKcmVuZGVyaW5ncxgHIAMoCzI5LnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWFuaWZlc3QuUmVuZGVyaW5nc0VudHJ5Ej4KBWZpbGVzGAggAygLMi8udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZRpdCg9SZW5kZXJpbmdzRW50cnkSCwoDa2V5GAEgASgJEjkKBXZhbHVlGAIgASgLMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5SZW5kZXJpbmc6AjgBInoKDFB1Ym1lZFJlY29yZBIoCgdhcnRpY2xlGAEgASgLMhUucHVibWVkLlB1Ym1lZEFydGljbGVIABIxCgxib29rX2FydGljbGUYAiABKAsyGS5wdWJtZWQuUHVibWVkQm9va0FydGljbGVIAEINCgRraW5kEgW6SAIIASLNAgoNUGFwZXJNZXRhZGF0YRI9CgZwdWJtZWQYASABKAsyLS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlB1Ym1lZFJlY29yZBI3Cghjcm9zc3JlZhgCIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMuY3Jvc3NyZWYuV29yaxI3CghvcGVuYWxleBgDIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMub3BlbmFsZXguV29yazqKAbpIhgEagwEKGnBhcGVyX21ldGFkYXRhLnNvbWVfcmVjb3JkEidhdCBsZWFzdCBvbmUgaW5kZXgncyByZWNvcmQgbXVzdCBiZSBzZXQaPGhhcyh0aGlzLnB1Ym1lZCkgfHwgaGFzKHRoaXMuY3Jvc3NyZWYpIHx8IGhhcyh0aGlzLm9wZW5hbGV4KSqFAgoKU291cmNlS2luZBIbChdTT1VSQ0VfS0lORF9VTlNQRUNJRklFRBAAEhkKFVNPVVJDRV9LSU5EX1BNQ19PQV9TMxABEhoKFlNPVVJDRV9LSU5EX0VVUk9QRV9QTUMQAhIbChdTT1VSQ0VfS0lORF9FTFNFVklFUl9PQRADEhcKE1NPVVJDRV9LSU5EX0JJT1JYSVYQBBIWChJTT1VSQ0VfS0lORF9VUExPQUQQBRIUChBTT1VSQ0VfS0lORF9TRUVEEAYSJAogU09VUkNFX0tJTkRfRVVST1BFX1BNQ19CT09LU0hFTEYQBxIZChVTT1VSQ0VfS0lORF9VTlBBWVdBTEwQCCpbCgxTb3VyY2VGb3JtYXQSHQoZU09VUkNFX0ZPUk1BVF9VTlNQRUNJRklFRBAAEhUKEVNPVVJDRV9GT1JNQVRfWE1MEAESFQoRU09VUkNFX0ZPUk1BVF9QREYQAiplCgxMaWNlbmNlQmFzaXMSHQoZTElDRU5DRV9CQVNJU19VTlNQRUNJRklFRBAAEhoKFkxJQ0VOQ0VfQkFTSVNfQVJUSUZBQ1QQARIaChZMSUNFTkNFX0JBU0lTX0FTU0VSVEVEEAIqawoJQ29udmVydGVyEhkKFUNPTlZFUlRFUl9VTlNQRUNJRklFRBAAEhUKEUNPTlZFUlRFUl9MSVRET1dOEAESFQoRQ09OVkVSVEVSX0RPQ0xJTkcQAhIVChFDT05WRVJURVJfTExNX09DUhADKoMBChJBc3NvY2lhdGVkRmlsZVJvbGUSJAogQVNTT0NJQVRFRF9GSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIfChtBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9GSUdVUkUQARImCiJBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9TVVBQTEVNRU5UQVJZEAJiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_pubmed_proto_pubmed, file_themis_litcache_models_crossref, file_themis_litcache_models_openalex]);
+  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCKrAgoVUmVuZGVyaW5nQ29uc3RydWN0aW9uEj0KCWNvbnZlcnRlchgBIAEoDjIqLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuQ29udmVydGVyEhkKEWNvbnZlcnRlcl92ZXJzaW9uGAIgASgJEhIKBW1vZGVsGAMgASgJSACIAQE6mQG6SJUBGpIBCihyZW5kZXJpbmdfY29uc3RydWN0aW9uLm1vZGVsX2lmZl9sbG1fb2NyEjltb2RlbCBtdXN0IGJlIHNldCBpZmYgY29udmVydGVyIGlzIENPTlZFUlRFUl9MTE1fT0NSICg9MykaKyh0aGlzLmNvbnZlcnRlciA9PSAzKSA9PSAodGhpcy5tb2RlbCAhPSAnJylCCAoGX21vZGVsIqoBCgZSZWNvcmQSDAoEZGVwcxgBIAMoCRIuCgpjcmVhdGVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJLCglyZW5kZXJpbmcYCiABKAsyNi50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJlbmRlcmluZ0NvbnN0cnVjdGlvbkgAQhUKDGNvbnN0cnVjdGlvbhIFukgCCAEiwQEKC0V4dGVybmFsSWRzEhAKA2RvaRgBIAEoCUgAiAEBEhEKBHBtaWQYAiABKAlIAYgBARISCgVwbWNpZBgDIAEoCUgCiAEBEhIKBWFyeGl2GAQgASgJSAOIAQESFAoHYmlvcnhpdhgFIAEoCUgEiAEBEhMKBmJvb2tpZBgGIAEoCUgFiAEBQgYKBF9kb2lCBwoFX3BtaWRCCAoGX3BtY2lkQggKBl9hcnhpdkIKCghfYmlvcnhpdkIJCgdfYm9va2lkIjYKC0VxdWl2YWxlbmNlEg0KBWVkZ2VzGAEgAygJEhgKEGNhbm9uaWNhbF9kb2NfaWQYAiABKAkibgoKUmV0cmFjdGlvbhIWCglyZXRyYWN0ZWQYASABKAhIAIgBARITCgZzb3VyY2UYAiABKAlIAYgBARIRCgRkYXRlGAMgASgJSAKIAQFCDAoKX3JldHJhY3RlZEIJCgdfc291cmNlQgcKBV9kYXRlIuQBCg5Bc3NvY2lhdGVkRmlsZRJBCgRyb2xlGAEgASgOMjMudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZVJvbGUSDAoEbmFtZRgCIAEoCRIXCgpzb3VyY2VfdXJsGAMgASgJSACIAQESEQoEcGF0aBgEIAEoCUgBiAEBEgwKBGhhc2gYBSABKAkSLwoLY2FwdHVyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQg0KC19zb3VyY2VfdXJsQgcKBV9wYXRoIqYKCghNYW5pZmVzdBIOCgZkb2NfaWQYASABKAkSQgoMZXh0ZXJuYWxfaWRzGAIgASgLMiwudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5FeHRlcm5hbElkcxIRCgljbGFpbV9rZXkYAyABKAkSQQoLZXF1aXZhbGVuY2UYBCABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkVxdWl2YWxlbmNlEj8KCnJldHJhY3Rpb24YBSABKAsyKy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldHJhY3Rpb24SOAoHc291cmNlcxgGIAMoCzInLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuU291cmNlElEKCnJlbmRlcmluZ3MYByADKAsyOS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLk1hbmlmZXN0LlJlbmRlcmluZ3NFbnRyeUICGAESPgoFZmlsZXMYCCADKAsyLy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkFzc29jaWF0ZWRGaWxlEkcKB3JlY29yZHMYCSADKAsyNi50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLk1hbmlmZXN0LlJlY29yZHNFbnRyeRJBCgRyZWZzGAogAygLMjMudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5NYW5pZmVzdC5SZWZzRW50cnkaXQoPUmVuZGVyaW5nc0VudHJ5EgsKA2tleRgBIAEoCRI5CgV2YWx1ZRgCIAEoCzIqLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuUmVuZGVyaW5nOgI4ARpXCgxSZWNvcmRzRW50cnkSCwoDa2V5GAEgASgJEjYKBXZhbHVlGAIgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5SZWNvcmQ6AjgBGisKCVJlZnNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBOvADukjsAxpzChVtYW5pZmVzdC5yZWZzX3Jlc29sdmUSJGV2ZXJ5IHJlZiBtdXN0IG5hbWUgYSBrZXkgb2YgcmVjb3Jkcxo0dGhpcy5yZWZzLmFsbChuYW1lLCB0aGlzLnJlZnNbbmFtZV0gaW4gdGhpcy5yZWNvcmRzKRr0AgoVbWFuaWZlc3QuZGVwc19yZXNvbHZlEnNldmVyeSByZWNvcmQgbmVlZHMgYSBkZXAsIGFuZCBlYWNoIGRlcCBtdXN0IGJlIGEgaGVsZCByZXZpc2lvbiBoYXNoLCBhIGZldGNoZWQgZmlsZSdzIGhhc2gsIG9yIGFub3RoZXIgcmVjb3JkJ3Mga2V5GuUBdGhpcy5yZWNvcmRzLmFsbChrLCB0aGlzLnJlY29yZHNba10uZGVwcy5zaXplKCkgPiAwICYmIHRoaXMucmVjb3Jkc1trXS5kZXBzLmFsbChkLCBkICE9IGsgJiYgKGQgaW4gdGhpcy5yZWNvcmRzIHx8IHRoaXMuc291cmNlcy5leGlzdHMocywgcy5yZXZpc2lvbnMuZXhpc3RzKHIsIHIuaGFzaCA9PSBkKSkgfHwgdGhpcy5maWxlcy5leGlzdHMoZiwgZi5oYXNoICE9ICcnICYmIGYuaGFzaCA9PSBkKSkpKSJ6CgxQdWJtZWRSZWNvcmQSKAoHYXJ0aWNsZRgBIAEoCzIVLnB1Ym1lZC5QdWJtZWRBcnRpY2xlSAASMQoMYm9va19hcnRpY2xlGAIgASgLMhkucHVibWVkLlB1Ym1lZEJvb2tBcnRpY2xlSABCDQoEa2luZBIFukgCCAEizQIKDVBhcGVyTWV0YWRhdGESPQoGcHVibWVkGAEgASgLMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5QdWJtZWRSZWNvcmQSNwoIY3Jvc3NyZWYYAiABKAsyJS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmNyb3NzcmVmLldvcmsSNwoIb3BlbmFsZXgYAyABKAsyJS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLm9wZW5hbGV4Lldvcms6igG6SIYBGoMBChpwYXBlcl9tZXRhZGF0YS5zb21lX3JlY29yZBInYXQgbGVhc3Qgb25lIGluZGV4J3MgcmVjb3JkIG11c3QgYmUgc2V0GjxoYXModGhpcy5wdWJtZWQpIHx8IGhhcyh0aGlzLmNyb3NzcmVmKSB8fCBoYXModGhpcy5vcGVuYWxleCkqhQIKClNvdXJjZUtpbmQSGwoXU09VUkNFX0tJTkRfVU5TUEVDSUZJRUQQABIZChVTT1VSQ0VfS0lORF9QTUNfT0FfUzMQARIaChZTT1VSQ0VfS0lORF9FVVJPUEVfUE1DEAISGwoXU09VUkNFX0tJTkRfRUxTRVZJRVJfT0EQAxIXChNTT1VSQ0VfS0lORF9CSU9SWElWEAQSFgoSU09VUkNFX0tJTkRfVVBMT0FEEAUSFAoQU09VUkNFX0tJTkRfU0VFRBAGEiQKIFNPVVJDRV9LSU5EX0VVUk9QRV9QTUNfQk9PS1NIRUxGEAcSGQoVU09VUkNFX0tJTkRfVU5QQVlXQUxMEAgqWwoMU291cmNlRm9ybWF0Eh0KGVNPVVJDRV9GT1JNQVRfVU5TUEVDSUZJRUQQABIVChFTT1VSQ0VfRk9STUFUX1hNTBABEhUKEVNPVVJDRV9GT1JNQVRfUERGEAIqZQoMTGljZW5jZUJhc2lzEh0KGUxJQ0VOQ0VfQkFTSVNfVU5TUEVDSUZJRUQQABIaChZMSUNFTkNFX0JBU0lTX0FSVElGQUNUEAESGgoWTElDRU5DRV9CQVNJU19BU1NFUlRFRBACKmsKCUNvbnZlcnRlchIZChVDT05WRVJURVJfVU5TUEVDSUZJRUQQABIVChFDT05WRVJURVJfTElURE9XThABEhUKEUNPTlZFUlRFUl9ET0NMSU5HEAISFQoRQ09OVkVSVEVSX0xMTV9PQ1IQAyqDAQoSQXNzb2NpYXRlZEZpbGVSb2xlEiQKIEFTU09DSUFURURfRklMRV9ST0xFX1VOU1BFQ0lGSUVEEAASHwobQVNTT0NJQVRFRF9GSUxFX1JPTEVfRklHVVJFEAESJgoiQVNTT0NJQVRFRF9GSUxFX1JPTEVfU1VQUExFTUVOVEFSWRACYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp, file_pubmed_proto_pubmed, file_themis_litcache_models_crossref, file_themis_litcache_models_openalex]);
 
 /**
  * @generated from message themis.litcache.models.litcache.FreeToRead
@@ -183,7 +183,7 @@ export const RevisionSchema: GenMessage<Revision> = /*@__PURE__*/
  */
 export type Source = Message<"themis.litcache.models.litcache.Source"> & {
   /**
-   * lineage identity, stable across updates: "pdf" | "jats-xml" | "scraped-html"
+   * lineage identity, stable across updates: "pdf" | "xml"
    *
    * @generated from field: string handle = 1;
    */
@@ -225,8 +225,8 @@ export const SourceSchema: GenMessage<Source> = /*@__PURE__*/
   messageDesc(file_themis_litcache_models_litcache, 6);
 
 /**
- * Markdown derived from one revision via one route. Content-addressed at renderings/{hex}.md
- * (the Manifest.renderings key is that hash).
+ * The deprecated Manifest.renderings entry. Retained because an at-rest message is never deleted;
+ * a rendering is now a Record whose construction is a RenderingConstruction.
  *
  * @generated from message themis.litcache.models.litcache.Rendering
  */
@@ -278,6 +278,82 @@ export const RenderingSchema: GenMessage<Rendering> = /*@__PURE__*/
   messageDesc(file_themis_litcache_models_litcache, 7);
 
 /**
+ * How a rendering was made: markdown converted from the one source revision its Record names as a dep.
+ *
+ * @generated from message themis.litcache.models.litcache.RenderingConstruction
+ */
+export type RenderingConstruction = Message<"themis.litcache.models.litcache.RenderingConstruction"> & {
+  /**
+   * @generated from field: themis.litcache.models.litcache.Converter converter = 1;
+   */
+  converter: Converter;
+
+  /**
+   * the converter tool/harness version
+   *
+   * @generated from field: string converter_version = 2;
+   */
+  converterVersion: string;
+
+  /**
+   * free-text LLM id (e.g. "claude-opus-4-8"); set iff converter is llm_ocr
+   *
+   * @generated from field: optional string model = 3;
+   */
+  model?: string | undefined;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.RenderingConstruction.
+ * Use `create(RenderingConstructionSchema)` to create a new message.
+ */
+export const RenderingConstructionSchema: GenMessage<RenderingConstruction> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 8);
+
+/**
+ * One derived artifact of the paper: what it was made from and how. Keyed in Manifest.records by
+ * the sha256 hex of its bytes, which are content-addressed in the paper's directory at a path its
+ * construction kind determines. Bytes that are produced again keep their key; the record then
+ * holds the deps and construction of the run that most recently produced them.
+ *
+ * @generated from message themis.litcache.models.litcache.Record
+ */
+export type Record = Message<"themis.litcache.models.litcache.Record"> & {
+  /**
+   * The hashes this artifact was derived from: a Revision.hash, or the key of another record. A
+   * dep's role is read from what it resolves to — a source revision, or a record's construction kind.
+   *
+   * @generated from field: repeated string deps = 1;
+   */
+  deps: string[];
+
+  /**
+   * when the run that produced these bytes most recently finished
+   *
+   * @generated from field: google.protobuf.Timestamp created_at = 2;
+   */
+  createdAt?: Timestamp | undefined;
+
+  /**
+   * @generated from oneof themis.litcache.models.litcache.Record.construction
+   */
+  construction: {
+    /**
+     * @generated from field: themis.litcache.models.litcache.RenderingConstruction rendering = 10;
+     */
+    value: RenderingConstruction;
+    case: "rendering";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.Record.
+ * Use `create(RecordSchema)` to create a new message.
+ */
+export const RecordSchema: GenMessage<Record> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 9);
+
+/**
  * @generated from message themis.litcache.models.litcache.ExternalIds
  */
 export type ExternalIds = Message<"themis.litcache.models.litcache.ExternalIds"> & {
@@ -319,7 +395,7 @@ export type ExternalIds = Message<"themis.litcache.models.litcache.ExternalIds">
  * Use `create(ExternalIdsSchema)` to create a new message.
  */
 export const ExternalIdsSchema: GenMessage<ExternalIds> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 8);
+  messageDesc(file_themis_litcache_models_litcache, 10);
 
 /**
  * @generated from message themis.litcache.models.litcache.Equivalence
@@ -341,7 +417,7 @@ export type Equivalence = Message<"themis.litcache.models.litcache.Equivalence">
  * Use `create(EquivalenceSchema)` to create a new message.
  */
 export const EquivalenceSchema: GenMessage<Equivalence> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 9);
+  messageDesc(file_themis_litcache_models_litcache, 11);
 
 /**
  * @generated from message themis.litcache.models.litcache.Retraction
@@ -368,9 +444,12 @@ export type Retraction = Message<"themis.litcache.models.litcache.Retraction"> &
  * Use `create(RetractionSchema)` to create a new message.
  */
 export const RetractionSchema: GenMessage<Retraction> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 10);
+  messageDesc(file_themis_litcache_models_litcache, 12);
 
 /**
+ * One file the paper's publisher lists beside the article. Append-only: a reissued file is a new entry with the same
+ * name and a later captured_at, never an edit, so a record whose dep is the old hash keeps resolving.
+ *
  * @generated from message themis.litcache.models.litcache.AssociatedFile
  */
 export type AssociatedFile = Message<"themis.litcache.models.litcache.AssociatedFile"> & {
@@ -395,6 +474,20 @@ export type AssociatedFile = Message<"themis.litcache.models.litcache.Associated
    * @generated from field: optional string path = 4;
    */
   path?: string | undefined;
+
+  /**
+   * sha256 hex digest of the fetched bytes, the stem of `path`; empty until fetched
+   *
+   * @generated from field: string hash = 5;
+   */
+  hash: string;
+
+  /**
+   * when these bytes were fetched; unset until fetched
+   *
+   * @generated from field: google.protobuf.Timestamp captured_at = 6;
+   */
+  capturedAt?: Timestamp | undefined;
 };
 
 /**
@@ -402,7 +495,7 @@ export type AssociatedFile = Message<"themis.litcache.models.litcache.Associated
  * Use `create(AssociatedFileSchema)` to create a new message.
  */
 export const AssociatedFileSchema: GenMessage<AssociatedFile> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 11);
+  messageDesc(file_themis_litcache_models_litcache, 13);
 
 /**
  * @generated from message themis.litcache.models.litcache.Manifest
@@ -438,16 +531,18 @@ export type Manifest = Message<"themis.litcache.models.litcache.Manifest"> & {
   retraction?: Retraction | undefined;
 
   /**
-   * primary-artifact lineages (pdf, jats-xml, …)
+   * primary-artifact lineages (pdf, xml)
    *
    * @generated from field: repeated themis.litcache.models.litcache.Source sources = 6;
    */
   sources: Source[];
 
   /**
-   * key = the markdown's content hash (sha256 hex)
+   * Superseded by records and refs. Read only by the rewrite that copies each entry into records;
+   * retired once every stored manifest has been rewritten.
    *
-   * @generated from field: map<string, themis.litcache.models.litcache.Rendering> renderings = 7;
+   * @generated from field: map<string, themis.litcache.models.litcache.Rendering> renderings = 7 [deprecated = true];
+   * @deprecated
    */
   renderings: { [key: string]: Rendering };
 
@@ -457,6 +552,21 @@ export type Manifest = Message<"themis.litcache.models.litcache.Manifest"> & {
    * @generated from field: repeated themis.litcache.models.litcache.AssociatedFile files = 8;
    */
   files: AssociatedFile[];
+
+  /**
+   * key = the derived artifact's content hash (sha256 hex)
+   *
+   * @generated from field: map<string, themis.litcache.models.litcache.Record> records = 9;
+   */
+  records: { [key: string]: Record };
+
+  /**
+   * The current record of each kind, by name: `markdown` names the rendering a reader is served.
+   * Moved by the run that produces a record it prefers to the one named; never edited by hand.
+   *
+   * @generated from field: map<string, string> refs = 10;
+   */
+  refs: { [key: string]: string };
 };
 
 /**
@@ -464,7 +574,7 @@ export type Manifest = Message<"themis.litcache.models.litcache.Manifest"> & {
  * Use `create(ManifestSchema)` to create a new message.
  */
 export const ManifestSchema: GenMessage<Manifest> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 12);
+  messageDesc(file_themis_litcache_models_litcache, 14);
 
 /**
  * PubMed's record for a PMID, in the one of its two kinds the index files it under: a journal
@@ -497,7 +607,7 @@ export type PubmedRecord = Message<"themis.litcache.models.litcache.PubmedRecord
  * Use `create(PubmedRecordSchema)` to create a new message.
  */
 export const PubmedRecordSchema: GenMessage<PubmedRecord> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 13);
+  messageDesc(file_themis_litcache_models_litcache, 15);
 
 /**
  * The at-rest type of a paper's `metadata.pb`: one field per index, each holding that index's
@@ -528,7 +638,7 @@ export type PaperMetadata = Message<"themis.litcache.models.litcache.PaperMetada
  * Use `create(PaperMetadataSchema)` to create a new message.
  */
 export const PaperMetadataSchema: GenMessage<PaperMetadata> = /*@__PURE__*/
-  messageDesc(file_themis_litcache_models_litcache, 14);
+  messageDesc(file_themis_litcache_models_litcache, 16);
 
 /**
  * @generated from enum themis.litcache.models.litcache.SourceKind
