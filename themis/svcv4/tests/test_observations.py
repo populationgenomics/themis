@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import decimal
+import typing
 from collections.abc import Iterable
 
 import pytest
 
 from themis.svcv4 import observations, reference
+from themis.svcv4.models import svcv4_pb2
 
 
 def addressed_grids(ref: reference.Reference) -> tuple[tuple[str, reference.ObservationGrid], ...]:
@@ -140,3 +142,119 @@ def test_every_cell_addresses_a_code_the_reference_names(ref: reference.Referenc
     cells = observations.cell_points(ref)
     assert cells
     assert [cell_id for cell_id in cells if observations._code_of(cell_id) not in ref.codes] == []
+
+
+_MONOALLELIC = observations.AffectedTable.MONOALLELIC
+_BIALLELIC = observations.AffectedTable.BIALLELIC
+
+
+@pytest.mark.parametrize(
+    ('mode', 'karyotype', 'table'),
+    [
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, observations.Karyotype.XX, _MONOALLELIC),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, observations.Karyotype.XY, _MONOALLELIC),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, observations.Karyotype.XX, _BIALLELIC),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, observations.Karyotype.XY, _MONOALLELIC),
+    ],
+)
+def test_an_x_linked_proband_is_counted_from_the_table_its_kind_and_karyotype_select(
+    mode: svcv4_pb2.ModeOfInheritance, karyotype: observations.Karyotype, table: observations.AffectedTable
+) -> None:
+    # SM4 §75: one heterozygous affected woman lands in a different table under the two kinds.
+    assert observations.x_linked_affected_table(mode, karyotype) is table
+
+
+@pytest.mark.parametrize(
+    'mode',
+    [
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT,
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE,
+        svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT,
+        svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED,
+    ],
+)
+def test_the_karyotype_selects_a_table_only_under_an_x_linked_mode(mode: svcv4_pb2.ModeOfInheritance) -> None:
+    with pytest.raises(ValueError, match='not X-linked'):
+        observations.x_linked_affected_table(mode, observations.Karyotype.XX)
+
+
+@pytest.mark.parametrize(
+    ('mode', 'tables'),
+    [
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, {_MONOALLELIC}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE, {_BIALLELIC}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, {_MONOALLELIC, _BIALLELIC}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, {_MONOALLELIC}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, {_MONOALLELIC, _BIALLELIC}),
+    ],
+)
+def test_each_mode_admits_the_affected_tables_sm4_names_for_it(
+    mode: svcv4_pb2.ModeOfInheritance, tables: set[observations.AffectedTable]
+) -> None:
+    assert set(observations.affected_tables(mode)) == tables
+
+
+def test_every_stated_mode_reaches_an_affected_table() -> None:
+    """A member added to the enum fails here until SM4's table for it is written down."""
+    for value in svcv4_pb2.ModeOfInheritance.values():
+        mode = typing.cast('svcv4_pb2.ModeOfInheritance', value)
+        if mode == svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED:
+            with pytest.raises(ValueError, match='MODE_OF_INHERITANCE_UNSPECIFIED'):
+                observations.affected_tables(mode)
+        else:
+            assert observations.affected_tables(mode)
+
+
+def test_every_affected_table_addresses_priced_cells_and_names_them_back(ref: reference.Reference) -> None:
+    """The table's value opens its cell ids, so a cell is read back to the table it was priced from."""
+    priced = observations.cell_points(ref)
+    for table in observations.AffectedTable:
+        cells = [cell_id for cell_id in priced if cell_id.startswith(f'{table.value}.')]
+        assert cells, table
+        assert {observations.affected_table_of(cell_id) for cell_id in cells} == {table}
+    with pytest.raises(observations.UnknownCellError):
+        observations.affected_table_of('CLN_DNV.specific.confirmed')
+
+
+@pytest.mark.parametrize('code', ['POP_HMZ', 'CLN_UAF'])
+@pytest.mark.parametrize(
+    ('mode', 'tables'),
+    [
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, {'ad'}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE, {'arxl'}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, {'arxl'}),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, {'arxl'}),
+    ],
+)
+def test_the_benign_observation_tables_split_dominant_from_recessive_and_x_linked(
+    code: str, mode: svcv4_pb2.ModeOfInheritance, tables: set[str]
+) -> None:
+    assert set(observations.mode_routed_tables(mode, code)) == tables
+
+
+@pytest.mark.parametrize(('code', 'table'), [('POP_HMZ', 'arxl'), ('CLN_UAF', 'ad')])
+def test_a_semidominant_entity_takes_the_table_its_supplement_prints_it_under(code: str, table: str) -> None:
+    """SM3 Table 7 prices it beside the recessive rows, SM4 Table 5 under the dominant column."""
+    assert observations.mode_routed_tables(svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, code) == (table,)
+
+
+def test_every_mode_routed_table_addresses_priced_cells(ref: reference.Reference) -> None:
+    """A table a mode reaches is one the reference prices, read back from its cells."""
+    priced = observations.cell_points(ref)
+    for code in ('CLN_AFF', 'CLN_UAF', 'POP_HMZ'):
+        for value in svcv4_pb2.ModeOfInheritance.values():
+            mode = typing.cast('svcv4_pb2.ModeOfInheritance', value)
+            if mode == svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED:
+                with pytest.raises(ValueError, match='MODE_OF_INHERITANCE_UNSPECIFIED'):
+                    observations.mode_routed_tables(mode, code)
+                continue
+            for table in observations.mode_routed_tables(mode, code):
+                cells = [cell for cell in priced if cell.startswith(f'{code}.{table}.')]
+                assert cells, (code, table)
+                assert {observations.mode_routed_table_of(cell) for cell in cells} == {table}
+
+
+def test_a_code_whose_tables_no_mode_routes_is_refused() -> None:
+    assert observations.mode_routed_table_of('CLN_DNV.specific.confirmed') is None
+    with pytest.raises(ValueError, match='does not split its tables'):
+        observations.mode_routed_tables(svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, 'CLN_DNV')

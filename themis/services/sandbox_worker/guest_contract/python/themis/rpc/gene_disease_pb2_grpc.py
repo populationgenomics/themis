@@ -46,22 +46,22 @@ class GeneDiseaseServicer:
 
     def DescribeGene(self, request, context):
         """ClinGen validity/dosage + GenCC + PanelApp AU, keyed under MONDO's subclass closure.
-        Lists every gene-disease entity curated for the gene: one element per (source, MONDO term,
-        inheritance) a curator asserts, with its label, its classification on the harmonised rank, the
-        gate level that classification reads as, its mechanism narratives and its source. Where a source
-        states one entity several times — GenCC files one row per submitter — they reduce to its
-        strongest classification on the published rank, an aggregation under a fixed vocabulary, with
-        each assertion kept. Across entities the rpc reduces nothing and selects nothing: which curated
-        entity a presentation belongs to is the analyst's call (SM21), and the level the gate reads is
-        that entity's, not the gene's (SM18). Name the entity you established as `mondo_id` +
-        `inheritance` and the rpc resolves it: the requested term's own curations decide wherever the
-        gene is curated for that term, and only where it is not does a curated MONDO subclass descendant
-        of it resolve. It answers with the entities that name your entity, and FAILED_PRECONDITION where
-        the term selects several of the gene's or none of them — never the nearest. A gene the tables do
-        not carry and a gene they carry with no validity assertion are distinct answers (`coverage`).
-        Classification, gate level, inheritance and mechanism narratives are per entity; the
-        haploinsufficiency score, the gain-of-function veto and PanelApp's mode of inheritance are per
-        gene. See DescribeGeneResponse.
+        Lists every gene-disease record curated for the gene: one element per (source, MONDO term, the
+        source's mode term) a curator asserts, with its label, its mode term verbatim, its classification
+        on the published rank, the gate level that classification reads as, its mechanism narratives and
+        its source. Where a source states one record several times — GenCC files one row per submitter —
+        they reduce to its strongest classification on the published rank, an aggregation under a fixed
+        vocabulary, with each assertion kept. Across records the rpc reduces nothing and selects nothing:
+        which record describes the entity a presentation belongs to, its mode included, is the analyst's
+        call (SM21), and the level the gate reads is that record's, not the gene's (SM18). Name the
+        entity's disease term as `mondo_id` and the rpc resolves it: the requested term's own curations
+        decide wherever the gene is curated for that term, and only where it is not do the curations of
+        a MONDO subclass descendant of it resolve. It answers with every record on that one term, under
+        every mode, and FAILED_PRECONDITION where several distinct curated terms sit under the requested
+        one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
+        validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
+        mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
+        PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

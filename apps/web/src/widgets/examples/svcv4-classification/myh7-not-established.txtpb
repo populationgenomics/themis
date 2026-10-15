@@ -22,7 +22,7 @@ routing {
   entity {
     disease: "hypertrophic cardiomyopathy"
     mondo_id: "MONDO:0005045"
-    inheritance: INHERITANCE_AUTOSOMAL_DOMINANT
+    mode_of_inheritance: MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT
     mechanism: "gain of function"
     validity_source: "ClinGen Gene Validity"
     validity_classification: "Definitive"

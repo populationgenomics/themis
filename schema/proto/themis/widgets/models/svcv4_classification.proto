@@ -132,24 +132,22 @@ message Svcv4Classification {
 
   // The Monogenic disease entity the variant is classified against.
   message Entity {
+    reserved 3;
+    reserved "inheritance";
     string disease = 1 [(buf.validate.field).string = {
       min_len: 1
       max_len: 512
     }];
     // `MONDO:<seven digits>`.
     string mondo_id = 2 [(buf.validate.field).string.pattern = "^MONDO:[0-9]{7}$"];
-    themis.evidence.models.Inheritance inheritance = 3 [(buf.validate.field).enum = {
-      defined_only: true
-      not_in: [0]
-    }];
     // The disease mechanism the agent classified under, in its words, e.g. "loss of function": a
-    // statement of evidence about the entity, which the disease and inheritance identify.
+    // statement of evidence about the entity, which the disease and mode of inheritance identify.
     string mechanism = 4 [(buf.validate.field).string = {
       min_len: 1
       max_len: 256
     }];
-    // The curation the gate was read from, as `GeneDisease.DescribeGene` names its source, e.g.
-    // "ClinGen Gene Validity".
+    // The curated record the gate was read from, as `GeneDisease.DescribeGene` names its source, e.g.
+    // "ClinGen Gene Validity": the record the agent judged to describe this entity, mode included.
     string validity_source = 5 [(buf.validate.field).string = {
       min_len: 1
       max_len: 256
@@ -164,10 +162,12 @@ message Svcv4Classification {
       defined_only: true
       not_in: [0]
     }];
-    // The entity's mode of inheritance, in the framework's own vocabulary; where set, it is the mode
-    // the record was classified under, and `inheritance` restates it in the evidence contract's
-    // coarser vocabulary. UNSPECIFIED on a record that states its mode in `inheritance` alone.
-    themis.svcv4.models.ModeOfInheritance mode_of_inheritance = 8 [(buf.validate.field).enum.defined_only = true];
+    // The entity's mode of inheritance in the framework's own vocabulary: the mode the record was
+    // classified under.
+    themis.svcv4.models.ModeOfInheritance mode_of_inheritance = 8 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
   }
 
   // One path through a decision tree the variant was routed onto.

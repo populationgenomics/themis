@@ -6,11 +6,12 @@ import dataclasses
 import decimal
 from collections.abc import Callable
 
+import protovalidate
 import pytest
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
-from themis.svcv4 import builders, classify, data, provenance, reference, scoring, splice_tree, widget
+from themis.svcv4 import builders, classify, data, observations, provenance, reference, scoring, splice_tree, widget
 from themis.svcv4.models import svcv4_pb2
 from themis.svcv4.tests import widget_cases
 from themis.widgets import ownership
@@ -433,3 +434,110 @@ def test_a_clinical_code_s_standing_is_restated_when_pop_frq_moves_under_it(ref:
     )
     with pytest.raises(widget.AnnotationError, match='CLN_AFF is not restated, and POP_FRQ, which decides'):
         widget.build(ref, rarer, codes={'POP_FRQ': frequency}, committed=first)
+
+
+def _routing_under(mode: svcv4_pb2.ModeOfInheritance) -> svcv4_classification_pb2.Svcv4Classification.Routing:
+    routing = _routing()
+    routing.entity.mode_of_inheritance = mode
+    return routing
+
+
+def test_the_record_states_the_mode_it_was_classified_under(ref: reference.Reference) -> None:
+    payload = _built(ref, _missense())
+    assert payload.routing.entity.mode_of_inheritance == svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT
+
+
+def test_an_entity_stating_no_mode_is_refused(ref: reference.Reference) -> None:
+    routing = _routing_under(svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED)
+    inputs = _missense()
+    with pytest.raises(widget.AnnotationError, match='states no mode of inheritance'):
+        widget.build(ref, inputs, routing=routing, codes=_annotations(ref, inputs))
+
+
+def test_a_record_stating_no_mode_fails_its_rules(ref: reference.Reference) -> None:
+    payload = _built(ref, _missense())
+    payload.routing.entity.ClearField('mode_of_inheritance')
+    with pytest.raises(protovalidate.ValidationError):
+        protovalidate.validate(payload)
+
+
+def _observed(ref: reference.Reference, cell_id: str) -> tuple[widget.Inputs, dict[str, Record.Code]]:
+    """The missense inputs with one observation priced from `cell_id` under its code, and every code annotated."""
+    code = cell_id.split('.', 1)[0]
+    cells = {**_CELLS, code: [(cell_id, 1)]}
+    inputs = dataclasses.replace(
+        _missense(),
+        independent_codes=[
+            classify.IndependentCode('POP_FRQ', D('0.0')),
+            classify.IndependentCode(code, observations.points_for(ref, cell_id)),
+            classify.IndependentCode('CLN_DNV', D('2.0')),
+            classify.IndependentCode('LOC_PHE', D('4.0')),
+        ],
+    )
+    return inputs, _annotations(ref, inputs, cells)
+
+
+_HETEROZYGOUS = 'CLN_AFF.arxl.consistent_full_lt_0_0001.no_second_variant'
+
+
+@pytest.mark.parametrize(
+    ('mode', 'admitted'),
+    [
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, True),
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE, True),
+        (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, False),
+        (svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, False),
+    ],
+)
+def test_an_affected_proband_is_priced_only_from_a_table_the_mode_counts_from(
+    ref: reference.Reference, mode: svcv4_pb2.ModeOfInheritance, admitted: bool
+) -> None:
+    # SM4 §75: a heterozygous affected woman is a biallelic-table row under an X-linked recessive entity only.
+    inputs, codes = _observed(ref, _HETEROZYGOUS)
+    if admitted:
+        payload = widget.build(ref, inputs, routing=_routing_under(mode), codes=codes)
+        assert [cell.cell_id for code in payload.codes if code.code == 'CLN_AFF' for cell in code.cells] == [
+            _HETEROZYGOUS
+        ]
+        return
+    with pytest.raises(widget.AnnotationError, match='routes CLN_AFF to ad'):
+        widget.build(ref, inputs, routing=_routing_under(mode), codes=codes)
+
+
+def test_a_monoallelic_proband_is_refused_under_a_recessive_entity(ref: reference.Reference) -> None:
+    inputs, codes = _observed(ref, 'CLN_AFF.ad.specific_full')
+    with pytest.raises(widget.AnnotationError, match='routes CLN_AFF to arxl'):
+        widget.build(
+            ref, inputs, routing=_routing_under(svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE), codes=codes
+        )
+    semidominant = widget.build(
+        ref, inputs, routing=_routing_under(svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT), codes=codes
+    )
+    assert semidominant.routing.entity.mode_of_inheritance == svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT
+
+
+@pytest.mark.parametrize(
+    ('cell_id', 'mode', 'admitted'),
+    [
+        ('POP_HMZ.ad.homozygous', svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, True),
+        ('POP_HMZ.ad.homozygous', svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE, False),
+        ('POP_HMZ.arxl.homozygous_or_hemizygous', svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, True),
+        ('POP_HMZ.arxl.homozygous_or_hemizygous', svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, False),
+        ('CLN_UAF.ad.near_100', svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, True),
+        ('CLN_UAF.arxl.near_100.hom_hemi', svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, False),
+        ('POP_HMZ.arxl.homozygous_or_hemizygous', svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, True),
+        ('POP_HMZ.ad.homozygous', svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT, False),
+        ('CLN_UAF.ad.near_100', svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, False),
+        ('CLN_UAF.arxl.near_100.hom_hemi', svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE, True),
+        ('CLN_UAF.arxl.near_100.hom_hemi', svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT, False),
+    ],
+)
+def test_a_benign_observation_is_priced_only_from_a_table_the_mode_routes_to(
+    ref: reference.Reference, cell_id: str, mode: svcv4_pb2.ModeOfInheritance, admitted: bool
+) -> None:
+    inputs, codes = _observed(ref, cell_id)
+    if admitted:
+        widget.build(ref, inputs, routing=_routing_under(mode), codes=codes)
+        return
+    with pytest.raises(widget.AnnotationError, match=r'from its \w+ table, and a'):
+        widget.build(ref, inputs, routing=_routing_under(mode), codes=codes)

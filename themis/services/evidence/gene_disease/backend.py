@@ -48,15 +48,15 @@ class GeneDiseaseBackend(abc.ABC):
 
 
 def gene_key(request: gene_disease_pb2.DescribeGeneRequest) -> str:
-    """The fixture key for one gene-disease query: the gene's HGNC id, plus the entity named.
+    """The fixture key for one gene-disease query: the gene's HGNC id, plus the disease term named.
 
-    The gene's curated entities are the same for every request, but the response's `resolution` is
-    not — keying on the HGNC id alone would answer a request that named an entity from a seed built
-    for no entity, which is the gene-scoped answer this rpc exists to stop giving.
+    The gene's curated records are the same for every request, but the response's `resolution` is
+    not — keying on the HGNC id alone would answer a request that named a term from a seed built for
+    no term, which is the gene-scoped answer this rpc exists to stop giving.
     """
     if not request.mondo_id:
         return request.hgnc_id
-    return f'{request.hgnc_id}:{request.mondo_id}:{evidence_pb2.Inheritance.Name(request.inheritance)}'
+    return f'{request.hgnc_id}:{request.mondo_id}'
 
 
 class FixtureBackend(GeneDiseaseBackend):
@@ -132,7 +132,7 @@ class LiveBackend(GeneDiseaseBackend):
         curated = gene_disease.entities(sources.validity, sources.harmonised)
         raw, stamped = sources.raw_and_provenance(at)
 
-        # A gene with no curated entity has nothing to resolve against and nothing to be wrong about:
+        # A gene with no curated record has nothing to resolve against and nothing to be wrong about:
         # `coverage` is the answer, and the gene-scoped signals still stand.
         resolution = None
         if request.mondo_id and curated:
@@ -141,7 +141,7 @@ class LiveBackend(GeneDiseaseBackend):
                 raw['mondo_ancestors'] = closure.raw
                 stamped.append(provenance.provenance(closure, at))
             ancestors = closure.ancestors if closure is not None else {}
-            resolution = gene_disease.resolve(curated, request.mondo_id, request.inheritance, ancestors)
+            resolution = gene_disease.resolve(curated, request.mondo_id, ancestors)
 
         return gene_disease_pb2.DescribeGeneResponse(
             entities=curated,
@@ -160,7 +160,7 @@ class LiveBackend(GeneDiseaseBackend):
         The ontology is reached only where the requested term is not itself curated, so an
         exact-term request stays the in-memory join the four reference tables are.
         """
-        terms = gene_disease.terms_needing_closure(curated, request.mondo_id, request.inheritance)
+        terms = gene_disease.terms_needing_closure(curated, request.mondo_id)
         if not terms:
             return None
         return await mondo.fetch_subclass_closure(terms, http_client=self._http_client)

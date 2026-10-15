@@ -14,7 +14,6 @@ from collections.abc import Awaitable, Callable
 import httpx2
 import pytest
 
-from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -77,7 +76,13 @@ def _validity_table(
 
 
 def _gencc_table(
-    hgnc_id: str, classification: str, *, notes: str = '', mondo_id: str = _CURATED_TERM, moi_curie: str = 'HP:0000006'
+    hgnc_id: str,
+    classification: str,
+    *,
+    notes: str = '',
+    mondo_id: str = _CURATED_TERM,
+    moi_curie: str = 'HP:0000006',
+    moi_title: str = 'Autosomal dominant',
 ) -> gencc.GenCC:
     row = {
         'gene_curie': hgnc_id,
@@ -86,7 +91,7 @@ def _gencc_table(
         'disease_curie': mondo_id,
         'classification_title': classification,
         'moi_curie': moi_curie,
-        'moi_title': 'Autosomal dominant',
+        'moi_title': moi_title,
         'submitter_title': 'ClinGen',
         'submitted_as_notes': notes,
         'submitted_run_date': '2026-01-01',
@@ -249,11 +254,7 @@ def test_gene_disease_resolving_the_curated_term_reads_no_ontology() -> None:
                 client, _tables(validity=_validity_table('HGNC:1100', 'Limited', 'AD'))
             )
             return await backend.describe_gene(
-                gene_disease_pb2.DescribeGeneRequest(
-                    hgnc_id='HGNC:1100',
-                    mondo_id=_CURATED_TERM,
-                    inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
-                )
+                gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_CURATED_TERM)
             )
 
     resp = asyncio.run(run())
@@ -261,6 +262,25 @@ def test_gene_disease_resolving_the_curated_term_reads_no_ontology() -> None:
     assert [e.gate_level for e in resp.resolution.entities] == [gene_disease_pb2.GATE_LEVEL_LIMITED]
     assert [p.source for p in resp.provenance] == ['ClinGen Gene Validity']  # no MONDO round-trip
     assert 'mondo_ancestors' not in resp.raw
+
+
+def test_gene_disease_answers_a_gene_carrying_a_mode_outside_the_framework() -> None:
+    # GenCC files a digenic assertion (HP:0010984) against CLCNKB, a mode outside the framework's five.
+    # The record stands as the source states it, and the gene's other records and the resolution of
+    # its term are answered whole.
+    resp = _run(
+        _tables(
+            validity=_validity_table('HGNC:1100', 'Definitive', 'AR'),
+            gencc_table=_gencc_table(
+                'HGNC:1100', 'Supportive', moi_curie='HP:0010984', moi_title='Digenic inheritance'
+            ),
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_CURATED_TERM)),
+    )
+    assert [(e.source, e.inheritance_term) for e in resp.resolution.entities] == [
+        ('ClinGen Gene Validity', 'AR'),
+        ('GenCC', 'Digenic inheritance'),
+    ]
 
 
 def test_gene_disease_resolving_a_parent_term_reads_the_subclass_closure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,13 +299,7 @@ def test_gene_disease_resolving_a_parent_term_reads_the_subclass_closure(monkeyp
     )
     resp = _run(
         _tables(validity=_validity_table('HGNC:1100', 'Definitive', 'AD')),
-        lambda be: be.describe_gene(
-            gene_disease_pb2.DescribeGeneRequest(
-                hgnc_id='HGNC:1100',
-                mondo_id=_PARENT_TERM,
-                inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
-            )
-        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)),
     )
     assert resp.resolution.relation == gene_disease_pb2.TERM_RELATION_DESCENDANT
     assert resp.resolution.mondo_id == _CURATED_TERM

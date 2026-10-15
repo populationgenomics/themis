@@ -201,6 +201,13 @@ revision draws only if its payload passes its rules, and a pushed revision must 
 first release would hide every earlier revision that breaks it. The rules can loosen later but never tighten, so they
 are all written with the schema.
 
+The entity's required mode of inheritance is a rule added after the first release. A record written before it states its
+mode only in a field the schema has since retired, so it fails the new rule: it no longer draws, and reading it back
+refuses it. The break is taken in one change, which [`proto.md`](proto.md#schema-evolution) allows where the skew costs
+nothing real, because the only stored records are the classification runs on dev, and those are disposable. It lasts for
+good, since nothing rewrites those records; the run's next build of the widget writes one that states its mode and
+loads.
+
 ### A revision carries its reasoning forward
 
 The obvious way for the agent to revise the record is to rebuild it whole on every turn, annotations included. It breaks

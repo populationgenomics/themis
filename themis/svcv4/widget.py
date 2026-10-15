@@ -91,7 +91,7 @@ class Inputs:
     Attributes:
         consequence: The routing consequence, as `Variant.Normalize` states it.
         evidence: The workflow's judgement inputs, in the family its arm takes.
-        gate_level: The resolved entity's gene-disease-validity gate level.
+        gate_level: The gene-disease-validity gate level of the curated record judged to describe the entity.
         independent_codes: The POP/CLN/LOC codes, as the doors return them or as `classify.IndependentCode`s.
         whole_gene: A whole-gene deletion: SM13's own tier table, which `classify_variant` cannot reach and
             `builders.build_exon_deletion(whole_gene=True)` does. Only with `NullEvidence`.
@@ -162,8 +162,8 @@ def build(
     Args:
         ref: The loaded reference.
         inputs: The inputs of the tally the document proceeds on.
-        routing: The routing's annotation: the variant, the entity (with no gate level, which `inputs` states),
-            and the rationale. None keeps the committed payload's.
+        routing: The routing's annotation: the variant, the entity (its mode in `mode_of_inheritance`, with no
+            gate level, which `inputs` states), and the rationale. None keeps the committed payload's.
         codes: Each code's annotation, by code name: its status, and for a scored code its rationale and
             confidence, with the evidence, the decision-tree cell (`decision`) for a code on a path, and for an
             independent code the cells it was priced from, as `cell_id` and `count`. A code left out keeps the
@@ -180,9 +180,10 @@ def build(
     Raises:
         AnnotationError: If a code the paths taken admit has no annotation, an annotation names a code they do not
             admit, sets a field the library computes or a curator's judgement, states a status the tally
-            contradicts, or prices cells that do not sum to the code's points; or a carried annotation was written
-            against other points, another path or other releases, or a carried routing against another route,
-            consequence or gate level.
+            contradicts, prices cells that do not sum to the code's points, or prices a cell from a table the
+            entity's mode does not route to; if the entity states no `mode_of_inheritance`; or a carried annotation
+            was written against other points, another path or other releases, or a carried routing against another
+            route, consequence or gate level.
         ValueError: As `builders.classify_variant` does, or if the payload fails its rules.
     """
     result = inputs.classify(ref)
@@ -227,6 +228,7 @@ def build(
     agreed = all(value.tally.final_class == payload.tally.final_class for value in payload.open_values)
     payload.classification = payload.tally.final_class if agreed else svcv4_pb2.CLASSIFICATION_NOT_ESTABLISHED
     _check_sum(payload, result)
+    _check_mode_routed_cells(payload)
     protovalidate.validate(payload)
     return payload
 
@@ -239,6 +241,23 @@ def admitted(ref: reference.Reference, inputs: Inputs) -> tuple[str, ...]:
     """
     result = inputs.classify(ref)
     return tuple(code for code, _ in _admitted(ref, _routes(inputs, result)))
+
+
+def _check_mode_routed_cells(payload: svcv4_classification_pb2.Svcv4Classification) -> None:
+    """Refuse a cell from a table the entity's mode does not route to (`observations.mode_routed_tables`)."""
+    mode = payload.routing.entity.mode_of_inheritance
+    for code in payload.codes:
+        for cell in code.cells:
+            table = observations.mode_routed_table_of(cell.cell_id)
+            if table is None:
+                continue
+            admitted = observations.mode_routed_tables(mode, code.code)
+            if table not in admitted:
+                raise AnnotationError(
+                    f'{code.code} prices {cell.cell_id} from its {table} table, and a '
+                    f'{svcv4_pb2.ModeOfInheritance.Name(mode)} entity routes {code.code} to '
+                    f'{" or ".join(admitted)}'
+                )
 
 
 def _decimal(value: decimal.Decimal) -> str:
@@ -388,6 +407,11 @@ def _routing(
         raise AnnotationError(
             f"the routing's entity states gate level {reference.gate_level_name(annotation.entity.gate_level)}, "
             f'and the inputs {reference.gate_level_name(inputs.gate_level)}; the inputs state it, so leave it unset'
+        )
+    elif annotation.entity.mode_of_inheritance == svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED:
+        raise AnnotationError(
+            "the routing's entity states no mode of inheritance; set `mode_of_inheritance` to the mode the entity "
+            'is classified under'
         )
     routing = Record.Routing(
         variant=annotation.variant,

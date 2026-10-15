@@ -35,6 +35,7 @@ import pytest
 
 from themis.services.sandbox_worker import _generated, git_hatches, worker
 from themis.services.sandbox_worker.tests import fakes
+from tools.schema import guest_contract
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _DOCKERFILE = pathlib.Path(__file__).resolve().parents[1] / 'Dockerfile'
@@ -306,6 +307,24 @@ def test_the_guest_ships_the_contract_tree_and_no_other_stub_or_source() -> None
     tree = {path.relative_to(proto).as_posix(): path for path in proto.rglob('*') if path.is_file()}
     assert tree, 'the guest contract tree holds no sources — regen has not written it'
     assert sources == tree, f'the proto root holds {sorted(sources)}, the tree holds {sorted(tree)}'
+
+
+def test_every_authored_message_stub_from_the_main_tree_is_one_the_cut_keeps_types_for() -> None:
+    """A message stub the guest takes from the main tree names types its descriptor resolves in the guest tree.
+
+    The cut keeps those types only for the trees `guest_contract.SHIPPED_WHOLE` lists, so an authored stub landed
+    from anywhere else would import into a pool missing a type it names, which no import check by module name sees.
+    """
+    python = _GUEST_CONTRACT / 'python'
+    astray = sorted(
+        landing
+        for landing, source in _guest_modules().items()
+        if landing.startswith(f'{_PROJECT}/')
+        and landing.endswith('_pb2.py')
+        and not source.is_relative_to(python)
+        and not landing.startswith(guest_contract.SHIPPED_WHOLE)
+    )
+    assert not astray, f'message stubs shipped from the main tree outside {guest_contract.SHIPPED_WHOLE}: {astray}'
 
 
 def _locked_guest_distributions() -> set[str]:

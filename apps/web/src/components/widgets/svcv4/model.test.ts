@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
-import { Classification, Confidence } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
+  Classification,
+  Confidence,
+  ModeOfInheritance,
+} from "@/gen/themis/svcv4/models/svcv4_pb";
+import {
+  Svcv4Classification_EntitySchema,
   Svcv4Classification_Line_Kind,
   Svcv4Classification_LineSchema,
   Svcv4ClassificationSchema,
@@ -14,6 +19,7 @@ import {
   counted,
   decisiveMarks,
   domain,
+  entityModeLabel,
   lettered,
   needleLabels,
   needles,
@@ -370,5 +376,19 @@ describe("points", () => {
   test("refuse text the payload's rules admit none of", () => {
     expect(() => pointsOf("1E+1")).toThrow("not decimal text");
     expect(() => pointsOf("")).toThrow("not decimal text");
+  });
+});
+
+describe("the entity's mode", () => {
+  test("names the X-linked kind the record was classified under", () => {
+    const entity = create(Svcv4Classification_EntitySchema, {
+      modeOfInheritance: ModeOfInheritance.X_LINKED_RECESSIVE,
+    });
+    expect(entityModeLabel(entity)).toBe("X-linked recessive");
+  });
+
+  test("says so where the mode is one it does not know, rather than naming one", () => {
+    const entity = create(Svcv4Classification_EntitySchema, {});
+    expect(entityModeLabel(entity)).toBe("unknown mode of inheritance");
   });
 });

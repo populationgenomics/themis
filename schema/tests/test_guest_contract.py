@@ -97,6 +97,27 @@ def test_closure_ships_the_files_the_kept_declarations_reach_and_no_other() -> N
     assert dict(shipped.methods) == {'themis/papers.proto': {'Papers': frozenset({'Read'})}}
 
 
+def test_a_type_only_a_file_shipped_whole_names_is_kept_and_that_file_is_not_cut() -> None:
+    # The guest imports a payload stub from the main tree, and its descriptor resolves the types it names against
+    # the guest tree's stubs: a type no marked rpc reaches has to be there all the same.
+    image = _hand_built_image()
+    payload = descriptor_pb2.FileDescriptorProto(
+        name=f'{guest_contract.SHIPPED_WHOLE[0]}payload.proto', package='themis.payload', syntax='proto3'
+    )
+    payload.dependency.append('themis/shared.proto')
+    payload.message_type.add(name='Payload').field.add(
+        name='unused',
+        number=1,
+        type=descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+        type_name='.themis.shared.Unused',
+    )
+    image.file.append(payload)
+    shipped = guest_contract.closure(image, [_marked('themis/papers.proto', 'themis.papers', 'Papers', 'Read')])
+    assert '.themis.shared.Unused' in shipped.types
+    assert '.themis.payload.Payload' not in shipped.types
+    assert payload.name not in shipped.files
+
+
 def test_a_kept_rpc_naming_a_type_outside_the_image_fails_loud() -> None:
     image = _hand_built_image()
     image.file[1].service[0].method[0].input_type = '.elsewhere.Missing'
@@ -307,6 +328,20 @@ def tree(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
     filtered = guest_contract.compile_tree(
         root / guest_contract.PROTO, [f for f in shipped.files if f.startswith('themis/')]
     )
+    # The guest's view: the cut tree with the files it ships whole from the main tree laid beside it, and their
+    # dependencies outside this repo's protos.
+    guest = tmp_path_factory.mktemp('guest_proto')
+    shutil.copytree(root / guest_contract.PROTO, guest, dirs_exist_ok=True)
+    whole = []
+    for path in sorted(export.rglob('*.proto')):
+        name = path.relative_to(export).as_posix()
+        if name.startswith(guest_contract.SHIPPED_WHOLE):
+            whole.append(name)
+        elif name.startswith('themis/'):
+            continue
+        target = guest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
     return SimpleNamespace(
         image_bytes=image_bytes,
         image=agent_exposed.image_of(image_bytes),
@@ -315,6 +350,8 @@ def tree(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
         root=root,
         shipped=shipped,
         filtered=filtered,
+        guest=guest,
+        whole=whole,
     )
 
 
@@ -351,8 +388,10 @@ def test_every_stub_offers_exactly_the_marked_rpcs(tree: SimpleNamespace) -> Non
 
 @_needs_buf
 def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tree: SimpleNamespace) -> None:
-    """In each authored file the top-level types are exactly the ones a kept rpc reaches: none unused, none missing."""
-    reachable_now = guest_contract.reachable_types(tree.filtered, tree.services)
+    """In each authored file the top-level types are exactly the ones the guest reaches: none unused, none missing."""
+    authored = [f for f in tree.shipped.files if f.startswith('themis/')]
+    guest = guest_contract.compile_tree(tree.guest, authored + tree.whole)
+    reachable_now = guest_contract.reachable_types(guest, tree.services)
     assert reachable_now == tree.shipped.types, 'the cut sources reach a different type set than the full module did'
     for name, file in _by_file(tree.filtered).items():
         if not name.startswith('themis/'):
@@ -362,6 +401,18 @@ def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tre
         depth = prefix.count('.') + 1
         reachable = {t for t in tree.shipped.types if t.startswith(prefix + '.') and t.count('.') == depth}
         assert declared == reachable, f'{name}: declared {sorted(declared)} vs reachable {sorted(reachable)}'
+
+
+@_needs_buf
+def test_the_files_shipped_whole_build_against_the_cut_tree(tree: SimpleNamespace) -> None:
+    """Every message stub the guest takes from the main tree resolves the types it names in the guest tree's sources.
+
+    A descriptor naming a type the cut left out fails the guest's import of the stub, where no test runs; compiled
+    against the cut sources, the same omission fails protoc here.
+    """
+    assert tree.whole, 'no file is shipped whole'
+    compiled = {file.name for file in guest_contract.compile_tree(tree.guest, tree.whole).file}
+    assert set(tree.whole) <= compiled
 
 
 @_needs_buf

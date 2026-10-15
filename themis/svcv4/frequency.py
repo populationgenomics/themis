@@ -97,9 +97,9 @@ import decimal
 import enum
 from collections.abc import Iterable, Mapping, Sequence
 
-from themis.evidence.models import evidence_pb2
 from themis.rpc import clinvar_pb2, gnomad_pb2
 from themis.svcv4 import clinvar_classification, exact, payload, provenance, reference
+from themis.svcv4.models import svcv4_pb2
 
 # SM3: a founder/outlier variant is "significantly higher in frequency than other P/LP variants
 # (e.g., >5x higher)"; the top observed FAF is peeled when it exceeds this multiple of the next.
@@ -405,11 +405,11 @@ class BinningTable(enum.Enum):
     """Which of SM3's six DAFT lookup tables a binned threshold is read off.
 
     The value is the title printed inside the image: SM3's own name for the table, and how a
-    curation block names the one it read. Which table applies is the caller's judgement and not the
-    library's — the MDE's inheritance, and for an X-linked one whether the frequency being scored is
-    a male, female or combined-sex frequency; each table's `applies_to` in the reference states its
-    case. SM3 prints no X-linked-recessive combined-sex table, so that observation has no binned
-    route at all.
+    curation block names the one it read. The MDE's mode of inheritance decides which tables are
+    open (`binning_tables_for`); among those, which population the frequency is measured over (male,
+    female or combined) is the caller's judgement, and each table's `applies_to` in the reference
+    states its case. SM3 prints no X-linked-recessive combined-sex table, so that observation has no
+    binned route at all.
     """
 
     AUTOSOMAL_DOMINANT = 'AUTOSOMAL DOMINANT'
@@ -424,6 +424,7 @@ def binned_daft(
     ref: reference.Reference,
     table: BinningTable,
     *,
+    mode: svcv4_pb2.ModeOfInheritance,
     prevalence_denominator: int,
     penetrance: exact.Figure,
 ) -> Daft:
@@ -443,7 +444,9 @@ def binned_daft(
 
     Args:
         ref: The loaded reference, which carries the transcribed tables.
-        table: Which of the six applies, the caller's judgement (`BinningTable`).
+        table: Which of the six applies, the caller's judgement (`BinningTable`) among the ones `mode`
+            admits.
+        mode: The MDE's mode of inheritance, which rules out the tables printed for another.
         prevalence_denominator: X in the prevalence "1 in X" of the phenotype for the whole MDE,
             lumping every gene associated with it. Which population it is measured over is the
             table's business: a sex-specific table takes the sex-specific prevalence.
@@ -455,9 +458,16 @@ def binned_daft(
         it.
 
     Raises:
-        ValueError: On a non-positive input, or one that rounds onto no row or column.
+        ValueError: On a non-positive input, one that rounds onto no row or column, or a table `mode`
+            rules out.
         reference.ReferenceDataError: If the reference does not carry `table`.
     """
+    admitted = binning_tables_for(mode)
+    if table not in admitted:
+        raise ValueError(
+            f'SM3 prints {table.value!r} for another mode of inheritance; a {_mode_name(mode)} MDE reads '
+            f'{" or ".join(repr(t.value) for t in admitted)}'
+        )
     grid = ref.binning_grid(table.value)
     penetrance = exact.decimal_of(penetrance, what='penetrance')
     if prevalence_denominator <= 0:
@@ -506,58 +516,66 @@ class HmzInheritance(enum.Enum):
     XLINKED = 'xlinked'
 
 
-_DAFT_INHERITANCE: dict[evidence_pb2.Inheritance, Inheritance] = {
-    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance.MONOALLELIC,
-    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance.BIALLELIC,
-    evidence_pb2.INHERITANCE_X_LINKED: Inheritance.XLINKED,
+_DAFT_INHERITANCE: dict[svcv4_pb2.ModeOfInheritance, Inheritance] = {
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: Inheritance.MONOALLELIC,
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: Inheritance.BIALLELIC,
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: Inheritance.XLINKED,
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: Inheritance.XLINKED,
 }
 
-_HMZ_INHERITANCE: dict[evidence_pb2.Inheritance, HmzInheritance] = {
-    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: HmzInheritance.AD,
-    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: HmzInheritance.AR,
-    evidence_pb2.INHERITANCE_SEMIDOMINANT: HmzInheritance.SEMIDOMINANT,
-    evidence_pb2.INHERITANCE_X_LINKED: HmzInheritance.XLINKED,
+# SM3 Table 7 weighs a homozygous or hemizygous observation the same for either X-linked kind.
+_HMZ_INHERITANCE: dict[svcv4_pb2.ModeOfInheritance, HmzInheritance] = {
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: HmzInheritance.AD,
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: HmzInheritance.AR,
+    svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT: HmzInheritance.SEMIDOMINANT,
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: HmzInheritance.XLINKED,
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: HmzInheritance.XLINKED,
 }
 
-_BINNING_TABLES: dict[evidence_pb2.Inheritance, tuple[BinningTable, ...]] = {
-    evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT: (BinningTable.AUTOSOMAL_DOMINANT,),
-    evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE: (BinningTable.AUTOSOMAL_RECESSIVE,),
-    evidence_pb2.INHERITANCE_SEMIDOMINANT: (BinningTable.AUTOSOMAL_DOMINANT, BinningTable.AUTOSOMAL_RECESSIVE),
-    evidence_pb2.INHERITANCE_X_LINKED: (
+# SM3 prints one male table for both X-linked kinds, a female table per kind, and a combined-sex
+# table for the dominant kind only (§34 and the tables' own titles).
+_BINNING_TABLES: dict[svcv4_pb2.ModeOfInheritance, tuple[BinningTable, ...]] = {
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: (BinningTable.AUTOSOMAL_DOMINANT,),
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: (BinningTable.AUTOSOMAL_RECESSIVE,),
+    svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT: (BinningTable.AUTOSOMAL_DOMINANT, BinningTable.AUTOSOMAL_RECESSIVE),
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: (
         BinningTable.X_LINKED_MALE,
         BinningTable.X_LINKED_DOMINANT_FEMALE,
-        BinningTable.X_LINKED_RECESSIVE_FEMALE,
         BinningTable.X_LINKED_DOMINANT_COMBINED,
+    ),
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: (
+        BinningTable.X_LINKED_MALE,
+        BinningTable.X_LINKED_RECESSIVE_FEMALE,
     ),
 }
 
 
-def _mode_name(mode: evidence_pb2.Inheritance) -> str:
-    """Name an inheritance mode for an error message, however it was composed."""
-    if type(mode) is int and mode in evidence_pb2.Inheritance.values():
-        return evidence_pb2.Inheritance.Name(mode)
+def _mode_name(mode: svcv4_pb2.ModeOfInheritance) -> str:
+    """Name a mode of inheritance for an error message, however it was composed."""
+    if type(mode) is int and mode in svcv4_pb2.ModeOfInheritance.values():
+        return svcv4_pb2.ModeOfInheritance.Name(mode)
     return repr(mode)
 
 
-def _curated(mode: evidence_pb2.Inheritance) -> evidence_pb2.Inheritance:
-    """The mode, held to the contract's enum.
+def _stated(mode: svcv4_pb2.ModeOfInheritance) -> svcv4_pb2.ModeOfInheritance:
+    """The mode, held to the framework's enum.
 
     Checked at runtime because the model composes this untyped in code mode, where a bool, a float
     and a `Decimal` all hash equal to a member and would resolve to whichever one they equal.
     """
     if type(mode) is not int:
         raise ValueError(
-            f'the inheritance mode must be an evidence_pb2.Inheritance value, got a {type(mode).__name__}; '
-            'it is what `GeneDisease.DescribeGene` states per curated entity'
+            f'the mode of inheritance must be a svcv4_pb2.ModeOfInheritance value, got a {type(mode).__name__}; '
+            "it is the mode of the entity being classified, in the framework's own five"
         )
     return mode
 
 
-def daft_inheritance(mode: evidence_pb2.Inheritance) -> Inheritance:
-    """The DAFT calculator's inheritance for a curated entity's mode of inheritance.
+def daft_inheritance(mode: svcv4_pb2.ModeOfInheritance) -> Inheritance:
+    """The DAFT calculator's inheritance for an MDE's mode of inheritance.
 
     Args:
-        mode: The entity's mode, as `GeneDisease.DescribeGene` states it.
+        mode: The mode of the entity being classified.
 
     Returns:
         The `Inheritance` the calculator's two formulas are keyed on.
@@ -565,60 +583,60 @@ def daft_inheritance(mode: evidence_pb2.Inheritance) -> Inheritance:
     Raises:
         ValueError: For a mode the calculator has no formula for. A semidominant MDE has a
             monoallelic and a biallelic phenotype at different frequencies, so which one is being
-            scored is a judgement rather than a mapping; Y-linked, mitochondrial and undetermined
-            modes reach no DAFT method at all. X-linked resolves here and `daft_calculator` then
-            refuses it, which is SM3's own routing to the binning tables — `binning_tables_for`.
+            scored is a judgement rather than a mapping. Either X-linked kind resolves here and
+            `daft_calculator` then refuses it, which is SM3's own routing to the binning tables
+            (`binning_tables_for`).
     """
-    resolved = _DAFT_INHERITANCE.get(_curated(mode))
+    resolved = _DAFT_INHERITANCE.get(_stated(mode))
     if resolved is None:
         raise ValueError(
-            f'the DAFT calculator has no formula for inheritance {_mode_name(mode)}; SM3 states one for a '
+            f'the DAFT calculator has no formula for {_mode_name(mode)}; SM3 states one for a '
             'monoallelic and one for a biallelic MDE, and a semidominant MDE is scored on whichever of its '
             'two phenotypes the frequency is being compared for'
         )
     return resolved
 
 
-def hmz_inheritance(mode: evidence_pb2.Inheritance) -> HmzInheritance:
-    """The POP_HMZ weighting row for a curated entity's mode of inheritance (SM3 Table 7).
+def hmz_inheritance(mode: svcv4_pb2.ModeOfInheritance) -> HmzInheritance:
+    """The POP_HMZ weighting row for an MDE's mode of inheritance (SM3 Table 7).
 
     Args:
-        mode: The entity's mode, as `GeneDisease.DescribeGene` states it.
+        mode: The mode of the entity being classified.
 
     Returns:
         The `HmzInheritance` whose per-observation weight Table 7 states.
 
     Raises:
-        ValueError: For a mode Table 7 states no row for — Y-linked, mitochondrial, and the
-            undetermined mode, which is the curator declining to state one.
+        ValueError: For a mode Table 7 states no row for, which is only the unstated one.
     """
-    resolved = _HMZ_INHERITANCE.get(_curated(mode))
+    resolved = _HMZ_INHERITANCE.get(_stated(mode))
     if resolved is None:
-        raise ValueError(f'SM3 Table 7 states no per-observation weight for inheritance {_mode_name(mode)}')
+        raise ValueError(f'SM3 Table 7 states no per-observation weight for {_mode_name(mode)}')
     return resolved
 
 
-def binning_tables_for(mode: evidence_pb2.Inheritance) -> tuple[BinningTable, ...]:
-    """The SM3 binning tables a curated entity's mode of inheritance admits.
+def binning_tables_for(mode: svcv4_pb2.ModeOfInheritance) -> tuple[BinningTable, ...]:
+    """The SM3 binning tables an MDE's mode of inheritance admits.
 
-    A set rather than one table: SM3 separates X-linked dominant from recessive and male from female
-    where the contract curates one X-linked mode, and prints no semidominant table at all. So the
-    remaining choice — which sex stratum the frequency is measured over, and which of a semidominant
-    MDE's two phenotypes is being scored — stays the caller's, over a set nothing outside it can be
-    read off.
+    A set rather than one table: SM3 separates the male from the female and combined-sex
+    frequencies of an X-linked MDE, and prints no semidominant table at all. So the remaining choice,
+    which population the frequency is measured over and which of a semidominant MDE's two phenotypes
+    is being scored, stays the caller's, over a set nothing outside it can be read off.
+    An X-linked dominant MDE reads Tables 3, 4 and 6; a recessive one Tables 3 and 5, so its
+    combined-sex frequency has no binned threshold.
 
     Args:
-        mode: The entity's mode, as `GeneDisease.DescribeGene` states it.
+        mode: The mode of the entity being classified.
 
     Returns:
         The tables the mode admits, in SM3's own order.
 
     Raises:
-        ValueError: For a mode SM3 prints no table for.
+        ValueError: For a mode SM3 prints no table for, which is only the unstated one.
     """
-    resolved = _BINNING_TABLES.get(_curated(mode))
+    resolved = _BINNING_TABLES.get(_stated(mode))
     if resolved is None:
-        raise ValueError(f'SM3 prints no DAFT binning table for inheritance {_mode_name(mode)}')
+        raise ValueError(f'SM3 prints no DAFT binning table for {_mode_name(mode)}')
     return resolved
 
 

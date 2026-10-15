@@ -21,7 +21,7 @@ import {
   counted,
   decisiveMarks,
   domain,
-  inheritanceLabel,
+  entityModeLabel,
   reviewReason,
   signedPoints,
 } from "./model";
@@ -182,7 +182,7 @@ export function Svcv4ClassificationWidget(
           {[
             variant?.geneSymbol,
             entity?.disease,
-            entity && inheritanceLabel(entity.inheritance),
+            entity && entityModeLabel(entity),
           ]
             .filter((part) => part)
             .map((part) => ` · ${part}`)

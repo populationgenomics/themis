@@ -4,7 +4,9 @@ The guest — the sandboxed process the agent's code runs in — is handed the c
 else: each proto declaring a marked rpc, cut down to the marked rpcs, the types they reach and the imports those
 still need, with the marks themselves removed; and the Python stubs protoc generates from those cut sources. What
 the model reads and what its calls run on are one artifact, so a stub cannot offer an rpc the hatch refuses and the
-sources cannot describe one. Both halves are committed under
+sources cannot describe one. The guest also ships some message stubs whole from the main tree (`SHIPPED_WHOLE`),
+and their descriptors resolve the types they name against this tree's stubs, so the cut keeps every type those
+reach as well. Both halves are committed under
 ``themis/services/sandbox_worker/guest_contract/`` (``proto/`` and ``python/``) and held fresh like every other
 generated file.
 
@@ -44,6 +46,10 @@ _AUTHORED_PREFIX = 'themis/'
 # The upstream record schemas: the wheel publishing each ships its own `_pb2`, which the guest installs, so
 # generating one here would shadow it. Their sources still ship, for the model to read.
 _WHEEL_PREFIXES = ('clinvar_proto/', 'pubmed_proto/')
+# The message stubs the guest stage copies whole from the main tree rather than from this one. A type they name in
+# another authored file resolves against this tree's stub of that file when the guest imports them, so the cut keeps
+# it whether or not a marked rpc reaches it.
+SHIPPED_WHOLE = ('themis/svcv4/models/', 'themis/widgets/models/')
 
 # FileDescriptorProto field numbers, as a SourceCodeInfo path spells them.
 _DEPENDENCY, _MESSAGE_TYPE, _ENUM_TYPE, _SERVICE = 3, 4, 5, 6
@@ -173,24 +179,31 @@ def reachable_types(
 
     A message ships whole — the cut removes declarations, never fields — so reaching a type reaches the messages
     it is nested in, and reaching a message reaches every type nested in it, whose fields are then followed too.
+    The types the `SHIPPED_WHOLE` files name are reached the same way, while those files' own types are not: they
+    ship from the main tree.
 
     Raises:
-        ValueError: If a marked rpc, or a field on the way, names a type the image does not declare.
+        ValueError: If a marked rpc, a file shipped whole, or a field on the way, names a type the image does not
+            declare.
     """
     types = _types(image, _Extensions(image))
     children: dict[str, list[str]] = {}
     for name in types:
         if _parent(name) in types:
             children.setdefault(_parent(name), []).append(name)
+    whole = {name for name, declared in types.items() if declared.file.startswith(SHIPPED_WHOLE)}
     kept = _kept_methods(image, services)
     stack = [name for k in kept for name in (k.method.input_type, k.method.output_type)]
+    stack.extend(reference for name in sorted(whole) for reference in types[name].references)
     reached: set[str] = set()
     while stack:
         name = stack.pop()
-        if name in reached:
+        if name in reached or name in whole:
             continue
         if name not in types:
-            raise ValueError(f'{name} is reached from a marked rpc but not declared in the image')
+            raise ValueError(
+                f'{name} is reached from a marked rpc or a file shipped whole but not declared in the image'
+            )
         reached.add(name)
         stack.extend(types[name].references)
         stack.extend(children.get(name, ()))

@@ -48,7 +48,7 @@ def routing() -> svcv4_classification_pb2.Svcv4Classification.Routing:
         entity=Record.Entity(
             disease='Marfan syndrome',
             mondo_id='MONDO:0007947',
-            inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
+            mode_of_inheritance=svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT,
             mechanism='loss of function',
             validity_source='ClinGen Gene Validity',
             validity_classification='Definitive',

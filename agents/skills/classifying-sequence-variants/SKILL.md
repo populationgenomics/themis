@@ -5,9 +5,9 @@ description: Classifies one germline sequence variant against one gene-disease e
 
 # Classifying a sequence variant
 
-Classify **one** variant against **one** Monogenic Disease Entity (MDE: gene × phenotype × inheritance × mechanism)
-under draft SVCv4, and write the working document a curator reviews. Where SVCv4 defers to "an experienced analyst",
-that is you.
+Classify **one** variant against **one** Monogenic Disease Entity (MDE: gene × disease × mode of inheritance; an
+allelic disorder by a different mechanism is a different disease) under draft SVCv4, and write the working document a
+curator reviews. Where SVCv4 defers to "an experienced analyst", that is you.
 
 - **The evidence services retrieve**: `variant`, `clinvar`, `vep`, `gnomad`, `gene_disease`, `transcript`, `splice`,
   `mavedb`, `cspec`, `literature`. The sandbox has no credentials and no egress. Filter what they return yourself.
@@ -20,9 +20,10 @@ that is you.
 - **`themis.svcv4` computes every point.** You supply the judgement inputs and read its trail back. Never compute a
   total, band or class by hand. The exception is the `CLN_*`/`LOC_*` case codes: you reduce them from the case facts and
   price them with `observations.total`, and the classification record carries the cells you priced.
-- **You judge** the MDE, mechanism level, exon relevance, informative-variant eligibility, assay concordance, DAFT
-  parameters, critical-residue and multiple-disorder calls, and the verdict. Give each its reasoning, an explicit
-  uncertainty and its provenance. The verdict rests on your reasoning over the evidence, not on the total.
+- **You judge** the mechanism level, exon relevance, informative-variant eligibility, assay concordance, DAFT
+  parameters, critical-residue and multiple-disorder calls, and the verdict, and you choose the MDE where nothing names
+  it. Give each its reasoning, an explicit uncertainty and its provenance. The verdict rests on your reasoning over the
+  evidence, not on the total.
 
 ## Draft framework
 
@@ -89,13 +90,19 @@ Read a module's docstring before using it (`python3 -c 'import themis.svcv4.freq
   `ref = data.load_reference()`.
 - `frequency`: the POP_FRQ FAF from a `Gnomad.DescribeVariant` response (`absent_faf()` where it was `NOT_FOUND`),
   POP_HMZ, and the DAFT from a ClinVar gene pool. The DAFT needs one `Gnomad.DescribeVariant` per pooled record: spread
-  them across `shell` calls with `cache_dir`.
+  them across `shell` calls with `cache_dir`. Its mode mappers and `binned_daft` take the entity's mode as
+  `svcv4_pb2.ModeOfInheritance` (`from themis.svcv4.models import svcv4_pb2`). An X-linked MDE is binned by kind:
+  dominant reads Tables 3, 4 and 6, recessive Tables 3 and 5, so a recessive MDE's combined-sex frequency has no binned
+  threshold. Where a worked example names a table the kind rules out, apply the rule.
 - `nmd`: NMD from a `GetStructure` exon table, or from a `PredictSkipOutcome` skip.
 - `predictor_policy`: the gene's one MIS_PRD predictor, the `Vep.Annotate` request for it, and its bin.
 - `placement`: a ClinVar pool placed against a codon or an exon, for the `*_INF` rules and the SM18 §17 waiver.
-- `gate_level`: pass the resolved entity's `gate_level` from `DescribeGene`. `gene_disease_validity.gate_level` maps a
-  classification you hold from elsewhere.
-- `observations`: prices the `CLN_*`/`LOC_*` cells.
+- `gate_level`: pass the `gate_level` of the `DescribeGene` record you picked for the entity.
+  `gene_disease_validity.gate_level` maps a classification you hold from elsewhere.
+- `observations`: prices the `CLN_*`/`LOC_*` cells. `affected_tables(mode)` names the `CLN_AFF` tables an MDE's
+  probands are counted from. Under an X-linked mode, `x_linked_affected_table(mode, karyotype)` gives one proband's
+  (SM4 ¶75): an affected XX proband in an X-linked recessive MDE counts from the biallelic table, every other X-linked
+  proband from the monoallelic one.
 - `functional`, `grantham`, `splice_tree`: FXN, MIS_INF, and the splice colour.
 
 A nonsense variant with NMD predicted, on the null arm:
@@ -115,7 +122,7 @@ result = builders.classify_variant(
         nul_inf=scoring.informative_points(('P', 'LP')),   # distinct, same-MDE informative variants you judged eligible
     ),
     independent_codes=[frequency.pop_frq(ref, frequency.faf_from_gnomad(gnomad_resp), daft)],
-    gate_level=entity.gate_level,                          # the resolved entity's, from DescribeGene
+    gate_level=record.gate_level,                          # the DescribeGene record describing the entity
 )
 # result.total, result.band, result.vus_subband, result.final_class, result.gate_capped, result.contributions
 ```
@@ -125,11 +132,23 @@ trimming a value to fit.
 
 ## Judgements the library cannot make
 
-- **The entity.** The kickoff normally names no condition. Call `DescribeGene` on `Normalize`'s `hgnc_id` for the
-  gene's curated entities, choose the one the presentation fits, and re-issue with `mondo_id` and `inheritance` to
-  resolve it. Map a named condition to a MONDO term yourself. Where several MDEs are candidates, name them, say why you
-  chose (SM21), and say which calls differ; a presentation too thin to choose between them is a finding. Never aggregate
-  across mutually exclusive mechanisms.
+- **The entity.** The MDE, its mode of inheritance included, is the question the classification answers: the same
+  variant against the same disease under another mode is another question with its own answer. Where the kickoff's
+  clinical context names the entity, as a curation round's names the registered disease term and mode, that is the
+  question: classify against that entity as stated. Where nothing names it, choosing the entity is part of the work: map
+  a named condition to a MONDO term yourself, and choose the entity, mode included, that the presentation calls for.
+  Where several MDEs are candidates, name them, say why you chose (SM21), and say which calls differ; a presentation too
+  thin to choose between them is a finding. Never aggregate across mutually exclusive mechanisms.
+- **The curated record.** Call `DescribeGene` with `Normalize`'s `hgnc_id` and the entity's `mondo_id`. It returns
+  every curated record on that term, under every mode and from every source, each with its source's own mode term in
+  `inheritance_term`, mapped onto nothing. Pick the record whose mode is the entity's: ClinGen's `XL` and GenCC's
+  "X-linked" cover both X-linked kinds, while GenCC's "X-linked dominant" and "X-linked recessive" name
+  one. Where ClinGen and GenCC both carry the mode, take ClinGen's: SM18's gate names the ClinGen framework, and GenCC
+  fills in where ClinGen has not curated. That record's `gate_level` feeds the gate. A record whose mode is stated as
+  undetermined (ClinGen `UD`, GenCC "Unknown") names none of the five. Where no record is curated under the entity's
+  mode, the entity has no curated validity level, and the library and the classification record both need one: never
+  pass another mode's level in its place. Stop before scoring, write the document with the records on the term and
+  their modes, and put the entity's validity to the curator as an open item.
 - **The mechanism level** is a point sum over the GenCC LoF rubric in `data/gencc-lof-mechanism-framework.md`, beside
   `themis.svcv4.__file__`. Read the criteria there, never from web text, and cite the version the file names. Show the
   criteria met and the sum. Uncertain (×0) is the floor when the evidence cannot support a call, not a default for a
@@ -177,8 +196,9 @@ trimming a value to fit.
 
 ## Intake
 
-The kickoff states the transcript, the coding change, and the clinical context in the referring clinician's words, and
-nothing else. Read the case facts the `CLN_*`/`LOC_*` codes need from that text, each with its basis: the phenotype and
+The kickoff states the transcript, the coding change, and the clinical context, and nothing else. The clinical context
+is the referring clinician's words, or a curation round's statement of the entity followed by any case facts its
+curator recorded. Read the case facts the `CLN_*`/`LOC_*` codes need from that text, each with its basis: the phenotype and
 how specific it is, the proband count, phase, segregation, the assay modality and scope, the genes analysed and their
 coverage, other candidate variants, and the non-genetic work-up. Where the text is silent, state the absence ("the
 testing modality is not stated") and leave the code open or ND. Never default: an unstated modality is not exome, and
@@ -250,7 +270,9 @@ outline and add no sections. What the outline does not say:
   `decision`; an independent code names the cells it was priced from, as `cell_id` and `count`, the same
   observations `observations.total` priced. Pass the other surviving values of an open input as `open_values`, and the
   sensitivity rows as `sensitivity`, each as the inputs with the varied ones replaced: the builder scores them. Write it
-  with `widgets.update('assets/svcv4.binpb', lambda committed: widget.build(..., committed=committed))`, and put
+  with `widgets.update('assets/svcv4.binpb', lambda committed: widget.build(..., committed=committed))`. The routing's
+  entity states its mode in `mode_of_inheritance` (`svcv4_pb2.ModeOfInheritance`), and its
+  `validity_source` and `validity_classification` are the record you picked. Put
   `::embed[assets/svcv4.binpb]` on a line of its own in "Evidence assessment". The document does not restate what the
   record carries: a code's cell, points, evidence and reasoning live in the record alone. Nor does a code's text state
   what the builder scores, such as an alternative's total or class or whether a sensitivity row changes the class: the

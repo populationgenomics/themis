@@ -1,15 +1,16 @@
-// The value types the evidence interfaces share, and the two vocabularies anything speaking about a
-// variant routes on: where a fact came from, the molecular consequence, the mode of inheritance, and
-// the genomic interval a fact is placed on. They live here rather than in one contract because
-// several exchange them — the window a ClinVar search ran on and one exon of a transcript are the
-// same kind of interval, every rpc stamps its own provenance, and a retrieved routing and a curator's
-// stated one are comparable only if they are the same vocabulary.
+// The value types the evidence interfaces share, and the vocabulary anything speaking about a variant
+// routes on: where a fact came from, the molecular consequence, and the genomic interval a fact is
+// placed on. They live here rather than in one contract because several exchange them — the window a
+// ClinVar search ran on and one exon of a transcript are the same kind of interval, every rpc stamps
+// its own provenance, and a retrieved routing and a curator's stated one are comparable only if they
+// are the same vocabulary. The framework's mode of inheritance is not here but in
+// themis/svcv4/models/svcv4.proto; `Inheritance` is a coarser one the curation worksheet states.
 //
 // Modelled from:
 //   SVCv4 variant-type workflows (docs/design/evidence-interfaces.md § "place the variant, and route
 //     it to a decision tree"): `Consequence` is the partition its decision trees select on; VEP's
 //     term is re-encoded onto it.
-//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, harmonised onto one set:
+//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, folded onto one set:
 //     `Inheritance`.
 //   This interface's own design: `Provenance`, `GenomicSpan`.
 //
@@ -43,17 +44,13 @@ enum Consequence {
   CONSEQUENCE_NON_CODING = 12;
 }
 
-// The mode of inheritance of the entity under analysis, harmonised across the vocabularies the
-// sources publish: ClinGen's MOI codes and GenCC's HPO moi_curie both land here, and a curated entity
-// carries the source's own term verbatim beside it. The X-linked spellings fold onto one member —
-// ClinGen curates a single XL, and the downstream SVCv4 rules (SM3's DAFT, SM7's POP_HMZ) take one
-// X-linked mode. A source mode outside this set fails the rpc rather than landing anywhere: the mode
-// is half of what identifies an entity, so a value nothing harmonises cannot be matched, dropped or
-// defaulted. Several SVCv4 rules select on it, and not every member is one they select on: the
-// AD/AR/X-linked splits have no branch for a Y-linked, mitochondrial or undetermined mode.
+// A coarse mode of inheritance, with one member for both X-linked kinds. No evidence interface states
+// a mode in it: a curated source's mode term stays verbatim (themis/rpc/gene_disease.proto), and the
+// mode an entity is classified under is themis.svcv4.models.ModeOfInheritance, which routes the two
+// X-linked kinds apart. It is the type of the mode a curation worksheet's routing states
+// (themis/curation/models/curation.proto).
 enum Inheritance {
-  // Nothing has stated a mode — a request narrowing by term alone, an analysis not yet routed.
-  // Never a curated entity, which always carries one.
+  // No mode stated.
   INHERITANCE_UNSPECIFIED = 0;
   INHERITANCE_AUTOSOMAL_DOMINANT = 1;
   INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
@@ -61,7 +58,7 @@ enum Inheritance {
   INHERITANCE_Y_LINKED = 4;
   INHERITANCE_MITOCHONDRIAL = 5;
   INHERITANCE_SEMIDOMINANT = 6;
-  INHERITANCE_UNDETERMINED = 7;  // the curator states the mode is not determined (ClinGen UD, GenCC HP:0000005)
+  INHERITANCE_UNDETERMINED = 7;  // the mode is stated as not determined
 }
 
 // Where a fact came from, so every claim is reproducible without a mirror (PRODUCT §6). For a live

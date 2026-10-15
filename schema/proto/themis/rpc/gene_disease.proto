@@ -5,7 +5,7 @@
 // Modelled from:
 //   ClinGen Gene Validity, ClinGen Dosage, GenCC and PanelApp Australia (the reference tables the
 //     weekly refresh job writes): `CuratedEntity`, `GenccSubmission`, `MechanismStatement` and
-//     `GeneScopedSignals` carry each source's own values — its classification string, its mode string,
+//     `GeneScopedSignals` carry each source's own values — its classification string, its mode term,
 //     its notes, its haploinsufficiency score.
 //   EBI OLS4 MONDO subclass closure: `TermRelation`.
 //   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
@@ -22,9 +22,9 @@
 // Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
 // metadata and resolves via themis.clients.auth; it is never a message field.
 //
-// The shared value types (Provenance, GenomicSpan) and the two routing vocabularies (Consequence,
-// Inheritance — the sources' mode vocabularies harmonised onto one set):
-// themis/evidence/models/evidence.proto.
+// The shared value types (Provenance, GenomicSpan): themis/evidence/models/evidence.proto. The
+// framework's mode of inheritance is not here: a source's mode term is never mapped onto it
+// (themis/svcv4/models/svcv4.proto).
 
 syntax = "proto3";
 
@@ -34,16 +34,17 @@ import "google/protobuf/struct.proto";
 import "themis/evidence/models/evidence.proto";
 import "themis/rpc/sandbox_options.proto";
 
-// The unit SVCv4 classifies is the MDE — gene x phenotype x inheritance x mechanism — and SM18
-// states the gate and the mechanism precondition per MDE, never per gene. So the message keeps the
-// two scopes apart rather than answering for the gene and letting that read as the entity's:
-//   entities[]  -> per curated entity: gate_level feeds the GDV gate (Definitive/Strong -> any class;
+// The unit SVCv4 classifies is the MDE — gene x phenotype x mode of inheritance x mechanism — and
+// SM18 states the gate and the mechanism precondition per MDE, never per gene. So the message keeps
+// the two scopes apart rather than answering for the gene and letting that read as the entity's:
+//   entities[]  -> per curated record: gate_level feeds the GDV gate (Definitive/Strong -> any class;
 //                  Moderate -> cap LP; Limited -> cap VUS; below -> GUS / do-not-report) and the
 //                  SM18 precondition (Moderate+) for the mechanism multiplier to exceed Uncertain;
-//                  inheritance feeds the AD/AR-specific rules (SM3's DAFT, POP_HMZ, SM20's animal
-//                  models); mechanism_statements feed the Established/Likely/Suspected/Uncertain
-//                  level call.
-//   resolution  -> which of them the requested MONDO id names, when the request names one.
+//                  inheritance_term is the source's mode, verbatim, which the analyst reads to
+//                  decide which record describes the entity being classified; mechanism_statements
+//                  feed the Established/Likely/Suspected/Uncertain level call.
+//   resolution  -> the records on the disease term the requested MONDO id names, when the request
+//                  names one.
 //   gene_scoped -> the ClinGen dosage haploinsufficiency score, PanelApp's GoF veto, PanelApp's
 //                  panel-level mode of inheritance and its evaluation comments. On a gene carrying
 //                  both an LoF and a GoF entity (SM21 ¶9) none of these is evidence about whichever
@@ -82,49 +83,52 @@ enum GeneCoverage {
   GENE_COVERAGE_ABSENT = 3;                  // no reference table carries the gene at all
 }
 
-// The gene to describe, and optionally the entity to resolve against its curations.
+// The gene to describe, and optionally the disease term to resolve against its curations.
 message DescribeGeneRequest {
+  reserved 3;
+  reserved "inheritance";
   // "HGNC:nnnn" (required) — the key every reference table is joined on; empty is INVALID_ARGUMENT.
   string hgnc_id = 1;
-  // The entity the analyst established, as a MONDO curie ("MONDO:" and seven digits). Optional: unset
-  // returns the gene's curated entities and resolves nothing. Set, the rpc resolves it against them
-  // under MONDO's own subsumption: the requested term's own curations decide wherever the gene is
-  // curated for that term, and only where it is not does a curated subclass descendant of it resolve.
-  // A free-text condition is not accepted (evidence-interfaces.md §gene_disease).
+  // The entity's disease term, as a MONDO curie ("MONDO:" and seven digits). Optional: unset returns
+  // the gene's curated records and resolves nothing. Set, the rpc resolves it against them under
+  // MONDO's own subsumption: the requested term's own curations decide wherever the gene is curated
+  // for that term, and only where it is not do the curations of one subclass descendant of it
+  // resolve. A free-text condition is not accepted (evidence-interfaces.md §gene_disease).
   string mondo_id = 2;
-  // The entity's mode of inheritance, which is half of what identifies it (SM21: one gene's MDEs can
-  // differ in mode alone). Unset narrows by term only, which is ambiguous — and so refused — where
-  // the term is curated under more than one mode.
-  themis.evidence.models.Inheritance inheritance = 3;
 }
 // What the reference tables hold for the gene, with the entity scope and the gene scope kept apart.
 message DescribeGeneResponse {
   // Every gene-disease validity assertion the tables carry for the gene, one element per (source,
-  // disease term, inheritance). Reduced across nothing and selected from by nothing: which curated
-  // entity a presentation belongs to is the analyst's call (SM21), and the level the gate reads is
-  // that entity's, not the gene's (SM18). Empty is a real answer — see `coverage`.
+  // disease term, the source's mode term). Reduced across nothing and selected from by nothing: which
+  // curated record describes the entity a presentation belongs to is the analyst's call (SM21), and
+  // the level the gate reads is that record's, not the gene's (SM18). Empty is a real answer — see
+  // `coverage`.
   repeated CuratedEntity entities = 1;
-  // Set when the request named a MONDO id and the gene carries entities to resolve it against: the
-  // ones it names, and how. A named entity the curations do not settle is the rpc's
-  // FAILED_PRECONDITION, never an empty field; a gene with no curated entity at all is `coverage`.
+  // Set when the request named a MONDO id and the gene carries records to resolve it against: the
+  // ones on the term it names, and how. A named term the curations do not settle is the rpc's
+  // FAILED_PRECONDITION, never an empty field; a gene with no curated record at all is `coverage`.
   EntityResolution resolution = 2;
   GeneScopedSignals gene_scoped = 3;
   GeneCoverage coverage = 4;
   google.protobuf.Struct raw = 15;      // the per-source rows (ClinGen, GenCC, each PanelApp panel, the MONDO closure)
   repeated themis.evidence.models.Provenance provenance = 16;  // one per contributing source
 }
-// One source's validity assertion for one (MONDO term, inheritance) — the unit the GDV gate reads.
+// One source's validity assertion for one (MONDO term, the source's mode term): the record the GDV
+// gate reads, once the analyst has decided it describes the entity being classified.
 message CuratedEntity {
+  reserved 4;
+  reserved "inheritance";
   string source = 1;         // "ClinGen Gene Validity" | "GenCC"
   string disease_label = 2;  // the curator's own label for the entity
   string mondo_id = 3;       // the MONDO term curated, which the label is one alias of
-  themis.evidence.models.Inheritance inheritance = 4;
-  // The source's own mode string, verbatim ("AD", "Autosomal dominant"); where a source spells one
-  // harmonised mode several ways, the first it uses for this entity.
+  // The source's own mode of inheritance, verbatim and mapped onto nothing: ClinGen's code ("AD",
+  // "XL") or the title of GenCC's HPO term ("Autosomal dominant", "X-linked recessive"), whatever
+  // the term. ClinGen curates one X-linked mode where GenCC states the dominant and recessive kinds
+  // apart. Where GenCC's submitters title one HPO term several ways, the first title.
   string inheritance_term = 5;
   // The source's own classification: the ClinGen set, plus GenCC's `Supportive` (below `Moderate`)
   // and its `… Evidence` spellings for the two contradicted ones. Where several of the source's
-  // assertions share this entity it is the strongest on the harmonised rank — an aggregation under a
+  // assertions share this record it is the strongest on the published rank — an aggregation under a
   // published vocabulary; GenCC's assertions are kept in `submissions`, and every source's rows in `raw`.
   string validity_classification = 6;
   GateLevel gate_level = 7;
@@ -139,20 +143,20 @@ message GenccSubmission {
   string validity_classification = 2;  // this submitter's own classification, unreduced
   string mechanism_note = 3;           // its submitted_as_notes, empty where the submission carries none
 }
-// Which of the gene's curated entities the requested MONDO id names, and how the two terms relate.
+// Which of the gene's curated terms the requested MONDO id names, its records, and how the two terms
+// relate.
 message EntityResolution {
+  reserved 2, 4;
+  reserved "requested_inheritance", "inheritance";
   string requested_mondo_id = 1;
-  // echoed; UNSPECIFIED where the request narrowed by term alone
-  themis.evidence.models.Inheritance requested_inheritance = 2;
   string mondo_id = 3;  // the curated term: the requested one, or a descendant of it
-  // the mode the resolved entities are curated under
-  themis.evidence.models.Inheritance inheritance = 4;
   TermRelation relation = 5;
-  // The resolved entities themselves, one per source that curates this (term, inheritance) — so a
-  // caller reads them without re-filtering `entities`, which still carries the gene's others. Where
-  // both sources carry it the classifications are each source's own: SM18's gate names the ClinGen gene-disease
-  // validity framework, and GenCC (which aggregates a ClinGen submission of its own) fills in where
-  // ClinGen has not curated.
+  // Every record on the curated term, under every mode and from every source, so a caller reads them
+  // without re-filtering `entities`, which still carries the gene's other terms. Which of them
+  // describes the entity being classified, its mode above all, is the analyst's call, read off each
+  // record's `inheritance_term`. Where both sources carry a mode the classifications are each
+  // source's own: SM18's gate names the ClinGen gene-disease validity framework, and GenCC (which
+  // aggregates a ClinGen submission of its own) fills in where ClinGen has not curated.
   repeated CuratedEntity entities = 6;
 }
 // Signals curated for the gene rather than for any one of its entities.
@@ -162,7 +166,8 @@ message GeneScopedSignals {
   optional int32 haploinsufficiency_score = 1;
   string mode_of_pathogenicity = 2;  // PanelApp: populated only as a GoF/other exception flag; usually empty
   // PanelApp's panel-level mode ("MONOALLELIC", "BIALLELIC", …). Panel membership, not an entity's
-  // inheritance — that is entities[].inheritance, and the two disagree on a gene with several MDEs.
+  // mode: each curated record states its source's in entities[].inheritance_term, and the two
+  // disagree on a gene with several MDEs.
   string mode_of_inheritance = 3;
   repeated MechanismStatement mechanism_statements = 4;  // PanelApp evaluation comments, per panel
   // Which reference tables carry the gene at all, whether or not they assert validity: what separates
@@ -178,22 +183,22 @@ message MechanismStatement {
 
 service GeneDisease {
   // ClinGen validity/dosage + GenCC + PanelApp AU, keyed under MONDO's subclass closure.
-  // Lists every gene-disease entity curated for the gene: one element per (source, MONDO term,
-  // inheritance) a curator asserts, with its label, its classification on the harmonised rank, the
-  // gate level that classification reads as, its mechanism narratives and its source. Where a source
-  // states one entity several times — GenCC files one row per submitter — they reduce to its
-  // strongest classification on the published rank, an aggregation under a fixed vocabulary, with
-  // each assertion kept. Across entities the rpc reduces nothing and selects nothing: which curated
-  // entity a presentation belongs to is the analyst's call (SM21), and the level the gate reads is
-  // that entity's, not the gene's (SM18). Name the entity you established as `mondo_id` +
-  // `inheritance` and the rpc resolves it: the requested term's own curations decide wherever the
-  // gene is curated for that term, and only where it is not does a curated MONDO subclass descendant
-  // of it resolve. It answers with the entities that name your entity, and FAILED_PRECONDITION where
-  // the term selects several of the gene's or none of them — never the nearest. A gene the tables do
-  // not carry and a gene they carry with no validity assertion are distinct answers (`coverage`).
-  // Classification, gate level, inheritance and mechanism narratives are per entity; the
-  // haploinsufficiency score, the gain-of-function veto and PanelApp's mode of inheritance are per
-  // gene. See DescribeGeneResponse.
+  // Lists every gene-disease record curated for the gene: one element per (source, MONDO term, the
+  // source's mode term) a curator asserts, with its label, its mode term verbatim, its classification
+  // on the published rank, the gate level that classification reads as, its mechanism narratives and
+  // its source. Where a source states one record several times — GenCC files one row per submitter —
+  // they reduce to its strongest classification on the published rank, an aggregation under a fixed
+  // vocabulary, with each assertion kept. Across records the rpc reduces nothing and selects nothing:
+  // which record describes the entity a presentation belongs to, its mode included, is the analyst's
+  // call (SM21), and the level the gate reads is that record's, not the gene's (SM18). Name the
+  // entity's disease term as `mondo_id` and the rpc resolves it: the requested term's own curations
+  // decide wherever the gene is curated for that term, and only where it is not do the curations of
+  // a MONDO subclass descendant of it resolve. It answers with every record on that one term, under
+  // every mode, and FAILED_PRECONDITION where several distinct curated terms sit under the requested
+  // one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
+  // validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
+  // mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
+  // PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
   rpc DescribeGene(DescribeGeneRequest) returns (DescribeGeneResponse) {
     option (themis.rpc.admits_caller) = CALLER_AGENT;
   }

@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Mapping
-from typing import cast, override
+from typing import override
 
 import grpc
 import grpc.aio
 import pytest
 
-from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
@@ -76,27 +75,13 @@ def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expec
             'MONDO curie',
         ),
         (gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:007947'), 'MONDO curie'),
-        (
-            gene_disease_pb2.DescribeGeneRequest(
-                hgnc_id='HGNC:1100', inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT
-            ),
-            'narrows nothing',
-        ),
-        # proto3 carries an enum number the schema does not name; unchecked it matches no entity and
-        # comes back as a statement about the gene's curations.
-        (
-            gene_disease_pb2.DescribeGeneRequest(
-                hgnc_id='HGNC:1100', mondo_id='MONDO:0011450', inheritance=cast('evidence_pb2.Inheritance', 99)
-            ),
-            'takes inheritance',
-        ),
     ],
 )
-def test_gene_disease_refuses_an_entity_it_cannot_key_on(
+def test_gene_disease_refuses_a_term_it_cannot_key_on(
     unaccepted: gene_disease_pb2.DescribeGeneRequest, expected: str
 ) -> None:
     # A free-text condition or a malformed curie would resolve against no curation and come back as
-    # a statement about the gene's entities; an inheritance with no term narrows nothing at all.
+    # a statement about the gene's records.
     tables = _backend(describe_gene={'HGNC:1100': gene_disease_pb2.DescribeGeneResponse()})
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
@@ -109,21 +94,17 @@ def test_gene_disease_refuses_an_entity_it_cannot_key_on(
     assert expected in str(caught.value.details())
 
 
-def test_the_gene_disease_fixture_key_names_the_entity_asked_about() -> None:
-    # A seed built for the gene alone answers no entity: it carries no `resolution`, which is the
+def test_the_gene_disease_fixture_key_names_the_term_asked_about() -> None:
+    # A seed built for the gene alone answers no term: it carries no `resolution`, which is the
     # gene-scoped answer this rpc exists to stop giving.
-    entity = gene_disease_pb2.DescribeGeneRequest(
-        hgnc_id='HGNC:1100',
-        mondo_id='MONDO:0011450',
-        inheritance=evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT,
-    )
+    entity = gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:0011450')
     seeded = gene_disease_pb2.DescribeGeneResponse(
         resolution=gene_disease_pb2.EntityResolution(requested_mondo_id='MONDO:0011450')
     )
     tables = _backend(
         describe_gene={
             'HGNC:1100': gene_disease_pb2.DescribeGeneResponse(),
-            'HGNC:1100:MONDO:0011450:INHERITANCE_AUTOSOMAL_DOMINANT': seeded,
+            'HGNC:1100:MONDO:0011450': seeded,
         }
     )
 

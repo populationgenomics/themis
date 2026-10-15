@@ -1,14 +1,12 @@
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
-import {
-  Consequence,
-  Inheritance,
-} from "@/gen/themis/evidence/models/evidence_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
 import { GateLevel } from "@/gen/themis/rpc/gene_disease_pb";
 import {
   AssessmentStatus,
   Classification,
   Confidence,
+  ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
   type Svcv4Classification,
@@ -302,7 +300,7 @@ export function fbn1Classification(
       entity: {
         disease: "Marfan syndrome",
         mondoId: "MONDO:0007947",
-        inheritance: Inheritance.AUTOSOMAL_DOMINANT,
+        modeOfInheritance: ModeOfInheritance.AUTOSOMAL_DOMINANT,
         mechanism: "loss of function",
         validitySource: "ClinGen Gene Validity",
         validityClassification: "Definitive",

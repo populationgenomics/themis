@@ -1,16 +1,15 @@
-import {
-  Consequence,
-  Inheritance,
-} from "@/gen/themis/evidence/models/evidence_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
 import { GateLevel } from "@/gen/themis/rpc/gene_disease_pb";
 import {
   AssessmentStatus,
   Classification,
   Confidence,
+  ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
   type Svcv4Classification,
   type Svcv4Classification_Code,
+  type Svcv4Classification_Entity,
   Svcv4Classification_Line_Kind,
 } from "@/models/widgets";
 
@@ -566,18 +565,18 @@ export function consequenceLabel(value: Consequence): string {
   return CONSEQUENCES.get(value) ?? "unknown consequence";
 }
 
-const INHERITANCES: ReadonlyMap<Inheritance, string> = new Map([
-  [Inheritance.AUTOSOMAL_DOMINANT, "autosomal dominant"],
-  [Inheritance.AUTOSOMAL_RECESSIVE, "autosomal recessive"],
-  [Inheritance.X_LINKED, "X-linked"],
-  [Inheritance.Y_LINKED, "Y-linked"],
-  [Inheritance.MITOCHONDRIAL, "mitochondrial"],
-  [Inheritance.SEMIDOMINANT, "semidominant"],
-  [Inheritance.UNDETERMINED, "inheritance undetermined"],
+const MODES: ReadonlyMap<ModeOfInheritance, string> = new Map([
+  [ModeOfInheritance.AUTOSOMAL_DOMINANT, "autosomal dominant"],
+  [ModeOfInheritance.AUTOSOMAL_RECESSIVE, "autosomal recessive"],
+  [ModeOfInheritance.SEMIDOMINANT, "semidominant"],
+  [ModeOfInheritance.X_LINKED_DOMINANT, "X-linked dominant"],
+  [ModeOfInheritance.X_LINKED_RECESSIVE, "X-linked recessive"],
 ]);
 
-export function inheritanceLabel(value: Inheritance): string {
-  return INHERITANCES.get(value) ?? "unknown inheritance";
+/** The mode the entity was classified under. The payload's rules require one, so an unknown
+ *  value says so rather than naming a default. */
+export function entityModeLabel(entity: Svcv4Classification_Entity): string {
+  return MODES.get(entity.modeOfInheritance) ?? "unknown mode of inheritance";
 }
 
 const GATE_LEVELS: ReadonlyMap<GateLevel, string> = new Map([

@@ -10,8 +10,8 @@ import type { RowGuards } from "./code-row";
 import {
   classLabel,
   consequenceLabel,
+  entityModeLabel,
   gateLevelLabel,
-  inheritanceLabel,
   lettered,
   routeLabel,
   samePoints,
@@ -95,10 +95,7 @@ export function RoutingSection({
             {entity?.mondoId}
           </span>
           <div className="text-ink-muted">
-            {entity &&
-              [inheritanceLabel(entity.inheritance), entity.mechanism].join(
-                " · ",
-              )}
+            {entity && [entityModeLabel(entity), entity.mechanism].join(" · ")}
           </div>
           {entity && (
             <div className="text-ink-muted">

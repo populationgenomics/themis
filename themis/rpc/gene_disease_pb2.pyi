@@ -48,14 +48,12 @@ GENE_COVERAGE_NO_VALIDITY_ASSERTION: GeneCoverage
 GENE_COVERAGE_ABSENT: GeneCoverage
 
 class DescribeGeneRequest(_message.Message):
-    __slots__ = ("hgnc_id", "mondo_id", "inheritance")
+    __slots__ = ("hgnc_id", "mondo_id")
     HGNC_ID_FIELD_NUMBER: _ClassVar[int]
     MONDO_ID_FIELD_NUMBER: _ClassVar[int]
-    INHERITANCE_FIELD_NUMBER: _ClassVar[int]
     hgnc_id: str
     mondo_id: str
-    inheritance: _evidence_pb2.Inheritance
-    def __init__(self, hgnc_id: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ...) -> None: ...
+    def __init__(self, hgnc_id: _Optional[str] = ..., mondo_id: _Optional[str] = ...) -> None: ...
 
 class DescribeGeneResponse(_message.Message):
     __slots__ = ("entities", "resolution", "gene_scoped", "coverage", "raw", "provenance")
@@ -74,11 +72,10 @@ class DescribeGeneResponse(_message.Message):
     def __init__(self, entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ..., resolution: _Optional[_Union[EntityResolution, _Mapping]] = ..., gene_scoped: _Optional[_Union[GeneScopedSignals, _Mapping]] = ..., coverage: _Optional[_Union[GeneCoverage, str]] = ..., raw: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., provenance: _Optional[_Iterable[_Union[_evidence_pb2.Provenance, _Mapping]]] = ...) -> None: ...
 
 class CuratedEntity(_message.Message):
-    __slots__ = ("source", "disease_label", "mondo_id", "inheritance", "inheritance_term", "validity_classification", "gate_level", "submissions", "mechanism_statements")
+    __slots__ = ("source", "disease_label", "mondo_id", "inheritance_term", "validity_classification", "gate_level", "submissions", "mechanism_statements")
     SOURCE_FIELD_NUMBER: _ClassVar[int]
     DISEASE_LABEL_FIELD_NUMBER: _ClassVar[int]
     MONDO_ID_FIELD_NUMBER: _ClassVar[int]
-    INHERITANCE_FIELD_NUMBER: _ClassVar[int]
     INHERITANCE_TERM_FIELD_NUMBER: _ClassVar[int]
     VALIDITY_CLASSIFICATION_FIELD_NUMBER: _ClassVar[int]
     GATE_LEVEL_FIELD_NUMBER: _ClassVar[int]
@@ -87,13 +84,12 @@ class CuratedEntity(_message.Message):
     source: str
     disease_label: str
     mondo_id: str
-    inheritance: _evidence_pb2.Inheritance
     inheritance_term: str
     validity_classification: str
     gate_level: GateLevel
     submissions: _containers.RepeatedCompositeFieldContainer[GenccSubmission]
     mechanism_statements: _containers.RepeatedCompositeFieldContainer[MechanismStatement]
-    def __init__(self, source: _Optional[str] = ..., disease_label: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., inheritance_term: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[GateLevel, str]] = ..., submissions: _Optional[_Iterable[_Union[GenccSubmission, _Mapping]]] = ..., mechanism_statements: _Optional[_Iterable[_Union[MechanismStatement, _Mapping]]] = ...) -> None: ...
+    def __init__(self, source: _Optional[str] = ..., disease_label: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance_term: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[GateLevel, str]] = ..., submissions: _Optional[_Iterable[_Union[GenccSubmission, _Mapping]]] = ..., mechanism_statements: _Optional[_Iterable[_Union[MechanismStatement, _Mapping]]] = ...) -> None: ...
 
 class GenccSubmission(_message.Message):
     __slots__ = ("submitter", "validity_classification", "mechanism_note")
@@ -106,20 +102,16 @@ class GenccSubmission(_message.Message):
     def __init__(self, submitter: _Optional[str] = ..., validity_classification: _Optional[str] = ..., mechanism_note: _Optional[str] = ...) -> None: ...
 
 class EntityResolution(_message.Message):
-    __slots__ = ("requested_mondo_id", "requested_inheritance", "mondo_id", "inheritance", "relation", "entities")
+    __slots__ = ("requested_mondo_id", "mondo_id", "relation", "entities")
     REQUESTED_MONDO_ID_FIELD_NUMBER: _ClassVar[int]
-    REQUESTED_INHERITANCE_FIELD_NUMBER: _ClassVar[int]
     MONDO_ID_FIELD_NUMBER: _ClassVar[int]
-    INHERITANCE_FIELD_NUMBER: _ClassVar[int]
     RELATION_FIELD_NUMBER: _ClassVar[int]
     ENTITIES_FIELD_NUMBER: _ClassVar[int]
     requested_mondo_id: str
-    requested_inheritance: _evidence_pb2.Inheritance
     mondo_id: str
-    inheritance: _evidence_pb2.Inheritance
     relation: TermRelation
     entities: _containers.RepeatedCompositeFieldContainer[CuratedEntity]
-    def __init__(self, requested_mondo_id: _Optional[str] = ..., requested_inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., relation: _Optional[_Union[TermRelation, str]] = ..., entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ...) -> None: ...
+    def __init__(self, requested_mondo_id: _Optional[str] = ..., mondo_id: _Optional[str] = ..., relation: _Optional[_Union[TermRelation, str]] = ..., entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ...) -> None: ...
 
 class GeneScopedSignals(_message.Message):
     __slots__ = ("haploinsufficiency_score", "mode_of_pathogenicity", "mode_of_inheritance", "mechanism_statements", "sources_holding_the_gene")

@@ -8,12 +8,17 @@ from collections.abc import Callable
 
 import pytest
 
-from themis.evidence.models import evidence_pb2
 from themis.rpc import clinvar_pb2, gnomad_pb2
 from themis.svcv4 import clinvar_classification, frequency, provenance, reference
+from themis.svcv4.models import svcv4_pb2
 from themis.svcv4.tests import responses
 
 D = decimal.Decimal
+_AD = svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT
+_AR = svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE
+_SD = svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT
+_XLD = svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT
+_XLR = svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE
 
 
 def test_daft_monoallelic_matches_fbn1_worked_output() -> None:
@@ -415,6 +420,7 @@ def test_an_xlinked_entity_reaches_a_binned_daft_and_pop_frq_points(ref: referen
     daft = frequency.binned_daft(
         ref,
         frequency.BinningTable.X_LINKED_DOMINANT_COMBINED,
+        mode=_XLD,
         prevalence_denominator=10_000,
         penetrance=D('0.80'),
     )
@@ -430,10 +436,10 @@ def test_a_binned_daft_rounds_prevalence_up_and_penetrance_down(ref: reference.R
     penetrance the lower column.
     """
     on_the_bins = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_DOMINANT, prevalence_denominator=1_000, penetrance=D('0.50')
+        ref, frequency.BinningTable.AUTOSOMAL_DOMINANT, mode=_AD, prevalence_denominator=1_000, penetrance=D('0.50')
     )
     between_the_bins = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_DOMINANT, prevalence_denominator=2_000, penetrance=D('0.65')
+        ref, frequency.BinningTable.AUTOSOMAL_DOMINANT, mode=_AD, prevalence_denominator=2_000, penetrance=D('0.65')
     )
     assert between_the_bins.value == on_the_bins.value
     assert 'prevalence 1/2,000 -> the 1/1,000 bin' in between_the_bins.basis
@@ -444,10 +450,18 @@ def test_a_rarer_disease_than_the_last_row_still_rounds_onto_it(ref: reference.R
     # Rounding up is satisfiable off the rare end (1/1,000,000 is more frequent than 1/5,000,000),
     # so the axis has a floor and not a bound; only the frequent end can round onto nothing.
     floor = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, prevalence_denominator=1_000_000, penetrance=D('0.80')
+        ref,
+        frequency.BinningTable.AUTOSOMAL_RECESSIVE,
+        mode=_AR,
+        prevalence_denominator=1_000_000,
+        penetrance=D('0.80'),
     )
     rarer = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, prevalence_denominator=5_000_000, penetrance=D('0.80')
+        ref,
+        frequency.BinningTable.AUTOSOMAL_RECESSIVE,
+        mode=_AR,
+        prevalence_denominator=5_000_000,
+        penetrance=D('0.80'),
     )
     assert rarer.value == floor.value
 
@@ -467,6 +481,7 @@ def test_an_estimate_off_the_axes_is_refused_not_clamped(
         frequency.binned_daft(
             ref,
             frequency.BinningTable.X_LINKED_RECESSIVE_FEMALE,
+            mode=_XLR,
             prevalence_denominator=prevalence_denominator,
             penetrance=D(penetrance),
         )
@@ -476,14 +491,44 @@ def test_a_cell_sm3_marks_says_so_in_the_basis(ref: reference.Reference) -> None
     # The `*` is printed on three cells and defined nowhere in SM3, so it travels with the result
     # rather than being resolved into a meaning the supplement does not give it.
     marked = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, prevalence_denominator=500, penetrance=D('0.20')
+        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, mode=_AR, prevalence_denominator=500, penetrance=D('0.20')
     )
     unmarked = frequency.binned_daft(
-        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, prevalence_denominator=500, penetrance=D('0.80')
+        ref, frequency.BinningTable.AUTOSOMAL_RECESSIVE, mode=_AR, prevalence_denominator=500, penetrance=D('0.80')
     )
     assert marked.value == unmarked.value  # both 0.05000; only the marker distinguishes them
     assert '"*"' in marked.basis
     assert '"*"' not in unmarked.basis
+
+
+@pytest.mark.parametrize(
+    ('mode', 'tables'),
+    [
+        (
+            _XLD,
+            {
+                frequency.BinningTable.X_LINKED_MALE,
+                frequency.BinningTable.X_LINKED_DOMINANT_FEMALE,
+                frequency.BinningTable.X_LINKED_DOMINANT_COMBINED,
+            },
+        ),
+        (_XLR, {frequency.BinningTable.X_LINKED_MALE, frequency.BinningTable.X_LINKED_RECESSIVE_FEMALE}),
+    ],
+)
+def test_an_x_linked_entity_s_tables_are_chosen_by_its_kind(
+    mode: svcv4_pb2.ModeOfInheritance, tables: set[frequency.BinningTable]
+) -> None:
+    # SM3 prints the female tables per kind and the combined-sex one for the dominant kind only.
+    assert set(frequency.binning_tables_for(mode)) == tables
+
+
+def test_a_table_the_entity_s_mode_rules_out_is_refused(ref: reference.Reference) -> None:
+    # A worked example in the pilot names the combined-sex table for an X-linked recessive disease;
+    # the rule wins, because that table is the dominant kind's threshold.
+    for mode in frequency._BINNING_TABLES:
+        for table in set(frequency.BinningTable) - set(frequency.binning_tables_for(mode)):
+            with pytest.raises(ValueError, match='for another mode of inheritance'):
+                frequency.binned_daft(ref, table, mode=mode, prevalence_denominator=10_000, penetrance=D('0.80'))
 
 
 # --- the DAFT methods are distinguishable in the result -------------------------------------------
@@ -501,7 +546,7 @@ def test_each_daft_method_names_itself(ref: reference.Reference) -> None:
         frequency.daft_from_pathogenic_variants(_TEN_VARIANTS, review_status_floor=1, pool_truncated=False),
         frequency.curated_daft(D('0.0001'), source='ClinGen Hearing Loss VCEP v3'),
         frequency.binned_daft(
-            ref, frequency.BinningTable.X_LINKED_MALE, prevalence_denominator=10_000, penetrance=D('0.50')
+            ref, frequency.BinningTable.X_LINKED_MALE, mode=_XLR, prevalence_denominator=10_000, penetrance=D('0.50')
         ),
     )
     # A method added to the enum without a constructor of its own fails here.
@@ -855,22 +900,24 @@ def test_a_bare_eligible_count_stays_admissible(ref: reference.Reference) -> Non
 @pytest.mark.parametrize(
     ('mode', 'expected'),
     [
-        (evidence_pb2.INHERITANCE_AUTOSOMAL_DOMINANT, frequency.Inheritance.MONOALLELIC),
-        (evidence_pb2.INHERITANCE_AUTOSOMAL_RECESSIVE, frequency.Inheritance.BIALLELIC),
-        (evidence_pb2.INHERITANCE_X_LINKED, frequency.Inheritance.XLINKED),
+        (_AD, frequency.Inheritance.MONOALLELIC),
+        (_AR, frequency.Inheritance.BIALLELIC),
+        (_XLD, frequency.Inheritance.XLINKED),
+        (_XLR, frequency.Inheritance.XLINKED),
     ],
 )
-def test_a_curated_mode_reaches_the_calculators_own_partition(
-    mode: evidence_pb2.Inheritance, expected: frequency.Inheritance
+def test_a_mode_reaches_the_calculators_own_partition(
+    mode: svcv4_pb2.ModeOfInheritance, expected: frequency.Inheritance
 ) -> None:
     assert frequency.daft_inheritance(mode) == expected
 
 
-def test_x_linked_resolves_and_is_then_refused_by_the_calculator_itself() -> None:
-    # SM3's own routing: the mode is curated, and the method it reaches is the binning tables.
+@pytest.mark.parametrize('mode', [_XLD, _XLR])
+def test_x_linked_resolves_and_is_then_refused_by_the_calculator_itself(mode: svcv4_pb2.ModeOfInheritance) -> None:
+    # SM3's own routing: the mode is stated, and the method it reaches is the binning tables.
     with pytest.raises(ValueError, match='binning method'):
         frequency.daft_calculator(
-            frequency.daft_inheritance(evidence_pb2.INHERITANCE_X_LINKED),
+            frequency.daft_inheritance(mode),
             prevalence_denominator=10000,
             genetic_heterogeneity=D('1'),
             allelic_heterogeneity=D('1'),
@@ -881,21 +928,18 @@ def test_x_linked_resolves_and_is_then_refused_by_the_calculator_itself() -> Non
 @pytest.mark.parametrize(
     ('mapping', 'mode'),
     [
-        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_SEMIDOMINANT),
-        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_MITOCHONDRIAL),
-        (frequency.daft_inheritance, evidence_pb2.INHERITANCE_UNDETERMINED),
-        (frequency.hmz_inheritance, evidence_pb2.INHERITANCE_Y_LINKED),
-        (frequency.hmz_inheritance, evidence_pb2.INHERITANCE_UNSPECIFIED),
-        (frequency.binning_tables_for, evidence_pb2.INHERITANCE_MITOCHONDRIAL),
-        (frequency.binning_tables_for, evidence_pb2.INHERITANCE_UNSPECIFIED),
+        (frequency.daft_inheritance, _SD),
+        (frequency.daft_inheritance, svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED),
+        (frequency.hmz_inheritance, svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED),
+        (frequency.binning_tables_for, svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED),
     ],
 )
 def test_a_mode_the_framework_has_no_route_for_is_refused(
-    mapping: Callable[[evidence_pb2.Inheritance], object], mode: evidence_pb2.Inheritance
+    mapping: Callable[[svcv4_pb2.ModeOfInheritance], object], mode: svcv4_pb2.ModeOfInheritance
 ) -> None:
     # Naming the mode: the alternative is resolving to the nearest route, which answers the gate
     # right and the frequency arithmetic wrong.
-    with pytest.raises(ValueError, match=evidence_pb2.Inheritance.Name(mode)):
+    with pytest.raises(ValueError, match=svcv4_pb2.ModeOfInheritance.Name(mode)):
         mapping(mode)
 
 
@@ -903,10 +947,10 @@ def test_a_mode_the_framework_has_no_route_for_is_refused(
     'mapping', [frequency.daft_inheritance, frequency.hmz_inheritance, frequency.binning_tables_for]
 )
 def test_a_mode_composed_as_something_other_than_the_enum_is_refused(
-    mapping: Callable[[evidence_pb2.Inheritance], object],
+    mapping: Callable[[svcv4_pb2.ModeOfInheritance], object],
 ) -> None:
     # A bool hashes equal to AUTOSOMAL_DOMINANT, so membership alone would admit it.
-    with pytest.raises(ValueError, match=r'must be an evidence_pb2\.Inheritance'):
+    with pytest.raises(ValueError, match=r'must be a svcv4_pb2\.ModeOfInheritance'):
         mapping(True)  # type: ignore[arg-type] — the code-mode case
 
 
@@ -930,7 +974,7 @@ def test_the_hmz_rows_the_reference_weighs_are_the_ones_a_mode_reaches(ref: refe
         assert scored.points < 0
 
 
-def _refusal(mapping: Callable[[evidence_pb2.Inheritance], object], mode: evidence_pb2.Inheritance) -> str:
+def _refusal(mapping: Callable[[svcv4_pb2.ModeOfInheritance], object], mode: svcv4_pb2.ModeOfInheritance) -> str:
     """The message the mapping refused `mode` with, or the empty string where it routed it."""
     try:
         mapping(mode)
@@ -942,14 +986,14 @@ def _refusal(mapping: Callable[[evidence_pb2.Inheritance], object], mode: eviden
 @pytest.mark.parametrize(
     'mapping', [frequency.daft_inheritance, frequency.hmz_inheritance, frequency.binning_tables_for]
 )
-def test_every_mode_the_contract_curates_is_mapped_or_named_as_unroutable(
-    mapping: Callable[[evidence_pb2.Inheritance], object],
+def test_every_mode_is_mapped_or_named_as_unroutable(
+    mapping: Callable[[svcv4_pb2.ModeOfInheritance], object],
 ) -> None:
-    """No mode falls through: a member added to the contract reaches a route or a refusal naming it."""
-    for value in evidence_pb2.Inheritance.values():
-        mode = typing.cast('evidence_pb2.Inheritance', value)
+    """No mode falls through: a member added to the enum reaches a route or a refusal naming it."""
+    for value in svcv4_pb2.ModeOfInheritance.values():
+        mode = typing.cast('svcv4_pb2.ModeOfInheritance', value)
         refusal = _refusal(mapping, mode)
-        assert not refusal or evidence_pb2.Inheritance.Name(value) in refusal
+        assert not refusal or svcv4_pb2.ModeOfInheritance.Name(value) in refusal
 
 
 def _pool_faf(value: str) -> frequency.Faf:

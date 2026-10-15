@@ -27,7 +27,7 @@ from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_model
 from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dthemis/rpc/gene_disease.proto\x12\x17themis.rpc.gene_disease\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"r\n\x13\x44\x65scribeGeneRequest\x12\x0f\n\x07hgnc_id\x18\x01 \x01(\t\x12\x10\n\x08mondo_id\x18\x02 \x01(\t\x12\x38\n\x0binheritance\x18\x03 \x01(\x0e\x32#.themis.evidence.models.Inheritance\"\xe7\x02\n\x14\x44\x65scribeGeneResponse\x12\x38\n\x08\x65ntities\x18\x01 \x03(\x0b\x32&.themis.rpc.gene_disease.CuratedEntity\x12=\n\nresolution\x18\x02 \x01(\x0b\x32).themis.rpc.gene_disease.EntityResolution\x12?\n\x0bgene_scoped\x18\x03 \x01(\x0b\x32*.themis.rpc.gene_disease.GeneScopedSignals\x12\x37\n\x08\x63overage\x18\x04 \x01(\x0e\x32%.themis.rpc.gene_disease.GeneCoverage\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance\"\xff\x02\n\rCuratedEntity\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x15\n\rdisease_label\x18\x02 \x01(\t\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x38\n\x0binheritance\x18\x04 \x01(\x0e\x32#.themis.evidence.models.Inheritance\x12\x18\n\x10inheritance_term\x18\x05 \x01(\t\x12\x1f\n\x17validity_classification\x18\x06 \x01(\t\x12\x36\n\ngate_level\x18\x07 \x01(\x0e\x32\".themis.rpc.gene_disease.GateLevel\x12=\n\x0bsubmissions\x18\x08 \x03(\x0b\x32(.themis.rpc.gene_disease.GenccSubmission\x12I\n\x14mechanism_statements\x18\t \x03(\x0b\x32+.themis.rpc.gene_disease.MechanismStatement\"]\n\x0fGenccSubmission\x12\x11\n\tsubmitter\x18\x01 \x01(\t\x12\x1f\n\x17validity_classification\x18\x02 \x01(\t\x12\x16\n\x0emechanism_note\x18\x03 \x01(\t\"\xb1\x02\n\x10\x45ntityResolution\x12\x1a\n\x12requested_mondo_id\x18\x01 \x01(\t\x12\x42\n\x15requested_inheritance\x18\x02 \x01(\x0e\x32#.themis.evidence.models.Inheritance\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x38\n\x0binheritance\x18\x04 \x01(\x0e\x32#.themis.evidence.models.Inheritance\x12\x37\n\x08relation\x18\x05 \x01(\x0e\x32%.themis.rpc.gene_disease.TermRelation\x12\x38\n\x08\x65ntities\x18\x06 \x03(\x0b\x32&.themis.rpc.gene_disease.CuratedEntity\"\x80\x02\n\x11GeneScopedSignals\x12%\n\x18haploinsufficiency_score\x18\x01 \x01(\x05H\x00\x88\x01\x01\x12\x1d\n\x15mode_of_pathogenicity\x18\x02 \x01(\t\x12\x1b\n\x13mode_of_inheritance\x18\x03 \x01(\t\x12I\n\x14mechanism_statements\x18\x04 \x03(\x0b\x32+.themis.rpc.gene_disease.MechanismStatement\x12 \n\x18sources_holding_the_gene\x18\x05 \x03(\tB\x1b\n\x19_haploinsufficiency_score\"C\n\x12MechanismStatement\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t*\xd0\x01\n\tGateLevel\x12\x1a\n\x16GATE_LEVEL_UNSPECIFIED\x10\x00\x12\x19\n\x15GATE_LEVEL_DEFINITIVE\x10\x01\x12\x15\n\x11GATE_LEVEL_STRONG\x10\x02\x12\x17\n\x13GATE_LEVEL_MODERATE\x10\x03\x12\x16\n\x12GATE_LEVEL_LIMITED\x10\x04\x12 \n\x1cGATE_LEVEL_LESS_THAN_LIMITED\x10\x05\x12\"\n\x1eGATE_LEVEL_DISPUTED_OR_REFUTED\x10\x06*c\n\x0cTermRelation\x12\x1d\n\x19TERM_RELATION_UNSPECIFIED\x10\x00\x12\x16\n\x12TERM_RELATION_SAME\x10\x01\x12\x1c\n\x18TERM_RELATION_DESCENDANT\x10\x02*\x8b\x01\n\x0cGeneCoverage\x12\x1d\n\x19GENE_COVERAGE_UNSPECIFIED\x10\x00\x12\x19\n\x15GENE_COVERAGE_CURATED\x10\x01\x12\'\n#GENE_COVERAGE_NO_VALIDITY_ASSERTION\x10\x02\x12\x18\n\x14GENE_COVERAGE_ABSENT\x10\x03\x32\x81\x01\n\x0bGeneDisease\x12r\n\x0c\x44\x65scribeGene\x12,.themis.rpc.gene_disease.DescribeGeneRequest\x1a-.themis.rpc.gene_disease.DescribeGeneResponse\"\x05\xa2\xb5\x18\x01\x03\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dthemis/rpc/gene_disease.proto\x12\x17themis.rpc.gene_disease\x1a\x1cgoogle/protobuf/struct.proto\x1a%themis/evidence/models/evidence.proto\x1a themis/rpc/sandbox_options.proto\"K\n\x13\x44\x65scribeGeneRequest\x12\x0f\n\x07hgnc_id\x18\x01 \x01(\t\x12\x10\n\x08mondo_id\x18\x02 \x01(\tJ\x04\x08\x03\x10\x04R\x0binheritance\"\xe7\x02\n\x14\x44\x65scribeGeneResponse\x12\x38\n\x08\x65ntities\x18\x01 \x03(\x0b\x32&.themis.rpc.gene_disease.CuratedEntity\x12=\n\nresolution\x18\x02 \x01(\x0b\x32).themis.rpc.gene_disease.EntityResolution\x12?\n\x0bgene_scoped\x18\x03 \x01(\x0b\x32*.themis.rpc.gene_disease.GeneScopedSignals\x12\x37\n\x08\x63overage\x18\x04 \x01(\x0e\x32%.themis.rpc.gene_disease.GeneCoverage\x12$\n\x03raw\x18\x0f \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x36\n\nprovenance\x18\x10 \x03(\x0b\x32\".themis.evidence.models.Provenance\"\xd8\x02\n\rCuratedEntity\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x15\n\rdisease_label\x18\x02 \x01(\t\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x18\n\x10inheritance_term\x18\x05 \x01(\t\x12\x1f\n\x17validity_classification\x18\x06 \x01(\t\x12\x36\n\ngate_level\x18\x07 \x01(\x0e\x32\".themis.rpc.gene_disease.GateLevel\x12=\n\x0bsubmissions\x18\x08 \x03(\x0b\x32(.themis.rpc.gene_disease.GenccSubmission\x12I\n\x14mechanism_statements\x18\t \x03(\x0b\x32+.themis.rpc.gene_disease.MechanismStatementJ\x04\x08\x04\x10\x05R\x0binheritance\"]\n\x0fGenccSubmission\x12\x11\n\tsubmitter\x18\x01 \x01(\t\x12\x1f\n\x17validity_classification\x18\x02 \x01(\t\x12\x16\n\x0emechanism_note\x18\x03 \x01(\t\"\xe3\x01\n\x10\x45ntityResolution\x12\x1a\n\x12requested_mondo_id\x18\x01 \x01(\t\x12\x10\n\x08mondo_id\x18\x03 \x01(\t\x12\x37\n\x08relation\x18\x05 \x01(\x0e\x32%.themis.rpc.gene_disease.TermRelation\x12\x38\n\x08\x65ntities\x18\x06 \x03(\x0b\x32&.themis.rpc.gene_disease.CuratedEntityJ\x04\x08\x02\x10\x03J\x04\x08\x04\x10\x05R\x15requested_inheritanceR\x0binheritance\"\x80\x02\n\x11GeneScopedSignals\x12%\n\x18haploinsufficiency_score\x18\x01 \x01(\x05H\x00\x88\x01\x01\x12\x1d\n\x15mode_of_pathogenicity\x18\x02 \x01(\t\x12\x1b\n\x13mode_of_inheritance\x18\x03 \x01(\t\x12I\n\x14mechanism_statements\x18\x04 \x03(\x0b\x32+.themis.rpc.gene_disease.MechanismStatement\x12 \n\x18sources_holding_the_gene\x18\x05 \x03(\tB\x1b\n\x19_haploinsufficiency_score\"C\n\x12MechanismStatement\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t*\xd0\x01\n\tGateLevel\x12\x1a\n\x16GATE_LEVEL_UNSPECIFIED\x10\x00\x12\x19\n\x15GATE_LEVEL_DEFINITIVE\x10\x01\x12\x15\n\x11GATE_LEVEL_STRONG\x10\x02\x12\x17\n\x13GATE_LEVEL_MODERATE\x10\x03\x12\x16\n\x12GATE_LEVEL_LIMITED\x10\x04\x12 \n\x1cGATE_LEVEL_LESS_THAN_LIMITED\x10\x05\x12\"\n\x1eGATE_LEVEL_DISPUTED_OR_REFUTED\x10\x06*c\n\x0cTermRelation\x12\x1d\n\x19TERM_RELATION_UNSPECIFIED\x10\x00\x12\x16\n\x12TERM_RELATION_SAME\x10\x01\x12\x1c\n\x18TERM_RELATION_DESCENDANT\x10\x02*\x8b\x01\n\x0cGeneCoverage\x12\x1d\n\x19GENE_COVERAGE_UNSPECIFIED\x10\x00\x12\x19\n\x15GENE_COVERAGE_CURATED\x10\x01\x12\'\n#GENE_COVERAGE_NO_VALIDITY_ASSERTION\x10\x02\x12\x18\n\x14GENE_COVERAGE_ABSENT\x10\x03\x32\x81\x01\n\x0bGeneDisease\x12r\n\x0c\x44\x65scribeGene\x12,.themis.rpc.gene_disease.DescribeGeneRequest\x1a-.themis.rpc.gene_disease.DescribeGeneResponse\"\x05\xa2\xb5\x18\x01\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,26 +36,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_GENEDISEASE'].methods_by_name['DescribeGene']._loaded_options = None
   _globals['_GENEDISEASE'].methods_by_name['DescribeGene']._serialized_options = b'\242\265\030\001\003'
-  _globals['_GATELEVEL']._serialized_start=1757
-  _globals['_GATELEVEL']._serialized_end=1965
-  _globals['_TERMRELATION']._serialized_start=1967
-  _globals['_TERMRELATION']._serialized_end=2066
-  _globals['_GENECOVERAGE']._serialized_start=2069
-  _globals['_GENECOVERAGE']._serialized_end=2208
+  _globals['_GATELEVEL']._serialized_start=1601
+  _globals['_GATELEVEL']._serialized_end=1809
+  _globals['_TERMRELATION']._serialized_start=1811
+  _globals['_TERMRELATION']._serialized_end=1910
+  _globals['_GENECOVERAGE']._serialized_start=1913
+  _globals['_GENECOVERAGE']._serialized_end=2052
   _globals['_DESCRIBEGENEREQUEST']._serialized_start=161
-  _globals['_DESCRIBEGENEREQUEST']._serialized_end=275
-  _globals['_DESCRIBEGENERESPONSE']._serialized_start=278
-  _globals['_DESCRIBEGENERESPONSE']._serialized_end=637
-  _globals['_CURATEDENTITY']._serialized_start=640
-  _globals['_CURATEDENTITY']._serialized_end=1023
-  _globals['_GENCCSUBMISSION']._serialized_start=1025
-  _globals['_GENCCSUBMISSION']._serialized_end=1118
-  _globals['_ENTITYRESOLUTION']._serialized_start=1121
-  _globals['_ENTITYRESOLUTION']._serialized_end=1426
-  _globals['_GENESCOPEDSIGNALS']._serialized_start=1429
-  _globals['_GENESCOPEDSIGNALS']._serialized_end=1685
-  _globals['_MECHANISMSTATEMENT']._serialized_start=1687
-  _globals['_MECHANISMSTATEMENT']._serialized_end=1754
-  _globals['_GENEDISEASE']._serialized_start=2211
-  _globals['_GENEDISEASE']._serialized_end=2340
+  _globals['_DESCRIBEGENEREQUEST']._serialized_end=236
+  _globals['_DESCRIBEGENERESPONSE']._serialized_start=239
+  _globals['_DESCRIBEGENERESPONSE']._serialized_end=598
+  _globals['_CURATEDENTITY']._serialized_start=601
+  _globals['_CURATEDENTITY']._serialized_end=945
+  _globals['_GENCCSUBMISSION']._serialized_start=947
+  _globals['_GENCCSUBMISSION']._serialized_end=1040
+  _globals['_ENTITYRESOLUTION']._serialized_start=1043
+  _globals['_ENTITYRESOLUTION']._serialized_end=1270
+  _globals['_GENESCOPEDSIGNALS']._serialized_start=1273
+  _globals['_GENESCOPEDSIGNALS']._serialized_end=1529
+  _globals['_MECHANISMSTATEMENT']._serialized_start=1531
+  _globals['_MECHANISMSTATEMENT']._serialized_end=1598
+  _globals['_GENEDISEASE']._serialized_start=2055
+  _globals['_GENEDISEASE']._serialized_end=2184
 # @@protoc_insertion_point(module_scope)

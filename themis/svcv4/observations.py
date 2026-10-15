@@ -20,19 +20,164 @@ cells that score nothing.
 Only the independent codes are here. The variant-type path codes (`MIS_`, `NUL_`, `CDS_`, `SPL_`)
 are priced by the path a `builders` call selects, from a tier plus the mechanism and exon axes; a
 cell id is the wrong key for them and `builders` is where they belong.
+
+Which of CLN_AFF's two tables a proband is counted from turns on the MDE's mode of inheritance, and
+for an X-linked recessive MDE on the proband's sex chromosomes as well (SM4 §26, §75, §77):
+`affected_tables` and `x_linked_affected_table` answer it. POP_HMZ and CLN_UAF also split their rows
+into a dominant and a recessive or X-linked table; `mode_routed_tables` names the tables each mode
+reaches in all three codes.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import decimal
+import enum
 from collections.abc import Iterator, Mapping
 
 from themis.svcv4 import reference
+from themis.svcv4.models import svcv4_pb2
 
 
 class UnknownCellError(Exception):
     """A cell id no per-observation table defines."""
+
+
+class AffectedTable(enum.Enum):
+    """Which of SM4's two CLN_AFF tables an affected proband is counted from; the value opens its cell ids."""
+
+    MONOALLELIC = 'CLN_AFF.ad'  # SM4 Table 1, "Monoallelic Disorder"
+    BIALLELIC = 'CLN_AFF.arxl'  # SM4 Table 2, "Biallelic Disorder"
+
+
+class Karyotype(enum.Enum):
+    """An affected proband's sex chromosomes, which SM4 reads for an X-linked recessive MDE."""
+
+    XX = 'XX'
+    XY = 'XY'
+
+
+# SM4 §26: Table 1 for an autosomal dominant MDE, Table 2 for a recessive one. §77: a semidominant MDE
+# counts heterozygotes from Table 1 and biallelic individuals from Table 2. §75: an X-linked dominant
+# MDE counts every affected proband from Table 1; a recessive one counts XY probands from Table 1 and
+# XX probands from Table 2.
+_AFFECTED_TABLES: Mapping[svcv4_pb2.ModeOfInheritance, tuple[AffectedTable, ...]] = {
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: (AffectedTable.MONOALLELIC,),
+    svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: (AffectedTable.BIALLELIC,),
+    svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT: (AffectedTable.MONOALLELIC, AffectedTable.BIALLELIC),
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: (AffectedTable.MONOALLELIC,),
+    svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: (AffectedTable.MONOALLELIC, AffectedTable.BIALLELIC),
+}
+_X_LINKED_AFFECTED: Mapping[tuple[svcv4_pb2.ModeOfInheritance, Karyotype], AffectedTable] = {
+    (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, Karyotype.XX): AffectedTable.MONOALLELIC,
+    (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT, Karyotype.XY): AffectedTable.MONOALLELIC,
+    (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, Karyotype.XX): AffectedTable.BIALLELIC,
+    (svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE, Karyotype.XY): AffectedTable.MONOALLELIC,
+}
+
+
+def _mode_name(mode: svcv4_pb2.ModeOfInheritance) -> str:
+    if type(mode) is int and mode in svcv4_pb2.ModeOfInheritance.values():
+        return svcv4_pb2.ModeOfInheritance.Name(mode)
+    return repr(mode)
+
+
+def affected_tables(mode: svcv4_pb2.ModeOfInheritance) -> tuple[AffectedTable, ...]:
+    """The CLN_AFF tables an MDE's affected probands are counted from (SM4 §26, §75, §77).
+
+    Two where the proband decides: a semidominant MDE by the proband's genotype, an X-linked
+    recessive one by the proband's sex chromosomes (`x_linked_affected_table`).
+
+    Raises:
+        ValueError: For a mode that is not a `svcv4_pb2.ModeOfInheritance` member, or is unstated.
+    """
+    if type(mode) is not int or mode not in _AFFECTED_TABLES:
+        raise ValueError(f'SM4 counts affected probands under a stated mode of inheritance; got {_mode_name(mode)}')
+    return _AFFECTED_TABLES[mode]
+
+
+def x_linked_affected_table(mode: svcv4_pb2.ModeOfInheritance, karyotype: Karyotype) -> AffectedTable:
+    """The CLN_AFF table one affected proband of an X-linked MDE is counted from (SM4 §75).
+
+    An XX proband in an X-linked recessive MDE is counted from the biallelic table, where the second
+    variant in trans decides the points; every other X-linked proband from the monoallelic table.
+
+    Raises:
+        ValueError: For a mode that is not X-linked: there the mode alone decides (`affected_tables`).
+    """
+    if type(mode) is not int or type(karyotype) is not Karyotype:
+        raise ValueError(
+            f'x_linked_affected_table takes a svcv4_pb2.ModeOfInheritance and a Karyotype; got {mode!r}, {karyotype!r}'
+        )
+    try:
+        return _X_LINKED_AFFECTED[(mode, karyotype)]
+    except KeyError:
+        raise ValueError(
+            f'{_mode_name(mode)} is not X-linked, so the karyotype decides nothing; affected_tables gives its table'
+        ) from None
+
+
+# The two tables POP_HMZ (SM3 Table 7) and CLN_UAF (SM4 Table 5) split their rows into, as the cell id's
+# second fragment, and the table each mode is read under. Semidominant follows the supplements, not the
+# calculator (svcv4-interpretations.md §Semidominant entities in `POP_HMZ` and `CLN_UAF`).
+_DOMINANT, _RECESSIVE_OR_X_LINKED = 'ad', 'arxl'
+_SPLIT_TABLES: Mapping[str, Mapping[svcv4_pb2.ModeOfInheritance, tuple[str, ...]]] = {
+    'POP_HMZ': {
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: (_DOMINANT,),
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: (_RECESSIVE_OR_X_LINKED,),
+        svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT: (_RECESSIVE_OR_X_LINKED,),
+        svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: (_RECESSIVE_OR_X_LINKED,),
+        svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: (_RECESSIVE_OR_X_LINKED,),
+    },
+    'CLN_UAF': {
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: (_DOMINANT,),
+        svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: (_RECESSIVE_OR_X_LINKED,),
+        svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT: (_DOMINANT,),
+        svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_DOMINANT: (_RECESSIVE_OR_X_LINKED,),
+        svcv4_pb2.MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: (_RECESSIVE_OR_X_LINKED,),
+    },
+}
+_AFFECTED_CODE = 'CLN_AFF'
+
+
+def mode_routed_tables(mode: svcv4_pb2.ModeOfInheritance, code: str) -> tuple[str, ...]:
+    """The tables of a mode-routed code an MDE's mode reaches, each as its cell ids' second fragment.
+
+    Args:
+        mode: The mode of the entity being classified.
+        code: `CLN_AFF`, `CLN_UAF` or `POP_HMZ`.
+
+    Raises:
+        ValueError: For a code whose tables the mode does not route, or an unstated mode.
+    """
+    if code == _AFFECTED_CODE:
+        return tuple(table.value.split('.', 1)[1] for table in affected_tables(mode))
+    tables = _SPLIT_TABLES.get(code)
+    if tables is None:
+        raise ValueError(f'{code} does not split its tables by mode of inheritance')
+    if type(mode) is not int or mode not in tables:
+        raise ValueError(f'{code} routes on a stated mode of inheritance; got {_mode_name(mode)}')
+    return tables[mode]
+
+
+def mode_routed_table_of(cell_id: str) -> str | None:
+    """The table of a mode-routed code a cell id addresses, as its second fragment; None for any other code."""
+    code, _, rest = cell_id.partition('.')
+    if code != _AFFECTED_CODE and code not in _SPLIT_TABLES:
+        return None
+    return rest.partition('.')[0]
+
+
+def affected_table_of(cell_id: str) -> AffectedTable:
+    """The CLN_AFF table a cell id addresses a row of.
+
+    Raises:
+        UnknownCellError: If the id addresses no CLN_AFF table.
+    """
+    for table in AffectedTable:
+        if cell_id.startswith(f'{table.value}.'):
+            return table
+    raise UnknownCellError(f'{cell_id!r} addresses no CLN_AFF table')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -152,10 +297,14 @@ def _addressed(ref: reference.Reference) -> Iterator[_Cell]:
 
     # A monoallelic proband's row and column read as one fragment, the way SM4 Table 1 names a case.
     for row, column, points, description in _priced(tables.affected_monoallelic):
-        yield _Cell(f'CLN_AFF.ad.{row if column is None else f"{row}_{column}"}', points, description)
+        yield _Cell(
+            f'{AffectedTable.MONOALLELIC.value}.{row if column is None else f"{row}_{column}"}', points, description
+        )
 
     for row, column, points, description in _priced(tables.affected_biallelic):
-        yield _Cell(f'CLN_AFF.arxl.{row if column is None else f"{row}.{column}"}', points, description)
+        yield _Cell(
+            f'{AffectedTable.BIALLELIC.value}.{row if column is None else f"{row}.{column}"}', points, description
+        )
 
     for row, column, points, description in _priced(tables.de_novo):
         yield _Cell(f'CLN_DNV.{row if column is None else f"{row}.{column}"}', points, description)
