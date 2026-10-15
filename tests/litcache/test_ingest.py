@@ -118,7 +118,8 @@ def test_an_id_that_resolves_upstream_is_minted_and_its_manifest_committed(
     # The whole point of an id-only manifest: no bytes were fetched, and the ladder still has its
     # input — `produce_full_text` builds the OA bundle from `external_ids` alone.
     assert not manifest.sources
-    assert not manifest.renderings
+    assert not manifest.records
+    assert not manifest.refs
 
 
 def test_the_ingested_paper_reads_pending_so_the_conversion_lane_picks_it_up(

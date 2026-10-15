@@ -88,8 +88,8 @@ def test_xml_body_opens_oa_branch() -> None:
     assert result.access.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
     assert result.access.access.WhichOneof('kind') == 'free_to_read'
     # The bytes are exactly what the xml→litdown conversion consumes.
-    conversion = convert.convert_jats(result.content, from_source='xml', from_revision='0', created_at=_CREATED_AT)
-    assert conversion.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    conversion = convert.convert_jats(result.content)
+    assert conversion.construction.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
 
 
 def test_bookshelf_rung_opens_oa_branch_for_a_chapter() -> None:
@@ -101,7 +101,7 @@ def test_bookshelf_rung_opens_oa_branch_for_a_chapter() -> None:
     assert result.access.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
     assert result.access.access.WhichOneof('kind') == 'free_to_read'
     # The BITS wrapper is what the xml→litdown conversion consumes.
-    conversion = convert.convert_jats(result.content, from_source='xml', from_revision='0', created_at=_CREATED_AT)
+    conversion = convert.convert_jats(result.content)
     assert conversion.markdown.startswith('# A synthetic chapter')
 
 

@@ -1,8 +1,8 @@
 """The litcache-reading full-text store (docs/design/document-pane.md §Backend seam).
 
 Resolves a canonical ``doc_id`` against the real litcache GCS layout: reads ``papers/{doc_id}/
-manifest.pb``, picks the canonical rendering (xml-faithful over pdf-derived), and names the GCS
-object for a rendering, the current PDF revision, or an associated file — or serves the canonical
+manifest.pb``, follows its ``markdown`` ref to the rendering readers are served, and names the
+GCS object for a rendering, the current PDF revision, or an associated file — or serves that
 rendering's text itself, up to a per-read budget. ``locate``/``validate`` run
 anchorite's quote-to-offset location over the rendering bytes — manifest +
 rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, decoded as
@@ -11,7 +11,8 @@ back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-on
 paper is reported unknown-not-checked, never a false "not located".
 
 Readiness and provenance are derived from the layout, never stored: readiness by
-``litcache.outcome``, provenance from the lineage the canonical rendering was produced from.
+``litcache.outcome``, provenance from the lineages holding the revision that rendering was made
+from.
 
 ``ingest_papers`` is the one method that writes the bucket, committing a manifest for a paper the
 corpus does not hold; otherwise the cache warms via the ingestion pipeline and the convert worker.
@@ -52,6 +53,7 @@ from themis.litcache import (
     mirror,
     outcome,
     paper_metadata,
+    records,
     resolve,
     writer,
 )
@@ -80,15 +82,6 @@ _TRANSIENT_ENQUEUE_ERRORS = (
     api_exceptions.Aborted,  # a concurrent write to the same queue lost
     api_exceptions.RetryError,  # api-core gave up on a retryable code
 )
-
-# Canonical-rendering preference: an xml-faithful litdown rendering over a pdf-derived one, and
-# llm-ocr over the legacy docling route (litcache-manifest.md — fidelity is a read-path policy).
-_CONVERTER_RANK = {
-    litcache_pb2.Converter.CONVERTER_LITDOWN: 0,
-    litcache_pb2.Converter.CONVERTER_LLM_OCR: 1,
-    litcache_pb2.Converter.CONVERTER_DOCLING: 2,
-}
-_CONVERTER_RANK_MISS = max(_CONVERTER_RANK.values()) + 1
 
 # litcache associated-file role -> evidence FileRole (values align; mapped by name to stay explicit).
 _FILE_ROLE = {
@@ -123,10 +116,10 @@ _UNINGESTABLE = (efetch.RecordPreconditionError, mirror.SchemaDriftError, ingest
 
 @dataclasses.dataclass(frozen=True)
 class _Paper:
-    """A paper's parsed litcache record: its manifest and the canonical rendering (if any)."""
+    """A paper's parsed litcache record: its manifest and the rendering its `markdown` ref names (if any)."""
 
     manifest: litcache_pb2.Manifest
-    rendering: tuple[str, litcache_pb2.Rendering] | None  # (hash, rendering) — the canonical one
+    rendering: tuple[str, litcache_pb2.Record] | None  # (hash, record) — the one readers are served
 
 
 class Store:
@@ -355,12 +348,12 @@ class Store:
         return _READINESS_STATE[outcome.read_readiness(self._bucket, doc_id)]
 
     def _read_manifest(self, doc_id: str) -> _Paper:
-        """The paper's manifest + canonical rendering, or ``UnknownPaperError`` if absent."""
+        """The paper's manifest + the rendering its ``markdown`` ref names, or ``UnknownPaperError`` if absent."""
         manifest_bytes = self._download(writer.manifest_path(doc_id))
         if manifest_bytes is None:
             raise literature_backend.UnknownPaperError(doc_id)
         manifest = _parse(litcache_pb2.Manifest(), manifest_bytes)
-        return _Paper(manifest=manifest, rendering=_select_rendering(manifest))
+        return _Paper(manifest=manifest, rendering=records.markdown(manifest))
 
     def _read_for_describe(self, doc_id: str) -> tuple[_Paper, bytes | None]:
         """The manifest and the ``metadata.pb`` bytes (absent ⇒ the title falls back)."""
@@ -471,27 +464,9 @@ def _parse[M: _message.Message](target: M, data: bytes) -> M:
     return target
 
 
-def _provenance(
-    manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Rendering | None
-) -> literature_pb2.TextProvenance:
-    """How the rendering's text entered the store, from the revision it was produced from.
-
-    A lineage a human captured under institutional access, or a revision uploaded rather than
-    fetched, is SUPPLIED; a free-to-read lineage the OA ladder reached is OPEN_ACCESS. Everything
-    else is UNSPECIFIED: no rendering, a rendering whose lineage or revision the manifest does not
-    carry, and the ``licensed``/``unknown`` dispositions — text that reached the store neither by
-    a human nor demonstrably openly, which neither answer would state honestly.
-    """
-    if rendering is None:
-        return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
-    source = _source_by_handle(manifest, rendering.from_source)
-    if source is None:
-        return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
+def _lineage_provenance(source: litcache_pb2.Source, revision: litcache_pb2.Revision) -> literature_pb2.TextProvenance:
     if source.access.WhichOneof('kind') == 'institution_captured':
         return literature_pb2.TEXT_PROVENANCE_SUPPLIED
-    revision = next((r for r in source.revisions if r.hash == rendering.from_revision), None)
-    if revision is None:
-        return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
     if revision.kind == litcache_pb2.SourceKind.SOURCE_KIND_UPLOAD:
         return literature_pb2.TEXT_PROVENANCE_SUPPLIED
     if source.access.WhichOneof('kind') == 'free_to_read':
@@ -499,23 +474,30 @@ def _provenance(
     return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
 
 
-def _select_rendering(manifest: litcache_pb2.Manifest) -> tuple[str, litcache_pb2.Rendering] | None:
-    """The canonical rendering ``(hash, rendering)``: highest-fidelity route, then newest, or None.
+def _provenance(
+    manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Record | None
+) -> literature_pb2.TextProvenance:
+    """How the rendering's text entered the store, from the revision it was produced from.
 
-    Ranks by converter preference (litcache-manifest.md §5), breaking ties toward the most recent
-    ``created_at`` (a re-render of a newer revision is newer) and finally the hash — a total,
-    deterministic order, since protobuf-map iteration order is unspecified.
+    A lineage a human captured under institutional access, or a revision uploaded rather than
+    fetched, is SUPPLIED; a free-to-read lineage the OA ladder reached is OPEN_ACCESS. Everything
+    else is UNSPECIFIED: no rendering, a rendering whose revision no lineage carries, and the
+    ``licensed``/``unknown`` dispositions — text that reached the store neither by a human nor
+    demonstrably openly, which neither answer would state honestly.
+
+    The same bytes can sit in more than one lineage, and then the least restrictive terms apply to
+    them (litcache-manifest.md): OPEN_ACCESS if any lineage holding them is free to read, else
+    SUPPLIED if any reached the store through a human, else UNSPECIFIED.
     """
-    if not manifest.renderings:
-        return None
-
-    def _key(item: tuple[str, litcache_pb2.Rendering]) -> tuple[int, int, int, str]:
-        rendering_hash, rendering = item
-        rank = _CONVERTER_RANK.get(rendering.converter, _CONVERTER_RANK_MISS)
-        created = rendering.created_at
-        return (rank, -created.seconds, -created.nanos, rendering_hash)
-
-    return min(manifest.renderings.items(), key=_key)
+    if rendering is None:
+        return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
+    found = {
+        _lineage_provenance(source, revision) for source, revision in records.source_revisions(manifest, rendering)
+    }
+    for answer in (literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS, literature_pb2.TEXT_PROVENANCE_SUPPLIED):
+        if answer in found:
+            return answer
+    return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
 
 
 def _source_by_format(manifest: litcache_pb2.Manifest, fmt: litcache_pb2.SourceFormat) -> litcache_pb2.Source | None:
@@ -526,13 +508,11 @@ def _source_by_format(manifest: litcache_pb2.Manifest, fmt: litcache_pb2.SourceF
     return max(candidates, key=lambda s: _current_revision(s).captured_at.ToDatetime(), default=None)
 
 
-def _source_by_handle(manifest: litcache_pb2.Manifest, handle: str) -> litcache_pb2.Source | None:
-    return next((s for s in manifest.sources if s.handle == handle), None)
-
-
-def _renders_from_xml(manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Rendering) -> bool:
-    source = _source_by_handle(manifest, rendering.from_source)
-    return source is not None and source.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_XML
+def _renders_from_xml(manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Record) -> bool:
+    return any(
+        source.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_XML
+        for source, _ in records.source_revisions(manifest, rendering)
+    )
 
 
 def _current_revision(source: litcache_pb2.Source) -> litcache_pb2.Revision:

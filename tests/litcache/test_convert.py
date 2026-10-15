@@ -46,9 +46,7 @@ _EXPECTED_MARKDOWN = '\n\n'.join(
 
 
 def _convert() -> convert.Conversion:
-    return convert.convert_docling(
-        _NONOA.read_bytes(), from_source='pdf', from_revision=_FROM_REVISION, created_at=_CREATED_AT
-    )
+    return convert.convert_docling(_NONOA.read_bytes())
 
 
 def test_renders_expected_markdown() -> None:
@@ -56,42 +54,33 @@ def test_renders_expected_markdown() -> None:
 
 
 def test_rendering_record_fields() -> None:
-    rendering = _convert().rendering
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_DOCLING
-    assert rendering.converter_version  # docling-core's installed version
-    assert rendering.from_source == 'pdf'
-    assert rendering.from_revision == _FROM_REVISION
-    assert not rendering.HasField('model')  # docling is not a model-driven converter
-    assert rendering.created_at.ToDatetime(tzinfo=datetime.UTC) == _CREATED_AT
+    construction = _convert().construction
+    assert construction.converter == litcache_pb2.Converter.CONVERTER_DOCLING
+    assert construction.converter_version  # docling-core's installed version
+    assert not construction.HasField('model')  # docling is not a model-driven converter
 
 
 def test_accepts_str_and_bytes_identically() -> None:
-    from_bytes = convert.convert_docling(
-        _NONOA.read_bytes(), from_source='pdf', from_revision=_FROM_REVISION, created_at=_CREATED_AT
-    )
-    from_str = convert.convert_docling(
-        _NONOA.read_text(), from_source='pdf', from_revision=_FROM_REVISION, created_at=_CREATED_AT
-    )
+    from_bytes = convert.convert_docling(_NONOA.read_bytes())
+    from_str = convert.convert_docling(_NONOA.read_text())
     assert from_bytes.markdown == from_str.markdown
 
 
 def test_invalid_json_fails_loud() -> None:
     # docling-core validates with pydantic; malformed json fails its parse.
     with pytest.raises(pydantic.ValidationError):
-        convert.convert_docling(b'{not valid', from_source='pdf', from_revision=_FROM_REVISION, created_at=_CREATED_AT)
+        convert.convert_docling(b'{not valid')
 
 
 def test_empty_document_fails_loud() -> None:
     # A schema-valid DoclingDocument with no body items exports to empty markdown.
     empty = b'{"schema_name": "DoclingDocument", "version": "1.10.0", "name": "empty"}'
     with pytest.raises(ValueError, match='empty markdown'):
-        convert.convert_docling(empty, from_source='pdf', from_revision=_FROM_REVISION, created_at=_CREATED_AT)
+        convert.convert_docling(empty)
 
 
 def _convert_jats() -> convert.Conversion:
-    return convert.convert_jats(
-        _OA_JATS.read_bytes(), from_source='xml', from_revision=_FROM_REVISION, created_at=_CREATED_AT
-    )
+    return convert.convert_jats(_OA_JATS.read_bytes())
 
 
 def test_jats_renders_markdown() -> None:
@@ -101,26 +90,21 @@ def test_jats_renders_markdown() -> None:
 
 
 def test_jats_rendering_record_fields() -> None:
-    rendering = _convert_jats().rendering
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
-    assert rendering.converter_version  # litdown's installed version
-    assert rendering.from_source == 'xml'
-    assert rendering.from_revision == _FROM_REVISION
-    assert not rendering.HasField('model')  # litdown is not a model-driven converter
-    assert rendering.created_at.ToDatetime(tzinfo=datetime.UTC) == _CREATED_AT
+    construction = _convert_jats().construction
+    assert construction.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    assert construction.converter_version  # litdown's installed version
+    assert not construction.HasField('model')  # litdown is not a model-driven converter
 
 
 def test_book_part_wrapper_renders_markdown() -> None:
     # A Bookshelf chapter arrives as a BITS wrapper; litdown heads it with the chapter's title.
-    conversion = convert.convert_jats(
-        _BOOKSHELF_XML.read_bytes(), from_source='xml', from_revision=_FROM_REVISION, created_at=_CREATED_AT
-    )
+    conversion = convert.convert_jats(_BOOKSHELF_XML.read_bytes())
     assert conversion.markdown.startswith('# A synthetic chapter')
-    assert conversion.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    assert conversion.construction.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
 
 
 def test_jats_empty_conversion_fails_loud() -> None:
     # A well-formed article with an empty body converts to empty markdown.
     empty = b'<article><body></body></article>'
     with pytest.raises(ValueError, match='empty markdown'):
-        convert.convert_jats(empty, from_source='xml', from_revision=_FROM_REVISION, created_at=_CREATED_AT)
+        convert.convert_jats(empty)

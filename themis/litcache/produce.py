@@ -41,10 +41,9 @@ from collections.abc import Awaitable, Callable
 import litdown
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
-from google.protobuf import timestamp_pb2
 from litfetch import resolvers
 
-from themis.litcache import identity, oa, ocr, outcome, pdf, writer
+from themis.litcache import identity, oa, ocr, outcome, pdf, records, writer
 from themis.litcache.models import litcache_pb2
 
 # The fetched XML lands as its own lineage; the litdown rendering is produced from it.
@@ -74,9 +73,10 @@ class PaperNotInCorpusError(Exception):
 class _PermanentSourceError(Exception):
     """An OA body or located PDF could not be turned into text and a retry would not help.
 
-    Raised for a served body of an unknown source kind / no access terms, XML litdown cannot parse, or
-    a located PDF over the size bound. Internal: after an OA body the producer falls through to
-    the PDF; either way it settles FAILED — it never escapes as a retryable error.
+    Raised for a served body of an unknown source kind / no access terms, XML litdown cannot parse, a
+    located PDF over the size bound, or a write the writer refuses.
+    Internal: after an OA body the producer falls through to the PDF; either way it settles FAILED —
+    it never escapes as a retryable error.
     """
 
 
@@ -116,16 +116,28 @@ def _source_input(oa_source: oa.OaSource, captured_at: datetime.datetime) -> wri
     )
 
 
-def _xml_rendering(oa_source: oa.OaSource, created_at: datetime.datetime) -> litcache_pb2.Rendering:
-    created = timestamp_pb2.Timestamp()
-    created.FromDatetime(created_at)
-    return litcache_pb2.Rendering(
-        from_source=_XML_HANDLE,
+def _xml_rendering(oa_source: oa.OaSource, markdown: str, created_at: datetime.datetime) -> writer.RenderingInput:
+    return writer.RenderingInput(
+        construction=litcache_pb2.RenderingConstruction(
+            converter=litcache_pb2.Converter.CONVERTER_LITDOWN, converter_version=_LITDOWN_VERSION
+        ),
         from_revision=hashlib.sha256(oa_source.content).hexdigest(),
-        converter=litcache_pb2.Converter.CONVERTER_LITDOWN,
-        converter_version=_LITDOWN_VERSION,
-        created_at=created,
+        created_at=created_at,
+        markdown=markdown,
     )
+
+
+def _write(commit: Callable[[], writer.AddRenderingResult]) -> None:
+    """Run a manifest write, turning the writer's refusal into the permanent failure it is.
+
+    The writer raises `ManifestRefusedError` only for a write it will refuse on every attempt;
+    retrying would re-run a paid conversion to the same end. A storage fault is not caught here, and
+    stays retryable.
+    """
+    try:
+        commit()
+    except writer.ManifestRefusedError as e:
+        raise _PermanentSourceError(f'the manifest refused the write: {e}') from e
 
 
 def _current_revision(source: litcache_pb2.Source) -> litcache_pb2.Revision:
@@ -151,17 +163,17 @@ def _pdf_source(manifest: litcache_pb2.Manifest) -> litcache_pb2.Source | None:
 
 
 def _ocr_rendering(
-    handle: str, revision_hash: str, result: ocr.OcrRendering, created_at: datetime.datetime
-) -> litcache_pb2.Rendering:
-    created = timestamp_pb2.Timestamp()
-    created.FromDatetime(created_at)
-    return litcache_pb2.Rendering(
-        from_source=handle,
+    revision_hash: str, result: ocr.OcrRendering, created_at: datetime.datetime
+) -> writer.RenderingInput:
+    return writer.RenderingInput(
+        construction=litcache_pb2.RenderingConstruction(
+            converter=litcache_pb2.Converter.CONVERTER_LLM_OCR,
+            converter_version=result.converter_version,
+            model=result.model,
+        ),
         from_revision=revision_hash,
-        converter=litcache_pb2.Converter.CONVERTER_LLM_OCR,
-        converter_version=result.converter_version,
-        model=result.model,
-        created_at=created,
+        created_at=created_at,
+        markdown=result.markdown,
     )
 
 
@@ -195,11 +207,9 @@ async def _produce_from_oa(
     if not markdown.strip():
         return False
     captured = now()
-    writer.add_source_and_rendering(
-        bucket,
-        doc_id,
-        _source_input(oa_source, captured),
-        writer.RenderingInput(rendering=_xml_rendering(oa_source, captured), markdown=markdown),
+    source = _source_input(oa_source, captured)
+    _write(
+        lambda: writer.add_source_and_rendering(bucket, doc_id, source, _xml_rendering(oa_source, markdown, captured))
     )
     return True
 
@@ -238,10 +248,8 @@ async def _produce_from_located_pdf(
         origin_url=located.origin_url,
         has_text_layer=pdf.probe_has_text_layer(located.content),
     )
-    rendering = _ocr_rendering(_PDF_HANDLE, hashlib.sha256(located.content).hexdigest(), result, captured)
-    writer.add_source_and_rendering(
-        bucket, doc_id, source, writer.RenderingInput(rendering=rendering, markdown=result.markdown)
-    )
+    rendering = _ocr_rendering(hashlib.sha256(located.content).hexdigest(), result, captured)
+    _write(lambda: writer.add_source_and_rendering(bucket, doc_id, source, rendering))
     return True
 
 
@@ -264,13 +272,7 @@ async def _produce_from_pdf(
     result = await convert_pdf(pdf_bytes)
     if not result.markdown.strip():
         return False
-    writer.add_rendering(
-        bucket,
-        doc_id,
-        writer.RenderingInput(
-            rendering=_ocr_rendering(source.handle, revision.hash, result, now()), markdown=result.markdown
-        ),
-    )
+    _write(lambda: writer.add_rendering(bucket, doc_id, _ocr_rendering(revision.hash, result, now())))
     return True
 
 
@@ -286,8 +288,8 @@ async def produce_full_text(
 ) -> outcome.Readiness:
     """Produce a paper's full text — OA XML if the ladder serves it, else the PDF via LLM-OCR.
 
-    Reads the manifest (which must exist — this runs for a known paper). A rendering already present
-    is a no-op READY. Otherwise it tries the OA ladder (build the litfetch id bundle from
+    Reads the manifest (which must exist — this runs for a known paper). A paper whose `markdown` ref
+    already names a rendering is a no-op READY. Otherwise it tries the OA ladder (build the litfetch id bundle from
     `manifest.external_ids`, fetch the XML body, litdown-convert, commit source + rendering); failing
     that, if the manifest carries a PDF source it OCRs the PDF to markdown and commits a rendering;
     if it carries none, it locates an open-access PDF and commits that PDF with its OCR rendering.
@@ -309,8 +311,8 @@ async def produce_full_text(
         The resulting `Readiness`: READY when a rendering is present or was committed, NO_FULL_TEXT
         when neither the OA ladder nor a held or located PDF yielded any full text, FAILED when a conversion
         failed permanently and will not be retried — a permanent OA anomaly (unknown source kind / no
-        access terms / unparseable XML, which first falls through to the PDF) or an OCR refusal /
-        truncation.
+        access terms / unparseable XML, which first falls through to the PDF), an OCR refusal /
+        truncation, or a stored manifest that breaks its constraints, settled before any fetch or OCR.
 
     Raises:
         PaperNotInCorpusError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
@@ -328,13 +330,19 @@ async def produce_full_text(
     except api_exceptions.NotFound as e:
         raise PaperNotInCorpusError(doc_id) from e
     manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
-    if manifest.renderings:
+    if records.MARKDOWN_REF in manifest.refs:
         return outcome.Readiness.READY
     # A terminal marker settles the paper: Cloud Tasks delivers at-least-once, so a redelivery must
     # not re-run the ladder (an OA fetch, or a full LLM-OCR) only to rewrite the same marker.
     marker = outcome.read_outcome(bucket, doc_id)
     if marker is not None:
         return outcome.terminal_readiness(marker)
+    # Every write checks the whole manifest, so one already breaking its constraints refuses every write:
+    # settle it before paying for an OA fetch or an OCR whose result could not be committed.
+    try:
+        writer.validate_manifest(manifest)
+    except writer.ManifestRefusedError as e:
+        return _record_failed(bucket, doc_id, now(), error=str(e))
 
     oa_failure: str | None = None
     try:

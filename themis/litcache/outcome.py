@@ -4,9 +4,9 @@ A paper's full text is produced lazily: an OA fetch or a PDF conversion adds a r
 manifest (`writer.add_rendering`). Readiness is derived from the `papers/{doc_id}/` layout with no
 separate status store (`docs/design/evidence-fulltext.md`):
 
-- the manifest lists a rendering ⇒ **READY** — a rendering is committed into the manifest only after
-  its blob is written, so `manifest.renderings` non-empty *is* the rendering-present signal (one read,
-  no extra blob probe);
+- the manifest's `markdown` ref is set ⇒ **READY** — a rendering is committed into the manifest only
+  after its blob is written, and the ref lands in the same write, so the ref *is* the
+  rendering-present signal (one read, no extra blob probe);
 - a `.fetch_outcome` sidecar is present ⇒ its **terminal** reason (NO_FULL_TEXT / FAILED) — the stop
   condition, written once when the fetch/convert path gives up;
 - neither ⇒ **PENDING** — production has not been attempted, or has not settled.
@@ -31,7 +31,7 @@ import posixpath
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
-from themis.litcache import writer
+from themis.litcache import records, writer
 from themis.litcache.models import litcache_pb2
 
 _OUTCOME_NAME = '.fetch_outcome'
@@ -113,7 +113,7 @@ def readiness_from_manifest(bucket: gcs.Bucket, doc_id: str, manifest: litcache_
     For a caller that does not hold the manifest, `read_readiness` downloads it and asks this.
 
     Args:
-        bucket: The full-text bucket, probed for the terminal sidecar when the manifest lists no
+        bucket: The full-text bucket, probed for the terminal sidecar when the manifest names no
             rendering.
         doc_id: The paper the manifest belongs to.
         manifest: That paper's manifest.
@@ -121,7 +121,7 @@ def readiness_from_manifest(bucket: gcs.Bucket, doc_id: str, manifest: litcache_
     Returns:
         The readiness.
     """
-    if manifest.renderings:
+    if records.MARKDOWN_REF in manifest.refs:
         return Readiness.READY
     outcome = read_outcome(bucket, doc_id)
     if outcome is None:

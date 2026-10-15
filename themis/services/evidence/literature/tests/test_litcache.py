@@ -83,14 +83,12 @@ def _xml_source() -> litcache_pb2.Source:
     )
 
 
-def _rendering(from_source: str, converter: litcache_pb2.Converter) -> litcache_pb2.Rendering:
-    return litcache_pb2.Rendering(
-        from_source=from_source,
-        from_revision=f'{from_source}rev',
-        converter=converter,
-        converter_version='0.4.0',
-        created_at=_ts(_CAPTURED),
-    )
+def _rendering(from_source: str, converter: litcache_pb2.Converter) -> litcache_pb2.Record:
+    """A rendering record made from `from_source`'s one revision (`_pdf_source` and `_xml_source` name theirs so)."""
+    construction = litcache_pb2.RenderingConstruction(converter=converter, converter_version='0.4.0')
+    if converter == litcache_pb2.Converter.CONVERTER_LLM_OCR:
+        construction.model = 'claude-sonnet-5'
+    return litcache_pb2.Record(deps=[f'{from_source}rev'], created_at=_ts(_CAPTURED), rendering=construction)
 
 
 def _metadata(title: str) -> bytes:
@@ -122,7 +120,7 @@ def _seed_paper(
     *,
     doc_id: str = _DOC,
     sources: Sequence[litcache_pb2.Source] = (),
-    rendering: litcache_pb2.Rendering | None = None,
+    rendering: litcache_pb2.Record | None = None,
     markdown: str | None = _MARKDOWN,
     files: Sequence[litcache_pb2.AssociatedFile] = (),
     metadata: bytes | None = _metadata('A title'),
@@ -140,10 +138,12 @@ def _seed_paper(
     rendering_hash = ''
     if markdown is not None:
         rendering_hash = hashlib.sha256(markdown.encode('utf-8')).hexdigest()
-        # The manifest key is the markdown's own hash, so the caller passes just the Rendering, not a map.
-        manifest.renderings[rendering_hash].CopyFrom(
+        # The record's key is the markdown's own hash, so the caller passes just the record, and the markdown ref
+        # names it.
+        manifest.records[rendering_hash].CopyFrom(
             rendering or _rendering('xml', litcache_pb2.Converter.CONVERTER_LITDOWN)
         )
+        manifest.refs['markdown'] = rendering_hash
         bucket.blob(f'papers/{doc_id}/renderings/{rendering_hash}.md').upload_from_string(markdown)
     bucket.blob(f'papers/{doc_id}/manifest.pb').upload_from_string(manifest.SerializeToString())
     if metadata is not None:
@@ -372,18 +372,6 @@ def test_describe_tolerates_an_unspecified_file_role(gcs_bucket: storage.Bucket)
     assert file.role == literature_pb2.FILE_ROLE_UNSPECIFIED
 
 
-def test_select_rendering_breaks_a_converter_tie_toward_the_newer() -> None:
-    older = _rendering('xml', litcache_pb2.Converter.CONVERTER_LITDOWN)
-    newer = _rendering('xml', litcache_pb2.Converter.CONVERTER_LITDOWN)
-    newer.created_at.CopyFrom(_ts(_CAPTURED + datetime.timedelta(days=1)))
-    manifest = litcache_pb2.Manifest(doc_id=_DOC)
-    manifest.renderings['older-hash'].CopyFrom(older)
-    manifest.renderings['newer-hash'].CopyFrom(newer)
-    selected = litcache_store._select_rendering(manifest)
-    assert selected is not None
-    assert selected[0] == 'newer-hash'
-
-
 def _no_upstream(request: httpx2.Request) -> httpx2.Response:
     """The index half's transport here: these are store tests, and a dial out is the failure."""
     raise AssertionError(f'a store test reached an upstream: {request.url}')
@@ -584,14 +572,11 @@ def test_provenance_states_only_what_the_lineage_supports(
     )
 
 
-@pytest.mark.parametrize('dangling', ['from_source', 'from_revision'], ids=['unknown-lineage', 'unknown-revision'])
-def test_provenance_of_a_rendering_the_manifest_cannot_place_is_unspecified(
-    gcs_bucket: storage.Bucket, dangling: str
-) -> None:
+def test_provenance_of_a_rendering_the_manifest_cannot_place_is_unspecified(gcs_bucket: storage.Bucket) -> None:
     # A manifest that cannot say where its text came from must not be read as open access: the
     # permissive answer is the one a supplied paper would be mislabelled with.
     rendering = _rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR)
-    setattr(rendering, dangling, 'gone')
+    rendering.deps[:] = ['gone']
     _seed_paper(gcs_bucket, sources=[_uploaded()], rendering=rendering)
     result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
     assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
@@ -1087,3 +1072,18 @@ def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
     assert state == literature_pb2.FULL_TEXT_STATE_PENDING
     assert tasks.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}']
     assert gcs_bucket.blob(writer.manifest_path(doc_id)).exists()
+
+
+def test_bytes_held_on_two_sets_of_terms_take_the_least_restrictive(gcs_bucket: storage.Bucket) -> None:
+    # The same PDF captured through a library and found open access is one set of bytes: its text is open access.
+    supplied = _captured_by_an_institution()
+    found_open = _pdf_source()
+    found_open.handle = 'pdf-oa'
+    found_open.revisions[0].kind = litcache_pb2.SourceKind.SOURCE_KIND_UNPAYWALL
+    _seed_paper(
+        gcs_bucket,
+        sources=[supplied, found_open],
+        rendering=_rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR),
+    )
+    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
+    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS

@@ -8,6 +8,7 @@ production path uses.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import hashlib
 import posixpath
@@ -15,7 +16,6 @@ import posixpath
 import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
-from google.protobuf import timestamp_pb2
 
 from themis.litcache import writer
 from themis.litcache.models import litcache_pb2
@@ -70,31 +70,31 @@ def _xml_source(data: bytes = _XML_BYTES, *, handle: str = 'xml') -> writer.Sour
     )
 
 
-def _xml_rendering(from_revision: str = _XML_HASH) -> litcache_pb2.Rendering:
-    return _rendering(
-        from_source='xml', from_revision=from_revision, converter=litcache_pb2.Converter.CONVERTER_LITDOWN
-    )
-
-
 def _rendering(
     *,
-    from_source: str = 'pdf',
     from_revision: str = _PDF_HASH,
     converter: litcache_pb2.Converter = litcache_pb2.Converter.CONVERTER_DOCLING,
     model: str | None = None,
-) -> litcache_pb2.Rendering:
-    created_at = timestamp_pb2.Timestamp()
-    created_at.FromDatetime(_CREATED_AT)
-    rendering = litcache_pb2.Rendering(
-        from_source=from_source,
-        from_revision=from_revision,
-        converter=converter,
-        converter_version='2.0.0',
-        created_at=created_at,
-    )
+    markdown: str = _MARKDOWN,
+    docling_json: bytes | None = None,
+    created_at: datetime.datetime = _CREATED_AT,
+) -> writer.RenderingInput:
+    construction = litcache_pb2.RenderingConstruction(converter=converter, converter_version='2.0.0')
     if model is not None:
-        rendering.model = model
-    return rendering
+        construction.model = model
+    return writer.RenderingInput(
+        construction=construction,
+        from_revision=from_revision,
+        created_at=created_at,
+        markdown=markdown,
+        docling_json=docling_json,
+    )
+
+
+def _xml_rendering(from_revision: str = _XML_HASH, *, markdown: str = _MARKDOWN) -> writer.RenderingInput:
+    return _rendering(
+        from_revision=from_revision, converter=litcache_pb2.Converter.CONVERTER_LITDOWN, markdown=markdown
+    )
 
 
 def _paper(**overrides: object) -> writer.PaperInput:
@@ -105,7 +105,7 @@ def _paper(**overrides: object) -> writer.PaperInput:
         'equivalence': litcache_pb2.Equivalence(edges=[], canonical_doc_id=_DOC_ID),
         'retraction': litcache_pb2.Retraction(),
         'sources': [_source()],
-        'renderings': [writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN, docling_json=b'{"x": 1}')],
+        'renderings': [_rendering(markdown=_MARKDOWN, docling_json=b'{"x": 1}')],
         'metadata': _metadata(),
         'files': (),
     }
@@ -149,10 +149,10 @@ def test_committed_manifest_parses_and_records_revisions_and_hashes(gcs_bucket: 
     assert source.handle == 'pdf'
     assert source.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF
     assert [rev.hash for rev in source.revisions] == [_PDF_HASH]
-    # The rendering is keyed by the markdown's content hash and points back at the
-    # source revision it rendered.
-    assert _MARKDOWN_HASH in manifest.renderings
-    assert manifest.renderings[_MARKDOWN_HASH].from_revision == _PDF_HASH
+    # The rendering is a record keyed by the markdown's content hash, whose dep is the
+    # source revision it rendered, and the markdown ref names it.
+    assert list(manifest.records[_MARKDOWN_HASH].deps) == [_PDF_HASH]
+    assert manifest.refs['markdown'] == _MARKDOWN_HASH
 
 
 def test_a_crash_on_the_commit_leaves_no_manifest_and_no_record(
@@ -207,7 +207,7 @@ def test_skips_an_already_committed_paper(gcs_bucket: gcs.Bucket) -> None:
     changed_hash = hashlib.sha256(changed_bytes).hexdigest()
     changed = _paper(
         sources=[_source(data=changed_bytes)],
-        renderings=[writer.RenderingInput(rendering=_rendering(from_revision=changed_hash), markdown=_MARKDOWN)],
+        renderings=[_rendering(from_revision=changed_hash, markdown=_MARKDOWN)],
     )
     second = writer.write_paper(gcs_bucket, changed)
 
@@ -242,11 +242,7 @@ def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatc
     changed_bytes = b'DIFFERENT'
     changed = _paper(
         sources=[_source(data=changed_bytes)],
-        renderings=[
-            writer.RenderingInput(
-                rendering=_rendering(from_revision=hashlib.sha256(changed_bytes).hexdigest()), markdown=_MARKDOWN
-            )
-        ],
+        renderings=[_rendering(from_revision=hashlib.sha256(changed_bytes).hexdigest(), markdown=_MARKDOWN)],
     )
     result = writer.write_paper(gcs_bucket, changed)
 
@@ -330,6 +326,7 @@ def test_content_addresses_a_fetched_blob_and_records_unfetched_files(gcs_bucket
                 name='fig1.jpg',
                 source_url='https://x/fig1.jpg',
                 data=fig_bytes,
+                captured_at=_CAPTURED_AT,
             ),
             writer.FileInput(
                 role=litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_FIGURE,
@@ -347,29 +344,23 @@ def test_content_addresses_a_fetched_blob_and_records_unfetched_files(gcs_bucket
     digest = hashlib.sha256(fig_bytes).hexdigest()
     assert files['fig1.jpg'].path == f'figures/{digest}.jpg'
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, files['fig1.jpg'].path)) == fig_bytes
+    # A fetched file records the hash a record's dep can name, and when it was fetched.
+    assert files['fig1.jpg'].hash == digest
+    assert files['fig1.jpg'].captured_at.ToDatetime(datetime.UTC) == _CAPTURED_AT
     assert not files['fig2.jpg'].HasField('path')  # un-fetched (lazy fetch)
+    assert not files['fig2.jpg'].hash
 
 
-def test_rendering_from_source_naming_no_source_fails_loud(gcs_bucket: gcs.Bucket) -> None:
-    paper = _paper(renderings=[writer.RenderingInput(rendering=_rendering(from_source='xml'), markdown=_MARKDOWN)])
-    with pytest.raises(ValueError, match='from_source'):
+def test_a_rendering_of_a_revision_no_lineage_holds_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+    paper = _paper(renderings=[_rendering(from_revision='0' * 64, markdown=_MARKDOWN)])
+    with pytest.raises(ValueError, match='deps_resolve'):
         writer.write_paper(gcs_bucket, paper)
-
-
-def test_rendering_from_revision_naming_no_revision_fails_loud(gcs_bucket: gcs.Bucket) -> None:
-    stale_rev = '0' * 64
-    paper = _paper(
-        renderings=[writer.RenderingInput(rendering=_rendering(from_revision=stale_rev), markdown=_MARKDOWN)]
-    )
-    with pytest.raises(ValueError, match='from_revision'):
-        writer.write_paper(gcs_bucket, paper)
+    assert not gcs_bucket.blob(posixpath.join('papers', _DOC_ID, 'manifest.pb')).exists()
 
 
 def test_model_inconsistent_with_converter_fails_loud(gcs_bucket: gcs.Bucket) -> None:
     # docling carries no model; supplying one is inconsistent.
-    paper = _paper(
-        renderings=[writer.RenderingInput(rendering=_rendering(model='claude-opus-4-8'), markdown=_MARKDOWN)]
-    )
+    paper = _paper(renderings=[_rendering(model='claude-opus-4-8', markdown=_MARKDOWN)])
     with pytest.raises(ValueError, match='model'):
         writer.write_paper(gcs_bucket, paper)
 
@@ -377,8 +368,8 @@ def test_model_inconsistent_with_converter_fails_loud(gcs_bucket: gcs.Bucket) ->
 def test_two_renderings_with_the_same_markdown_hash_fail_loud(gcs_bucket: gcs.Bucket) -> None:
     paper = _paper(
         renderings=[
-            writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN),
-            writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN),
+            _rendering(markdown=_MARKDOWN),
+            _rendering(markdown=_MARKDOWN),
         ]
     )
     with pytest.raises(ValueError, match='share the markdown hash'):
@@ -470,56 +461,50 @@ def _load_manifest(bucket: gcs.Bucket, doc_id: str = _DOC_ID) -> litcache_pb2.Ma
 
 def test_add_rendering_appends_to_an_existing_manifest(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    result = writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
     assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
     manifest = _load_manifest(gcs_bucket)
     # The original rendering survives; the new one is added, keyed by its markdown hash.
-    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH}
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'renderings/{_MD2_HASH}.md')) == _MD2.encode('utf-8')
 
 
 def test_add_rendering_is_idempotent_on_a_repeated_hash(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
     # Re-adding the rendering the paper already carries (same markdown) is a no-op.
-    result = writer.add_rendering(
-        gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN)
-    )
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
     assert result == writer.AddRenderingResult(hash=_MARKDOWN_HASH, added=False)
-    assert set(_load_manifest(gcs_bucket).renderings) == {_MARKDOWN_HASH}
+    assert set(_load_manifest(gcs_bucket).records) == {_MARKDOWN_HASH}
 
 
 def test_add_rendering_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
     with pytest.raises(api_exceptions.NotFound):
-        writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+        writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
 
 
-def test_add_rendering_naming_no_source_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+def test_add_rendering_of_a_revision_no_lineage_holds_fails_loud(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    with pytest.raises(ValueError, match='names no source'):
-        writer.add_rendering(
-            gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(from_source='xml'), markdown=_MD2)
-        )
+    with pytest.raises(ValueError, match='deps_resolve'):
+        writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(from_revision='0' * 64, markdown=_MD2))
 
 
 def test_add_source_and_rendering_adds_a_new_lineage_and_rendering(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    result = writer.add_source_and_rendering(
-        gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
-    )
+    result = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), _xml_rendering(markdown=_MD2))
     assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
     manifest = _load_manifest(gcs_bucket)
     # The seed pdf lineage survives; the fetched xml lineage is added alongside it.
     assert {s.handle for s in manifest.sources} == {'pdf', 'xml'}
     xml = next(s for s in manifest.sources if s.handle == 'xml')
     assert [r.hash for r in xml.revisions] == [_XML_HASH]
-    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH}
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'sources/xml/{_XML_HASH}.xml')) == _XML_BYTES
     assert _read(gcs_bucket, posixpath.join('papers', _DOC_ID, f'renderings/{_MD2_HASH}.md')) == _MD2.encode('utf-8')
 
 
 def test_add_source_and_rendering_is_idempotent_on_re_add(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    rendering = writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
+    rendering = _xml_rendering(markdown=_MD2)
     first = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
     second = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
     assert first.added is True
@@ -528,14 +513,12 @@ def test_add_source_and_rendering_is_idempotent_on_re_add(gcs_bucket: gcs.Bucket
     xml = next(s for s in manifest.sources if s.handle == 'xml')
     # A re-delivery duplicates neither the source revision nor the rendering.
     assert [r.hash for r in xml.revisions] == [_XML_HASH]
-    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH}
 
 
 def test_add_source_and_rendering_appends_a_revision_to_an_existing_lineage(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    writer.add_source_and_rendering(
-        gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
-    )
+    writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), _xml_rendering(markdown=_MD2))
     xml2 = b'<article><body>Revised full text.</body></article>'
     xml2_hash = hashlib.sha256(xml2).hexdigest()
     md3 = '# Title\n\nRevised body.\n'
@@ -544,7 +527,7 @@ def test_add_source_and_rendering_appends_a_revision_to_an_existing_lineage(gcs_
         gcs_bucket,
         _DOC_ID,
         _xml_source(data=xml2),
-        writer.RenderingInput(rendering=_xml_rendering(from_revision=xml2_hash), markdown=md3),
+        _xml_rendering(from_revision=xml2_hash, markdown=md3),
     )
     assert result == writer.AddRenderingResult(hash=md3_hash, added=True)
     manifest = _load_manifest(gcs_bucket)
@@ -552,24 +535,22 @@ def test_add_source_and_rendering_appends_a_revision_to_an_existing_lineage(gcs_
     # A second capture of the same lineage appends a revision — it does not fork a new source.
     assert len(xmls) == 1
     assert [r.hash for r in xmls[0].revisions] == [_XML_HASH, xml2_hash]
-    assert set(manifest.renderings) == {_MARKDOWN_HASH, _MD2_HASH, md3_hash}
+    assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH, md3_hash}
 
 
 def test_add_source_and_rendering_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
     with pytest.raises(api_exceptions.NotFound):
-        writer.add_source_and_rendering(
-            gcs_bucket, _DOC_ID, _xml_source(), writer.RenderingInput(rendering=_xml_rendering(), markdown=_MD2)
-        )
+        writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), _xml_rendering(markdown=_MD2))
 
 
 def test_add_source_and_rendering_with_a_mismatched_revision_fails_loud(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    with pytest.raises(ValueError, match='names no revision'):
+    with pytest.raises(ValueError, match='deps_resolve'):
         writer.add_source_and_rendering(
             gcs_bucket,
             _DOC_ID,
             _xml_source(),
-            writer.RenderingInput(rendering=_xml_rendering(from_revision='deadbeef'), markdown=_MD2),
+            _xml_rendering(from_revision='deadbeef', markdown=_MD2),
         )
 
 
@@ -587,15 +568,13 @@ def test_add_rendering_retries_and_keeps_a_concurrent_rendering(
         original_reload(self)
         if self.name and self.name.endswith('manifest.pb') and not fired:
             fired.append(1)
-            writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+            writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
 
     monkeypatch.setattr(gcs.Blob, 'reload', racing_reload)
-    result = writer.add_rendering(
-        gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN)
-    )
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
 
     assert result.added is True
-    assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).renderings)  # neither is lost
+    assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).records)  # neither is lost
 
 
 def test_add_rendering_raises_when_the_rmw_never_converges(
@@ -613,7 +592,7 @@ def test_add_rendering_raises_when_the_rmw_never_converges(
 
     monkeypatch.setattr(gcs.Blob, 'download_as_bytes', always_conflict)
     with pytest.raises(writer.ConcurrentWriteError, match='did not converge'):
-        writer.add_rendering(gcs_bucket, _DOC_ID, writer.RenderingInput(rendering=_rendering(), markdown=_MD2))
+        writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
 
 
 def test_merge_source_rejects_a_media_type_mismatch() -> None:
@@ -625,3 +604,72 @@ def test_merge_source_rejects_a_media_type_mismatch() -> None:
     incoming = litcache_pb2.Source(handle='doc', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML)
     with pytest.raises(ValueError, match='in the manifest'):
         writer._merge_source(manifest, incoming)
+
+
+def test_a_fetched_file_without_a_capture_time_fails_loud(gcs_bucket: gcs.Bucket) -> None:
+    paper = _paper(
+        files=[
+            writer.FileInput(
+                role=litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY, name='mmc1.xlsx', data=b'PK'
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match='capture time'):
+        writer.write_paper(gcs_bucket, paper)
+
+
+def test_write_paper_points_the_markdown_ref_at_the_best_rendering(gcs_bucket: gcs.Bucket) -> None:
+    # A litdown rendering of the XML outranks a docling rendering of the PDF, whichever is listed first.
+    paper = _paper(
+        sources=[_source(), _xml_source()],
+        renderings=[_rendering(markdown=_MARKDOWN), _xml_rendering(markdown=_MD2)],
+    )
+    manifest = writer.write_paper(gcs_bucket, paper).manifest
+    assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH}
+    assert manifest.refs['markdown'] == _MD2_HASH
+
+
+def test_add_rendering_moves_the_markdown_ref_only_to_a_better_rendering(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())  # one docling rendering
+    llm = _rendering(converter=litcache_pb2.Converter.CONVERTER_LLM_OCR, model='claude-sonnet-5', markdown=_MD2)
+    writer.add_rendering(gcs_bucket, _DOC_ID, llm)
+    assert _load_manifest(gcs_bucket).refs['markdown'] == _MD2_HASH  # llm-ocr outranks docling
+
+    worse = _rendering(markdown='# A later docling rendering\n', created_at=_CREATED_AT + datetime.timedelta(days=1))
+    writer.add_rendering(gcs_bucket, _DOC_ID, worse)
+    manifest = _load_manifest(gcs_bucket)
+    assert len(manifest.records) == 3
+    assert manifest.refs['markdown'] == _MD2_HASH  # a newer docling rendering still ranks below llm-ocr
+
+
+def test_a_revision_on_other_terms_lands_in_a_numbered_lineage(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    second = b'%PDF-1.7 a second pdf'
+    other_terms = dataclasses.replace(
+        _source(data=second), access=litcache_pb2.Access(unknown=litcache_pb2.UnknownAccess())
+    )
+    rendering = _rendering(from_revision=hashlib.sha256(second).hexdigest(), markdown=_MD2)
+    writer.add_source_and_rendering(gcs_bucket, _DOC_ID, other_terms, rendering)
+    sources = {s.handle: s for s in _load_manifest(gcs_bucket).sources}
+    assert [r.hash for r in sources['pdf'].revisions] == [_PDF_HASH]  # the held lineage keeps only its own terms
+    assert sources['pdf-2'].access.WhichOneof('kind') == 'unknown'
+    assert [r.hash for r in sources['pdf-2'].revisions] == [hashlib.sha256(second).hexdigest()]
+    stored = posixpath.join('papers', _DOC_ID, f'sources/pdf-2/{hashlib.sha256(second).hexdigest()}.pdf')
+    assert _read(gcs_bucket, stored) == second
+
+
+def test_a_redelivered_fetch_adds_nothing(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    first = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _source(), _rendering(markdown=_MD2))
+    again = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _source(), _rendering(markdown=_MD2))
+    assert (first.added, again.added) == (True, False)
+    assert [s.handle for s in _load_manifest(gcs_bucket).sources] == ['pdf']
+
+
+def test_a_rendering_produced_again_takes_the_latest_runs_record(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    later = _CREATED_AT + datetime.timedelta(days=3)
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN, created_at=later))
+    assert not result.added  # the key was already held
+    record = _load_manifest(gcs_bucket).records[_MARKDOWN_HASH]
+    assert record.created_at.ToDatetime(datetime.UTC) == later

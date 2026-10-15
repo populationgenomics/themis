@@ -232,8 +232,8 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
     assert status == 200
     assert outcome_mod.read_readiness(gcs_bucket, _DOC_ID) is outcome_mod.Readiness.READY
     manifest = litcache_pb2.Manifest.FromString(gcs_bucket.blob(writer.manifest_path(_DOC_ID)).download_as_bytes())
-    rendering = next(iter(manifest.renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    rendering = manifest.records[manifest.refs['markdown']]
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
 
 
 def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(

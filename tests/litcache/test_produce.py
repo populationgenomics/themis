@@ -58,16 +58,19 @@ def _pdf_source() -> writer.SourceInput:
 
 
 def _docling_rendering() -> writer.RenderingInput:
-    created = timestamp_pb2.Timestamp()
-    created.FromDatetime(_CAPTURED_AT)
-    rendering = litcache_pb2.Rendering(
-        from_source='pdf',
+    return writer.RenderingInput(
+        construction=litcache_pb2.RenderingConstruction(
+            converter=litcache_pb2.Converter.CONVERTER_DOCLING, converter_version='2.0.0'
+        ),
         from_revision=_PDF_HASH,
-        converter=litcache_pb2.Converter.CONVERTER_DOCLING,
-        converter_version='2.0.0',
-        created_at=created,
+        created_at=_CAPTURED_AT,
+        markdown='# From the seed pdf\n',
     )
-    return writer.RenderingInput(rendering=rendering, markdown='# From the seed pdf\n')
+
+
+def _served(manifest: litcache_pb2.Manifest) -> litcache_pb2.Record:
+    """The rendering record the manifest's markdown ref names: the one a reader is served."""
+    return manifest.records[manifest.refs['markdown']]
 
 
 def _write_paper(
@@ -218,9 +221,9 @@ def test_produce_fetches_and_commits_oa_full_text(gcs_bucket: gcs.Bucket) -> Non
     xml = next(s for s in manifest.sources if s.handle == 'xml')
     assert xml.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_XML
     assert [r.hash for r in xml.revisions] == [hashlib.sha256(_JATS).hexdigest()]
-    assert len(manifest.renderings) == 1
-    rendering = next(iter(manifest.renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    assert len(manifest.records) == 1
+    rendering = _served(manifest)
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
 
 
@@ -268,10 +271,10 @@ def test_produce_ocrs_the_pdf_when_the_ladder_serves_no_xml(gcs_bucket: gcs.Buck
     manifest = _load_manifest(gcs_bucket)
     # No new source lineage — the OCR renders the pdf already in the manifest.
     assert {s.handle for s in manifest.sources} == {'pdf'}
-    rendering = next(iter(manifest.renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
-    assert rendering.model == 'claude-sonnet-5'
-    assert (rendering.from_source, rendering.from_revision) == ('pdf', _PDF_HASH)
+    rendering = _served(manifest)
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    assert rendering.rendering.model == 'claude-sonnet-5'
+    assert list(rendering.deps) == [_PDF_HASH]
 
 
 def test_produce_ocrs_the_pdf_when_no_fetchable_id(gcs_bucket: gcs.Bucket) -> None:
@@ -302,8 +305,8 @@ def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(
         )
     )
     assert readiness is outcome.Readiness.READY
-    rendering = next(iter(_load_manifest(gcs_bucket).renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    rendering = _served(_load_manifest(gcs_bucket))
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
 
 
 def test_produce_records_no_full_text_when_no_xml_and_no_pdf(gcs_bucket: gcs.Bucket) -> None:
@@ -351,9 +354,10 @@ def test_produce_commits_a_located_pdf_and_its_ocr_when_the_paper_holds_no_pdf(g
         ).download_as_bytes()
         == _LOCATED_PDF
     )
-    (rendering,) = manifest.renderings.values()
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
-    assert (rendering.from_source, rendering.from_revision) == (source.handle, located_hash)
+    (rendering,) = manifest.records.values()
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    assert list(rendering.deps) == [located_hash]
+    assert manifest.refs['markdown'] in manifest.records
 
 
 def test_produce_prefers_the_held_pdf_to_locating_one(gcs_bucket: gcs.Bucket) -> None:
@@ -463,7 +467,7 @@ def test_produce_records_no_full_text_on_an_empty_ocr(gcs_bucket: gcs.Bucket) ->
     )
     assert readiness is outcome.Readiness.NO_FULL_TEXT
     manifest = _load_manifest(gcs_bucket)
-    assert not manifest.renderings
+    assert not manifest.records
     assert {s.handle for s in manifest.sources} == {'pdf'}
 
 
@@ -493,8 +497,8 @@ def test_produce_ocrs_the_latest_pdf_revision_by_captured_at(gcs_bucket: gcs.Buc
     )
     assert readiness is outcome.Readiness.READY
     assert captured['pdf'] == newest
-    rendering = next(iter(_load_manifest(gcs_bucket).renderings.values()))
-    assert rendering.from_revision == hashlib.sha256(newest).hexdigest()
+    rendering = _served(_load_manifest(gcs_bucket))
+    assert list(rendering.deps) == [hashlib.sha256(newest).hexdigest()]
 
 
 def test_produce_records_failed_on_a_permanent_ocr_error(gcs_bucket: gcs.Bucket) -> None:
@@ -515,7 +519,7 @@ def test_produce_records_failed_on_a_permanent_ocr_error(gcs_bucket: gcs.Bucket)
     assert marker is not None
     assert marker.kind is outcome.OutcomeKind.FAILED
     assert 'refused' in marker.error  # the reason is preserved for diagnosis
-    assert not _load_manifest(gcs_bucket).renderings
+    assert not _load_manifest(gcs_bucket).records
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.FAILED
 
 
@@ -550,8 +554,8 @@ def test_produce_falls_through_to_pdf_on_a_permanent_oa_error(gcs_bucket: gcs.Bu
         )
     )
     assert readiness is outcome.Readiness.READY
-    rendering = next(iter(_load_manifest(gcs_bucket).renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+    rendering = _served(_load_manifest(gcs_bucket))
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
 
 
 def test_produce_records_failed_on_a_permanent_oa_error_without_a_pdf(gcs_bucket: gcs.Bucket) -> None:
@@ -687,3 +691,69 @@ def test_produce_raises_not_found_when_the_manifest_names_an_absent_seed(gcs_buc
         asyncio.run(
             produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
         )
+
+
+def test_produce_settles_failed_when_the_manifest_refuses_the_write(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write the writer refuses is refused on every attempt, so the paid conversion must not be retried.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    def refuse(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
+        raise writer.ManifestRefusedError('manifest breaks its constraints: manifest.deps_resolve')
+
+    monkeypatch.setattr(writer, 'add_rendering', refuse)
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT
+        )
+    )
+    assert readiness is outcome.Readiness.FAILED
+    marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
+    assert marker is not None
+    assert 'refused the write' in marker.error
+
+
+def test_produce_settles_a_stored_manifest_that_breaks_its_constraints_before_any_conversion(
+    gcs_bucket: gcs.Bucket,
+) -> None:
+    # Every write would be refused, so neither the OA fetch nor the OCR may run first.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    manifest = _load_manifest(gcs_bucket)
+    manifest.sources.add(handle='orphan')  # a lineage with no access and no revisions
+    gcs_bucket.blob(writer.manifest_path(_DOC_ID)).upload_from_string(manifest.SerializeToString())
+
+    readiness = asyncio.run(
+        produce.produce_full_text(
+            gcs_bucket, _DOC_ID, fetch=_boom, fetch_pdf=_pdf_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT
+        )
+    )
+
+    assert readiness is outcome.Readiness.FAILED
+    marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
+    assert marker is not None
+    assert 'breaks its constraints' in marker.error
+
+
+def test_produce_lets_a_transient_write_fault_propagate_for_retry(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A garbled storage response surfaces as a plain ValueError (a JSON decode error); it is not the writer's
+    # refusal, so the paper is left to be retried rather than settled.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    def garbled(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
+        raise ValueError('Expecting value: line 1 column 1 (char 0)')
+
+    monkeypatch.setattr(writer, 'add_rendering', garbled)
+    with pytest.raises(ValueError, match='Expecting value'):
+        asyncio.run(
+            produce.produce_full_text(
+                gcs_bucket,
+                _DOC_ID,
+                fetch=_returning(None),
+                convert_pdf=_ocr_returning('# OCR\n'),
+                now=lambda: _CAPTURED_AT,
+            )
+        )
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None

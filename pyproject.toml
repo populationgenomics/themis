@@ -107,8 +107,9 @@ sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group
 # defusedxml parses ClinVar's VCV XML (stdlib ElementTree stays exposed to entity expansion, and the
 # payload comes off an unauthenticated public endpoint). google-cloud-storage reaches the litcache
 # fulltext bucket and the gene-disease reference dumps; pubmed_proto reads the metadata.pb title. The
-# litcache_pb2 stubs pull the vendored buf/validate stubs (shipped in the image), which need only
-# protobuf at runtime; no protovalidate and no converter — nothing here renders a source. litfetch is
+# litcache_pb2 stubs pull the vendored buf/validate stubs (shipped in the image). protovalidate checks
+# the manifest MaybeIngestPapers commits against the manifest's own constraints, as every manifest writer
+# does; there is no converter — nothing here renders a source. litfetch is
 # an import, not weight: litcache/resolve.py's bulk arm names it, and its own requirements (httpx2,
 # defusedxml) are already above; the body fetchers behind it belong to the convert worker's path.
 # anchorite locates a verbatim quote to markdown offsets. The cloudsql group (connector +
@@ -120,11 +121,12 @@ sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 # google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
-# XML, anthropic transcribes a PDF, and the storage/protobuf pair reads and commits the manifest.
+# XML, anthropic transcribes a PDF, the storage/protobuf pair reads and commits the manifest, and
+# protovalidate checks each manifest against its own constraints before the commit.
 # pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
 # renders into a Pillow image). google-auth mints the Google identity token the Anthropic SDK
 # exchanges for a federation token, and requests is its transport. The telemetry group carries each
@@ -136,6 +138,7 @@ convert_worker = [
     "google-auth",
     "google-cloud-storage",
     "protobuf",
+    "protovalidate",
     "requests",
     "litfetch==0.4.0",
     "litdown==0.7.0",

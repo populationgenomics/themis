@@ -65,7 +65,7 @@ from themis.common import storage
 from themis.litcache import convert, crosswalk, identity, ingest, oa, pdf, resolve, writer
 from themis.litcache.models import litcache_pb2
 
-# Source-lineage handles: the rendering's `from_source` and the on-disk
+# Source-lineage handles: the manifest's `Source.handle` and the on-disk
 # `sources/{handle}/…` stem. The pdf lineage is always retained; the xml lineage
 # is added only on the OA branch.
 _PDF_HANDLE = 'pdf'
@@ -237,6 +237,7 @@ def ingest_paper(
             name=s.filename,
             source_url=s.origin_url,
             data=s.content,
+            captured_at=now,
         )
         for s in supplementary
     ]
@@ -425,9 +426,7 @@ def _convert_branch(
     """
     if oa_source is not None:
         xml_hash = hashlib.sha256(oa_source.content).hexdigest()
-        conversion = convert.convert_jats(
-            oa_source.content, from_source=_XML_HANDLE, from_revision=xml_hash, created_at=now
-        )
+        conversion = convert.convert_jats(oa_source.content)
         xml_source = writer.SourceInput(
             handle=_XML_HANDLE,
             media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML,
@@ -451,13 +450,16 @@ def _convert_branch(
         )
         return _Branch(
             sources=[pdf_source, xml_source],
-            rendering=writer.RenderingInput(rendering=conversion.rendering, markdown=conversion.markdown),
+            rendering=writer.RenderingInput(
+                construction=conversion.construction,
+                from_revision=xml_hash,
+                created_at=now,
+                markdown=conversion.markdown,
+            ),
         )
 
     pdf_hash = hashlib.sha256(seed.pdf).hexdigest()
-    conversion = convert.convert_docling(
-        seed.docling_json, from_source=_PDF_HANDLE, from_revision=pdf_hash, created_at=now
-    )
+    conversion = convert.convert_docling(seed.docling_json)
     pdf_source = writer.SourceInput(
         handle=_PDF_HANDLE,
         media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF,
@@ -471,5 +473,10 @@ def _convert_branch(
     )
     return _Branch(
         sources=[pdf_source],
-        rendering=writer.RenderingInput(rendering=conversion.rendering, markdown=conversion.markdown),
+        rendering=writer.RenderingInput(
+            construction=conversion.construction,
+            from_revision=pdf_hash,
+            created_at=now,
+            markdown=conversion.markdown,
+        ),
     )

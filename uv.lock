@@ -3874,6 +3874,7 @@ convert-worker = [
     { name = "opentelemetry-sdk" },
     { name = "pillow" },
     { name = "protobuf" },
+    { name = "protovalidate" },
     { name = "pubmed-proto" },
     { name = "pypdfium2" },
     { name = "requests" },
@@ -3936,6 +3937,7 @@ evidence = [
     { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "protovalidate" },
     { name = "pubmed-proto" },
     { name = "requests" },
 ]
@@ -4228,6 +4230,7 @@ convert-worker = [
     { name = "opentelemetry-sdk" },
     { name = "pillow" },
     { name = "protobuf" },
+    { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "pypdfium2" },
     { name = "requests" },
@@ -4290,6 +4293,7 @@ evidence = [
     { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "protovalidate" },
     { name = "pubmed-proto", specifier = "==0.3.0" },
     { name = "requests" },
 ]

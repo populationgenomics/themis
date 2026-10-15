@@ -1,7 +1,7 @@
 """Tests for full-text readiness + the terminal-outcome sidecar (`themis.litcache.outcome`).
 
 Backed by the shared fake-gcs-server `gcs_bucket` fixture (Docker-gated): readiness is derived from a
-real `papers/{doc_id}/` layout — a committed manifest, its renderings, and the `.fetch_outcome`
+real `papers/{doc_id}/` layout — a committed manifest, its rendering records, and the `.fetch_outcome`
 sidecar — the same objects the deployed service reads.
 """
 
@@ -12,7 +12,6 @@ import hashlib
 
 import pytest
 from google.cloud import storage as gcs
-from google.protobuf import timestamp_pb2
 
 from themis.litcache import outcome, writer
 from themis.litcache.models import litcache_pb2
@@ -37,15 +36,14 @@ def _source() -> writer.SourceInput:
     )
 
 
-def _rendering() -> litcache_pb2.Rendering:
-    created = timestamp_pb2.Timestamp()
-    created.FromDatetime(_AT)
-    return litcache_pb2.Rendering(
-        from_source='pdf',
+def _rendering() -> writer.RenderingInput:
+    return writer.RenderingInput(
+        construction=litcache_pb2.RenderingConstruction(
+            converter=litcache_pb2.Converter.CONVERTER_DOCLING, converter_version='2.0.0'
+        ),
         from_revision=_PDF_HASH,
-        converter=litcache_pb2.Converter.CONVERTER_DOCLING,
-        converter_version='2.0.0',
-        created_at=created,
+        created_at=_AT,
+        markdown=_MARKDOWN,
     )
 
 
@@ -83,7 +81,7 @@ def _write_pending(bucket: gcs.Bucket) -> None:
 def _write_ready(bucket: gcs.Bucket) -> None:
     writer.write_paper(
         bucket,
-        _paper(sources=[_source()], renderings=[writer.RenderingInput(rendering=_rendering(), markdown=_MARKDOWN)]),
+        _paper(sources=[_source()], renderings=[_rendering()]),
     )
 
 

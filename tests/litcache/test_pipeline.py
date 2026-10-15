@@ -242,9 +242,9 @@ def test_ingests_a_nonoa_paper_end_to_end(conn: pg8000.dbapi.Connection, gcs_buc
 
     # Non-OA branch: one rendering from the pdf source, via docling.
     assert [s.handle for s in manifest.sources] == ['pdf']
-    rendering = next(iter(manifest.renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_DOCLING
-    assert rendering.from_source == 'pdf'
+    rendering = manifest.records[manifest.refs['markdown']]
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_DOCLING
+    assert list(rendering.deps) == [manifest.sources[0].revisions[0].hash]
     pdf_revision = manifest.sources[0].revisions[0]
     # The pdf is the source of truth, so its revision carries the char-addressability
     # probe; the fixture pdf has a text layer.
@@ -400,9 +400,9 @@ def test_ingests_an_oa_paper_via_the_xml_branch(conn: pg8000.dbapi.Connection, g
     assert not sources['pdf'].revisions[0].HasField('has_text_layer')
 
     # One rendering from the xml source, via litdown.
-    rendering = next(iter(result.manifest.renderings.values()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
-    assert rendering.from_source == 'xml'
+    rendering = result.manifest.records[result.manifest.refs['markdown']]
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    assert list(rendering.deps) == [sources['xml'].revisions[0].hash]
 
     # Licence/access are per-source. The xml lineage carries the fetched artifact's
     # terms (CC-BY → free-to-read), overriding the non-OA fallback; the retained seed
@@ -464,9 +464,11 @@ def test_ingests_a_bookshelf_chapter_via_the_xml_branch(conn: pg8000.dbapi.Conne
     assert sources['xml'].access.WhichOneof('kind') == 'free_to_read'
 
     # The BITS wrapper rendered through litdown.
-    rendering_hash, rendering = next(iter(manifest.renderings.items()))
-    assert rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
-    assert rendering.from_source == 'xml'
+    rendering_hash = manifest.refs['markdown']
+    rendering = manifest.records[rendering_hash]
+    assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+    xml_revision = next(s for s in manifest.sources if s.handle == 'xml').revisions[0]
+    assert list(rendering.deps) == [xml_revision.hash]
     markdown_path = posixpath.join('papers', result.doc_id, 'renderings', f'{rendering_hash}.md')
     assert gcs_bucket.blob(markdown_path).download_as_bytes().decode('utf-8').startswith('# A synthetic chapter')
 

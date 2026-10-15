@@ -1,6 +1,6 @@
 """Render a seed paper's source to markdown — both conversion branches.
 
-A paper's seed snapshot becomes one `Rendering` via one of two branches:
+A paper's seed snapshot becomes one rendering via one of two branches:
 
 - OA / xml-faithful (`convert_jats`): full-text XML fetched from the litfetch
   ladder (gated by `themis.litcache.oa`), converted with litdown. Higher-fidelity — the
@@ -10,14 +10,14 @@ A paper's seed snapshot becomes one `Rendering` via one of two branches:
   structure from the pdf's layout, so it is lower-fidelity; this is the fallback
   when no OA XML is obtainable.
 
-Both functions are pure: the caller owns where the source bytes and the clock
-come from, so `from_source`, `from_revision`, and `created_at` are inputs.
+Both functions are pure, and say only how the markdown was made: which revision it
+was made from and when are the caller's, which records them on the rendering's
+record (`writer.RenderingInput`).
 """
 
 from __future__ import annotations
 
 import dataclasses
-import datetime
 import importlib.metadata
 
 import litdown
@@ -38,34 +38,26 @@ _JATS_CONVERTER_VERSION = importlib.metadata.version('litdown')
 
 @dataclasses.dataclass(frozen=True)
 class Conversion:
-    """A rendered markdown document and its manifest rendering record.
+    """A rendered markdown document and how it was made.
 
     Attributes:
         markdown: The rendered markdown text — the rendering's bytes before the
             caller writes them.
-        rendering: The manifest `Rendering` record describing this conversion.
+        construction: The converter and its version, for the rendering's record.
     """
 
     markdown: str
-    rendering: litcache_pb2.Rendering
+    construction: litcache_pb2.RenderingConstruction
 
 
-def convert_docling(
-    docling_json: bytes | str, *, from_source: str, from_revision: str, created_at: datetime.datetime
-) -> Conversion:
+def convert_docling(docling_json: bytes | str) -> Conversion:
     """Convert a Docling json document to a `pdf-derived` markdown rendering.
 
     Args:
         docling_json: The raw DoclingDocument json (bytes or str).
-        from_source: The `Source.handle` the markdown is produced from — the pdf
-            lineage (e.g. `pdf`).
-        from_revision: The hash of the source revision's bytes the markdown was
-            produced from; the writer verifies it against the source it writes.
-        created_at: Timezone-aware timestamp for the rendering record; the caller
-            (pipeline) owns the clock.
 
     Returns:
-        The `Conversion`: the markdown text and its `Rendering` record
+        The `Conversion`: the markdown text and its construction
         (`converter=docling`).
 
     Raises:
@@ -78,17 +70,11 @@ def convert_docling(
     if not markdown.strip():
         raise ValueError(f'docling export produced empty markdown for {doc.name!r}')
 
-    rendering = litcache_pb2.Rendering(
-        converter=_CONVERTER,
-        converter_version=_CONVERTER_VERSION,
-        from_source=from_source,
-        from_revision=from_revision,
-        created_at=created_at,
-    )
-    return Conversion(markdown=markdown, rendering=rendering)
+    construction = litcache_pb2.RenderingConstruction(converter=_CONVERTER, converter_version=_CONVERTER_VERSION)
+    return Conversion(markdown=markdown, construction=construction)
 
 
-def convert_jats(jats_xml: bytes, *, from_source: str, from_revision: str, created_at: datetime.datetime) -> Conversion:
+def convert_jats(jats_xml: bytes) -> Conversion:
     """Convert full-text XML to an `xml-faithful` markdown rendering.
 
     The OA branch: the XML body has been fetched from the litfetch ladder (see
@@ -98,15 +84,9 @@ def convert_jats(jats_xml: bytes, *, from_source: str, from_revision: str, creat
 
     Args:
         jats_xml: The full-text XML bytes (JATS, BITS, or Elsevier `ce:`/`ja:`).
-        from_source: The `Source.handle` the markdown is produced from — the xml
-            lineage (e.g. `xml`).
-        from_revision: The hash of the source revision's bytes the markdown was
-            produced from; the writer verifies it against the source it writes.
-        created_at: Timezone-aware timestamp for the rendering record; the caller
-            (pipeline) owns the clock.
 
     Returns:
-        The `Conversion`: the markdown text and its `Rendering` record
+        The `Conversion`: the markdown text and its construction
         (`converter=litdown`).
 
     Raises:
@@ -117,11 +97,7 @@ def convert_jats(jats_xml: bytes, *, from_source: str, from_revision: str, creat
     if not markdown.strip():
         raise ValueError('litdown conversion produced empty markdown')
 
-    rendering = litcache_pb2.Rendering(
-        converter=_JATS_CONVERTER,
-        converter_version=_JATS_CONVERTER_VERSION,
-        from_source=from_source,
-        from_revision=from_revision,
-        created_at=created_at,
+    construction = litcache_pb2.RenderingConstruction(
+        converter=_JATS_CONVERTER, converter_version=_JATS_CONVERTER_VERSION
     )
-    return Conversion(markdown=markdown, rendering=rendering)
+    return Conversion(markdown=markdown, construction=construction)
