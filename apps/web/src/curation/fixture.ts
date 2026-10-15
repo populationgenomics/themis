@@ -1,6 +1,19 @@
-import { fromBinary, toBinary } from "@bufbuild/protobuf";
-import { AssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
-import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import {
+  create,
+  fromBinary,
+  type MessageInitShape,
+  toBinary,
+} from "@bufbuild/protobuf";
+import {
+  AssessmentSchema,
+  type FieldValue,
+} from "@/gen/themis/curation/models/curation_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
+import {
+  AssessmentStatus,
+  Classification,
+  ModeOfInheritance,
+} from "@/gen/themis/svcv4/models/svcv4_pb";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
 import { DEV_USER_EMAIL } from "@/server/identity";
 import type {
@@ -12,6 +25,7 @@ import type {
   Variant,
   Worksheet,
 } from "./model";
+import { CASE_ID, ROUTING_ID, VERDICT_ID } from "./sections";
 import { type CurationStore, duplicateRegistration } from "./store";
 import { WORKFLOWS_VERSION } from "./version";
 
@@ -20,7 +34,8 @@ import { WORKFLOWS_VERSION } from "./version";
 //
 // Seeded with one manager (the dev user, who is also assigned a worksheet — the arrangement the
 // blindness rule exists for) and two curators, so the surface has something to render without a
-// database.
+// database. Both curators of the second variant have submitted, so the comparison page has two
+// answers to read against each other.
 
 const SECOND_CURATOR = "sam.okafor@example.org";
 const THIRD_CURATOR = "rin.tanaka@example.org";
@@ -89,9 +104,38 @@ export class FixtureCurationStore implements CurationStore {
           ? [DEV_USER_EMAIL, SECOND_CURATOR]
           : [SECOND_CURATOR, THIRD_CURATOR];
       for (const curator of curators) {
-        this.insertWorksheet(stored.id, curator, DEV_USER_EMAIL, at);
+        const worksheet = this.insertWorksheet(
+          stored.id,
+          curator,
+          DEV_USER_EMAIL,
+          at,
+        );
+        if (stored.gene !== "CFTR") continue;
+        const answers = SUBMITTED_ANSWERS.get(curator);
+        if (answers === undefined) {
+          throw new Error(`the fixture seeds no answers for ${curator}`);
+        }
+        this.insertSubmission(worksheet.id, answers, at);
       }
     }
+  }
+
+  /** A worksheet whose drafts were submitted as they stand, as `submit` leaves one. */
+  private insertSubmission(
+    worksheetId: string,
+    answers: Entry[],
+    submittedAt: Date,
+  ): void {
+    const entries = new Map(
+      answers.map(({ workflowId, assessment }) => [
+        workflowId,
+        toBinary(AssessmentSchema, assessment),
+      ]),
+    );
+    this.draftRows.set(worksheetId, new Map(entries));
+    this.submissionRows.set(worksheetId, [
+      { id: this.id("sub"), worksheetId, submittedAt, note: "", entries },
+    ]);
   }
 
   private insertVariant(
@@ -297,3 +341,211 @@ export class FixtureCurationStore implements CurationStore {
     throw new ResourceNotFoundError(`no such submission: ${submissionId}`);
   }
 }
+
+// The two seeded submissions on the CFTR variant. Each field is what the worksheet would have stored:
+// the control's field id, the cell's framework name, the label the curator read, and the value —
+// the chosen cell's id for a selection, the typed text for a count or a frequency.
+
+function field(
+  fieldId: string,
+  cellId: string,
+  label: string,
+  value: string,
+): FieldValue {
+  return {
+    $typeName: "themis.curation.models.curation.FieldValue",
+    fieldId,
+    cellId,
+    label,
+    value,
+  };
+}
+
+function scoredWorkflow(
+  workflowId: string,
+  fields: FieldValue[],
+  rationale: string,
+): Entry {
+  return {
+    workflowId,
+    assessment: create(AssessmentSchema, {
+      kind: {
+        case: "workflow",
+        value: { status: AssessmentStatus.SCORED, fields, rationale },
+      },
+    }),
+  };
+}
+
+/** A workflow the curator marked as having nothing to assess. `leftover` is what a status change
+ *  leaves stored: the worksheet keeps the fields filled before it. */
+function noDataWorkflow(
+  workflowId: string,
+  statusReason: string,
+  leftover: FieldValue[],
+): Entry {
+  return {
+    workflowId,
+    assessment: create(AssessmentSchema, {
+      kind: {
+        case: "workflow",
+        value: {
+          status: AssessmentStatus.NO_DATA,
+          fields: leftover,
+          statusReason,
+        },
+      },
+    }),
+  };
+}
+
+function section(
+  workflowId: string,
+  kind: MessageInitShape<typeof AssessmentSchema>["kind"],
+): Entry {
+  return { workflowId, assessment: create(AssessmentSchema, { kind }) };
+}
+
+const DAFT = (value: string) =>
+  field(
+    "pop_frq.daft",
+    "POP_FRQ.daft",
+    "Disease Allele Frequency Threshold",
+    value,
+  );
+const FAF = (value: string) =>
+  field(
+    "pop_frq.faf",
+    "POP_FRQ.faf",
+    "Variant GrpMax Filtering Allele Frequency",
+    value,
+  );
+const BELOW_1_5X = field(
+  "pop_frq.bin",
+  "POP_FRQ.bin.lt_1_5x",
+  "Frequency of VBC <(1.5x of DAFT)",
+  "pop_frq.bin.lt_1_5x",
+);
+const DAMAGING_INDEL = field(
+  "cds_prd",
+  "CDS_PRD.not_repetitive.damaging",
+  "InDel is NOT located in a repetitive region (>5 repetitive units) — In silico inframe predictive tool suggests a damaging impact",
+  "cds_prd.not_repetitive.damaging",
+);
+const HOMOZYGOUS_PROBANDS = (count: string) =>
+  field(
+    "CLN_AFF.arxl.consistent_full_lt_0_0001.homozygous",
+    "CLN_AFF.arxl.consistent_full_lt_0_0001.homozygous",
+    "Phenotype is CONSISTENT for MDE AND All relevant genes for disorder tested AND Non-genetic etiology is unlikely AND No additional variant of interest AND Likelihood of observing two heterozygous variants is <0.0001 — Homozygous VBC",
+    count,
+  );
+
+const SUBMITTED_ANSWERS: ReadonlyMap<string, Entry[]> = new Map([
+  [
+    SECOND_CURATOR,
+    [
+      section(CASE_ID, {
+        case: "caseContext",
+        value: {
+          probandNarrative:
+            "Meconium ileus at birth; sweat chloride 98 mmol/L on two occasions.",
+          testingPerformed: "CFTR full-gene sequencing with MLPA.",
+          coObservedVariant:
+            "Homozygous; each parent carries one copy, so the two alleles are in trans.",
+        },
+      }),
+      section(ROUTING_ID, {
+        case: "routing",
+        value: {
+          consequenceClass: Consequence.INFRAME_INDEL,
+          rationale: "A three-base deletion removing Phe508; the frame holds.",
+        },
+      }),
+      scoredWorkflow(
+        "pop_frq",
+        [BELOW_1_5X, DAFT("0.0153"), FAF("0.00984")],
+        "Common in European-ancestry groups, but below the threshold the disease's prevalence allows.",
+      ),
+      scoredWorkflow(
+        "cds_prd",
+        [DAMAGING_INDEL],
+        "Outside any repeat; the in-frame predictors agree on a damaging effect.",
+      ),
+      scoredWorkflow(
+        "cds_fxn",
+        [
+          field(
+            "cds_fxn",
+            "CDS_FXN.assay_consistent_with_controls",
+            "There are functional data for the VBC AND Functional assay is consistent with mechanism for VBC AND P & B controls are used",
+            "cds_fxn.yes",
+          ),
+        ],
+        "Chloride-transport assays in primary airway cells, with wild-type and known-benign controls, show near-absent function.",
+      ),
+      scoredWorkflow(
+        "cln_aff_arxl",
+        [HOMOZYGOUS_PROBANDS("3")],
+        "Three unrelated homozygous probands in the cited cohort, each with a classic presentation.",
+      ),
+      section(VERDICT_ID, {
+        case: "verdict",
+        value: {
+          classification: Classification.PATHOGENIC,
+          rationale:
+            "The functional data alone carry it past likely pathogenic; the probands agree.",
+          classDeterminative: ["cds_fxn", "cln_aff_arxl"],
+        },
+      }),
+    ],
+  ],
+  [
+    THIRD_CURATOR,
+    [
+      section(CASE_ID, {
+        case: "caseContext",
+        value: {
+          probandNarrative:
+            "Recurrent chest infections from infancy; sweat chloride 98 mmol/L.",
+          segregation: "Both parents are heterozygous carriers.",
+        },
+      }),
+      section(ROUTING_ID, {
+        case: "routing",
+        value: {
+          consequenceClass: Consequence.INFRAME_INDEL,
+          rationale: "In-frame deletion of one codon.",
+        },
+      }),
+      scoredWorkflow(
+        "pop_frq",
+        [BELOW_1_5X, DAFT("0.0153"), FAF("0.0104")],
+        "Below the threshold, if not by much.",
+      ),
+      noDataWorkflow(
+        "cds_prd",
+        "The in-frame predictors I can run were trained with this deletion as a positive, so none of them is independent evidence.",
+        [DAMAGING_INDEL],
+      ),
+      scoredWorkflow(
+        "cds_fxn",
+        [field("cds_fxn", "CDS_FXN.no", "No", "cds_fxn.no")],
+        "The assays I found had no benign controls, so they do not meet the row.",
+      ),
+      scoredWorkflow(
+        "cln_aff_arxl",
+        [HOMOZYGOUS_PROBANDS("2")],
+        "Two of the three probands share a surname and a clinic; I counted them once.",
+      ),
+      section(VERDICT_ID, {
+        case: "verdict",
+        value: {
+          classification: Classification.LIKELY_PATHOGENIC,
+          rationale:
+            "Without a controlled assay the probands hold it at likely pathogenic.",
+          classDeterminative: ["cln_aff_arxl", "pop_frq"],
+        },
+      }),
+    ],
+  ],
+]);

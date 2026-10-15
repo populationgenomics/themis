@@ -550,7 +550,7 @@ function RoutingNotes({ routing }: { routing: Routing }) {
 
 // The message's own prose fields, named explicitly: `keyof CaseAssessment` also picks up
 // protobuf-es's `$typeName` and `$unknown`.
-type CaseField =
+export type CaseField =
   | "probandNarrative"
   | "testingPerformed"
   | "coObservedVariant"
@@ -558,7 +558,8 @@ type CaseField =
   | "assays"
   | "other";
 
-const CASE_FIELDS: [CaseField, string, string][] = [
+/** Each slot of the case: its field, the name the curator reads it under, and the hint beside it. */
+export const CASE_FIELDS: [CaseField, string, string][] = [
   [
     "probandNarrative",
     "Presentation",
@@ -656,6 +657,18 @@ export const CLASSIFICATIONS: [Classification, string][] = [
   ],
   [Classification.DO_NOT_REPORT, "Do not report"],
 ];
+
+/** The class as the picker names it; "not stated" for a verdict that names none yet. */
+export function classificationLabel(classification: Classification): string {
+  if (classification === Classification.UNSPECIFIED) return "not stated";
+  const found = CLASSIFICATIONS.find(([value]) => value === classification);
+  if (found === undefined) {
+    throw new Error(
+      `${classification} is not a classification the worksheet offers`,
+    );
+  }
+  return found[1];
+}
 
 /** The classification and its reasoning. Stated, never derived: the worksheet collects no points,
  *  and `themis.svcv4` owns the arithmetic that would turn a code set into a band.

@@ -1,17 +1,12 @@
+import { toJson } from "@bufbuild/protobuf";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isCurationAccessError } from "@/curation/access";
-import { consequenceLabel } from "@/curation/consequence";
 import { curationContext } from "@/curation/http";
 import { inlineMode } from "@/curation/mode";
-import { ROUTING_ID } from "@/curation/sections";
-import type {
-  RoutingAssessment,
-  WorkflowAssessment,
-} from "@/gen/themis/curation/models/curation_pb";
-import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
-import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { Comparison, type CuratorAnswers } from "@/curation/ui/comparison";
+import { AssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
 import { isResourceNotFoundError } from "@/server/errors";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +22,11 @@ export const dynamic = "force-dynamic";
 // two curators have submitted — one submitted answer is not a comparison, and serving it would let a
 // manager read a colleague's reasoning under the name of one.
 //
-// Everything rendered comes from the stored assessment, never from today's transcription. A
-// worksheet pins the `workflows_version` it was answered against, so labelling an old answer with
-// current wording would report a question the curator was never asked.
+// The wording of what was asked comes only from the stored labels, never from today's transcription.
+// A worksheet pins the `workflows_version` it was answered against, so labelling an old answer with
+// current wording would report a question the curator was never asked. A workflow's name comes from
+// the registry: a workflow id is never reused for another workflow, so the registry's code and title
+// name the same workflow whatever version a worksheet pinned.
 
 export default async function ComparePage({
   params,
@@ -67,23 +64,16 @@ export default async function ComparePage({
   const variant = await access.listVariants();
   const subject = variant.find((v) => v.id === variantId);
 
-  // Every workflow either curator answered, in registry order so the two columns line up. The
-  // routing is drawn on its own, above them.
-  const workflowIds = [
-    ...new Set(answers.flatMap((a) => a.entries.map((e) => e.workflowId))),
-  ]
-    .filter((id) => id !== ROUTING_ID)
-    .sort();
-  const routings = answers.map((answer) => {
-    const entry = answer.entries.find((e) => e.workflowId === ROUTING_ID);
-    return {
-      curator: answer.worksheet.curatorEmail,
-      routing:
-        entry?.assessment.kind.case === "routing"
-          ? entry.assessment.kind.value
-          : undefined,
-    };
-  });
+  const submitted: CuratorAnswers[] = answers.map((answer) => ({
+    curator: answer.worksheet.curatorEmail,
+    workflowsVersion: answer.worksheet.workflowsVersion,
+    entries: Object.fromEntries(
+      answer.entries.map((e) => [
+        e.workflowId,
+        toJson(AssessmentSchema, e.assessment),
+      ]),
+    ),
+  }));
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -109,183 +99,7 @@ export default async function ComparePage({
         </p>
       </header>
 
-      <div className="space-y-4">
-        <RoutingComparison routings={routings} />
-        {workflowIds.map((workflowId) => {
-          const perCurator = answers.map((answer) => {
-            const entry = answer.entries.find(
-              (e) => e.workflowId === workflowId,
-            );
-            return {
-              curator: answer.worksheet.curatorEmail,
-              assessment:
-                entry?.assessment.kind.case === "workflow"
-                  ? entry.assessment.kind.value
-                  : undefined,
-            };
-          });
-          const cells = perCurator.map((p) =>
-            (p.assessment?.fields ?? [])
-              .map((f) => f.cellId)
-              .sort()
-              .join("|"),
-          );
-          const agreed = new Set(cells).size === 1;
-          return (
-            <section
-              key={workflowId}
-              className={`rounded-md border bg-white p-5 ${agreed ? "border-line-primary" : "border-amber-uncertainty-border"}`}
-            >
-              <div className="mb-3 flex items-baseline justify-between gap-3 border-line-row border-b pb-2">
-                <span>
-                  <span className="font-mono text-[12px] text-ink-faint">
-                    {codeOf(perCurator) ?? workflowId}
-                  </span>
-                  <span className="framework-voice ml-2 text-[14px] text-ink-primary">
-                    {workflowId}
-                  </span>
-                </span>
-                <span
-                  className={`framework-voice text-[12.5px] ${agreed ? "text-ink-faint" : "text-amber-uncertainty-heading"}`}
-                >
-                  {agreed ? "same cells" : "different cells"}
-                </span>
-              </div>
-              <div className="grid gap-5 md:grid-cols-2">
-                {perCurator.map(({ curator, assessment }) => (
-                  <CuratorAnswer
-                    key={curator}
-                    curator={curator}
-                    assessment={assessment}
-                  />
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      <Comparison answers={submitted} />
     </main>
-  );
-}
-
-/** The evidence code, read off a stored cell id (`CLN_AFF.ad.specific_full`) rather than looked up:
- *  the answer names its own framework address, and that survives a change to the components. */
-function codeOf(
-  perCurator: { assessment?: WorkflowAssessment }[],
-): string | undefined {
-  for (const { assessment } of perCurator) {
-    const cell = assessment?.fields.find((f) => f.cellId !== "")?.cellId;
-    if (cell) return cell.split(".")[0];
-  }
-  return undefined;
-}
-
-/** The two routings: the consequence class each curator stated, and their reasoning, which is also
- *  where a curator argues that another entity is the question to ask. */
-function RoutingComparison({
-  routings,
-}: {
-  routings: { curator: string; routing?: RoutingAssessment }[];
-}) {
-  // Agreement needs a class from every curator: two unstated classes are not a shared answer.
-  const agreed =
-    routings.every(
-      (r) =>
-        r.routing !== undefined &&
-        r.routing.consequenceClass !== Consequence.UNSPECIFIED,
-    ) && new Set(routings.map((r) => r.routing?.consequenceClass)).size === 1;
-  return (
-    <section
-      className={`rounded-md border bg-white p-5 ${agreed ? "border-line-primary" : "border-amber-uncertainty-border"}`}
-    >
-      <div className="mb-3 flex items-baseline justify-between gap-3 border-line-row border-b pb-2">
-        <span className="framework-voice text-[14px] text-ink-primary">
-          Routing
-        </span>
-        <span
-          className={`framework-voice text-[12.5px] ${agreed ? "text-ink-faint" : "text-amber-uncertainty-heading"}`}
-        >
-          {agreed ? "same consequence class" : "not the same consequence class"}
-        </span>
-      </div>
-      <div className="grid gap-5 md:grid-cols-2">
-        {routings.map(({ curator, routing }) => (
-          <div key={curator}>
-            <p className="framework-voice mb-1 text-[12.5px] text-ink-faint">
-              {curator}
-            </p>
-            {routing ? (
-              <>
-                <p className="framework-voice mb-2 text-[13px] text-ink-body">
-                  Consequence class:{" "}
-                  {consequenceLabel(routing.consequenceClass)}
-                </p>
-                {routing.rationale ? (
-                  <p className="curator-voice border-line-row border-l-2 pl-3 text-[15px] text-ink-body">
-                    {routing.rationale}
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <p className="framework-voice text-[13px] text-ink-faintest">
-                nothing recorded
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CuratorAnswer({
-  curator,
-  assessment,
-}: {
-  curator: string;
-  assessment?: WorkflowAssessment;
-}) {
-  const status =
-    assessment?.status === AssessmentStatus.SCORED
-      ? "scored"
-      : assessment?.status === AssessmentStatus.NOT_APPLICABLE
-        ? "not applicable"
-        : assessment?.status === AssessmentStatus.NO_DATA
-          ? "no data"
-          : "not answered";
-  return (
-    <div>
-      <p className="framework-voice mb-1 text-[12.5px] text-ink-faint">
-        {curator} · {status}
-      </p>
-      {assessment ? (
-        <>
-          <ul className="mb-2 space-y-0.5">
-            {assessment.fields.map((field) => (
-              <li
-                key={field.fieldId}
-                className="framework-voice text-[13px] text-ink-body"
-              >
-                {field.label}
-                {field.value ? (
-                  <span className="ml-1 font-mono text-ink-muted">
-                    {field.value}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          {assessment.rationale ? (
-            <p className="curator-voice border-line-row border-l-2 pl-3 text-[15px] text-ink-body">
-              {assessment.rationale}
-            </p>
-          ) : null}
-        </>
-      ) : (
-        <p className="framework-voice text-[13px] text-ink-faintest">
-          nothing recorded
-        </p>
-      )}
-    </div>
   );
 }
