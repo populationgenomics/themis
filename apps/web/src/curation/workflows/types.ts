@@ -1,9 +1,7 @@
 import type { ComponentType } from "react";
 import type { WorkflowAssessment } from "@/gen/themis/curation/models/curation_pb";
-import type {
-  Consequence,
-  Inheritance,
-} from "@/gen/themis/evidence/models/evidence_pb";
+import type { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
+import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import type { Cell } from "../ui/primitives";
 
 // What a transcribed workflow is, as the worksheet holds it.
@@ -12,12 +10,13 @@ import type { Cell } from "../ui/primitives";
 // (population frequency takes two typed numbers and a bin; specific phenotype is two ordered steps),
 // and a schema general enough for those is a schema nobody can read.
 
-/** The routing the curator states, which decides the workflows on screen. Both vocabularies are the
- *  shared ones, so a curator's routing and a run's are the same members and can be compared. Each
- *  admits members the calculator's splits have no branch for; a workflow says which ones it covers
- *  and is absent for the rest. */
+/** What decides the workflows on screen: the entity's mode of inheritance, which the registration
+ *  fixes, and the consequence class the curator states. Both are the shared vocabularies, so a
+ *  worksheet's routing and a run's are the same members and can be compared. The consequence
+ *  vocabulary admits members no predicted-effect workflow covers; a workflow names the modes and
+ *  classes it covers and is absent for the rest. */
 export interface Routing {
-  inheritance: Inheritance;
+  modeOfInheritance: ModeOfInheritance;
   consequenceClass: Consequence;
 }
 
@@ -57,7 +56,7 @@ export interface WorkflowDef {
    *  about it. `fidelity.test.ts` checks the declaration against the sources both ways, so one cannot
    *  be forgotten or claimed falsely. */
   source?: "supplement";
-  /** Whether the curator's stated routing puts this workflow on screen. */
+  /** Whether the routing puts this workflow on screen. */
   applies: (routing: Routing) => boolean;
   Body: ComponentType<WorkflowBodyProps>;
 }

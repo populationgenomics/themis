@@ -104,17 +104,15 @@ message CaseAssessment {
 // disagreeing about codes, so this is recorded and reasoned about in its own right.
 //
 // The registration states the question, the entity with its disease and its mode of inheritance,
-// and the curator answers it (curation-surface.md). The curator's own statements here are the
-// consequence class, where UNSPECIFIED means not yet chosen and the workflows it routes between do
-// not apply, and the rationale, which is also where a curator argues that another entity is the
-// question to ask. `entity` and `mondo_id` copy the registration, and `inheritance` is a mode
-// stated on the worksheet that the registered one overrides: a reader takes the entity and its mode
-// from the registration.
+// and the curator answers it without restating it (curation-surface.md). The curator's own
+// statements here are the consequence class, where UNSPECIFIED means not yet chosen and the
+// workflows it routes between do not apply, and the rationale, which is also where a curator argues
+// that another entity is the question to ask.
 message RoutingAssessment {
-  themis.evidence.models.Inheritance inheritance = 1 [(buf.validate.field).enum.defined_only = true];
+  reserved 1, 3, 4;
+  reserved "inheritance", "entity", "mondo_id";
+
   themis.evidence.models.Consequence consequence_class = 2 [(buf.validate.field).enum.defined_only = true];
-  string entity = 3 [(buf.validate.field).string.max_len = 1024];
-  string mondo_id = 4 [(buf.validate.field).string.max_len = 64];
   string rationale = 5 [(buf.validate.field).string.max_len = 20000];
 }
 

@@ -114,10 +114,8 @@ export type SpecifiedEntity = Message<"themis.rpc.cspec.SpecifiedEntity"> & {
 
   /**
    * Every mode the rule set states for this disease, spelled as it spells them ("Autosomal dominant
-   * inheritance"). Not harmonised onto `Inheritance`: the registry states the mode in two different
-   * shapes and states none at all on some entries, and no rule here keys on it — a harmonised mode
-   * is load-bearing on `GeneDisease`, and reading one off a scope statement would invite joining the
-   * two.
+   * inheritance"). Not mapped onto any enum: the registry states the mode in two different shapes
+   * and states none at all on some entries, and no rule here keys on it.
    *
    * @generated from field: repeated string inheritance_terms = 5;
    */

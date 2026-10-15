@@ -4,14 +4,12 @@
 // ClinVar search ran on and one exon of a transcript are the same kind of interval, every rpc stamps
 // its own provenance, and a retrieved routing and a curator's stated one are comparable only if they
 // are the same vocabulary. The framework's mode of inheritance is not here but in
-// themis/svcv4/models/svcv4.proto; `Inheritance` is a coarser one the curation worksheet states.
+// themis/svcv4/models/svcv4.proto.
 //
 // Modelled from:
 //   SVCv4 variant-type workflows (docs/design/evidence-interfaces.md § "place the variant, and route
 //     it to a decision tree"): `Consequence` is the partition its decision trees select on; VEP's
 //     term is re-encoded onto it.
-//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, folded onto one set:
-//     `Inheritance`.
 //   This interface's own design: `Provenance`, `GenomicSpan`.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
@@ -42,23 +40,6 @@ enum Consequence {
   CONSEQUENCE_EXON_DELETION = 10;
   CONSEQUENCE_EXON_DUPLICATION = 11;
   CONSEQUENCE_NON_CODING = 12;
-}
-
-// A coarse mode of inheritance, with one member for both X-linked kinds. No evidence interface states
-// a mode in it: a curated source's mode term stays verbatim (themis/rpc/gene_disease.proto), and the
-// mode an entity is classified under is themis.svcv4.models.ModeOfInheritance, which routes the two
-// X-linked kinds apart. It is the type of the mode a curation worksheet's routing states
-// (themis/curation/models/curation.proto).
-enum Inheritance {
-  // No mode stated.
-  INHERITANCE_UNSPECIFIED = 0;
-  INHERITANCE_AUTOSOMAL_DOMINANT = 1;
-  INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
-  INHERITANCE_X_LINKED = 3;
-  INHERITANCE_Y_LINKED = 4;
-  INHERITANCE_MITOCHONDRIAL = 5;
-  INHERITANCE_SEMIDOMINANT = 6;
-  INHERITANCE_UNDETERMINED = 7;  // the mode is stated as not determined
 }
 
 // Where a fact came from, so every claim is reproducible without a mirror (PRODUCT §6). For a live

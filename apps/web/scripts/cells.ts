@@ -1,8 +1,11 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { MODES, modeName } from "../src/curation/mode";
 import { cellLabel } from "../src/curation/ui/primitives";
 import { WORKFLOWS_VERSION } from "../src/curation/version";
 import { ALL_WORKFLOWS } from "../src/curation/workflows/registry";
+import { ConsequenceSchema } from "../src/gen/themis/evidence/models/evidence_pb";
+import type { ModeOfInheritance } from "../src/gen/themis/svcv4/models/svcv4_pb";
 
 // Export every decision-tree cell the transcribed workflows can emit.
 //
@@ -47,9 +50,25 @@ if (duplicates.length > 0) {
   );
 }
 
+// Which workflows each registered mode puts on screen, under any consequence class. The library routes
+// the same modes onto the same tables, and a Python test holds the two to agreeing.
+const modeRouting = Object.fromEntries(
+  MODES.map(({ mode }) => [
+    modeName(mode),
+    ALL_WORKFLOWS.filter((workflow) =>
+      ConsequenceSchema.values.some((consequence) =>
+        workflow.applies({
+          modeOfInheritance: mode as ModeOfInheritance,
+          consequenceClass: consequence.number,
+        }),
+      ),
+    ).map((workflow) => workflow.id),
+  ]),
+);
+
 writeFileSync(
   OUT,
-  `${JSON.stringify({ workflows_version: WORKFLOWS_VERSION, cells }, null, 2)}\n`,
+  `${JSON.stringify({ workflows_version: WORKFLOWS_VERSION, cells, mode_routing: modeRouting }, null, 2)}\n`,
 );
 console.log(
   `${cells.length} cells across ${ALL_WORKFLOWS.length} workflows -> ${OUT}`,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Inheritance } from "@/gen/themis/evidence/models/evidence_pb";
+import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
   DAFT_BINNING_TITLE,
   DaftBinningReference,
@@ -28,7 +28,7 @@ import {
   frequencyRatio,
   withDerivedBin,
 } from "./frequency";
-import { countBody } from "./shared";
+import { countBody, coversModes } from "./shared";
 import type { WorkflowBodyProps, WorkflowDef } from "./types";
 
 // Population observations (POP), transcribed from the ClinGen Pilot Calculator.
@@ -183,9 +183,9 @@ export const POP_WORKFLOWS: WorkflowDef[] = [
     title:
       "Workflow for Population Homozygous Observations - Autosomal Dominant inheritance",
     cells: HMZ_AD,
-    applies: ({ inheritance }) =>
-      inheritance === Inheritance.AUTOSOMAL_DOMINANT ||
-      inheritance === Inheritance.SEMIDOMINANT,
+    // Not semidominant, though the calculator admits it: the supplement wins
+    // (svcv4-interpretations.md §Semidominant entities in `POP_HMZ` and `CLN_UAF`).
+    applies: coversModes(ModeOfInheritance.AUTOSOMAL_DOMINANT),
     Body: countBody(HMZ_AD, "Applicable observations", [
       "Note: Minimum 2 observations required to score, subsequent individuals scored per observation. * : Total is calculated after deducting 1 Applicable Observation.",
     ]),
@@ -196,10 +196,12 @@ export const POP_WORKFLOWS: WorkflowDef[] = [
     title:
       "Workflow for Population Homozygous/Hemizygous Observations - Autosomal Recessive/X-linked inheritance",
     cells: HMZ_ARXL,
-    applies: ({ inheritance }) =>
-      inheritance === Inheritance.AUTOSOMAL_RECESSIVE ||
-      inheritance === Inheritance.X_LINKED ||
-      inheritance === Inheritance.SEMIDOMINANT,
+    applies: coversModes(
+      ModeOfInheritance.AUTOSOMAL_RECESSIVE,
+      ModeOfInheritance.SEMIDOMINANT,
+      ModeOfInheritance.X_LINKED_DOMINANT,
+      ModeOfInheritance.X_LINKED_RECESSIVE,
+    ),
     Body: countBody(HMZ_ARXL, "Applicable observations", [
       "Minimum 2 observations required to score, subsequent individuals scored per observation. Applicable for semi-dominant inheritance. * : Total is calculated after deducting 1 Applicable Observation",
     ]),

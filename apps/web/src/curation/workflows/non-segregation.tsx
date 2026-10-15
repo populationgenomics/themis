@@ -1,6 +1,6 @@
 "use client";
 
-import { Inheritance } from "@/gen/themis/evidence/models/evidence_pb";
+import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
   type Cell,
   ChoiceRows,
@@ -8,6 +8,7 @@ import {
   readField,
   withField,
 } from "../ui/primitives";
+import { coversModes } from "./shared";
 import type { WorkflowBodyProps, WorkflowDef } from "./types";
 
 // The non-segregation branch of locus segregation (LOC_SEG), transcribed from Supplementary
@@ -126,11 +127,13 @@ export const NON_SEGREGATION_WORKFLOWS: WorkflowDef[] = [
       "Next, non-segregations are considered in a similar way that they were considered for LOC_PHE, above (see that section for caveats and criteria for evaluating non-segregations).",
     cells: DETERMINATION,
     source: "supplement",
-    applies: ({ inheritance }) =>
-      inheritance === Inheritance.AUTOSOMAL_DOMINANT ||
-      inheritance === Inheritance.AUTOSOMAL_RECESSIVE ||
-      inheritance === Inheritance.SEMIDOMINANT ||
-      inheritance === Inheritance.X_LINKED,
+    applies: coversModes(
+      ModeOfInheritance.AUTOSOMAL_DOMINANT,
+      ModeOfInheritance.AUTOSOMAL_RECESSIVE,
+      ModeOfInheritance.SEMIDOMINANT,
+      ModeOfInheritance.X_LINKED_DOMINANT,
+      ModeOfInheritance.X_LINKED_RECESSIVE,
+    ),
     Body: NonSegregationBody,
   },
 ];

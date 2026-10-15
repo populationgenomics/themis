@@ -4,14 +4,12 @@
 // ClinVar search ran on and one exon of a transcript are the same kind of interval, every rpc stamps
 // its own provenance, and a retrieved routing and a curator's stated one are comparable only if they
 // are the same vocabulary. The framework's mode of inheritance is not here but in
-// themis/svcv4/models/svcv4.proto; `Inheritance` is a coarser one the curation worksheet states.
+// themis/svcv4/models/svcv4.proto.
 //
 // Modelled from:
 //   SVCv4 variant-type workflows (docs/design/evidence-interfaces.md § "place the variant, and route
 //     it to a decision tree"): `Consequence` is the partition its decision trees select on; VEP's
 //     term is re-encoded onto it.
-//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, folded onto one set:
-//     `Inheritance`.
 //   This interface's own design: `Provenance`, `GenomicSpan`.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
@@ -33,7 +31,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/evidence/models/evidence.proto.
  */
 export const file_themis_evidence_models_evidence: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvZXZpZGVuY2UvbW9kZWxzL2V2aWRlbmNlLnByb3RvEhZ0aGVtaXMuZXZpZGVuY2UubW9kZWxzIncKClByb3ZlbmFuY2USDgoGc291cmNlGAEgASgJEhgKEGRhdGFzZXRfdmVyc2lvbnMYAiADKAkSDQoFcXVlcnkYAyABKAkSMAoMcmV0cmlldmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIpCgtHZW5vbWljU3BhbhINCgVzdGFydBgBIAEoAxILCgNlbmQYAiABKAMqhQMKC0NvbnNlcXVlbmNlEhsKF0NPTlNFUVVFTkNFX1VOU1BFQ0lGSUVEEAASGAoUQ09OU0VRVUVOQ0VfTUlTU0VOU0UQARIYChRDT05TRVFVRU5DRV9OT05TRU5TRRACEhoKFkNPTlNFUVVFTkNFX0ZSQU1FU0hJRlQQAxIgChxDT05TRVFVRU5DRV9DQU5PTklDQUxfU1BMSUNFEAQSGAoUQ09OU0VRVUVOQ0VfSU5UUk9OSUMQBRIaChZDT05TRVFVRU5DRV9TWU5PTllNT1VTEAYSHQoZQ09OU0VRVUVOQ0VfSU5GUkFNRV9JTkRFTBAHEhoKFkNPTlNFUVVFTkNFX1NUQVJUX0xPU1QQCBIZChVDT05TRVFVRU5DRV9TVE9QX0xPU1QQCRIdChlDT05TRVFVRU5DRV9FWE9OX0RFTEVUSU9OEAoSIAocQ09OU0VRVUVOQ0VfRVhPTl9EVVBMSUNBVElPThALEhoKFkNPTlNFUVVFTkNFX05PTl9DT0RJTkcQDCqCAgoLSW5oZXJpdGFuY2USGwoXSU5IRVJJVEFOQ0VfVU5TUEVDSUZJRUQQABIiCh5JTkhFUklUQU5DRV9BVVRPU09NQUxfRE9NSU5BTlQQARIjCh9JTkhFUklUQU5DRV9BVVRPU09NQUxfUkVDRVNTSVZFEAISGAoUSU5IRVJJVEFOQ0VfWF9MSU5LRUQQAxIYChRJTkhFUklUQU5DRV9ZX0xJTktFRBAEEh0KGUlOSEVSSVRBTkNFX01JVE9DSE9ORFJJQUwQBRIcChhJTkhFUklUQU5DRV9TRU1JRE9NSU5BTlQQBhIcChhJTkhFUklUQU5DRV9VTkRFVEVSTUlORUQQB2IGcHJvdG8z", [file_google_protobuf_timestamp]);
+  fileDesc("CiV0aGVtaXMvZXZpZGVuY2UvbW9kZWxzL2V2aWRlbmNlLnByb3RvEhZ0aGVtaXMuZXZpZGVuY2UubW9kZWxzIncKClByb3ZlbmFuY2USDgoGc291cmNlGAEgASgJEhgKEGRhdGFzZXRfdmVyc2lvbnMYAiADKAkSDQoFcXVlcnkYAyABKAkSMAoMcmV0cmlldmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIpCgtHZW5vbWljU3BhbhINCgVzdGFydBgBIAEoAxILCgNlbmQYAiABKAMqhQMKC0NvbnNlcXVlbmNlEhsKF0NPTlNFUVVFTkNFX1VOU1BFQ0lGSUVEEAASGAoUQ09OU0VRVUVOQ0VfTUlTU0VOU0UQARIYChRDT05TRVFVRU5DRV9OT05TRU5TRRACEhoKFkNPTlNFUVVFTkNFX0ZSQU1FU0hJRlQQAxIgChxDT05TRVFVRU5DRV9DQU5PTklDQUxfU1BMSUNFEAQSGAoUQ09OU0VRVUVOQ0VfSU5UUk9OSUMQBRIaChZDT05TRVFVRU5DRV9TWU5PTllNT1VTEAYSHQoZQ09OU0VRVUVOQ0VfSU5GUkFNRV9JTkRFTBAHEhoKFkNPTlNFUVVFTkNFX1NUQVJUX0xPU1QQCBIZChVDT05TRVFVRU5DRV9TVE9QX0xPU1QQCRIdChlDT05TRVFVRU5DRV9FWE9OX0RFTEVUSU9OEAoSIAocQ09OU0VRVUVOQ0VfRVhPTl9EVVBMSUNBVElPThALEhoKFkNPTlNFUVVFTkNFX05PTl9DT0RJTkcQDGIGcHJvdG8z", [file_google_protobuf_timestamp]);
 
 /**
  * Where a fact came from, so every claim is reproducible without a mirror (PRODUCT §6). For a live
@@ -184,65 +182,4 @@ export enum Consequence {
  */
 export const ConsequenceSchema: GenEnum<Consequence> = /*@__PURE__*/
   enumDesc(file_themis_evidence_models_evidence, 0);
-
-/**
- * A coarse mode of inheritance, with one member for both X-linked kinds. No evidence interface states
- * a mode in it: a curated source's mode term stays verbatim (themis/rpc/gene_disease.proto), and the
- * mode an entity is classified under is themis.svcv4.models.ModeOfInheritance, which routes the two
- * X-linked kinds apart. It is the type of the mode a curation worksheet's routing states
- * (themis/curation/models/curation.proto).
- *
- * @generated from enum themis.evidence.models.Inheritance
- */
-export enum Inheritance {
-  /**
-   * No mode stated.
-   *
-   * @generated from enum value: INHERITANCE_UNSPECIFIED = 0;
-   */
-  UNSPECIFIED = 0,
-
-  /**
-   * @generated from enum value: INHERITANCE_AUTOSOMAL_DOMINANT = 1;
-   */
-  AUTOSOMAL_DOMINANT = 1,
-
-  /**
-   * @generated from enum value: INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
-   */
-  AUTOSOMAL_RECESSIVE = 2,
-
-  /**
-   * @generated from enum value: INHERITANCE_X_LINKED = 3;
-   */
-  X_LINKED = 3,
-
-  /**
-   * @generated from enum value: INHERITANCE_Y_LINKED = 4;
-   */
-  Y_LINKED = 4,
-
-  /**
-   * @generated from enum value: INHERITANCE_MITOCHONDRIAL = 5;
-   */
-  MITOCHONDRIAL = 5,
-
-  /**
-   * @generated from enum value: INHERITANCE_SEMIDOMINANT = 6;
-   */
-  SEMIDOMINANT = 6,
-
-  /**
-   * the mode is stated as not determined
-   *
-   * @generated from enum value: INHERITANCE_UNDETERMINED = 7;
-   */
-  UNDETERMINED = 7,
-}
-
-/**
- * Describes the enum themis.evidence.models.Inheritance.
- */
-export const InheritanceSchema: GenEnum<Inheritance> = /*@__PURE__*/
-  enumDesc(file_themis_evidence_models_evidence, 1);
 

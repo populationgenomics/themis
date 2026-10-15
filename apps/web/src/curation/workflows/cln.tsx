@@ -1,8 +1,8 @@
 "use client";
 
-import { Inheritance } from "@/gen/themis/evidence/models/evidence_pb";
+import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import type { Cell } from "../ui/primitives";
-import { countBody, crossCells } from "./shared";
+import { countBody, coversModes, crossCells } from "./shared";
 import type { WorkflowDef } from "./types";
 
 // Clinical observations (CLN), transcribed from the ClinGen Pilot Calculator.
@@ -203,13 +203,13 @@ const DNV = crossCells(
   ],
 );
 
-const isAdLike = (inheritance: Inheritance) =>
-  inheritance === Inheritance.AUTOSOMAL_DOMINANT ||
-  inheritance === Inheritance.SEMIDOMINANT;
-const isArXlLike = (inheritance: Inheritance) =>
-  inheritance === Inheritance.AUTOSOMAL_RECESSIVE ||
-  inheritance === Inheritance.X_LINKED ||
-  inheritance === Inheritance.SEMIDOMINANT;
+const {
+  AUTOSOMAL_DOMINANT,
+  AUTOSOMAL_RECESSIVE,
+  SEMIDOMINANT,
+  X_LINKED_DOMINANT,
+  X_LINKED_RECESSIVE,
+} = ModeOfInheritance;
 
 export const CLN_WORKFLOWS: WorkflowDef[] = [
   {
@@ -219,7 +219,7 @@ export const CLN_WORKFLOWS: WorkflowDef[] = [
       "Workflow for Unaffected Observations - Autosomal Dominant inheritance",
     applicability: "Applicable to: Autosomal Dominant Inheritance",
     cells: UAF_AD,
-    applies: ({ inheritance }) => isAdLike(inheritance),
+    applies: coversModes(AUTOSOMAL_DOMINANT, SEMIDOMINANT),
     Body: countBody(UAF_AD, "Number of individuals", [
       "Note: Applicable for semi-dominant inheritance",
     ]),
@@ -232,7 +232,13 @@ export const CLN_WORKFLOWS: WorkflowDef[] = [
     applicability:
       "Applicable to: Autosomal Recessive Inheritance OR X-linked Inheritance",
     cells: UAF_ARXL,
-    applies: ({ inheritance }) => isArXlLike(inheritance),
+    // Not semidominant, though the calculator admits it: the supplement wins
+    // (svcv4-interpretations.md §Semidominant entities in `POP_HMZ` and `CLN_UAF`).
+    applies: coversModes(
+      AUTOSOMAL_RECESSIVE,
+      X_LINKED_DOMINANT,
+      X_LINKED_RECESSIVE,
+    ),
     Body: countBody(UAF_ARXL, "Number of individuals"),
   },
   {
@@ -266,8 +272,14 @@ export const CLN_WORKFLOWS: WorkflowDef[] = [
       "Workflow for Affected Observations - Autosomal Dominant /X-linked inheritance",
     applicability: "Applicable to: Autosomal Dominant or X-linked Inheritance",
     cells: AFF_AD,
-    applies: ({ inheritance }) =>
-      isAdLike(inheritance) || inheritance === Inheritance.X_LINKED,
+    // SM4 counts every affected XY proband here, and an XX one only under X-linked dominant
+    // (svcv4-interpretations.md §X-linked entities).
+    applies: coversModes(
+      AUTOSOMAL_DOMINANT,
+      SEMIDOMINANT,
+      X_LINKED_DOMINANT,
+      X_LINKED_RECESSIVE,
+    ),
     Body: countBody(AFF_AD, "Applicable probands", [
       RARITY_NOTE,
       SEMIDOMINANT_NOTE,
@@ -281,7 +293,9 @@ export const CLN_WORKFLOWS: WorkflowDef[] = [
     applicability:
       "Applicable to: Autosomal Recessive Inheritance or X-linked Inheritance",
     cells: AFF_ARXL,
-    applies: ({ inheritance }) => isArXlLike(inheritance),
+    // The biallelic table takes an affected XX proband under X-linked recessive only, so an X-linked
+    // dominant entity has nothing to count here.
+    applies: coversModes(AUTOSOMAL_RECESSIVE, SEMIDOMINANT, X_LINKED_RECESSIVE),
     Body: countBody(AFF_ARXL, "Applicable probands", [
       RARITY_NOTE,
       SEMIDOMINANT_NOTE,
@@ -294,8 +308,12 @@ export const CLN_WORKFLOWS: WorkflowDef[] = [
     title: "Workflow for De Novo Observations",
     applicability: "Applicable to: Autosomal Dominant Inheritance",
     cells: DNV,
-    applies: ({ inheritance }) =>
-      isAdLike(inheritance) || inheritance === Inheritance.X_LINKED,
+    applies: coversModes(
+      AUTOSOMAL_DOMINANT,
+      SEMIDOMINANT,
+      X_LINKED_DOMINANT,
+      X_LINKED_RECESSIVE,
+    ),
     Body: countBody(DNV, "Applicable probands", [
       "Note: For this workflow to the applicable, the variant must meet ‘rarity’ definition (POP_FRQ >= -1.0",
       "Applicable for X-linked inheritance only for male cases",

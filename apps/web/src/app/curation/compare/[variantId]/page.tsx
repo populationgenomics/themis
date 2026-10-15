@@ -2,8 +2,15 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { isCurationAccessError } from "@/curation/access";
+import { consequenceLabel } from "@/curation/consequence";
 import { curationContext } from "@/curation/http";
-import type { WorkflowAssessment } from "@/gen/themis/curation/models/curation_pb";
+import { inlineMode } from "@/curation/mode";
+import { ROUTING_ID } from "@/curation/sections";
+import type {
+  RoutingAssessment,
+  WorkflowAssessment,
+} from "@/gen/themis/curation/models/curation_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
 import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { isResourceNotFoundError } from "@/server/errors";
 
@@ -60,10 +67,23 @@ export default async function ComparePage({
   const variant = await access.listVariants();
   const subject = variant.find((v) => v.id === variantId);
 
-  // Every workflow either curator answered, in registry order so the two columns line up.
+  // Every workflow either curator answered, in registry order so the two columns line up. The
+  // routing is drawn on its own, above them.
   const workflowIds = [
     ...new Set(answers.flatMap((a) => a.entries.map((e) => e.workflowId))),
-  ].sort();
+  ]
+    .filter((id) => id !== ROUTING_ID)
+    .sort();
+  const routings = answers.map((answer) => {
+    const entry = answer.entries.find((e) => e.workflowId === ROUTING_ID);
+    return {
+      curator: answer.worksheet.curatorEmail,
+      routing:
+        entry?.assessment.kind.case === "routing"
+          ? entry.assessment.kind.value
+          : undefined,
+    };
+  });
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -80,7 +100,7 @@ export default async function ComparePage({
         {subject ? (
           <p className="mt-1 font-mono text-[13px] text-ink-muted">
             {subject.transcript}:{subject.hgvsC} · {subject.gene} ·{" "}
-            {subject.diseaseLabel}
+            {subject.diseaseLabel} · {inlineMode(subject.modeOfInheritance)}
           </p>
         ) : null}
         <p className="framework-voice mt-2 text-[13px] text-ink-muted">
@@ -90,6 +110,7 @@ export default async function ComparePage({
       </header>
 
       <div className="space-y-4">
+        <RoutingComparison routings={routings} />
         {workflowIds.map((workflowId) => {
           const perCurator = answers.map((answer) => {
             const entry = answer.entries.find(
@@ -157,6 +178,64 @@ function codeOf(
     if (cell) return cell.split(".")[0];
   }
   return undefined;
+}
+
+/** The two routings: the consequence class each curator stated, and their reasoning, which is also
+ *  where a curator argues that another entity is the question to ask. */
+function RoutingComparison({
+  routings,
+}: {
+  routings: { curator: string; routing?: RoutingAssessment }[];
+}) {
+  // Agreement needs a class from every curator: two unstated classes are not a shared answer.
+  const agreed =
+    routings.every(
+      (r) =>
+        r.routing !== undefined &&
+        r.routing.consequenceClass !== Consequence.UNSPECIFIED,
+    ) && new Set(routings.map((r) => r.routing?.consequenceClass)).size === 1;
+  return (
+    <section
+      className={`rounded-md border bg-white p-5 ${agreed ? "border-line-primary" : "border-amber-uncertainty-border"}`}
+    >
+      <div className="mb-3 flex items-baseline justify-between gap-3 border-line-row border-b pb-2">
+        <span className="framework-voice text-[14px] text-ink-primary">
+          Routing
+        </span>
+        <span
+          className={`framework-voice text-[12.5px] ${agreed ? "text-ink-faint" : "text-amber-uncertainty-heading"}`}
+        >
+          {agreed ? "same consequence class" : "not the same consequence class"}
+        </span>
+      </div>
+      <div className="grid gap-5 md:grid-cols-2">
+        {routings.map(({ curator, routing }) => (
+          <div key={curator}>
+            <p className="framework-voice mb-1 text-[12.5px] text-ink-faint">
+              {curator}
+            </p>
+            {routing ? (
+              <>
+                <p className="framework-voice mb-2 text-[13px] text-ink-body">
+                  Consequence class:{" "}
+                  {consequenceLabel(routing.consequenceClass)}
+                </p>
+                {routing.rationale ? (
+                  <p className="curator-voice border-line-row border-l-2 pl-3 text-[15px] text-ink-body">
+                    {routing.rationale}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="framework-voice text-[13px] text-ink-faintest">
+                nothing recorded
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function CuratorAnswer({

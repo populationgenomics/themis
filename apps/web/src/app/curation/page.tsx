@@ -39,6 +39,7 @@ export default async function CurationHome() {
             transcript: variant.transcript,
             hgvsC: variant.hgvsC,
             diseaseLabel: variant.diseaseLabel,
+            modeOfInheritance: variant.modeOfInheritance,
             draftCount,
             submittedAt: latestSubmission?.submittedAt.toISOString() ?? null,
           }),

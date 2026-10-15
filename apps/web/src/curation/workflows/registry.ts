@@ -16,12 +16,6 @@ import type { Routing, WorkflowDef, WorkflowGroup } from "./types";
 // Every transcribed workflow, in the calculator's own order, and which of them the curator's stated
 // routing puts on screen.
 
-/** The worksheet-level sections. They are stored exactly as workflows are — same table, same
- *  auto-save, same submission snapshot — so nothing downstream needs a second read path for them. */
-export const CASE_ID = "case";
-export const ROUTING_ID = "routing";
-export const VERDICT_ID = "verdict";
-
 const GROUPS: WorkflowGroup[] = [
   {
     key: "pop",

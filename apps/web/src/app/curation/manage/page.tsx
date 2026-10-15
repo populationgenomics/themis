@@ -49,6 +49,8 @@ export default async function ManagePage() {
           transcript: variant.transcript,
           hgvsC: variant.hgvsC,
           diseaseLabel: variant.diseaseLabel,
+          mondoId: variant.mondoId,
+          modeOfInheritance: variant.modeOfInheritance,
           rows: rows.map((row) => ({
             curatorEmail: row.worksheet.curatorEmail,
             draftCount: row.draftCount,

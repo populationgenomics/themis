@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { inlineMode, MODES, modeName } from "../mode";
 import type { ResolvedAllele } from "../resolver";
 import {
   VARIANT_STATUS_LABELS,
@@ -26,6 +28,8 @@ export interface VariantRow {
   transcript: string;
   hgvsC: string;
   diseaseLabel: string;
+  mondoId: string;
+  modeOfInheritance: ModeOfInheritance;
   rows: {
     curatorEmail: string;
     draftCount: number;
@@ -149,8 +153,9 @@ export function NewVariantForm() {
         Add a variant
       </h2>
       <p className="framework-voice mb-4 text-[13px] text-ink-muted">
-        One variant against one disease entity. Both curators of it answer this
-        same question.
+        One variant against one disease entity, named by its MONDO term and its
+        mode of inheritance. Both curators of it answer this same question. A
+        disease the gene causes under two modes is two registrations.
       </p>
       <div className="mb-4 rounded-sm border border-line-row bg-surface-warm-panel p-3">
         <div className="flex flex-wrap items-end gap-2">
@@ -211,7 +216,32 @@ export function NewVariantForm() {
           placeholder="hypertrophic cardiomyopathy"
           required
         />
-        <Field name="mondoId" label="MONDO ID" placeholder="MONDO:0005045" />
+        <Field
+          name="mondoId"
+          label="MONDO ID"
+          placeholder="MONDO:0005045"
+          required
+        />
+        <label className="block">
+          <span className="field-eyebrow text-ink-label">
+            Mode of inheritance
+          </span>
+          <select
+            name="modeOfInheritance"
+            required
+            defaultValue=""
+            className="framework-voice mt-1 w-full rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13.5px] text-ink-body"
+          >
+            <option value="" disabled>
+              Select…
+            </option>
+            {MODES.map(({ mode, label }) => (
+              <option key={mode} value={modeName(mode)}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="mt-4 flex items-center gap-2">
         <button
@@ -409,7 +439,8 @@ function VariantCard({
             {variant.transcript}:{variant.hgvsC}
           </p>
           <p className="framework-voice mt-0.5 text-[13px] text-ink-muted">
-            {variant.gene} · {variant.diseaseLabel}
+            {variant.gene} · {variant.diseaseLabel} · {variant.mondoId} ·{" "}
+            {inlineMode(variant.modeOfInheritance)}
           </p>
         </div>
         <span className="framework-voice flex items-baseline gap-3 text-[12.5px] text-ink-faint">

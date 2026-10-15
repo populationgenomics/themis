@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { inlineMode } from "../mode";
 import {
   WORKSHEET_STATUS_LABELS,
   WORKSHEET_STATUS_ORDER,
@@ -27,6 +29,7 @@ export interface WorksheetRow {
   transcript: string;
   hgvsC: string;
   diseaseLabel: string;
+  modeOfInheritance: ModeOfInheritance;
   draftCount: number;
   submittedAt: string | null;
 }
@@ -101,7 +104,8 @@ export function WorksheetList({ rows }: { rows: WorksheetRow[] }) {
                     {row.transcript}:{row.hgvsC}
                   </p>
                   <p className="framework-voice mt-0.5 text-[13px] text-ink-muted">
-                    {row.gene} · {row.diseaseLabel}
+                    {row.gene} · {row.diseaseLabel} ·{" "}
+                    {inlineMode(row.modeOfInheritance)}
                   </p>
                 </div>
                 <span className="flex items-baseline gap-3">

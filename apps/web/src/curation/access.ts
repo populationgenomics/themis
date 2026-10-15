@@ -12,6 +12,7 @@ import type {
   WorksheetProgress,
 } from "./model";
 import type { ResolvedAllele, VariantResolver } from "./resolver";
+import { CASE_ID, ROUTING_ID, VERDICT_ID } from "./sections";
 import type { CurationStore } from "./store";
 
 // The one place a caller's verified email becomes permission to read or write something. Every
@@ -131,16 +132,25 @@ export class CurationAccess {
     await this.store.putDraft(worksheetId, entry);
   }
 
-  /** Commit every draft as one submission.
+  /** Commit the drafts of the workflows the worksheet shows, and of its three sections, as one
+   *  submission. `shownWorkflowIds` is what the routing put on the curator's screen: a draft for a
+   *  workflow the routing has since hidden stays a draft, because the curator cannot see what it
+   *  would submit.
    *
    *  Refuses a scored workflow carrying no rationale. That row is the reference's entire value — a
    *  selection with no reasoning is a number, and a number is what the reference exists not to be —
    *  and the refusal has to be here rather than in the UI, because the store copies drafts inside
    *  the database without decoding them and would commit whatever is there. */
-  async submit(worksheetId: string, note: string): Promise<Submission> {
+  async submit(
+    worksheetId: string,
+    note: string,
+    shownWorkflowIds: readonly string[],
+  ): Promise<Submission> {
     await this.ownWorksheet(worksheetId);
+    const submitted = [...shownWorkflowIds, CASE_ID, ROUTING_ID, VERDICT_ID];
     const unreasoned: string[] = [];
     for (const entry of await this.store.drafts(worksheetId)) {
+      if (!submitted.includes(entry.workflowId)) continue;
       const workflow =
         entry.assessment.kind.case === "workflow"
           ? entry.assessment.kind.value
@@ -159,7 +169,7 @@ export class CurationAccess {
           "A selection without reasoning cannot be compared to anyone else's.",
       );
     }
-    return this.store.submit(worksheetId, note);
+    return this.store.submit(worksheetId, note, submitted);
   }
 
   private async ownWorksheet(worksheetId: string): Promise<Worksheet> {

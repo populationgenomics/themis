@@ -1,4 +1,5 @@
 import type { Assessment } from "@/gen/themis/curation/models/curation_pb";
+import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 
 // The curation module's own domain. Deliberately shares nothing with the workbench's models: a
 // curation is not an Analysis, and the two have no reason to move together (curation-surface.md).
@@ -13,12 +14,14 @@ export interface Person {
   addedAt: Date;
 }
 
-/** One VBC against one MDE — the variant under analysis and the entity it is classified against.
- *  Every field is manager-typed; the surface resolves nothing.
- *
- *  The mode of inheritance is not here. It is half of what an MDE is, but the registration precedes
- *  every curator, and a mode filled in for them is a judgement they cannot be told to have made —
- *  each worksheet's `RoutingAssessment` is the whole record of it. */
+/** A MONDO term id as a registration states it, the form `curation.variants` checks. */
+export const MONDO_ID = /^MONDO:[0-9]{7}$/;
+
+/** One VBC against one MDE: the variant under analysis and the entity it is classified against,
+ *  whose disease term and mode of inheritance the manager states. Both curators of the variant
+ *  answer against this entity, and a curator never restates it. One registration per variant and
+ *  entity: the same variant against the same disease under another mode is a registration of its
+ *  own. */
 export interface Variant {
   id: string;
   gene: string;
@@ -26,7 +29,10 @@ export interface Variant {
   hgvsC: string;
   clingenAlleleId: string;
   diseaseLabel: string;
+  /** Matches `MONDO_ID`. */
   mondoId: string;
+  /** Never UNSPECIFIED. */
+  modeOfInheritance: ModeOfInheritance;
   createdBy: string;
   createdAt: Date;
 }

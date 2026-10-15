@@ -1,6 +1,6 @@
 "use client";
 
-import { Inheritance } from "@/gen/themis/evidence/models/evidence_pb";
+import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import {
   type Cell,
   ChoiceRows,
@@ -8,7 +8,7 @@ import {
   readField,
   withField,
 } from "../ui/primitives";
-import { countBody } from "./shared";
+import { countBody, coversModes } from "./shared";
 import type { WorkflowBodyProps, WorkflowDef } from "./types";
 
 // Locus specificity (LOC), transcribed from the ClinGen Pilot Calculator.
@@ -155,8 +155,7 @@ export const LOC_WORKFLOWS: WorkflowDef[] = [
     code: "LOC_SEG",
     title: "Workflow for Segregation with Disease - Autosomal Dominant",
     cells: SEG_AD,
-    applies: ({ inheritance }) =>
-      inheritance === Inheritance.AUTOSOMAL_DOMINANT,
+    applies: coversModes(ModeOfInheritance.AUTOSOMAL_DOMINANT),
     Body: countBody(SEG_AD, "Applicable individuals", [RARITY_NOTE]),
   },
   {
@@ -164,8 +163,7 @@ export const LOC_WORKFLOWS: WorkflowDef[] = [
     code: "LOC_SEG",
     title: "Workflow for Segregation with Disease - Autosomal Recessive",
     cells: SEG_AR,
-    applies: ({ inheritance }) =>
-      inheritance === Inheritance.AUTOSOMAL_RECESSIVE,
+    applies: coversModes(ModeOfInheritance.AUTOSOMAL_RECESSIVE),
     Body: countBody(SEG_AR, "Applicable individuals", [RARITY_NOTE]),
   },
   {
@@ -173,7 +171,7 @@ export const LOC_WORKFLOWS: WorkflowDef[] = [
     code: "LOC_SEG",
     title: "Workflow for Segregation with Disease - Semi-Dominant",
     cells: SEG_SD,
-    applies: ({ inheritance }) => inheritance === Inheritance.SEMIDOMINANT,
+    applies: coversModes(ModeOfInheritance.SEMIDOMINANT),
     Body: countBody(SEG_SD, "Applicable individuals", [RARITY_NOTE]),
   },
   {
@@ -182,7 +180,10 @@ export const LOC_WORKFLOWS: WorkflowDef[] = [
     title:
       "Workflow for Segregation with Disease - Co-segregation - X-linked inheritance",
     cells: SEG_XL,
-    applies: ({ inheritance }) => inheritance === Inheritance.X_LINKED,
+    applies: coversModes(
+      ModeOfInheritance.X_LINKED_DOMINANT,
+      ModeOfInheritance.X_LINKED_RECESSIVE,
+    ),
     Body: countBody(SEG_XL, "Applicable individuals", [RARITY_NOTE]),
   },
 ];

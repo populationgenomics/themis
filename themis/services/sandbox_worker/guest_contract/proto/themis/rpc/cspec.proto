@@ -163,10 +163,8 @@ message SpecifiedEntity {
   string mondo_id = 3;              // "MONDO:nnnnnnn"; empty where the rule set states no term
   string disease_label = 4;         // the panel's own label for it
   // Every mode the rule set states for this disease, spelled as it spells them ("Autosomal dominant
-  // inheritance"). Not harmonised onto `Inheritance`: the registry states the mode in two different
-  // shapes and states none at all on some entries, and no rule here keys on it — a harmonised mode
-  // is load-bearing on `GeneDisease`, and reading one off a scope statement would invite joining the
-  // two.
+  // inheritance"). Not mapped onto any enum: the registry states the mode in two different shapes
+  // and states none at all on some entries, and no rule here keys on it.
   repeated string inheritance_terms = 5;
 }
 

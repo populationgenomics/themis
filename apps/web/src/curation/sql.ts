@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { AssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
 import { getPool, inTransaction, type SqlConfig } from "@/server/pg";
+import { modeColumn, modeFromColumn } from "./mode";
 import type {
   Entry,
   NewVariant,
@@ -12,14 +13,16 @@ import type {
   Variant,
   Worksheet,
 } from "./model";
-import type { CurationStore } from "./store";
+import { type CurationStore, duplicateRegistration } from "./store";
 
 // Cloud SQL persistence for the curation schema, over the shared process-wide pool
 // (`server/pg.ts`). Every statement names the `curation` schema explicitly rather than relying on a
 // search_path the pool does not set.
 
 const VARIANT_COLUMNS =
-  "id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, created_by, created_at";
+  "id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, created_by, created_at";
+/** The uniqueness key `0013_curation_registration_mode` declares on `curation.variants`. */
+export const REGISTRATION_KEY = "variants_registration_key";
 const WORKSHEET_COLUMNS =
   "id, variant_id, curator_email, workflows_version, assigned_by, assigned_at";
 
@@ -31,6 +34,7 @@ interface VariantRow {
   clingen_allele_id: string;
   disease_label: string;
   mondo_id: string;
+  mode_of_inheritance: string;
   created_by: string;
   created_at: Date;
 }
@@ -133,8 +137,11 @@ export class SqlCurationStore implements CurationStore {
     const id = crypto.randomUUID();
     const rows = await this.query<{ created_at: Date }>(
       `INSERT INTO curation.variants
-         (id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at`,
+         (id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id,
+          mode_of_inheritance, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT ON CONSTRAINT ${REGISTRATION_KEY} DO NOTHING
+       RETURNING created_at`,
       [
         id,
         variant.gene,
@@ -143,15 +150,12 @@ export class SqlCurationStore implements CurationStore {
         variant.clingenAlleleId,
         variant.diseaseLabel,
         variant.mondoId,
+        modeColumn(variant.modeOfInheritance),
         createdBy,
       ],
     );
     const createdAt = rows[0]?.created_at;
-    if (createdAt === undefined) {
-      throw new Error(
-        `curation.variants INSERT returned no created_at for ${id}`,
-      );
-    }
+    if (createdAt === undefined) throw duplicateRegistration(variant);
     return { ...variant, id, createdBy, createdAt };
   }
 
@@ -289,7 +293,11 @@ export class SqlCurationStore implements CurationStore {
   /** One transaction: the submission row, then its assessments copied from the drafts by the
    *  database. The copy never leaves Postgres, so no encode/decode step sits between what the
    *  curator saw and what the submission commits. */
-  async submit(worksheetId: string, note: string): Promise<Submission> {
+  async submit(
+    worksheetId: string,
+    note: string,
+    workflowIds: readonly string[],
+  ): Promise<Submission> {
     const id = crypto.randomUUID();
     return this.transaction(async (client) => {
       const inserted = await client.query<{ submitted_at: Date }>(
@@ -305,8 +313,9 @@ export class SqlCurationStore implements CurationStore {
       }
       const copied = await client.query(
         `INSERT INTO curation.assessments (submission_id, workflow_id, assessment)
-         SELECT $1, workflow_id, assessment FROM curation.drafts WHERE worksheet_id = $2`,
-        [id, worksheetId],
+         SELECT $1, workflow_id, assessment FROM curation.drafts
+         WHERE worksheet_id = $2 AND workflow_id = ANY($3)`,
+        [id, worksheetId, [...workflowIds]],
       );
       if (copied.rowCount === 0) {
         throw new ClientInputError(
@@ -339,6 +348,7 @@ function parseVariant(row: VariantRow): Variant {
     clingenAlleleId: row.clingen_allele_id,
     diseaseLabel: row.disease_label,
     mondoId: row.mondo_id,
+    modeOfInheritance: modeFromColumn(row.mode_of_inheritance),
     createdBy: row.created_by,
     createdAt: row.created_at,
   };

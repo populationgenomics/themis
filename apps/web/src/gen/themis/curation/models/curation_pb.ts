@@ -19,7 +19,7 @@
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_buf_validate_validate } from "../../../buf/validate/validate_pb";
-import type { Consequence, Inheritance } from "../../evidence/models/evidence_pb";
+import type { Consequence } from "../../evidence/models/evidence_pb";
 import { file_themis_evidence_models_evidence } from "../../evidence/models/evidence_pb";
 import type { AssessmentStatus, Classification, Confidence } from "../../svcv4/models/svcv4_pb";
 import { file_themis_svcv4_models_svcv4 } from "../../svcv4/models/svcv4_pb";
@@ -29,7 +29,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/curation/models/curation.proto.
  */
 export const file_themis_curation_models_curation: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvY3VyYXRpb24vbW9kZWxzL2N1cmF0aW9uLnByb3RvEh90aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uInkKCkZpZWxkVmFsdWUSHAoIZmllbGRfaWQYASABKAlCCrpIB3IFEAEYgAESGQoHY2VsbF9pZBgCIAEoCUIIukgFcgMYgAESGQoFbGFiZWwYAyABKAlCCrpIB3IFEAEYgBASFwoFdmFsdWUYBCABKAlCCLpIBXIDGIAgItUDChJXb3JrZmxvd0Fzc2Vzc21lbnQSPwoGc3RhdHVzGAEgASgOMiUudGhlbWlzLnN2Y3Y0Lm1vZGVscy5Bc3Nlc3NtZW50U3RhdHVzQgi6SAWCAQIQARJFCgZmaWVsZHMYAiADKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWVCCLpIBZIBAhBAEiAKDXN0YXR1c19yZWFzb24YAyABKAlCCbpIBnIEGKCcARIbCghldmlkZW5jZRgEIAEoCUIJukgGcgQYoJwBEhwKCXJhdGlvbmFsZRgFIAEoCUIJukgGcgQYoJwBEkgKE25lYXJlc3RfYWx0ZXJuYXRpdmUYBiABKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWUSLQoabmVhcmVzdF9hbHRlcm5hdGl2ZV9yZWFzb24YByABKAlCCbpIBnIEGKCcARI9Cgpjb25maWRlbmNlGAggASgOMh8udGhlbWlzLnN2Y3Y0Lm1vZGVscy5Db25maWRlbmNlQgi6SAWCAQIQARIiCg9jb25maWRlbmNlX25vdGUYCSABKAlCCbpIBnIEGKCcASLZAQoOQ2FzZUFzc2Vzc21lbnQSJAoRcHJvYmFuZF9uYXJyYXRpdmUYASABKAlCCbpIBnIEGKCcARIkChF0ZXN0aW5nX3BlcmZvcm1lZBgCIAEoCUIJukgGcgQYoJwBEiYKE2NvX29ic2VydmVkX3ZhcmlhbnQYAyABKAlCCbpIBnIEGKCcARIeCgtzZWdyZWdhdGlvbhgEIAEoCUIJukgGcgQYoJwBEhkKBmFzc2F5cxgFIAEoCUIJukgGcgQYoJwBEhgKBW90aGVyGAYgASgJQgm6SAZyBBignAEi9AEKEVJvdXRpbmdBc3Nlc3NtZW50EkIKC2luaGVyaXRhbmNlGAEgASgOMiMudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Jbmhlcml0YW5jZUIIukgFggECEAESSAoRY29uc2VxdWVuY2VfY2xhc3MYAiABKA4yIy50aGVtaXMuZXZpZGVuY2UubW9kZWxzLkNvbnNlcXVlbmNlQgi6SAWCAQIQARIYCgZlbnRpdHkYAyABKAlCCLpIBXIDGIAIEhkKCG1vbmRvX2lkGAQgASgJQge6SARyAhhAEhwKCXJhdGlvbmFsZRgFIAEoCUIJukgGcgQYoJwBIqgBChFWZXJkaWN0QXNzZXNzbWVudBJFCg5jbGFzc2lmaWNhdGlvbhgBIAEoDjIjLnRoZW1pcy5zdmN2NC5tb2RlbHMuQ2xhc3NpZmljYXRpb25CCLpIBYIBAhABEhwKCXJhdGlvbmFsZRgCIAEoCUIJukgGcgQYoJwBEi4KE2NsYXNzX2RldGVybWluYXRpdmUYAyADKAlCEbpIDpIBCxBAIgdyBRABGIABIrsCCgpBc3Nlc3NtZW50EkcKCHdvcmtmbG93GAEgASgLMjMudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Xb3JrZmxvd0Fzc2Vzc21lbnRIABJFCgdyb3V0aW5nGAIgASgLMjIudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Sb3V0aW5nQXNzZXNzbWVudEgAEkUKB3ZlcmRpY3QYAyABKAsyMi50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLlZlcmRpY3RBc3Nlc3NtZW50SAASRwoMY2FzZV9jb250ZXh0GAQgASgLMi8udGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5DYXNlQXNzZXNzbWVudEgAQg0KBGtpbmQSBbpIAggBYgZwcm90bzM", [file_buf_validate_validate, file_themis_evidence_models_evidence, file_themis_svcv4_models_svcv4]);
+  fileDesc("CiV0aGVtaXMvY3VyYXRpb24vbW9kZWxzL2N1cmF0aW9uLnByb3RvEh90aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uInkKCkZpZWxkVmFsdWUSHAoIZmllbGRfaWQYASABKAlCCrpIB3IFEAEYgAESGQoHY2VsbF9pZBgCIAEoCUIIukgFcgMYgAESGQoFbGFiZWwYAyABKAlCCrpIB3IFEAEYgBASFwoFdmFsdWUYBCABKAlCCLpIBXIDGIAgItUDChJXb3JrZmxvd0Fzc2Vzc21lbnQSPwoGc3RhdHVzGAEgASgOMiUudGhlbWlzLnN2Y3Y0Lm1vZGVscy5Bc3Nlc3NtZW50U3RhdHVzQgi6SAWCAQIQARJFCgZmaWVsZHMYAiADKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWVCCLpIBZIBAhBAEiAKDXN0YXR1c19yZWFzb24YAyABKAlCCbpIBnIEGKCcARIbCghldmlkZW5jZRgEIAEoCUIJukgGcgQYoJwBEhwKCXJhdGlvbmFsZRgFIAEoCUIJukgGcgQYoJwBEkgKE25lYXJlc3RfYWx0ZXJuYXRpdmUYBiABKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWUSLQoabmVhcmVzdF9hbHRlcm5hdGl2ZV9yZWFzb24YByABKAlCCbpIBnIEGKCcARI9Cgpjb25maWRlbmNlGAggASgOMh8udGhlbWlzLnN2Y3Y0Lm1vZGVscy5Db25maWRlbmNlQgi6SAWCAQIQARIiCg9jb25maWRlbmNlX25vdGUYCSABKAlCCbpIBnIEGKCcASLZAQoOQ2FzZUFzc2Vzc21lbnQSJAoRcHJvYmFuZF9uYXJyYXRpdmUYASABKAlCCbpIBnIEGKCcARIkChF0ZXN0aW5nX3BlcmZvcm1lZBgCIAEoCUIJukgGcgQYoJwBEiYKE2NvX29ic2VydmVkX3ZhcmlhbnQYAyABKAlCCbpIBnIEGKCcARIeCgtzZWdyZWdhdGlvbhgEIAEoCUIJukgGcgQYoJwBEhkKBmFzc2F5cxgFIAEoCUIJukgGcgQYoJwBEhgKBW90aGVyGAYgASgJQgm6SAZyBBignAEirAEKEVJvdXRpbmdBc3Nlc3NtZW50EkgKEWNvbnNlcXVlbmNlX2NsYXNzGAIgASgOMiMudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Db25zZXF1ZW5jZUIIukgFggECEAESHAoJcmF0aW9uYWxlGAUgASgJQgm6SAZyBBignAFKBAgBEAJKBAgDEARKBAgEEAVSC2luaGVyaXRhbmNlUgZlbnRpdHlSCG1vbmRvX2lkIqgBChFWZXJkaWN0QXNzZXNzbWVudBJFCg5jbGFzc2lmaWNhdGlvbhgBIAEoDjIjLnRoZW1pcy5zdmN2NC5tb2RlbHMuQ2xhc3NpZmljYXRpb25CCLpIBYIBAhABEhwKCXJhdGlvbmFsZRgCIAEoCUIJukgGcgQYoJwBEi4KE2NsYXNzX2RldGVybWluYXRpdmUYAyADKAlCEbpIDpIBCxBAIgdyBRABGIABIrsCCgpBc3Nlc3NtZW50EkcKCHdvcmtmbG93GAEgASgLMjMudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Xb3JrZmxvd0Fzc2Vzc21lbnRIABJFCgdyb3V0aW5nGAIgASgLMjIudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Sb3V0aW5nQXNzZXNzbWVudEgAEkUKB3ZlcmRpY3QYAyABKAsyMi50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLlZlcmRpY3RBc3Nlc3NtZW50SAASRwoMY2FzZV9jb250ZXh0GAQgASgLMi8udGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5DYXNlQXNzZXNzbWVudEgAQg0KBGtpbmQSBbpIAggBYgZwcm90bzM", [file_buf_validate_validate, file_themis_evidence_models_evidence, file_themis_svcv4_models_svcv4]);
 
 /**
  * One control's value, and the framework cell it answers. Uniform across the two shapes the
@@ -216,35 +216,18 @@ export const CaseAssessmentSchema: GenMessage<CaseAssessment> = /*@__PURE__*/
  * disagreeing about codes, so this is recorded and reasoned about in its own right.
  *
  * The registration states the question, the entity with its disease and its mode of inheritance,
- * and the curator answers it (curation-surface.md). The curator's own statements here are the
- * consequence class, where UNSPECIFIED means not yet chosen and the workflows it routes between do
- * not apply, and the rationale, which is also where a curator argues that another entity is the
- * question to ask. `entity` and `mondo_id` copy the registration, and `inheritance` is a mode
- * stated on the worksheet that the registered one overrides: a reader takes the entity and its mode
- * from the registration.
+ * and the curator answers it without restating it (curation-surface.md). The curator's own
+ * statements here are the consequence class, where UNSPECIFIED means not yet chosen and the
+ * workflows it routes between do not apply, and the rationale, which is also where a curator argues
+ * that another entity is the question to ask.
  *
  * @generated from message themis.curation.models.curation.RoutingAssessment
  */
 export type RoutingAssessment = Message<"themis.curation.models.curation.RoutingAssessment"> & {
   /**
-   * @generated from field: themis.evidence.models.Inheritance inheritance = 1;
-   */
-  inheritance: Inheritance;
-
-  /**
    * @generated from field: themis.evidence.models.Consequence consequence_class = 2;
    */
   consequenceClass: Consequence;
-
-  /**
-   * @generated from field: string entity = 3;
-   */
-  entity: string;
-
-  /**
-   * @generated from field: string mondo_id = 4;
-   */
-  mondoId: string;
 
   /**
    * @generated from field: string rationale = 5;

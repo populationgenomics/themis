@@ -60,18 +60,12 @@ class CaseAssessment(_message.Message):
     def __init__(self, proband_narrative: _Optional[str] = ..., testing_performed: _Optional[str] = ..., co_observed_variant: _Optional[str] = ..., segregation: _Optional[str] = ..., assays: _Optional[str] = ..., other: _Optional[str] = ...) -> None: ...
 
 class RoutingAssessment(_message.Message):
-    __slots__ = ("inheritance", "consequence_class", "entity", "mondo_id", "rationale")
-    INHERITANCE_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("consequence_class", "rationale")
     CONSEQUENCE_CLASS_FIELD_NUMBER: _ClassVar[int]
-    ENTITY_FIELD_NUMBER: _ClassVar[int]
-    MONDO_ID_FIELD_NUMBER: _ClassVar[int]
     RATIONALE_FIELD_NUMBER: _ClassVar[int]
-    inheritance: _evidence_pb2.Inheritance
     consequence_class: _evidence_pb2.Consequence
-    entity: str
-    mondo_id: str
     rationale: str
-    def __init__(self, inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., consequence_class: _Optional[_Union[_evidence_pb2.Consequence, str]] = ..., entity: _Optional[str] = ..., mondo_id: _Optional[str] = ..., rationale: _Optional[str] = ...) -> None: ...
+    def __init__(self, consequence_class: _Optional[_Union[_evidence_pb2.Consequence, str]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class VerdictAssessment(_message.Message):
     __slots__ = ("classification", "rationale", "class_determinative")

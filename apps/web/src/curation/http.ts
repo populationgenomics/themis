@@ -21,7 +21,7 @@ import {
   isAlleleRegistryUnreachableError,
   type VariantResolver,
 } from "./resolver";
-import type { CurationStore } from "./store";
+import { type CurationStore, isDuplicateRegistrationError } from "./store";
 
 // The module's request boundary: reject a request another site caused the browser to send, resolve
 // the caller to their scoped access, and map a thrown value to a status. Every curation request —
@@ -66,6 +66,12 @@ export function toCurationErrorResponse(error: unknown): NextResponse {
     return NextResponse.json(
       { error: { code: "invalid_argument", message: error.message } },
       { status: 400 },
+    );
+  }
+  if (isDuplicateRegistrationError(error)) {
+    return NextResponse.json(
+      { error: { code: "already_exists", message: error.message } },
+      { status: 409 },
     );
   }
   if (isAlleleNotResolvedError(error)) {

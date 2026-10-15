@@ -1,7 +1,17 @@
 "use client";
 
+import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { type Cell, CountRows, FrameworkNote } from "../ui/primitives";
-import type { WorkflowBodyProps } from "./types";
+import type { Routing, WorkflowBodyProps } from "./types";
+
+/** An `applies` that puts a workflow on screen for exactly the modes named. Positive by design: a
+ *  predicate written as "every mode but autosomal dominant" would route an X-linked dominant entity
+ *  into the recessive branch. */
+export function coversModes(
+  ...modes: ModeOfInheritance[]
+): (routing: Routing) => boolean {
+  return ({ modeOfInheritance }) => modes.includes(modeOfInheritance);
+}
 
 /** The shape most clinical and locus workflows take: criteria rows, each carrying a count of the
  *  individuals it applies to, and the calculator's notes underneath. */

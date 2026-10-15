@@ -77,8 +77,8 @@ sql_pool = ["sqlalchemy", "opentelemetry-api", { include-group = "cloudsql" }]
 auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sql_pool" }, { include-group = "tracing" }]
 # migration runner (themis/migrate): applies the committed SQL migrations at deploy.
 migrate = [{ include-group = "cloudsql" }]
-# curation operator tooling (themis/curation/vocabulary_backfill.py): rewrites the stored
-# assessments through the generated stubs, so protobuf on top of the Cloud SQL client.
+# curation operator tooling (themis/curation/): rewrites the stored assessments through the
+# generated stubs, so protobuf on top of the Cloud SQL client.
 curation = ["protobuf", { include-group = "cloudsql" }]
 # service-to-service client (themis/clients): grpcio is the channel + generated stub;
 # google-auth mints the caller SA's ID token from the metadata server and requests is its

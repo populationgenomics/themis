@@ -1,5 +1,6 @@
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
 import { AssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
+import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
 import { DEV_USER_EMAIL } from "@/server/identity";
 import type {
@@ -11,7 +12,7 @@ import type {
   Variant,
   Worksheet,
 } from "./model";
-import type { CurationStore } from "./store";
+import { type CurationStore, duplicateRegistration } from "./store";
 import { WORKFLOWS_VERSION } from "./version";
 
 // The offline store: the same semantics as `sql.ts`, in memory. Assessments round-trip through the
@@ -67,6 +68,7 @@ export class FixtureCurationStore implements CurationStore {
         clingenAlleleId: "CA011552",
         diseaseLabel: "hypertrophic cardiomyopathy",
         mondoId: "MONDO:0005045",
+        modeOfInheritance: ModeOfInheritance.AUTOSOMAL_DOMINANT,
       },
       {
         gene: "CFTR",
@@ -75,6 +77,7 @@ export class FixtureCurationStore implements CurationStore {
         clingenAlleleId: "CA118639",
         diseaseLabel: "cystic fibrosis",
         mondoId: "MONDO:0009061",
+        modeOfInheritance: ModeOfInheritance.AUTOSOMAL_RECESSIVE,
       },
     ];
     for (const variant of seeded) {
@@ -96,6 +99,14 @@ export class FixtureCurationStore implements CurationStore {
     createdBy: string,
     createdAt: Date,
   ): Variant {
+    const registered = [...this.variants.values()].some(
+      (v) =>
+        v.transcript === variant.transcript &&
+        v.hgvsC === variant.hgvsC &&
+        v.mondoId === variant.mondoId &&
+        v.modeOfInheritance === variant.modeOfInheritance,
+    );
+    if (registered) throw duplicateRegistration(variant);
     const stored: Variant = {
       ...variant,
       id: this.id("var"),
@@ -241,12 +252,20 @@ export class FixtureCurationStore implements CurationStore {
     );
   }
 
-  async submit(worksheetId: string, note: string): Promise<Submission> {
+  async submit(
+    worksheetId: string,
+    note: string,
+    workflowIds: readonly string[],
+  ): Promise<Submission> {
     if (!this.worksheets.has(worksheetId)) {
       throw new ResourceNotFoundError(`no such worksheet: ${worksheetId}`);
     }
-    const drafts = this.draftRows.get(worksheetId);
-    if (drafts === undefined || drafts.size === 0) {
+    const drafts = new Map(
+      [...(this.draftRows.get(worksheetId) ?? [])].filter(([workflowId]) =>
+        workflowIds.includes(workflowId),
+      ),
+    );
+    if (drafts.size === 0) {
       throw new ClientInputError(
         "nothing to submit: the worksheet holds no answers",
       );
@@ -256,7 +275,7 @@ export class FixtureCurationStore implements CurationStore {
       worksheetId,
       submittedAt: new Date(),
       note,
-      entries: new Map(drafts),
+      entries: drafts,
     };
     const existing = this.submissionRows.get(worksheetId) ?? [];
     this.submissionRows.set(worksheetId, [...existing, submission]);

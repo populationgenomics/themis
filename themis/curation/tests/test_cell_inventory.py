@@ -14,11 +14,13 @@ from __future__ import annotations
 import decimal
 import json
 import pathlib
+import typing
 from typing import NotRequired, TypedDict
 
 import pytest
 
 from themis.svcv4 import data, observations, reference
+from themis.svcv4.models import svcv4_pb2
 
 _INVENTORY = pathlib.Path(__file__).resolve().parents[3] / 'apps' / 'web' / 'curation-cells.json'
 
@@ -167,3 +169,23 @@ def test_the_inventory_matches_the_pinned_transcription() -> None:
         'curation-cells.json was generated from a different WORKFLOWS_VERSION than version.ts '
         'declares; regenerate it with `bun run cells` in apps/web'
     )
+
+
+@pytest.mark.parametrize('code', ['CLN_AFF', 'CLN_UAF', 'POP_HMZ'])
+def test_each_mode_puts_on_screen_the_tables_the_library_routes_it_to(cells: list[InventoryCell], code: str) -> None:
+    """The worksheet's routing by mode and `observations.mode_routed_tables` are one table, kept twice.
+
+    A curator who sees a table the library refuses for the mode, or misses one it prices, answers a
+    different question than a run classifying the same entity.
+    """
+    routing: dict[str, list[str]] = json.loads(_INVENTORY.read_text('utf-8'))['mode_routing']
+    stated = {value for value in svcv4_pb2.ModeOfInheritance.values() if value}
+    assert {svcv4_pb2.ModeOfInheritance.Value(name) for name in routing} == stated
+    for name, workflows in routing.items():
+        on_screen = {
+            observations.mode_routed_table_of(entry['cell'])
+            for entry in cells
+            if entry['code'] == code and entry['workflow'] in workflows
+        }
+        mode = typing.cast('svcv4_pb2.ModeOfInheritance', svcv4_pb2.ModeOfInheritance.Value(name))
+        assert on_screen == set(observations.mode_routed_tables(mode, code)), name

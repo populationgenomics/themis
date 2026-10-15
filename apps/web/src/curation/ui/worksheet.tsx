@@ -9,27 +9,27 @@ import {
   type CaseAssessment,
   CaseAssessmentSchema,
   type RoutingAssessment,
+  RoutingAssessmentSchema,
   type VerdictAssessment,
   VerdictAssessmentSchema,
   type WorkflowAssessment,
   WorkflowAssessmentSchema,
 } from "@/gen/themis/curation/models/curation_pb";
-import {
-  Consequence,
-  Inheritance,
-} from "@/gen/themis/evidence/models/evidence_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
 import {
   AssessmentStatus,
   Classification,
+  type ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { CONSEQUENCES } from "../consequence";
+import { inlineMode } from "../mode";
+import { CASE_ID, ROUTING_ID, VERDICT_ID } from "../sections";
 import { POP_FRQ_ID } from "../workflows/pop";
 import { barredWorkflowIds, barringBin } from "../workflows/rarity-gate";
 import {
   ALL_WORKFLOWS,
-  CASE_ID,
   groupsFor,
-  ROUTING_ID,
-  VERDICT_ID,
+  workflowById,
   workflowsFor,
 } from "../workflows/registry";
 import type { Routing, WorkflowDef } from "../workflows/types";
@@ -58,6 +58,8 @@ export interface WorksheetInit {
     hgvsC: string;
     diseaseLabel: string;
     mondoId: string;
+    /** The registered mode, which routes the observation workflows. Never UNSPECIFIED. */
+    modeOfInheritance: ModeOfInheritance;
   };
   workflowsVersion: string;
   submissionCount: number;
@@ -132,12 +134,22 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
   );
   // Restored from the saved routing draft, not re-derived. Re-deriving reset the consequence class
   // on every revisit, which dropped every predicted-effect workflow off the screen while their
-  // stored answers stayed in the drafts and went into the next submission unseen.
-  const [routing, setRouting] = useState<Routing>({
-    inheritance: decoded.routing?.inheritance ?? Inheritance.UNSPECIFIED,
-    consequenceClass:
-      decoded.routing?.consequenceClass ?? Consequence.UNSPECIFIED,
-  });
+  // stored answers stayed in the drafts and went into the next submission unseen. Built field by
+  // field, so a stored draft's other fields are not written back.
+  const [routingAnswer, setRoutingAnswer] = useState<RoutingAssessment>(() =>
+    create(RoutingAssessmentSchema, {
+      consequenceClass:
+        decoded.routing?.consequenceClass ?? Consequence.UNSPECIFIED,
+      rationale: decoded.routing?.rationale ?? "",
+    }),
+  );
+  const routing = useMemo<Routing>(
+    () => ({
+      modeOfInheritance: init.variant.modeOfInheritance,
+      consequenceClass: routingAnswer.consequenceClass,
+    }),
+    [init.variant.modeOfInheritance, routingAnswer.consequenceClass],
+  );
   const [caseContext, setCaseContext] = useState<CaseAssessment>(
     () => decoded.caseContext ?? create(CaseAssessmentSchema, {}),
   );
@@ -145,6 +157,16 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
     () => decoded.verdict ?? create(VerdictAssessmentSchema, {}),
   );
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  // The worksheet-level sections the server holds a draft for, or will once the pending save lands:
+  // a submission always takes them, so one of them is enough to submit.
+  const [heldSections, setHeldSections] = useState<ReadonlySet<string>>(
+    () =>
+      new Set(
+        [CASE_ID, ROUTING_ID, VERDICT_ID].filter(
+          (id) => decoded.payloads[id] !== undefined,
+        ),
+      ),
+  );
   const [autosave] = useState(
     () =>
       new Autosave({
@@ -192,7 +214,7 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
   const barringRow = barringBin(popFrq);
   // Which workflows the frequency bars, over EVERY workflow rather than the ones on screen. Routing
   // decides what renders, never what the gate has decided: a barred workflow that leaves the screen is
-  // still barred, and reading the gate off `visible` made a change of inheritance restore its status
+  // still barred, and reading the gate off `visible` made a change of routing restore its status
   // — writing `scored` back, off-screen, under a frequency that bars it, into the next submission.
   const barred = barredWorkflowIds(ALL_WORKFLOWS, popFrq);
   useEffect(() => {
@@ -232,30 +254,24 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
       <div className="min-w-0 flex-1 space-y-5">
         <Header init={init} saveState={saveState} />
         <RoutingCard
-          routing={routing}
+          value={routingAnswer}
           onChange={(next) => {
-            setRouting(next);
-            void autosave.commit(
+            setRoutingAnswer(next);
+            setHeldSections((held) => new Set(held).add(ROUTING_ID));
+            autosave.schedule(
               ROUTING_ID,
               create(AssessmentSchema, {
-                kind: {
-                  case: "routing",
-                  value: {
-                    inheritance: next.inheritance,
-                    consequenceClass: next.consequenceClass,
-                    entity: init.variant.diseaseLabel,
-                    mondoId: init.variant.mondoId,
-                    rationale: "",
-                  },
-                },
+                kind: { case: "routing", value: next },
               }),
             );
           }}
+          onBlur={() => autosave.flush(ROUTING_ID)}
         />
         <CaseCard
           value={caseContext}
           onChange={(next) => {
             setCaseContext(next);
+            setHeldSections((held) => new Set(held).add(CASE_ID));
             autosave.schedule(
               CASE_ID,
               create(AssessmentSchema, {
@@ -323,6 +339,7 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
           )}
           onChange={(next) => {
             setVerdict(next);
+            setHeldSections((held) => new Set(held).add(VERDICT_ID));
             autosave.schedule(
               VERDICT_ID,
               create(AssessmentSchema, {
@@ -336,14 +353,18 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
           worksheetId={init.worksheetId}
           autosave={autosave}
           saveState={saveState}
-          answered={Object.keys(answers).length}
+          shown={visible.map((w) => w.id)}
+          submittable={submittable(answers, visible, heldSections)}
+          hidden={hiddenAnswers(answers, visible)}
         />
       </div>
     </div>
   );
 }
 
-function Header({
+/** The variant and the entity it is classified against, the registered mode included: shown to the
+ *  curator and never asked of them. */
+export function Header({
   init,
   saveState,
 }: {
@@ -365,8 +386,8 @@ function Header({
             {variant.transcript}:{variant.hgvsC}
           </p>
           <p className="framework-voice mt-0.5 text-[13px] text-ink-muted">
-            {variant.gene} · {variant.diseaseLabel}
-            {variant.mondoId ? ` · ${variant.mondoId}` : ""}
+            {variant.gene} · {variant.diseaseLabel} · {variant.mondoId} ·{" "}
+            {inlineMode(variant.modeOfInheritance)}
           </p>
         </div>
         <SaveIndicator state={saveState} />
@@ -439,46 +460,19 @@ function Ledger({
   );
 }
 
-/** Every mode the contract names, the autosomal ones first. Y-linked, mitochondrial and undetermined
- *  are here even though the calculator's splits have no branch for them: a curator has to be able to
- *  state the mode whatever it is, and an empty routed set is the framework's answer to one it does
- *  not route. */
-export const INHERITANCES: [Inheritance, string][] = [
-  [Inheritance.AUTOSOMAL_DOMINANT, "Autosomal dominant"],
-  [Inheritance.AUTOSOMAL_RECESSIVE, "Autosomal recessive"],
-  [Inheritance.SEMIDOMINANT, "Semi-dominant"],
-  [Inheritance.X_LINKED, "X-linked"],
-  [Inheritance.Y_LINKED, "Y-linked"],
-  [Inheritance.MITOCHONDRIAL, "Mitochondrial"],
-  [Inheritance.UNDETERMINED, "Undetermined"],
-];
-
-/** Every class the contract names, in the order the calculator groups them. Non-coding is here even
- *  though no predicted-effect workflow is transcribed for it: a curator whose variant is non-coding
- *  has to be able to say so, and an empty routed set is the framework's answer to that. */
-export const CONSEQUENCES: [Consequence, string][] = [
-  [Consequence.MISSENSE, "Missense"],
-  [Consequence.NONSENSE, "Nonsense"],
-  [Consequence.FRAMESHIFT, "Frameshift"],
-  [Consequence.INFRAME_INDEL, "In-frame indel"],
-  [Consequence.CANONICAL_SPLICE, "Canonical splice"],
-  [Consequence.INTRONIC, "Intronic"],
-  [Consequence.SYNONYMOUS, "Synonymous"],
-  [Consequence.NON_CODING, "Non-coding"],
-  [Consequence.EXON_DELETION, "Exon deletion"],
-  [Consequence.EXON_DUPLICATION, "Exon duplication"],
-  [Consequence.START_LOST, "Start lost"],
-  [Consequence.STOP_LOST, "Stop lost"],
-];
-
-/** The routing is a judgement of the curator's own, and it decides which workflows apply. Recorded
- *  as its own section rather than inferred from the variant row. */
+/** What the curator states before the workflows: the consequence class, which routes the
+ *  predicted-effect workflows, and the reasoning behind their routing. The entity and its mode are
+ *  part of the registered question, in the header above; the rationale is where a curator who
+ *  thinks another entity is the question to ask says so. */
 export function RoutingCard({
-  routing,
+  value,
   onChange,
+  onBlur,
 }: {
-  routing: Routing;
-  onChange: (next: Routing) => void;
+  value: RoutingAssessment;
+  onChange: (next: RoutingAssessment) => void;
+  /** Commit the current draft now, bound to a control losing focus. */
+  onBlur: () => void;
 }) {
   return (
     <section className="rounded-md border border-line-primary bg-white p-5">
@@ -486,88 +480,70 @@ export function RoutingCard({
         Routing
       </h2>
       <p className="framework-voice mt-1 mb-4 text-[13px] text-ink-muted">
-        Which workflows apply follows from these. State them before you start.
+        The consequence class decides which predicted-effect workflows apply.
+        The entity, its mode of inheritance included, is the question the
+        registration asks, shown above.
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="field-eyebrow text-ink-label">
-            Mode of inheritance
-          </span>
-          <select
-            value={routing.inheritance}
-            onChange={(e) =>
-              onChange({ ...routing, inheritance: Number(e.target.value) })
-            }
-            className="framework-voice mt-1 w-full rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13.5px] text-ink-body"
-          >
-            <option value={Inheritance.UNSPECIFIED}>Select…</option>
-            {INHERITANCES.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="field-eyebrow text-ink-label">
-            Consequence class
-          </span>
-          <select
-            value={routing.consequenceClass}
-            onChange={(e) =>
-              onChange({ ...routing, consequenceClass: Number(e.target.value) })
-            }
-            className="framework-voice mt-1 w-full rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13.5px] text-ink-body"
-          >
-            <option value={Consequence.UNSPECIFIED}>Select…</option>
-            {CONSEQUENCES.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+      <label className="block sm:w-1/2">
+        <span className="field-eyebrow text-ink-label">Consequence class</span>
+        <select
+          value={value.consequenceClass}
+          onChange={(e) =>
+            onChange({ ...value, consequenceClass: Number(e.target.value) })
+          }
+          onBlur={onBlur}
+          className="framework-voice mt-1 w-full rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13.5px] text-ink-body"
+        >
+          <option value={Consequence.UNSPECIFIED}>Select…</option>
+          {CONSEQUENCES.map(([member, label]) => (
+            <option key={member} value={member}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="mt-4 mb-1.5 flex items-baseline gap-2">
+        <span className="field-eyebrow text-ink-label">Rationale</span>
+        <span className="framework-voice text-[12px] text-ink-faint">
+          why this class, and any reason another entity is the question to ask
+        </span>
       </div>
+      <textarea
+        aria-label="Routing rationale"
+        value={value.rationale}
+        rows={2}
+        onChange={(e) => onChange({ ...value, rationale: e.target.value })}
+        onBlur={onBlur}
+        className="curator-voice w-full resize-y rounded-sm border border-line-input bg-white px-3 py-2 text-ink-body focus:border-ink-ghost focus:outline-none"
+      />
     </section>
   );
 }
 
-/** What the routing leaves off the page, said out loud. Each axis is either still unanswered — both
- *  pickers open unset, and nothing seeds them — or answered with a member the transcription has no
+/** What the routing leaves off the page, said out loud: a consequence class still unanswered (the
+ *  picker opens unset, and nothing seeds it) or answered with a class the transcription has no
  *  workflow for. Either way the absence is stated, rather than left looking like a page that failed
  *  to render.
  *
- *  Derived by asking the registry what the answer adds, not from a list of members: a class or mode
- *  the framework starts routing stops being named here without anyone remembering to edit this. */
+ *  Derived by asking the registry what the answer adds, not from a list of members: a class the
+ *  framework starts routing stops being named here without anyone remembering to edit this. */
 function RoutingNotes({ routing }: { routing: Routing }) {
-  const routed = workflowsFor(routing).length;
-  const adds = (unanswered: Partial<Routing>) =>
-    routed > workflowsFor({ ...routing, ...unanswered }).length;
-  const notes: string[] = [];
-  if (routing.inheritance === Inheritance.UNSPECIFIED) {
-    notes.push(
-      "State the mode of inheritance above to see the unaffected, affected, homozygous and segregation workflows it selects between.",
-    );
-  } else if (!adds({ inheritance: Inheritance.UNSPECIFIED })) {
-    notes.push(
-      "No workflow is routed by this mode of inheritance: the framework's observation workflows split on autosomal dominant, autosomal recessive, semi-dominant and X-linked only.",
-    );
-  }
+  let note: string | undefined;
   if (routing.consequenceClass === Consequence.UNSPECIFIED) {
-    notes.push(
-      "Name the consequence class above to see the predicted-effect workflows.",
-    );
-  } else if (!adds({ consequenceClass: Consequence.UNSPECIFIED })) {
-    notes.push(
-      "No predicted-effect workflow is transcribed for this consequence class.",
-    );
+    note =
+      "Name the consequence class above to see the predicted-effect workflows.";
+  } else if (
+    workflowsFor(routing).length <=
+    workflowsFor({ ...routing, consequenceClass: Consequence.UNSPECIFIED })
+      .length
+  ) {
+    note =
+      "No predicted-effect workflow is transcribed for this consequence class.";
   }
-  if (notes.length === 0) return null;
+  if (note === undefined) return null;
   return (
-    <div className="framework-voice space-y-2 rounded-md border border-line-primary border-dashed bg-surface-warm-panel px-5 py-8 text-center text-[13.5px] text-ink-muted">
-      {notes.map((note) => (
-        <p key={note}>{note}</p>
-      ))}
+    <div className="framework-voice rounded-md border border-line-primary border-dashed bg-surface-warm-panel px-5 py-8 text-center text-[13.5px] text-ink-muted">
+      <p>{note}</p>
     </div>
   );
 }
@@ -778,6 +754,35 @@ export function VerdictCard({
   );
 }
 
+/** How many drafts a submission would take, by the server's rule: the answered workflows on screen,
+ *  and every worksheet-level section that holds a draft. Zero is the one case the server refuses. */
+export function submittable(
+  answers: Record<string, WorkflowAssessment>,
+  visible: WorkflowDef[],
+  heldSections: ReadonlySet<string>,
+): number {
+  return (
+    visible.filter((w) => answers[w.id] !== undefined).length +
+    heldSections.size
+  );
+}
+
+/** The answered workflows the routing leaves off the screen, by code and id. Their drafts stay saved
+ *  and a submission leaves them out: the curator cannot see what they would submit. */
+export function hiddenAnswers(
+  answers: Record<string, WorkflowAssessment>,
+  visible: WorkflowDef[],
+): string[] {
+  const shown = new Set(visible.map((w) => w.id));
+  return Object.keys(answers)
+    .filter((id) => !shown.has(id))
+    .sort()
+    .map((id) => {
+      const workflow = workflowById(id);
+      return workflow === undefined ? id : `${workflow.code} ${id}`;
+    });
+}
+
 /** The server copies the drafts it holds, so every pending write has to land first: the click that
  *  submits also blurs the field being typed in, and a PUT dispatched on the same click as the POST
  *  can be applied after it. A section still failing bars submitting — the submission would quietly
@@ -786,12 +791,19 @@ function Submit({
   worksheetId,
   autosave,
   saveState,
-  answered,
+  shown,
+  submittable,
+  hidden,
 }: {
   worksheetId: string;
   autosave: Autosave;
   saveState: SaveState;
-  answered: number;
+  /** The workflows on screen, which are the ones a submission takes. */
+  shown: string[];
+  /** How many drafts a submission would take now (`submittable`). */
+  submittable: number;
+  /** The codes of answered workflows the routing has taken off the screen. */
+  hidden: string[];
 }) {
   const [state, setState] = useState<
     "idle" | "saving" | "sending" | "done" | "error"
@@ -807,9 +819,16 @@ function Submit({
         Submitting records everything you have answered as one set. You can keep
         working afterwards and submit again.
       </p>
+      {hidden.length > 0 ? (
+        <p className="framework-voice mb-3 text-[13px] text-ink-muted">
+          {hidden.length === 1
+            ? `One saved answer is for a workflow the routing no longer shows (${hidden[0]}). It stays saved and is not submitted.`
+            : `${hidden.length} saved answers are for workflows the routing no longer shows (${hidden.join(", ")}). They stay saved and are not submitted.`}
+        </p>
+      ) : null}
       <button
         type="button"
-        disabled={answered === 0 || busy || saveState === "failed"}
+        disabled={submittable === 0 || busy || saveState === "failed"}
         onClick={async () => {
           setState("saving");
           setMessage("");
@@ -829,7 +848,7 @@ function Submit({
               {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ note: "" }),
+                body: JSON.stringify({ note: "", workflowIds: shown }),
               },
             );
             if (res.ok) {

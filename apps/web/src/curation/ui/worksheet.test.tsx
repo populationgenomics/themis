@@ -1,32 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
 import { renderToStaticMarkup } from "react-dom/server";
-import { VerdictAssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
+import {
+  RoutingAssessmentSchema,
+  VerdictAssessmentSchema,
+} from "@/gen/themis/curation/models/curation_pb";
 import {
   Consequence,
   ConsequenceSchema,
-  Inheritance,
-  InheritanceSchema,
 } from "@/gen/themis/evidence/models/evidence_pb";
 import {
   Classification,
   ClassificationSchema,
+  ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
-import { workflowsFor } from "../workflows/registry";
-import {
-  CLASSIFICATIONS,
-  CONSEQUENCES,
-  INHERITANCES,
-  RoutingCard,
-  VerdictCard,
-} from "./worksheet";
+import { CONSEQUENCES } from "../consequence";
+import { CLASSIFICATIONS, Header, RoutingCard, VerdictCard } from "./worksheet";
 
-// That the curator can say what the contract can hold.
+// That the curator can say what the contract can hold, and is asked nothing the registration fixes.
 //
-// The routing and the verdict are the three answers a round compares side by side, so a member the
-// picker leaves out is not a missing option — it is a case a curator has to answer as something else,
-// silently, and a divergence that reads as disagreement rather than as an unaskable question. Read
-// off the generated descriptors, so a member added to the framework fails here rather than going
+// The routing and the verdict are what a round compares side by side, so a member the picker leaves
+// out is not a missing option: it is a case a curator has to answer as something else, silently, and
+// a divergence that reads as disagreement rather than as an unaskable question. Read off the
+// generated descriptors, so a member added to the framework fails here rather than going
 // unofferable.
 
 /** The values of the options under one of the routing card's headings, in the order rendered. */
@@ -41,10 +37,15 @@ function optionsUnder(markup: string, heading: string): number[] {
   );
 }
 
-const UNANSWERED = {
-  inheritance: Inheritance.UNSPECIFIED,
-  consequenceClass: Consequence.UNSPECIFIED,
-};
+function routingCard(): string {
+  return renderToStaticMarkup(
+    <RoutingCard
+      value={create(RoutingAssessmentSchema, {})}
+      onChange={() => {}}
+      onBlur={() => {}}
+    />,
+  );
+}
 
 describe("the consequence class the worksheet routes on", () => {
   test("offers every member the contract names, non-coding included", () => {
@@ -63,57 +64,44 @@ describe("the consequence class the worksheet routes on", () => {
   });
 
   test("reaches the curator as a select that opens on a placeholder", () => {
-    const markup = renderToStaticMarkup(
-      <RoutingCard routing={UNANSWERED} onChange={() => {}} />,
-    );
     // The placeholder first, then the list: a picker that opened on its first real option would
-    // record a routing nobody stated, which is what the registration used to do.
-    expect(optionsUnder(markup, "Consequence class")).toEqual([
+    // record a routing nobody stated.
+    expect(optionsUnder(routingCard(), "Consequence class")).toEqual([
       Consequence.UNSPECIFIED,
       ...CONSEQUENCES.map(([value]) => value),
     ]);
-    expect(optionsUnder(markup, "Mode of inheritance")).toEqual([
-      Inheritance.UNSPECIFIED,
-      ...INHERITANCES.map(([value]) => value),
-    ]);
   });
 });
 
-describe("the mode of inheritance the worksheet routes on", () => {
-  test("offers every member the contract names, the unrouted modes included", () => {
-    const offered = new Set(INHERITANCES.map(([value]) => value));
-    expect(offered.size).toBe(INHERITANCES.length);
-    expect(offered.has(Inheritance.UNSPECIFIED)).toBe(false);
-    expect(
-      InheritanceSchema.values
-        .filter(
-          (value) =>
-            value.number !== Inheritance.UNSPECIFIED &&
-            !offered.has(value.number),
-        )
-        .map((value) => value.name),
-    ).toEqual([]);
+describe("the registered entity", () => {
+  test("is not asked of the curator: the routing card's one picker is the consequence class", () => {
+    const markup = routingCard();
+    expect(markup.match(/<select/g)?.length).toBe(1);
+    expect(markup).toContain('aria-label="Routing rationale"');
   });
-});
 
-describe("a stored mode the workflows do not branch on", () => {
-  // Offered like any other: that the framework routes nothing on a mode is no reason a curator
-  // cannot state it. So the picker has to carry it as the answer it is — a select whose value
-  // matches none of its options falls back to the first, which here reads "Select…": an unanswered
-  // routing, over a stored answer, beside a note explaining what that answer routes.
-  test("renders as itself and routes nothing", () => {
-    const routing = { ...UNANSWERED, inheritance: Inheritance.MITOCHONDRIAL };
-    expect(workflowsFor(routing).map((workflow) => workflow.id)).toEqual(
-      workflowsFor(UNANSWERED).map((workflow) => workflow.id),
-    );
+  test("is shown in the header, its mode included", () => {
     const markup = renderToStaticMarkup(
-      <RoutingCard routing={routing} onChange={() => {}} />,
+      <Header
+        saveState="idle"
+        init={{
+          worksheetId: "ws",
+          workflowsVersion: "v",
+          submissionCount: 0,
+          drafts: {},
+          variant: {
+            gene: "F8",
+            transcript: "NM_000132.4",
+            hgvsC: "c.1A>G",
+            diseaseLabel: "hemophilia A",
+            mondoId: "MONDO:0010602",
+            modeOfInheritance: ModeOfInheritance.X_LINKED_RECESSIVE,
+          },
+        }}
+      />,
     );
-    // React marks the option matching the select's value, so this is the mode reading back as
-    // itself; a value matching no option leaves the placeholder marked instead.
-    expect(markup).toContain(
-      `<option value="${Inheritance.MITOCHONDRIAL}" selected="">`,
-    );
+    expect(markup).toContain("MONDO:0010602");
+    expect(markup).toContain("X-linked recessive");
   });
 });
 

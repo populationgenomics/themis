@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
 import { WorkflowAssessmentSchema } from "@/gen/themis/curation/models/curation_pb";
+import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
 import {
-  Consequence,
-  Inheritance,
-} from "@/gen/themis/evidence/models/evidence_pb";
-import { AssessmentStatus } from "@/gen/themis/svcv4/models/svcv4_pb";
+  AssessmentStatus,
+  ModeOfInheritance,
+} from "@/gen/themis/svcv4/models/svcv4_pb";
 import { withField } from "../ui/primitives";
 import { FRQ_DAFT, FRQ_FAF } from "./frequency";
 import {
@@ -16,7 +16,7 @@ import {
 import { ALL_WORKFLOWS, groupsFor } from "./registry";
 
 const AUTOSOMAL_DOMINANT = {
-  inheritance: Inheritance.AUTOSOMAL_DOMINANT,
+  modeOfInheritance: ModeOfInheritance.AUTOSOMAL_DOMINANT,
   consequenceClass: Consequence.MISSENSE,
 };
 

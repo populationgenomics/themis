@@ -10,9 +10,8 @@ document, and the membership chokepoint this surface stands beside rather than i
 [`frontend-framework.md`](frontend-framework.md) (the web tier it runs in, and the IAP gate in front of it);
 [`proto.md`](proto.md) (a proto at rest in a Cloud SQL column, and the compat gate that governs its evolution);
 [`migrations.md`](migrations.md) (how the tables land, and the condition a destructive migration is taken under);
-[`../runbooks/curation-vocabulary-deploy.md`](../runbooks/curation-vocabulary-deploy.md) (the closed-window procedure
-the vocabulary migration is applied with); [`../PRODUCT.md`](../PRODUCT.md) (§6 adversarial review and calibrated
-uncertainty, §7 the curation seat the workbench grows into); terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
+[`../PRODUCT.md`](../PRODUCT.md) (§6 adversarial review and calibrated uncertainty, §7 the curation seat the workbench
+grows into); terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview
 
@@ -37,8 +36,9 @@ human's — has a reference authored by a human, in a shape a reader can compare
   confidence are the enums the evidence interfaces and `themis.svcv4` already speak, so a registration, a curator's
   answer and a run's are stated in the same members.
 - **Storage is a scratch tier and a record tier.** Auto-save upserts drafts; submitting copies them, whole and in one
-  transaction, into insert-only assessments under a submission that owns the set. Lifecycle and status are read from
-  those two facts, never stored.
+  transaction, into insert-only assessments under a submission that owns the set. It copies the drafts of the workflows
+  the routing shows and leaves the rest as drafts, since a curator cannot vouch for an answer the screen no longer shows
+  them. Lifecycle and status are read from those two facts, never stored.
 - **It is its own module on the repository's ordinary machinery**, coupled to the workbench through infrastructure
   alone, so it can grow into the product's assisted curation seat, be absorbed by it, or be retired, each as a local
   change.
@@ -500,7 +500,9 @@ dev deployment's data retained:
 tiers and the variant registry before the rows are rewritten by a one-shot operator tool and verified against the
 snapshots. A closed window is needed because the deploy rolls Cloud Run before it applies migrations
 ([`migrations.md`](migrations.md) §How it runs), so a row saved in that gap would be renumbered twice with nothing able
-to tell; the procedure is [`../runbooks/curation-vocabulary-deploy.md`](../runbooks/curation-vocabulary-deploy.md).
+to tell. The snapshots are kept only while something reads them:
+[`0015_curation_snapshots_drop.sql`](../../themis/migrate/migrations/0015_curation_snapshots_drop.sql) drops them once
+the rewrite and `0014`, below, have both read them.
 
 **Once `0014` runs, registering a variant fails until the form that sends a mode is deployed.**
 [`0014_curation_registration_mode.sql`](../../themis/migrate/migrations/0014_curation_registration_mode.sql) adds the
@@ -521,6 +523,37 @@ key would refuse. Each is repaired by hand before the deploy is retried. A row m
 registration nobody has answered is deleted. A registration entered twice is repaired by deleting the copy without
 submissions, once its unsubmitted worksheets are gone. Where both copies hold submissions, which answers to keep is a
 decision for the team.
+
+**The routing's fields for the entity are deleted in the change that stops writing them.** The registration holds the
+entity and its mode, so `RoutingAssessment` carries neither: its fields for a stated mode and for copies of the disease
+label and MONDO term are deleted with their numbers and names reserved.
+
+[`proto.md`](proto.md) §Schema evolution retires a field the browser sends over two deploys: the first stops sending it,
+the second deletes it. In that order no tab running an older bundle ever sends a key the server no longer declares, so
+nothing fails at any point. One deploy is taken here, because the failures it allows reach nobody outside the team: the
+condition [`migrations.md`](migrations.md) §How it runs sets holds, since dev holds the only curation data and the team
+are its only curators. Two deploys would keep the dead fields, and the code that writes them, in the schema for a
+release to avoid failures nobody else can hit.
+
+The rollout is one deploy followed by one run of the backfill, and each step opens or closes a failure window:
+
+1. The deploy rolls the web tier. A tab still running the previous bundle sends the deleted keys with its routing card.
+   The draft route refuses keys the schema no longer declares, so that card fails to save, and the tab cannot submit
+   while a section fails; a reload clears it. The new surface reads the registered mode, which no column holds yet, so
+   every curation page fails too.
+1. The deploy applies the migrations. Once `0014` has run, the curation pages load again. If `0014` stops on a
+   registration it cannot place, they keep failing until that row is repaired and the deploy is retried.
+1. An operator runs [`routing_backfill`](../../themis/curation/routing_backfill.py) with `--apply`. Rows written before
+   the deploy still carry the deleted fields, which today's readers parse as unknown and ignore; the backfill rewrites
+   them without the fields.
+
+Between the second step and the third, a curator who saves over a routing draft replaces it with one that states no
+mode, so a contradiction that draft held escapes the backfill's check. Only drafts are exposed, since a submitted
+assessment is never rewritten, and the backfill runs straight after the deploy to keep the window short.
+
+Before it writes anything, the backfill holds each stored mode against the mode the variant is registered under. Where
+the two differ, the row records a curator who answered a different entity, so the backfill stops, naming the rows and
+writing nothing; its docstring names how such a row is settled.
 
 ### Auto-save, and the one write that is transactional
 

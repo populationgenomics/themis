@@ -5,14 +5,12 @@
 // ClinVar search ran on and one exon of a transcript are the same kind of interval, every rpc stamps
 // its own provenance, and a retrieved routing and a curator's stated one are comparable only if they
 // are the same vocabulary. The framework's mode of inheritance is not here but in
-// themis/svcv4/models/svcv4.proto; `Inheritance` is a coarser one the curation worksheet states.
+// themis/svcv4/models/svcv4.proto.
 //
 // Modelled from:
 //   SVCv4 variant-type workflows (docs/design/evidence-interfaces.md § "place the variant, and route
 //     it to a decision tree"): `Consequence` is the partition its decision trees select on; VEP's
 //     term is re-encoded onto it.
-//   ClinGen Gene Validity's MOI codes and GenCC's HPO moi_curie, folded onto one set:
-//     `Inheritance`.
 //   This interface's own design: `Provenance`, `GenomicSpan`.
 //
 // EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
