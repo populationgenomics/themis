@@ -28,7 +28,8 @@ Content-addressed writes are idempotent (identical bytes map to one name, and a
 GCS upload is atomic), so a re-put is a no-op. `write_paper` skips a paper whose
 manifest already exists; that manifest is the resumability checkpoint, not the
 crosswalk row. The commit itself is create-only (`if_generation_match=0`), so if two
-workers race past the skip check the first to commit wins and the loser adopts it.
+workers race past the skip check the first to commit wins. The loser joins the winner's
+manifest, adding its work when every id it records is one the manifest records.
 
 `metadata.pb` is written after the commit, by the writer whose commit won. A committed
 paper without one is filled by `fill_absent_metadata` or `themis.litcache.refresh`
@@ -48,7 +49,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import posixpath
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import protovalidate
 from google.api_core import exceptions as api_exceptions
@@ -237,7 +238,7 @@ class AddRenderingResult:
         hash: The rendering's markdown content hash — its `Manifest.records` key
             and the `renderings/{hash}.md` blob name.
         added: True when this call added the rendering; False when a rendering with
-            that hash was already present (its record then holds this run's construction).
+            that hash was already present (its record is then the newer run's).
     """
 
     hash: str
@@ -262,11 +263,13 @@ class WriteResult:
 def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
     """Write `paper`'s directory and commit it with the manifest.
 
-    Skips (and returns the existing manifest) when the paper's manifest already
-    exists. Otherwise writes the sources, renderings, and blobs, commits the manifest, and
-    then writes `metadata.pb`; a writer that loses the commit adopts the winner's manifest.
-    A call that finds a manifest committed, by the skip or by losing the commit, writes
-    `metadata.pb` only through `fill_absent_metadata`.
+    Writes the sources, renderings, and blobs, commits the manifest, and then writes
+    `metadata.pb`. A call that finds the paper's manifest already committed, before its
+    own commit or by losing it, joins that manifest instead. When every id it records is
+    one the manifest records, it adds its sources, renderings and files in one
+    generation-matched read-modify-write; otherwise it leaves the manifest as it is, since
+    it may have reached the `doc_id` through an id it shares with another paper. Either
+    way it writes `metadata.pb` only through `fill_absent_metadata`.
 
     Args:
         bucket: The cache bucket to write into.
@@ -274,7 +277,7 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             bytes, renderings, metadata, associated files).
 
     Returns:
-        A `WriteResult`: the manifest and whether this call wrote it.
+        A `WriteResult`: the manifest, and whether this call committed it.
 
     Raises:
         ValueError: On an inconsistency the writer refuses to commit — a manifest that
@@ -283,16 +286,16 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             with the same markdown hash, a source with an unknown media type, a blob
             with an unknown role or a name without an extension, a fetched file with no
             capture time, or `metadata` that is not a `PaperMetadata` envelope meeting
-            its constraints (`paper_metadata.parse`). On the skip, `metadata` is checked
-            only when the ids let it be written (`fill_absent_metadata`).
+            its constraints (`paper_metadata.parse`). Joining a committed manifest, `metadata`
+            is checked only when the ids let it be written (`fill_absent_metadata`).
+        ConcurrentWriteError: Joining a committed manifest lost its generation race the whole
+            retry budget (contention — retryable).
     """
     root = paper_dir(paper.doc_id)
     manifest_key = manifest_path(paper.doc_id)
     manifest_blob = bucket.blob(manifest_key)
     if manifest_blob.exists():
-        existing = litcache_pb2.Manifest.FromString(manifest_blob.download_as_bytes())
-        fill_absent_metadata(bucket, paper.doc_id, existing, paper.external_ids, paper.metadata)
-        return WriteResult(manifest=existing, written=False)
+        return _join_committed(bucket, paper)
 
     _validate_metadata(paper.metadata)
     sources = [_write_source(bucket, root, s) for s in paper.sources]
@@ -306,22 +309,18 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
         equivalence=paper.equivalence,
         retraction=paper.retraction,
         sources=sources,
-        records=rendering_records,
         files=files,
     )
-    best = records.best_rendering(manifest.records.items())
-    if best is not None:
-        manifest.refs[records.MARKDOWN_REF] = best
+    for key, record in rendering_records.items():
+        _put_record(manifest, key, record, records.MARKDOWN_REF)
     validate_manifest(manifest)
     try:
         # if_generation_match=0 (create-only): the first writer to commit this doc_id
         # wins, closing the exists()-then-write race between concurrent workers.
         manifest_blob.upload_from_string(manifest.SerializeToString(), if_generation_match=0)
     except api_exceptions.PreconditionFailed:
-        existing = litcache_pb2.Manifest.FromString(bucket.blob(manifest_key).download_as_bytes())
-        # also reached by our own commit, when its response was lost and the client retried it
-        fill_absent_metadata(bucket, paper.doc_id, existing, paper.external_ids, paper.metadata)
-        return WriteResult(manifest=existing, written=False)
+        # also reached by our own commit, when its response was lost and the client retried it: joining it adds nothing
+        return _join_committed(bucket, paper)
     write_metadata(bucket, paper.doc_id, paper.metadata)
     return WriteResult(manifest=manifest, written=True)
 
@@ -386,6 +385,75 @@ def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
 _MANIFEST_RMW_ATTEMPTS = 5
 
 
+def _claims_only(held: litcache_pb2.ExternalIds, claimed: litcache_pb2.ExternalIds) -> bool:
+    """Whether every id `claimed` records is one `held` records too.
+
+    Only the schemes `ExternalIds` has a field for are compared; a `pii` or `binhash` claim is in neither.
+    """
+    return all(
+        held.HasField(field.name) and getattr(held, field.name) == value for field, value in claimed.ListFields()
+    )
+
+
+def _merge_work(
+    manifest: litcache_pb2.Manifest,
+    rendering_records: Mapping[str, litcache_pb2.Record],
+    files: Sequence[litcache_pb2.AssociatedFile],
+) -> None:
+    """Add a joining writer's renderings and files to the manifest it joins.
+
+    Each rendering goes in by `records.put_record`, so a held one is replaced by a newer run's, and a file entry the
+    manifest already lists is not listed again.
+    """
+    for key, record in rendering_records.items():
+        _put_record(manifest, key, record, records.MARKDOWN_REF)
+    listed = {(f.role, f.name, f.hash) for f in manifest.files}
+    manifest.files.extend(f for f in files if (f.role, f.name, f.hash) not in listed)
+
+
+def _join_committed(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
+    """Join the manifest another writer committed for `paper.doc_id`: see `write_paper`."""
+    root = paper_dir(paper.doc_id)
+    staged: tuple[dict[str, litcache_pb2.Record], list[litcache_pb2.AssociatedFile]] | None = None
+    for _ in range(_MANIFEST_RMW_ATTEMPTS):
+        # a fresh handle each attempt: a reloaded one pins its generation, so reloading it again reads that one
+        manifest_blob = bucket.blob(manifest_path(paper.doc_id))
+        manifest_blob.reload()
+        generation = manifest_blob.generation
+        try:
+            manifest_bytes = manifest_blob.download_as_bytes(if_generation_match=generation)
+        except api_exceptions.PreconditionFailed:
+            continue  # a concurrent writer bumped the generation between reload and read; re-read
+        manifest = litcache_pb2.Manifest.FromString(manifest_bytes)
+        if manifest.doc_id != paper.doc_id:
+            raise ValueError(f'manifest in {paper.doc_id} names doc_id {manifest.doc_id!r}')
+        if not _claims_only(manifest.external_ids, paper.external_ids):
+            # An id the manifest does not record: this writer may have reached the doc_id through an id it shares with
+            # another paper, so its work stays out.
+            return WriteResult(manifest=manifest, written=False)
+        if staged is None:
+            staged = (_write_renderings(bucket, root, paper.renderings), _write_files(bucket, root, paper.files))
+        rendering_records, files = staged
+        before = manifest.SerializeToString(deterministic=True)
+        # Each source's handle is chosen from the manifest this attempt read; its bytes go under it, content-addressed,
+        # so writing them again on a retry is a no-op.
+        for source in paper.sources:
+            placed = dataclasses.replace(source, handle=_lineage_handle(manifest, source))
+            _merge_source(manifest, _write_source(bucket, root, placed))
+        _merge_work(manifest, rendering_records, files)
+        if manifest.SerializeToString(deterministic=True) != before:
+            validate_manifest(manifest)
+            try:
+                manifest_blob.upload_from_string(manifest.SerializeToString(), if_generation_match=generation)
+            except api_exceptions.PreconditionFailed:
+                continue  # a concurrent writer bumped the generation; re-read and retry
+        fill_absent_metadata(bucket, paper.doc_id, manifest, paper.external_ids, paper.metadata)
+        return WriteResult(manifest=manifest, written=False)
+    raise ConcurrentWriteError(
+        f'joining the manifest of {paper.doc_id} did not converge in {_MANIFEST_RMW_ATTEMPTS} attempts'
+    )
+
+
 class ManifestRefusedError(ValueError):
     """The writer refuses a write, and will refuse it on every attempt — **permanent**.
 
@@ -411,8 +479,8 @@ def add_rendering(bucket: gcs.Bucket, doc_id: str, rendering: RenderingInput) ->
     it outranks the one named, and rewrites the manifest with `if_generation_match`.
     A concurrent writer (another conversion of the same paper, or an ingestion
     re-commit) invalidates the generation; the read-modify-write retries against the
-    new manifest. A rendering whose hash is already present keeps its key and takes
-    this run's record; a re-delivered conversion adds no second record.
+    new manifest. A rendering whose hash is already present keeps its key, and its
+    record is the newer run's; a re-delivered conversion adds no second record.
 
     Args:
         bucket: The cache bucket holding the paper.
@@ -434,8 +502,9 @@ def add_rendering(bucket: gcs.Bucket, doc_id: str, rendering: RenderingInput) ->
     root = paper_dir(doc_id)
     key = _write_rendering_blobs(bucket, root, rendering)
 
-    manifest_blob = bucket.blob(manifest_path(doc_id))
     for _ in range(_MANIFEST_RMW_ATTEMPTS):
+        # a fresh handle each attempt: a reloaded one pins its generation, so reloading it again reads that one
+        manifest_blob = bucket.blob(manifest_path(doc_id))
         manifest_blob.reload()  # NotFound when the paper does not exist; sets .generation
         generation = manifest_blob.generation
         try:
@@ -496,8 +565,9 @@ def add_source_and_rendering(
     root = paper_dir(doc_id)
     key = _write_rendering_blobs(bucket, root, rendering)
 
-    manifest_blob = bucket.blob(manifest_path(doc_id))
     for _ in range(_MANIFEST_RMW_ATTEMPTS):
+        # a fresh handle each attempt: a reloaded one pins its generation, so reloading it again reads that one
+        manifest_blob = bucket.blob(manifest_path(doc_id))
         manifest_blob.reload()  # NotFound when the paper does not exist; sets .generation
         generation = manifest_blob.generation
         try:
@@ -600,20 +670,17 @@ def _rendering_record(rendering: RenderingInput) -> litcache_pb2.Record:
     return litcache_pb2.Record(deps=[rendering.from_revision], created_at=created, rendering=rendering.construction)
 
 
-def _put_rendering_record(manifest: litcache_pb2.Manifest, key: str, rendering: RenderingInput) -> bool:
-    """Record `rendering` under `key`, and point the `markdown` ref at the best rendering; return whether it changed.
+def _put_record(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record, ref: str | None) -> bool:
+    """`records.put_record`, with its refusal raised as this module's permanent one."""
+    try:
+        return records.put_record(manifest, key, record, ref)
+    except records.RecordRefusedError as e:
+        raise ManifestRefusedError(str(e)) from e
 
-    Bytes produced again keep their key, and the record takes the deps and construction of the run that produced them
-    most recently, as the `Record` contract says.
-    """
-    record = _rendering_record(rendering)
-    if manifest.records.get(key) == record:
-        return False
-    manifest.records[key].CopyFrom(record)
-    best = records.best_rendering(manifest.records.items())
-    if best is not None:
-        manifest.refs[records.MARKDOWN_REF] = best
-    return True
+
+def _put_rendering_record(manifest: litcache_pb2.Manifest, key: str, rendering: RenderingInput) -> bool:
+    """Record `rendering` under `key`, competing for the `markdown` ref; return whether anything changed."""
+    return _put_record(manifest, key, _rendering_record(rendering), records.MARKDOWN_REF)
 
 
 def _write_rendering_blobs(bucket: gcs.Bucket, root: str, rendering: RenderingInput) -> str:

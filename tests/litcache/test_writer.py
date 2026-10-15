@@ -17,7 +17,7 @@ import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
-from themis.litcache import writer
+from themis.litcache import records, writer
 from themis.litcache.models import litcache_pb2
 
 _CREATED_AT = datetime.datetime(2026, 6, 25, tzinfo=datetime.UTC)
@@ -196,25 +196,34 @@ def test_re_completes_after_a_partial_write_reusing_the_doc_id(gcs_bucket: gcs.B
     assert _read(gcs_bucket, posixpath.join(paper_dir, _pdf_path())) == _PDF_BYTES
 
 
-def test_skips_an_already_committed_paper(gcs_bucket: gcs.Bucket) -> None:
-    writer.write_paper(gcs_bucket, _paper())
-    manifest_key = posixpath.join('papers', _DOC_ID, 'manifest.pb')
-    committed = _read(gcs_bucket, manifest_key)
+def _committed(bucket: gcs.Bucket) -> litcache_pb2.Manifest:
+    return litcache_pb2.Manifest.FromString(_read(bucket, writer.manifest_path(_DOC_ID)))
 
-    # A second call with different source bytes must not write anything: the
-    # existing manifest is the checkpoint, so the paper is skipped untouched.
+
+def _generation(bucket: gcs.Bucket) -> int | None:
+    blob = bucket.get_blob(writer.manifest_path(_DOC_ID))
+    assert blob is not None
+    return blob.generation
+
+
+def test_a_writer_finding_its_paper_committed_adds_its_work(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+
     changed_bytes = b'DIFFERENT'
     changed_hash = hashlib.sha256(changed_bytes).hexdigest()
-    changed = _paper(
-        sources=[_source(data=changed_bytes)],
-        renderings=[_rendering(from_revision=changed_hash, markdown=_MARKDOWN)],
+    second = writer.write_paper(
+        gcs_bucket,
+        _paper(
+            sources=[_source(data=changed_bytes)],
+            renderings=[_rendering(from_revision=changed_hash, markdown='# Another rendering\n')],
+        ),
     )
-    second = writer.write_paper(gcs_bucket, changed)
 
     assert second.written is False
-    assert _read(gcs_bucket, manifest_key) == committed
-    changed_path = posixpath.join('papers', _DOC_ID, f'sources/pdf/{changed_hash}.pdf')
-    assert not gcs_bucket.blob(changed_path).exists()
+    manifest = _committed(gcs_bucket)
+    assert {r.hash for r in manifest.sources[0].revisions} == {_PDF_HASH, changed_hash}
+    assert len(manifest.records) == 2
+    assert second.manifest == manifest
 
 
 def _miss_the_skip_check(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -230,24 +239,103 @@ def _miss_the_skip_check(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(gcs_bucket, 'blob', skip_check_misses)
 
 
-def test_a_lost_commit_race_adopts_the_winner(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
-    # First writer commits. A second writer whose skip-check is forced to miss (the
-    # exists()-then-write window) reaches the create-only commit; if_generation_match=0
-    # loses to the existing manifest, so it adopts the winner rather than clobbering it.
-    writer.write_paper(gcs_bucket, _paper())
-    manifest_key = posixpath.join('papers', _DOC_ID, 'manifest.pb')
-    committed = _read(gcs_bucket, manifest_key)
+def test_a_writer_losing_the_commit_to_an_id_only_manifest_names_its_work(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An on-demand ingest commits an id-only manifest while a bulk writer converts the same paper; the bulk writer's
+    # PDF and rendering would otherwise sit in the bucket with no manifest naming them.
+    writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
     _miss_the_skip_check(gcs_bucket, monkeypatch)
 
-    changed_bytes = b'DIFFERENT'
-    changed = _paper(
-        sources=[_source(data=changed_bytes)],
-        renderings=[_rendering(from_revision=hashlib.sha256(changed_bytes).hexdigest(), markdown=_MARKDOWN)],
-    )
-    result = writer.write_paper(gcs_bucket, changed)
+    result = writer.write_paper(gcs_bucket, _paper())
 
     assert result.written is False
-    assert _read(gcs_bucket, manifest_key) == committed  # winner's manifest untouched
+    manifest = _committed(gcs_bucket)
+    assert [s.handle for s in manifest.sources] == ['pdf']
+    assert manifest.refs[records.MARKDOWN_REF] == _MARKDOWN_HASH
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()  # the winner's record, kept
+
+
+def test_a_writer_claiming_fewer_ids_than_the_manifest_adds_its_work(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer.write_paper(
+        gcs_bucket,
+        _paper(external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'), sources=[], renderings=[]),
+    )
+    _miss_the_skip_check(gcs_bucket, monkeypatch)
+
+    writer.write_paper(gcs_bucket, _paper())
+
+    manifest = _committed(gcs_bucket)
+    assert [s.handle for s in manifest.sources] == ['pdf']
+    assert manifest.refs[records.MARKDOWN_REF] == _MARKDOWN_HASH
+    assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+
+
+def test_a_join_keeps_the_record_of_the_run_that_finished_last(gcs_bucket: gcs.Bucket) -> None:
+    later = _CREATED_AT + datetime.timedelta(hours=1)
+    writer.write_paper(gcs_bucket, _paper(renderings=[_rendering(created_at=later)]))
+
+    writer.write_paper(gcs_bucket, _paper())  # an earlier run of the same conversion
+    assert _committed(gcs_bucket).records[_MARKDOWN_HASH].created_at.ToDatetime(tzinfo=datetime.UTC) == later
+
+    latest = later + datetime.timedelta(hours=1)
+    writer.write_paper(gcs_bucket, _paper(renderings=[_rendering(created_at=latest)]))
+    assert _committed(gcs_bucket).records[_MARKDOWN_HASH].created_at.ToDatetime(tzinfo=datetime.UTC) == latest
+
+
+def test_a_joining_source_on_other_terms_starts_a_lineage_of_its_own(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    other_bytes = b'OTHER PDF'
+    other_terms = dataclasses.replace(_source(data=other_bytes), licence='https://example.org/other-licence')
+
+    writer.write_paper(
+        gcs_bucket,
+        _paper(
+            sources=[other_terms],
+            renderings=[_rendering(from_revision=hashlib.sha256(other_bytes).hexdigest(), markdown='# Other\n')],
+        ),
+    )
+
+    assert [s.handle for s in _committed(gcs_bucket).sources] == ['pdf', 'pdf-2']
+    other_path = f'sources/pdf-2/{hashlib.sha256(other_bytes).hexdigest()}.pdf'
+    assert _read(gcs_bucket, posixpath.join(writer.paper_dir(_DOC_ID), other_path)) == other_bytes
+
+
+def test_a_join_that_loses_its_generation_race_keeps_both_writers_work(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A conversion lands between the join's read and its write; the retry re-reads and keeps that rendering too.
+    writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    real_merge = writer._merge_work
+    raced: list[bool] = []
+
+    def merge_after_a_concurrent_rendering(*args: object, **kwargs: object) -> None:
+        if not raced:
+            raced.append(True)
+            writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown='# Converted meanwhile\n'))
+        real_merge(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(writer, '_merge_work', merge_after_a_concurrent_rendering)
+    writer.write_paper(gcs_bucket, _paper())
+
+    assert len(_committed(gcs_bucket).records) == 2
+
+
+def test_a_writer_claiming_an_id_the_manifest_lacks_adds_nothing(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # It may be another paper's seed that names this paper's DOI by mistake: its work is not this paper's.
+    writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
+    committed = _read(gcs_bucket, writer.manifest_path(_DOC_ID))
+    _miss_the_skip_check(gcs_bucket, monkeypatch)
+
+    other = _paper(external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'))
+    result = writer.write_paper(gcs_bucket, other)
+
+    assert result.written is False
+    assert _read(gcs_bucket, writer.manifest_path(_DOC_ID)) == committed
 
 
 def test_a_lost_commit_race_writes_no_record(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,10 +363,12 @@ def test_a_commit_whose_response_was_lost_still_writes_the_record(
     gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()
     _miss_the_skip_check(gcs_bucket, monkeypatch)
 
+    generation = _generation(gcs_bucket)
     result = writer.write_paper(gcs_bucket, _paper())
 
     assert result.written is False
     assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
+    assert _generation(gcs_bucket) == generation  # its own work: nothing to add
 
 
 def test_a_record_lost_after_the_commit_is_filled_by_the_same_paper(gcs_bucket: gcs.Bucket) -> None:
@@ -575,6 +665,29 @@ def test_add_rendering_retries_and_keeps_a_concurrent_rendering(
 
     assert result.added is True
     assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).records)  # neither is lost
+
+
+def test_add_rendering_keeps_a_rendering_committed_between_its_read_and_its_write(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The write loses the generation race, so the retry has to read the manifest's current generation, not the one
+    # its first attempt read.
+    writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    real_put = writer._put_rendering_record
+    fired: list[int] = []
+
+    def put_after_a_concurrent_rendering(
+        manifest: litcache_pb2.Manifest, key: str, rendering: writer.RenderingInput
+    ) -> bool:
+        if not fired:
+            fired.append(1)
+            writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+        return real_put(manifest, key, rendering)
+
+    monkeypatch.setattr(writer, '_put_rendering_record', put_after_a_concurrent_rendering)
+    writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
+
+    assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).records)
 
 
 def test_add_rendering_raises_when_the_rmw_never_converges(

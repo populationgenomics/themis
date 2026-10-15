@@ -277,6 +277,27 @@ The cost is a window in which a committed paper has no record, a state the reade
 with its DOI or PMID. If the writer stops inside that window, the record stays missing until the paper is next ingested,
 and a metadata refresh fills any paper still missing its record.
 
+The same race costs more when the loser has done real work. Bulk ingestion claims a paper's ids, then spends minutes
+fetching and converting before it commits. If an agent asks for the same paper in that window, the on-demand ingest
+commits a manifest holding only the paper's ids, and the bulk writer's commit fails. Its PDF and rendering are in the
+bucket, but nothing names them. For a paper that is not open access, the conversion lane cannot reach that PDF, so the
+paper ends with no text although its seed was converted.
+
+So a writer that finds the manifest committed joins it rather than discarding its work. In one read-modify-write
+conditional on the manifest's generation, it adds its sources, renderings and files, and moves the `markdown` ref if a
+rendering it adds outranks the one named. It joins only when every id its manifest would record is one the committed
+manifest records. The weaker test, that none of its ids contradicts the manifest's, admits the second seed above: its
+PMID contradicts nothing in a manifest that records only the DOI, and its PDF would land in the other paper's directory.
+
+An on-demand ingest records the DOI, PMID and PMCID it was asked for or the index returned, which usually covers what a
+seed carries. Where it does not, the bulk writer still loses its work: a seed carrying a PMCID the index did not return,
+an alias DOI where the index returns the primary one, or a Bookshelf chapter, whose accession the on-demand path does
+not record. An open-access paper among them recovers when the conversion lane renders it again.
+
+A join can leave a paper holding two seeds' work where a sequential run would have kept one: two PDFs of the same paper,
+each with its rendering, when both seeds reached the `doc_id` concurrently. The ranking picks the rendering served, as
+it does for any paper holding more than one.
+
 ### A change to the manifest's shape pauses the writers instead of carrying both forms
 
 [`proto.md`](proto.md#schema-evolution) sets the rule for a change to a stored record that the compatibility gate would
@@ -499,13 +520,6 @@ message OffsetsCacheEntry {
 
 ## Open questions
 
-- **A writer that loses the commit.** Ingestion claims a paper's ids before it converts the paper and commits the
-  manifest minutes later. If an ingest of the same paper commits in between, the slower writer's create-only commit
-  fails, and its renderings are never named. When that paper is not open access, the conversion lane cannot reach the
-  PDF the slower writer held, and it settles the paper with no text. The proposed remedy is for a writer that loses the
-  commit to add its records to the winning manifest, in one read-modify-write. It would do that only when the ids it
-  claimed do not contradict the manifest's, which keeps a writer that reached the `doc_id` through a shared identifier
-  from adding another paper's work.
 - **Licence on supplementary files.** A supplementary file carries no licence of its own, so it is read under the
   paper's. A data file published under different terms, CC0 beside a CC-BY article say, would need its own, which is a
   new optional field when something needs it.
