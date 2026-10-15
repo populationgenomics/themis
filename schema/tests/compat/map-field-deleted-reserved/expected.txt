@@ -1,0 +1,2 @@
+compat gate: 1 proto(s) vs origin/main: no incompatibility
+PASS

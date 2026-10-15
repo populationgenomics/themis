@@ -82,7 +82,7 @@ message Revision {
 
 // A primary-artifact lineage. `handle` is stable identity across updates; `revisions` is
 // append-only, ordered by captured_at (current = latest). Licence and access are stable
-// across a lineage's revisions; the converter is not part of the lineage (a Rendering
+// across a lineage's revisions; the converter is not part of the lineage (a rendering's Record
 // records it).
 message Source {
   string handle = 1;  // lineage identity, stable across updates: "pdf" | "xml"
@@ -93,8 +93,8 @@ message Source {
   repeated Revision revisions = 6 [(buf.validate.field).repeated.min_items = 1];
 }
 
-// The deprecated Manifest.renderings entry. Retained because an at-rest message is never deleted;
-// a rendering is now a Record whose construction is a RenderingConstruction.
+// The entry of the retired Manifest.renderings map. Retained because an at-rest message is never
+// deleted; a rendering is a Record whose construction is a RenderingConstruction.
 message Rendering {
   option (buf.validate.message).cel = {
     id: "rendering.model_iff_llm_ocr"
@@ -190,15 +190,15 @@ message Manifest {
     expression: "this.records.all(k, this.records[k].deps.size() > 0 && this.records[k].deps.all(d, d != k && (d in this.records || this.sources.exists(s, s.revisions.exists(r, r.hash == d)) || this.files.exists(f, f.hash != '' && f.hash == d))))"
   };
 
+  reserved 7;
+  reserved "renderings";
+
   string doc_id = 1;  // uuid4, == directory name
   ExternalIds external_ids = 2;
   string claim_key = 3;  // precedence-primary external id, e.g. "doi:10.…"
   Equivalence equivalence = 4;
   Retraction retraction = 5;
   repeated Source sources = 6;  // primary-artifact lineages (pdf, xml)
-  // Superseded by records and refs. Read only by the rewrite that copies each entry into records;
-  // retired once every stored manifest has been rewritten.
-  map<string, Rendering> renderings = 7 [deprecated = true];
   repeated AssociatedFile files = 8;  // every KNOWN supplementary file, even un-fetched (lazy fetch)
   map<string, Record> records = 9;  // key = the derived artifact's content hash (sha256 hex)
   // The current record of each kind, by name: `markdown` names the rendering a reader is served.

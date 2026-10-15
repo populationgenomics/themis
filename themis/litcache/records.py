@@ -2,8 +2,8 @@
 
 A derived artifact is a `Record` in `Manifest.records`, keyed by the sha256 of its bytes; `Manifest.refs` names the
 record of each kind a reader is served (`docs/design/litcache-manifest.md`). The writer moves a ref when it adds a
-record that outranks the one named, the migration sets refs from the ranking, and readers follow them. All three read
-the ranking and the term resolution from here, so they cannot disagree.
+record that outranks the one named, and readers follow it. Both read the ranking and the term resolution from here, so
+they cannot disagree.
 """
 
 from __future__ import annotations

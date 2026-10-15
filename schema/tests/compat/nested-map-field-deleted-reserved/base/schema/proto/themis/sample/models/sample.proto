@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package themis.sample.models;
+
+message Outer {
+  message Inner {
+    string a = 1;
+    map<string, string> entries = 2;
+  }
+
+  Inner inner = 1;
+}

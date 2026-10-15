@@ -220,14 +220,7 @@ class AssociatedFile(_message.Message):
     def __init__(self, role: _Optional[_Union[AssociatedFileRole, str]] = ..., name: _Optional[str] = ..., source_url: _Optional[str] = ..., path: _Optional[str] = ..., hash: _Optional[str] = ..., captured_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class Manifest(_message.Message):
-    __slots__ = ("doc_id", "external_ids", "claim_key", "equivalence", "retraction", "sources", "renderings", "files", "records", "refs")
-    class RenderingsEntry(_message.Message):
-        __slots__ = ("key", "value")
-        KEY_FIELD_NUMBER: _ClassVar[int]
-        VALUE_FIELD_NUMBER: _ClassVar[int]
-        key: str
-        value: Rendering
-        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[Rendering, _Mapping]] = ...) -> None: ...
+    __slots__ = ("doc_id", "external_ids", "claim_key", "equivalence", "retraction", "sources", "files", "records", "refs")
     class RecordsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -248,7 +241,6 @@ class Manifest(_message.Message):
     EQUIVALENCE_FIELD_NUMBER: _ClassVar[int]
     RETRACTION_FIELD_NUMBER: _ClassVar[int]
     SOURCES_FIELD_NUMBER: _ClassVar[int]
-    RENDERINGS_FIELD_NUMBER: _ClassVar[int]
     FILES_FIELD_NUMBER: _ClassVar[int]
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     REFS_FIELD_NUMBER: _ClassVar[int]
@@ -258,11 +250,10 @@ class Manifest(_message.Message):
     equivalence: Equivalence
     retraction: Retraction
     sources: _containers.RepeatedCompositeFieldContainer[Source]
-    renderings: _containers.MessageMap[str, Rendering]
     files: _containers.RepeatedCompositeFieldContainer[AssociatedFile]
     records: _containers.MessageMap[str, Record]
     refs: _containers.ScalarMap[str, str]
-    def __init__(self, doc_id: _Optional[str] = ..., external_ids: _Optional[_Union[ExternalIds, _Mapping]] = ..., claim_key: _Optional[str] = ..., equivalence: _Optional[_Union[Equivalence, _Mapping]] = ..., retraction: _Optional[_Union[Retraction, _Mapping]] = ..., sources: _Optional[_Iterable[_Union[Source, _Mapping]]] = ..., renderings: _Optional[_Mapping[str, Rendering]] = ..., files: _Optional[_Iterable[_Union[AssociatedFile, _Mapping]]] = ..., records: _Optional[_Mapping[str, Record]] = ..., refs: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    def __init__(self, doc_id: _Optional[str] = ..., external_ids: _Optional[_Union[ExternalIds, _Mapping]] = ..., claim_key: _Optional[str] = ..., equivalence: _Optional[_Union[Equivalence, _Mapping]] = ..., retraction: _Optional[_Union[Retraction, _Mapping]] = ..., sources: _Optional[_Iterable[_Union[Source, _Mapping]]] = ..., files: _Optional[_Iterable[_Union[AssociatedFile, _Mapping]]] = ..., records: _Optional[_Mapping[str, Record]] = ..., refs: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class PubmedRecord(_message.Message):
     __slots__ = ("article", "book_article")

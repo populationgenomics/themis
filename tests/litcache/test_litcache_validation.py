@@ -69,30 +69,6 @@ def test_empty_revisions_fails() -> None:
         protovalidate.validate(_source(revisions=[]))
 
 
-def _rendering(
-    converter: litcache_pb2.Converter = litcache_pb2.CONVERTER_LITDOWN,
-    model: str | None = None,
-) -> litcache_pb2.Rendering:
-    rendering = litcache_pb2.Rendering(
-        from_source='pdf',
-        from_revision='abc',
-        converter=converter,
-        converter_version='0.4',
-    )
-    if model is not None:
-        rendering.model = model
-    return rendering
-
-
-def test_rendering_model_iff_llm_ocr() -> None:
-    protovalidate.validate(_rendering())  # litdown, no model
-    protovalidate.validate(_rendering(converter=litcache_pb2.CONVERTER_LLM_OCR, model='claude-opus-4-8'))
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(_rendering(model='claude-opus-4-8'))  # model on non-llm_ocr
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(_rendering(converter=litcache_pb2.CONVERTER_LLM_OCR))  # llm_ocr without model
-
-
 def _journal_record() -> litcache_pb2.PubmedRecord:
     return litcache_pb2.PubmedRecord(article=pubmed_pb2.PubmedArticle())
 

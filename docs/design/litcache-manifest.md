@@ -277,27 +277,27 @@ The cost is a window in which a committed paper has no record, a state the reade
 with its DOI or PMID. If the writer stops inside that window, the record stays missing until the paper is next ingested,
 and a metadata refresh fills any paper still missing its record.
 
-### Renderings move into records by rewriting every manifest once
+### A change to the manifest's shape pauses the writers instead of carrying both forms
 
-Until now the manifest held renderings in a map of their own, and every committed manifest still holds them there.
-[`proto.md`](proto.md#schema-evolution) sets the rule for a change of that kind to a stored record. The new form lands
-as a new field beside the old one, every stored record is rewritten into it, and only then is the old field retired. The
-usual way across the gap is for every reader to accept either form for a while, and for every writer to fill both.
+[`proto.md`](proto.md#schema-evolution) sets the rule for a change to a stored record that the compatibility gate would
+refuse. The new form lands as a new field beside the old one, every stored record is rewritten into it, and only then is
+the old field retired, with its number and name reserved. The usual way across the gap is for every reader to accept
+either form for a while, and for every writer to fill both.
 
-Here that period would be code written only to be deleted. The manifests live in one bucket, and the only code that
-reads or writes them is code this repository deploys. So the gap is crossed by ordering the steps instead:
+For the manifest, that period would be code written only to be deleted. The manifests live in one bucket, and the only
+code that reads or writes them is code this repository deploys. So the gap is crossed by ordering the steps instead:
 
 1. Every manifest writer pauses: the conversion queue is paused, and no ingestion runs. A metadata refresh writes only
    `metadata.pb`, so it can run throughout.
-1. A rewrite copies each manifest's renderings into records, and sets its `markdown` ref by the fidelity ranking. It
-   also fills each fetched supplementary file's hash from the path its bytes are stored at, which already names them, so
-   no file is fetched or moved. It leaves the old map in place, so readers still running the previous code keep working.
-1. Readers and writers that use only records and refs deploy. The rewrite then runs again, to catch any manifest a
-   writer touched despite the pause.
-1. Writers resume. Once a check finds no manifest whose renderings are missing from its records, the old field is
-   retired, with its number and name reserved.
+1. A one-off tool rewrites each manifest into the new form, leaving the old field in place, so readers still running the
+   previous code keep working.
+1. Readers and writers that use only the new form deploy. The rewrite then runs again, to catch any manifest a writer
+   touched despite the pause, and a check confirms that no manifest is left in the old form.
+1. Writers resume. The old field is then retired, and the tool is deleted with it.
 
-One manifest's renderings, before and after the rewrite:
+Renderings moved into records this way. Each manifest had held them in a map of their own, and the rewrite copied each
+entry into a record, set the `markdown` ref by the fidelity ranking, and filled each fetched supplementary file's hash
+from the path its bytes are stored at, which already names them. One manifest's renderings, before and after:
 
 ```json
 "renderings": {
@@ -312,10 +312,13 @@ One manifest's renderings, before and after the rewrite:
 "refs": { "markdown": "dd4306e5…" }
 ```
 
-Every quote survives the move, because a record's key is the same markdown hash the old map used. The rewrite replaces
-each manifest with a read-modify-write conditional on the manifest's generation, so a manifest a writer touches during
-the run is read again rather than overwritten. The bucket keeps each object's earlier generations for 30 days, which is
-the way back. The cost is the pause: conversions wait in the queue for as long as it lasts, rather than run.
+Every quote survived the move, because a record's key is the same markdown hash the map used.
+
+The rewrite replaces each manifest with a read-modify-write conditional on the manifest's generation, so a manifest a
+writer touches during the run is read again rather than overwritten. The bucket keeps each object's earlier generations
+for 30 days, which is the way back until writers resume; after that, a manifest written by the new code is one the
+previous readers cannot read. The cost is the pause: conversions wait in the queue for as long as it lasts, rather than
+run.
 
 ## The bibliographic record: `metadata.pb`
 
@@ -424,9 +427,9 @@ corpus is kept is not such an environment. A destructive change here is therefor
 [`proto.md`](proto.md#schema-evolution) sets out for every at-rest contract. The step that rewrites every record before
 the old field is retired is a metadata refresh, a full rebuild, or, for a change to the manifest's shape that leaves the
 conversions alone, a rewrite of the manifests themselves
-([Renderings move into records](#renderings-move-into-records-by-rewriting-every-manifest-once)). Changing what a field
-means in place is never open. Protobuf bytes carry field numbers and wire types, not names or meanings, so a record
-written before the change would decode without error into the new meaning.
+([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
+Changing what a field means in place is never open. Protobuf bytes carry field numbers and wire types, not names or
+meanings, so a record written before the change would decode without error into the new meaning.
 
 ## Quote-reference model
 

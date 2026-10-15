@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package themis.sample.models;
+
+message Entry {
+  string text = 1;
+}
+
+message Foo {
+  string a = 1;
+}

@@ -9,7 +9,9 @@ retiring a field whose number *and* name are reserved (``docs/design/proto.md``
 service contract, both at once — is outside the gate: proto reserves neither name, so
 there is nothing in the schema to check it against, and the type-checkers carry it
 instead. At-rest contracts keep
-``MESSAGE_NO_DELETE``: no type-checker sees their last reader go.
+``MESSAGE_NO_DELETE``: no type-checker sees their last reader go. The entry message protoc
+synthesises for a map field is not one of theirs: the field rules judge it, so a map field
+retired with its number and name reserved takes its entry with it.
 Gates every committed proto, RPC and at-rest alike, from the change that first
 commits it.
 
@@ -43,11 +45,12 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import NamedTuple
 
 from google.protobuf import descriptor, descriptor_pb2, descriptor_pool
@@ -69,6 +72,11 @@ _MODULE_SCOPE = '<module>'
 # The module definition each side is rebuilt from; buf.lock pins the dep commits so
 # both sides resolve `buf/validate/validate.proto` to the same module.
 _MODULE_FILES = ('buf.yaml', 'buf.lock')
+
+# buf reports a map field's deletion twice: the field, and the entry message protoc synthesises for it. The field rules
+# judge the retirement; the entry was never declared, so proto has no way to reserve its name.
+_BUF_FINDINGS_EXIT = 100
+_MESSAGE_DELETED = re.compile(r'^Previously present message "(?P<name>[^"]+)" was deleted')
 
 # buf breaking runner, pinned by digest (not a moving tag).
 _BUF_IMAGE = 'bufbuild/buf@sha256:c34c81ac26044490a10fb5009eb618640834b9048f38d4717538421c6a25e4d7'
@@ -295,6 +303,41 @@ def _findings_by_proto(stdout: str) -> tuple[dict[str, list[str]], list[str]]:
     return grouped, build
 
 
+def _map_entries(files: descriptor_pb2.FileDescriptorSet) -> set[tuple[str, str]]:
+    """Every map-entry message protoc synthesised in `files`, as ``(file, package-relative name)``."""
+    found: set[tuple[str, str]] = set()
+
+    def walk(file_name: str, prefix: str, messages: Iterable[descriptor_pb2.DescriptorProto]) -> None:
+        for message in messages:
+            name = f'{prefix}{message.name}'
+            if message.options.map_entry:
+                found.add((file_name, name))
+            walk(file_name, f'{name}.', message.nested_type)
+
+    for file in files.file:
+        walk(file.name, '', file.message_type)
+    return found
+
+
+def _without_map_entries(stdout: str, entries: set[tuple[str, str]]) -> str:
+    """The JSON findings from buf, less each one reporting the deletion of a released map field's entry message."""
+    kept = []
+    for line in stdout.splitlines():
+        try:
+            finding = json.loads(line)
+        except json.JSONDecodeError:
+            kept.append(line)
+            continue
+        if finding.get('type') == 'MESSAGE_NO_DELETE':
+            path = finding.get('path', '')
+            rel = path[len(_FINDING_PREFIX) :] if path.startswith(_FINDING_PREFIX) else path
+            deleted = _MESSAGE_DELETED.match(finding.get('message', ''))
+            if deleted is not None and (rel, deleted['name']) in entries:
+                continue
+        kept.append(line)
+    return '\n'.join(kept)
+
+
 class _Outcome(NamedTuple):
     """What a buf run means: the lines to log, and the gate's failure (``None`` passes).
 
@@ -369,11 +412,17 @@ def compare(scratch: pathlib.Path, baseline_ref: str) -> _Outcome:
     if not compared:
         return _Outcome([], f'compat gate: no proto under {_PROTO_TREE}; the gate would pass without comparing')
     stdout, stderr, returncode = _run_buf(scratch)
-    outcome = _outcome(stdout, stderr, returncode, baseline_ref)
     findings, build_failures = _findings_by_proto(stdout)
     if build_failures or (returncode != 0 and not findings):
-        return outcome
-    changes = ownership_changes(_descriptor_set(scratch, 'base'), _descriptor_set(scratch, 'new'))
+        return _outcome(stdout, stderr, returncode, baseline_ref)
+    base = _descriptor_set(scratch, 'base')
+    stdout = _without_map_entries(stdout, _map_entries(base))
+    # buf exits 100 for the findings it printed; with the map entries dropped, the findings left are the verdict. Any
+    # other code is the tool's own failure, and stays one.
+    if returncode == _BUF_FINDINGS_EXIT and not _findings_by_proto(stdout)[0]:
+        returncode = 0
+    outcome = _outcome(stdout, stderr, returncode, baseline_ref)
+    changes = ownership_changes(base, _descriptor_set(scratch, 'new'))
     outcome = _with_ownership(outcome, changes, baseline_ref)
     if outcome.failure is not None:
         return outcome

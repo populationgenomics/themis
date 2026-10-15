@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package themis.sample.models;
+
+message Outer {
+  message Inner {
+    reserved 2;
+    reserved "entries";
+
+    string a = 1;
+  }
+
+  Inner inner = 1;
+}

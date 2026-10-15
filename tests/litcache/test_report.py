@@ -28,13 +28,6 @@ def _timestamp() -> timestamp_pb2.Timestamp:
 
 def _manifest(doc_id: str, *, has_text_layer: bool | None) -> litcache_pb2.Manifest:
     """A minimal manifest with one pdf source whose revision carries `has_text_layer`."""
-    rendering = litcache_pb2.Rendering(
-        from_source='pdf',
-        from_revision='0',
-        converter=litcache_pb2.Converter.CONVERTER_DOCLING,
-        converter_version='2.0.0',
-        created_at=_timestamp(),
-    )
     revision = litcache_pb2.Revision(hash='0', kind=litcache_pb2.SourceKind.SOURCE_KIND_SEED, captured_at=_timestamp())
     if has_text_layer is not None:
         revision.has_text_layer = has_text_layer
@@ -53,7 +46,6 @@ def _manifest(doc_id: str, *, has_text_layer: bool | None) -> litcache_pb2.Manif
         equivalence=litcache_pb2.Equivalence(edges=[], canonical_doc_id=doc_id),
         retraction=litcache_pb2.Retraction(),
         sources=[source],
-        renderings={'0': rendering},
         files=[],
     )
 
