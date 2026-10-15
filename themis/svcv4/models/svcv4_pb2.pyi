@@ -4,6 +4,15 @@ from typing import ClassVar as _ClassVar
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class ModeOfInheritance(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    MODE_OF_INHERITANCE_UNSPECIFIED: _ClassVar[ModeOfInheritance]
+    MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: _ClassVar[ModeOfInheritance]
+    MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: _ClassVar[ModeOfInheritance]
+    MODE_OF_INHERITANCE_SEMIDOMINANT: _ClassVar[ModeOfInheritance]
+    MODE_OF_INHERITANCE_X_LINKED_DOMINANT: _ClassVar[ModeOfInheritance]
+    MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: _ClassVar[ModeOfInheritance]
+
 class Classification(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     CLASSIFICATION_UNSPECIFIED: _ClassVar[Classification]
@@ -29,6 +38,12 @@ class Confidence(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CONFIDENCE_SETTLED: _ClassVar[Confidence]
     CONFIDENCE_LEANING: _ClassVar[Confidence]
     CONFIDENCE_OPEN: _ClassVar[Confidence]
+MODE_OF_INHERITANCE_UNSPECIFIED: ModeOfInheritance
+MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT: ModeOfInheritance
+MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE: ModeOfInheritance
+MODE_OF_INHERITANCE_SEMIDOMINANT: ModeOfInheritance
+MODE_OF_INHERITANCE_X_LINKED_DOMINANT: ModeOfInheritance
+MODE_OF_INHERITANCE_X_LINKED_RECESSIVE: ModeOfInheritance
 CLASSIFICATION_UNSPECIFIED: Classification
 CLASSIFICATION_PATHOGENIC: Classification
 CLASSIFICATION_LIKELY_PATHOGENIC: Classification

@@ -8,10 +8,9 @@
 // curator chose.
 //
 // Every framework vocabulary a curator answers in is declared once, where every other side of the
-// comparison already reads it: consequence and mode of inheritance in
-// themis/evidence/models/evidence.proto; class, a workflow's status and a call's confidence in
-// themis/svcv4/models/svcv4.proto. A curator's answer and a run's are comparable only if they are the
-// same enum.
+// comparison already reads it: consequence in themis/evidence/models/evidence.proto; class, a
+// workflow's status and a call's confidence in themis/svcv4/models/svcv4.proto. A curator's answer
+// and a run's are comparable only if they are the same enum.
 
 syntax = "proto3";
 
@@ -101,15 +100,16 @@ message CaseAssessment {
   string other = 6 [(buf.validate.field).string.max_len = 20000];
 }
 
-// The routing the curator states before any workflow applies: which entity, which inheritance,
-// which consequence class. A run that routes differently is not disagreeing about codes, so this is
-// recorded and reasoned about in its own right.
+// The routing the curator states before any workflow applies. A run that routes differently is not
+// disagreeing about codes, so this is recorded and reasoned about in its own right.
 //
-// The entity is registered on the variant and restated here as the curator read it, so the two can
-// differ, and that difference is signal rather than an error to reconcile. Consequence class and
-// mode of inheritance have no registered counterpart: they are the curator's alone, chosen on the
-// worksheet, where UNSPECIFIED means not yet chosen and the workflows the choice routes between do
-// not apply.
+// The registration states the question, the entity with its disease and its mode of inheritance,
+// and the curator answers it (curation-surface.md). The curator's own statements here are the
+// consequence class, where UNSPECIFIED means not yet chosen and the workflows it routes between do
+// not apply, and the rationale, which is also where a curator argues that another entity is the
+// question to ask. `entity` and `mondo_id` copy the registration, and `inheritance` is a mode
+// stated on the worksheet that the registered one overrides: a reader takes the entity and its mode
+// from the registration.
 message RoutingAssessment {
   themis.evidence.models.Inheritance inheritance = 1 [(buf.validate.field).enum.defined_only = true];
   themis.evidence.models.Consequence consequence_class = 2 [(buf.validate.field).enum.defined_only = true];

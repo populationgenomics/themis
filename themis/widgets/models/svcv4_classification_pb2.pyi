@@ -46,7 +46,7 @@ class Svcv4Classification(_message.Message):
         caid: str
         def __init__(self, transcript_hgvs: _Optional[str] = ..., protein_hgvs: _Optional[str] = ..., genomic_hgvs: _Optional[str] = ..., gene_symbol: _Optional[str] = ..., hgnc_id: _Optional[str] = ..., caid: _Optional[str] = ...) -> None: ...
     class Entity(_message.Message):
-        __slots__ = ("disease", "mondo_id", "inheritance", "mechanism", "validity_source", "validity_classification", "gate_level")
+        __slots__ = ("disease", "mondo_id", "inheritance", "mechanism", "validity_source", "validity_classification", "gate_level", "mode_of_inheritance")
         DISEASE_FIELD_NUMBER: _ClassVar[int]
         MONDO_ID_FIELD_NUMBER: _ClassVar[int]
         INHERITANCE_FIELD_NUMBER: _ClassVar[int]
@@ -54,6 +54,7 @@ class Svcv4Classification(_message.Message):
         VALIDITY_SOURCE_FIELD_NUMBER: _ClassVar[int]
         VALIDITY_CLASSIFICATION_FIELD_NUMBER: _ClassVar[int]
         GATE_LEVEL_FIELD_NUMBER: _ClassVar[int]
+        MODE_OF_INHERITANCE_FIELD_NUMBER: _ClassVar[int]
         disease: str
         mondo_id: str
         inheritance: _evidence_pb2.Inheritance
@@ -61,7 +62,8 @@ class Svcv4Classification(_message.Message):
         validity_source: str
         validity_classification: str
         gate_level: _gene_disease_pb2.GateLevel
-        def __init__(self, disease: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., mechanism: _Optional[str] = ..., validity_source: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[_gene_disease_pb2.GateLevel, str]] = ...) -> None: ...
+        mode_of_inheritance: _svcv4_pb2.ModeOfInheritance
+        def __init__(self, disease: _Optional[str] = ..., mondo_id: _Optional[str] = ..., inheritance: _Optional[_Union[_evidence_pb2.Inheritance, str]] = ..., mechanism: _Optional[str] = ..., validity_source: _Optional[str] = ..., validity_classification: _Optional[str] = ..., gate_level: _Optional[_Union[_gene_disease_pb2.GateLevel, str]] = ..., mode_of_inheritance: _Optional[_Union[_svcv4_pb2.ModeOfInheritance, str]] = ...) -> None: ...
     class Route(_message.Message):
         __slots__ = ("family", "label")
         FAMILY_FIELD_NUMBER: _ClassVar[int]

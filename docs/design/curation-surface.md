@@ -26,12 +26,16 @@ human's — has a reference authored by a human, in a shape a reader can compare
   from the cell; nothing here computes them.
 - **It is unassisted by design.** No agent, no prefill, no retrieval of evidence (§Assistance anchors). Variant
   *identity* is the one exception, retrieved by the manager who registers the variant.
+- **The registration states the question.** SVCv4 classifies a variant against an entity whose mode of inheritance is
+  part of it, so a manager registers each variant against a disease term and a mode, and the same variant under another
+  mode is another registration. Curators answer the registered question and are shown its mode rather than asked for it,
+  so two curators of one variant always classify the same entity.
 - **Two curators answer each variant blind to one another, and both answers are kept.** Analyst-to-analyst spread is the
   measurement that says how much of a run's divergence is normal, and a split between the two is a finding the manager
   reads in a compare view, never a conflict to reconcile.
 - **One vocabulary per concept.** Molecular consequence, mode of inheritance, class, a workflow's status and a call's
-  confidence are the enums the evidence interfaces and `themis.svcv4` already speak, so a curator's answer and a run's
-  are the same members.
+  confidence are the enums the evidence interfaces and `themis.svcv4` already speak, so a registration, a curator's
+  answer and a run's are stated in the same members.
 - **Storage is a scratch tier and a record tier.** Auto-save upserts drafts; submitting copies them, whole and in one
   transaction, into insert-only assessments under a submission that owns the set. Lifecycle and status are read from
   those two facts, never stored.
@@ -80,7 +84,7 @@ without disobeying, and detecting that in prose is unreliable. The property a pr
 worksheet buys structurally: nothing on the screen the curator did not put there. What anchors a curator is a
 recommendation or a fact about the variant they are to assess — a frequency, a predicted effect, somebody else's
 classification; the variant's identity is the *question*, not an answer to it, which is why §Identity may be retrieved
-admits it.
+admits it. The entity it is classified against is part of the question too (§The registration states the question).
 
 ### Two curators, blind
 
@@ -101,13 +105,14 @@ answers.
 - A **cell** is one row of a workflow's decision tree — the thing a curator selects — named by a stable id built from
   the code and the row (`CLN_AFF.ad.specific_full`). The id names the cell for a human reader and for the compare view;
   the loop's reader matches a run's stated codes and derivations to the worksheet's cells by reading, not by a join.
-- **Routing** is the pair of statements that decide which workflows apply at all: the mode of inheritance selects
-  between the autosomal-dominant and recessive/X-linked variants of the observation workflows, and the consequence class
-  selects the predicted-effect workflow.
+- **Routing** decides which workflows apply at all. The entity's mode of inheritance, which the registration states as
+  part of the question, selects between the autosomal-dominant and recessive/X-linked variants of the observation
+  workflows. The consequence class, which the curator states, selects the predicted-effect workflow.
 - The **rarity gate** is the calculator's rule that a variant common enough against its disease threshold bars four
   clinical and locus codes outright ([`svcv4-worksheet-transcription.md`](svcv4-worksheet-transcription.md)).
-- A **variant** on this surface is one variant being classified against one **mono-disease entity** (gene × disease ×
-  inheritance × mechanism), the framework's unit of classification.
+- A **variant** on this surface is one variant being classified against one **Monogenic disease entity** (MDE: gene ×
+  disease × mode of inheritance), the framework's unit of classification. An allelic disorder that arises by a different
+  mechanism is a different disease.
 - **IAP** is the Identity-Aware Proxy in front of the web app, which authenticates every request before it reaches the
   app ([`frontend-framework.md`](frontend-framework.md) §Auth).
 
@@ -172,7 +177,7 @@ SVCv4 worksheets assigned to you.
 
 ┌────────────────────────────────────────────────────────────────────────┐
 │ NM_000257.4:c.1988G>A                       3 workflows · In progress  │
-│ MYH7 · hypertrophic cardiomyopathy                                     │
+│ MYH7 · hypertrophic cardiomyopathy · autosomal dominant                │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -181,12 +186,12 @@ Opening a worksheet:
 ```
  Recorded    │ ← All worksheets                                        Saved
  ● POP_FRQ   │ NM_000257.4:c.1988G>A
- ● POP_HMZ   │ MYH7 · hypertrophic cardiomyopathy · MONDO:0005045
+ ● POP_HMZ   │ MYH7 · hypertrophic cardiomyopathy · MONDO:0005045 · autosomal dominant
  ○ CLN_UAF   │
- ○ CLN_AFF   │ ┌ Routing ────────────────────────────────────────────────────┐
- ○ CLN_DNV   │ │ Mode of inheritance [Autosomal dominant ▾]                   │
- ○ CLN_ALT   │ │ Consequence class   [Missense ▾]                             │
- ○ CLN_CCS   │ └─────────────────────────────────────────────────────────────┘
+ ○ CLN_AFF   │ ┌ Routing ─────────────────────────────────────────────────────┐
+ ○ CLN_DNV   │ │ Consequence class   [Missense ▾]                             │
+ ○ CLN_ALT   │ │ Rationale ………                                                │
+ ○ CLN_CCS   │ └──────────────────────────────────────────────────────────────┘
  ○ LOC_PHE   │ ┌ The case ────────────────────────────── none recorded · show ┐
  ○ LOC_SEG   │
  ○ MIS_PRD   │ POPULATION OBSERVATIONS (POP)
@@ -225,16 +230,16 @@ Variants under curation                                      [My worksheets]
 [Add a variant]
 [Unassigned 0] [Pending 1] [In progress 0] [Part submitted 1] [Complete 1]
 
-┌ NM_000138.5:c.7003C>T  FBN1 · Marfan syndrome   Complete · 2 assigned · Read the divergence ┐
-│ a.curator@…          submitted 2026-08-20                                                   │
-│ b.curator@…          submitted 2026-08-22                                                   │
-└────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ NM_000138.5:c.7003C>T  FBN1 · Marfan syndrome · AD  Complete · 2 assigned · Read the divergence ┐
+│ a.curator@…          submitted 2026-08-20                                                       │
+│ b.curator@…          submitted 2026-08-22                                                       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The compare view lays the two submissions side by side, one section per workflow:
 
 ```
-Where the curators diverge                    NM_000138.5:c.7003C>T · FBN1 · Marfan syndrome
+Where the curators diverge               NM_000138.5:c.7003C>T · FBN1 · Marfan syndrome · AD
 ┌ CLN_AFF  cln_aff_ad ──────────────────────────────────────────────── different cells ┐
 │ a.curator@… · scored                       │ b.curator@… · scored                    │
 │ Highly specific phenotype — Heterozygous 3 │ Specific phenotype — Heterozygous 3     │
@@ -246,7 +251,7 @@ The lifecycle those pages drive:
 
 ```mermaid
 flowchart LR
-    reg["manager registers a variant<br>(identity typed or retrieved)"] --> assign["manager assigns curators<br>→ one worksheet each, pinned to a transcription version"]
+    reg["manager registers a variant against a disease and a mode<br>(identity typed or retrieved)"] --> assign["manager assigns curators<br>→ one worksheet each, pinned to a transcription version"]
     assign --> draft["curator answers<br>auto-save upserts one draft row per workflow"]
     draft --> submit["curator submits<br>drafts copied whole into one submission"]
     submit --> draft
@@ -276,28 +281,63 @@ option" from an unattributable disagreement into a checkable one. Optional, beca
 ([`../PRODUCT.md`](../PRODUCT.md) §6); an envelope stated on one side only cannot be compared, so the curator states how
 open they consider each call, and a divergence inside that envelope is not a defect.
 
-Two worksheet-level records serve the same end. The **routing** the curator states is recorded in its own right, because
-a run that routes differently is not disagreeing about codes. The **verdict** carries the class the curator reaches —
-stated, never derived — and which calls they consider class-determinative, which is what says whether a divergence could
-have moved the answer at all.
+Two worksheet-level records serve the same end. The **routing** the curator states, the consequence class and the
+reasoning behind it, is recorded in its own right, because a run that routes differently is not disagreeing about codes.
+The **verdict** carries the class the curator reaches — stated, never derived — and which calls they consider
+class-determinative, which is what says whether a divergence could have moved the answer at all.
 
 **Submission refuses a scored workflow whose rationale is empty.** That row is the reference's entire value — a
 selection with no reasoning is a number, and a number is what the reference exists not to be. The other fields are
 prompted, not required. The refusal sits in the access layer rather than the screen, because the store copies drafts
 inside the database without decoding them and would commit whatever is there.
 
-### The mode of inheritance is the curator's answer, not the registration's
+### The registration states the question, mode included
 
-The mode of inheritance is half of a mono-disease entity, so on the face of it the manager should register it beside the
-disease term. It is not registered, and it is not seeded into the worksheet: the curator states it on the routing card,
-which opens unset, and each worksheet's routing is the whole record of the mode.
+The mode of inheritance is part of the question a curator answers. SVCv4 classifies a variant against a Monogenic
+disease entity, which is a gene, a disease and a mode of inheritance taken together, so the same variant under another
+mode is another question with an answer of its own.
 
-The registration precedes every curator, and a mode filled in for them is a judgement they cannot be told to have made —
-a curator who left a seeded picker alone would record the manager's answer as their own, and no reader could tell that
-from a judgement, which is the one thing the routing section exists to capture. The cost is that a piece of the entity
-moves from the question into the answer: two curators may route differently, and have then classified two entities
-rather than disagreed about one. The disease term still fixes the question, and a disagreement about the mode is the
-divergence a blind pair exists to surface.
+Take a gene curated for one disease under both autosomal dominant and autosomal recessive inheritance. SM3 asks whether
+the variant is too common in the population to cause the disease. For the dominant entity, its threshold assumes that
+one copy of a variant is enough to cause the disease, which the framework calls the monoallelic setting. For the
+recessive entity, the threshold assumes two copies are needed (the biallelic setting), so it is computed differently and
+usually comes out higher; a variant too common for the dominant entity can still be rare enough for the recessive one.
+SM4 scores affected probands, and it splits the same way. Against the dominant entity, a heterozygous affected proband
+scores from SM4's table for a monoallelic disorder. Against the recessive entity, the same proband scores from the
+biallelic table, where the points turn on whether a second variant was found on the other copy of the gene (in trans).
+Those are two questions with two answers, and either may be the one a lab wants answered.
+
+So a registration decides nothing about the variant: it states which question is asked. A manager registers a variant
+against a MONDO term and one of the framework's five modes, and with the gene, that is the entity every curator of the
+variant classifies against. The same variant against the same disease under another mode is a different question,
+registered on its own with its own curators and answers when someone wants it answered. The mode is set before anyone
+reads the evidence, by whoever wants the question answered, so it is never a finding about the variant and no step of
+curation asks anyone for it.
+
+Mechanism needs no field of its own. SM21 treats an allelic disorder that arises by a different mechanism as a different
+disease, so the disease term already tells such entities apart. Its example is LMNA, whose dilated cardiomyopathy arises
+by loss of function and whose Hutchinson–Gilford progeria arises by gain of function. Within one entity, the mechanism
+is evidence about the entity, which the curators and the run assess: how firmly loss of function is established decides
+whether, and how strongly, the null-variant codes and SM18's multiplier apply.
+
+The rest follows from that. The mode is part of the question in the same way as the variant's HGVS name (§Assistance
+anchors): the worksheet shows it read-only beside the disease in its header, and nothing on the curator's side stores
+it. The routing card asks the curator only for the consequence class, which is a finding about the variant, and the
+reasoning behind it. Two curators of one registration therefore always answer the same question, and where their cells
+differ, they differ about the evidence or the reading of the framework, which is the spread the blind pair exists to
+measure (§Two curators, blind). ClinGen's own data model for SVCv4 draws the same line: its
+[`svcv4-model`](https://github.com/clingen-data-model/svcv4-model) sets the variant, the entity and the mode once per
+classification, as what is classified, beside the evidence rather than inside it.
+
+A curator can still think the registered question is the wrong one to ask, because the case they worked from presents as
+the recessive disease, say. They answer the question as registered and make that case in the routing rationale, which is
+free text and part of the submission. A manager who agrees registers the other question as a registration of its own,
+and the first keeps its answers, since they answer the question it asked.
+
+The cost is that a registration is the question for every curator on it. One stated wrongly, with a mode mistyped or a
+disease term broader than intended, is wrong for all of them at once, and the blind pair cannot catch it, because both
+curators answer the same wrong question consistently. It surfaces only where a curator's rationale or the manager's own
+reading says so.
 
 ### The workflows are the calculator's
 
@@ -310,30 +350,35 @@ rather than asks, how the transcription is versioned and how it is held to the f
 
 ### One vocabulary per concept
 
-A worksheet's routing states a molecular consequence and a mode of inheritance, and its verdict states a class; a run
-states all three too, and the loop's first question is whether the two agree. Two enums with identical member names and
-different numbers would answer that question by accident of which side decoded, which is not a comparison at all.
+A worksheet's routing states a molecular consequence for an entity registered under a mode of inheritance, and its
+verdict states a class; a run states all three too, and the loop's first question is whether the two agree. Two enums
+with identical member names and different numbers would answer that question by accident of which side decoded, which is
+not a comparison at all.
 
-So each concept has one vocabulary, owned by the contract every side already reads. Consequence and inheritance are what
-an evidence interface answers about a variant and a curated entity, so they live with the shared value types in
-[`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto); the class ladder is what `themis.svcv4`
-computes, so it lives beside the library in [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto),
-together with the two outcomes SM18's gate substitutes for a class when gene-disease validity falls below Limited and
-the curator's own "no class established". Whether a code was scored, and how open a call is, live there too: a run
-states both about every code it reports, as a curator states them about every workflow. The curation contract declares
-no vocabulary of its own and names the shared ones. The library returns a class as a string, so a test holds the proto
-ladder and the loaded reference to naming each other, and a framework revision that adds a class cannot leave the wire
-behind.
+So each concept has one vocabulary, owned by the contract every side already reads. Consequence is what an evidence
+interface answers about a variant, so it lives with the shared value types in
+[`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto). The mode of inheritance is the framework's
+own: SVCv4 names five modes and routes its rules on them, so the mode lives beside the class ladder in
+[`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto), and a registration stores one of its members. No
+evidence interface answers it, because the mode comes with the question rather than from a source. A curated source
+states its own mode in its own words, and matching a source record to the entity being classified is the analyst's work
+([`evidence-interfaces.md`](evidence-interfaces.md#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
+The class ladder is what `themis.svcv4` computes, and `svcv4.proto` holds it together with the two outcomes SM18's gate
+substitutes for a class when gene-disease validity falls below Limited and the curator's own "no class established".
+Whether a code was scored, and how open a call is, live there too: a run states both about every code it reports, as a
+curator states them about every workflow. The curation contract declares no vocabulary of its own and names the shared
+ones. The library returns a class as a string, so a test holds the proto ladder and the loaded reference to naming each
+other, and a framework revision that adds a class cannot leave the wire behind.
 
-Sharing costs something in the other direction, and the worksheet pays it. The shared inheritance vocabulary is the one
-the curated sources harmonise onto, so it carries modes — Y-linked, mitochondrial, undetermined — that the calculator's
-autosomal-dominant versus recessive/X-linked split has no branch for; the consequence vocabulary likewise carries
-non-coding, for which no predicted-effect workflow exists. Both routing pickers offer every member the contract names,
-and a worksheet routed to one the workflows do not branch on shows none of the routed workflows, with the page saying
-so: what the workflows branch on decides what renders, never what a curator may state. Every workflow's applicability
-predicate names the modes it covers positively — a predicate written as "not dominant, therefore recessive" would route
-a mitochondrial worksheet into the recessive branch — and a test holds the unrouted set to exactly the members the
-framework has no branch for.
+Sharing costs something in the other direction, and the worksheet pays it. The consequence vocabulary carries
+non-coding, for which no predicted-effect workflow exists. The consequence picker offers every member the contract
+names, and a worksheet routed to one the workflows do not branch on shows no predicted-effect workflow, with the page
+saying so: what the workflows branch on decides what renders, never what a curator may state. The mode vocabulary has no
+such member, since its five modes are exactly the ones the framework routes on. Every workflow's applicability predicate
+still names the modes it covers positively. The calculator's headings group X-linked with dominant in one branch and
+with recessive in another, while SM4 sends an affected XX proband to the biallelic table only for a recessive entity
+([`svcv4-interpretations.md`](svcv4-interpretations.md#x-linked-entities-dominant-and-recessive)), so a predicate
+written as "everything but autosomal dominant" would route an X-linked dominant entity into the recessive branch.
 
 ### Blind pairs: roles, assignment, and what the manager may see
 
@@ -344,9 +389,9 @@ layer over an already-authenticated caller, never the authentication. A verified
 forbidden rather than as a masked not-found: the surface's existence is not a secret, and telling someone they need
 access is more useful than a lie.
 
-A manager registers a variant (its identity and disease entity) and assigns curators to it, which is what mints a
-worksheet. A submitted worksheet cannot be withdrawn — a reference the loop may already have read cannot be deleted out
-from under it.
+A manager registers a variant (its identity, its disease term and its mode of inheritance) and assigns curators to it,
+which is what mints a worksheet. A submitted worksheet cannot be withdrawn — a reference the loop may already have read
+cannot be deleted out from under it.
 
 Every read goes through one access object that resolves the caller's verified email to what they may see, and no route
 holds an unscoped store — the same default-deny shape the workbench's `AuthorizedBackend` gives Analyses
@@ -411,9 +456,10 @@ statable about the schema as a whole rather than reconstructed from a name prefi
 ([`migrations.md`](migrations.md)). Nothing is in GCS and nothing reaches the model provider. Six tables:
 
 - **roles** — who may reach the surface, and as what.
-- **variants** — one variant against one disease entity, the identity typed or retrieved by the manager, and no mode of
-  inheritance (§The mode of inheritance is the curator's answer). The entity sits on the variant rather than on the
-  worksheet: two curators of one variant must be answering the same question.
+- **variants** — one variant against one entity: the identity typed or retrieved by the manager, and the MONDO term and
+  mode of inheritance the manager typed (§The registration states the question). The entity sits on the variant rather
+  than on the worksheet, because two curators of one variant must be answering the same question, and a variant is
+  registered once per entity.
 - **worksheets** — one curator on one variant, pinned to a transcription version; unique per pair.
 - **drafts** — auto-save scratch, one row per workflow, upserted.
 - **submissions** — one act of submitting, with its time and note.
@@ -456,6 +502,26 @@ snapshots. A closed window is needed because the deploy rolls Cloud Run before i
 ([`migrations.md`](migrations.md) §How it runs), so a row saved in that gap would be renumbered twice with nothing able
 to tell; the procedure is [`../runbooks/curation-vocabulary-deploy.md`](../runbooks/curation-vocabulary-deploy.md).
 
+**Once `0014` runs, registering a variant fails until the form that sends a mode is deployed.**
+[`0014_curation_registration_mode.sql`](../../themis/migrate/migrations/0014_curation_registration_mode.sql) adds the
+mode as a required column, backfilled from the mode each variant was first registered under, which `0012` kept in its
+snapshot. The deploy rolls the web tier before it applies migrations, so after the migration has run, a form that does
+not yet send the mode has every registration refused. Reads, drafts and submissions are unaffected. The failing window
+is accepted on the condition [`migrations.md`](migrations.md) §How it runs sets: the only environment holding curation
+data is dev, and the only people who register variants there are the team.
+
+The retired vocabulary had a single X-linked mode, and the new one splits it into dominant and recessive, which the
+stored rows cannot say. So the X-linked kind is chosen by hand, per gene, for the few genes registered so far: F8, the
+haemophilia A gene, is X-linked recessive. The migration's header comment is the list of record. Any other X-linked gene
+stops the migration.
+
+It stops whole, naming the rows, on any registration it cannot place rather than guessing: one with no recorded mode,
+one whose disease term is not a MONDO id, or two that register one variant against one entity, which the new uniqueness
+key would refuse. Each is repaired by hand before the deploy is retried. A row missing its term is given one; a
+registration nobody has answered is deleted. A registration entered twice is repaired by deleting the copy without
+submissions, once its unsubmitted worksheets are gone. Where both copies hold submissions, which answers to keep is a
+decision for the team.
+
 ### Auto-save, and the one write that is transactional
 
 One workflow is one draft row, so its status, selection and prose move together and can never be read half-written. A
@@ -483,11 +549,13 @@ partial.
   latest row per workflow reads mid-keystroke state as an answer.
 - **Free-form prose per code, with no options at all.** Two curators' answers stop being comparable, which is the
   concordance measurement's whole basis.
-- **Register the mode of inheritance and seed the routing from it.** A seeded picker left alone records the manager's
-  answer as the curator's (§The mode of inheritance is the curator's answer).
+- **Let the curator state the mode on the routing card.** It would keep the registration to the variant and the disease.
+  It lost because the mode defines the question rather than answering it (§The registration states the question): a
+  curator who sets it chooses which question they answer, and two curators who set it differently answer two questions,
+  which the compare view would then show as a divergence between them.
 - **Retrieve the whole registry record, crosswalks included.** Puts somebody else's classification one click from a
   worksheet header.
-- **Restrict the routing pickers to the members the workflows branch on.** Makes the stored vocabulary a subset per
+- **Restrict the consequence picker to the members the workflows branch on.** Makes the stored vocabulary a subset per
   consumer, which one vocabulary per concept exists to stop.
 
 ## Open questions

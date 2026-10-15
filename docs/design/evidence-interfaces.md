@@ -63,7 +63,7 @@ SVCv4 brings its own terms; each is used throughout and defined once here.
 | **SVCv4**                       | ACMG/AMP/CAP/ClinGen Sequence Variant Classification v4 — the points-based successor to ACMG 2015 (`ACMG (V4)` in the glossary).                                                                                                                                                                                                                           |
 | **SM*n***                       | SVCv4 Supplementary Material *n*: the per-topic normative supplements the framework is specified in. The ones leaned on here: SM3 frequency and the DAFT; SM4 clinical observations; SM5 segregation; SM6 in-silico prediction; SM18 mechanism and exon relevance; SM19 informative variants; SM20 functional assays; SM21 the MDE and multiple disorders. |
 | **VBC**                         | The variant being classified.                                                                                                                                                                                                                                                                                                                              |
-| **MDE**                         | Mono-disease entity: gene × phenotype × inheritance × mechanism. The unit SVCv4 classifies — not the gene.                                                                                                                                                                                                                                                 |
+| **MDE**                         | Monogenic disease entity: gene × disease × mode of inheritance; a different mechanism comes as a different disease. The unit SVCv4 classifies — not the gene.                                                                                                                                                                                              |
 | **Evidence code**               | One scored line of evidence, named by family: `POP_FRQ` / `POP_HMZ` (frequency), `*_PRD` (in-silico prediction), `*_INF` (other classified variants at the same codon or exon), `*_FXN` (functional assays), `CLN_*` (clinical), `LOC_*` (phenotype and segregation).                                                                                      |
 | **P/LP, B/LB**                  | Pathogenic or likely pathogenic; benign or likely benign — the classification pairs ClinVar records are grouped by.                                                                                                                                                                                                                                        |
 | **NMD / NSD**                   | Nonsense-mediated and non-stop decay: the pathways that decide whether a premature stop codon, or a missing one, leaves any protein. A **PTC** is a premature termination codon.                                                                                                                                                                           |
@@ -155,7 +155,7 @@ and support that judgement rather than standing in for it. Four roles follow:
   be reproducible and auditable and the score is *shown, not load-bearing* (PRODUCT §6).
 - **Judge** — the model. Every analyst call SVCv4 defines, each made with shown reasoning and an explicit uncertainty
   the curator can threshold on, and each curator-overridable:
-  - the MDE itself;
+  - the MDE, where the request names none, and which curated source record describes the MDE;
   - ambiguous consequence routing;
   - the mechanism level;
   - the All / Most / Few exon-relevance call;
@@ -553,8 +553,7 @@ variants to matter.
 
 Two of SVCv4's structural multipliers come from the gene rather than the variant: the curated **validity** level of the
 MDE caps the class and gates the mechanism multiplier, and the **mechanism** level scales positive predictive points.
-Both are stated per MDE — gene × phenotype × inheritance × mechanism — and never per gene, which is what shapes the
-response.
+Both are stated per MDE — gene × disease × mode of inheritance — and never per gene, which is what shapes the response.
 
 **RPCs.** `GeneDisease.DescribeGene`.
 
@@ -576,26 +575,54 @@ aggregated per HGNC id into the maximum confidence across the two, the mode of i
 entry, the gain-of-function veto flag, and the de-duplicated per-gene evaluation comments. PanelApp publishes no entity
 tag, so it is rebuilt each run.
 
-The rpc's one live dependency is the MONDO subclass closure at EBI OLS4, reached only when a request names an entity the
-gene is not curated for under that exact term. Curators routinely curate a numbered subtype of the term a presentation
-names, so identifier equality alone under-matches, and the ontology's subclass relation is what settles "is a kind of"
-without a label comparison.
+The rpc's one live dependency is the MONDO subclass closure at EBI OLS4, reached only when a request names a disease
+term the gene is not curated for. Curators routinely curate a numbered subtype of the term a presentation names, so
+identifier equality alone under-matches, and the ontology's subclass relation is what settles "is a kind of" without a
+label comparison.
 
-**The response shape follows from "per MDE".** Four decisions:
+**The response shape follows from "per MDE".** Five decisions:
 
 - **Nothing is reduced across entities and none is selected.** Which entity a presentation belongs to is a judgement
   over the full clinical picture (SM21), and a gene-wide maximum answers it by taking the strongest, discarding the cap
   the chosen entity imposes.
-- **Within one entity, code does reduce**, because several submitters file assertions about the same entity and an
-  aggregation under a published vocabulary is not a judgement.
-- **A named entity the curations do not settle raises, rather than resolving to the nearest.** The inheritance mode is
-  half the key it resolves on, and the mode also feeds SM3's DAFT — so collapsing it would answer the gate right and the
-  frequency arithmetic wrong.
+- **Within one source's record of one entity, code does reduce**, because several submitters file assertions about the
+  same entity and an aggregation under a published vocabulary is not a judgement.
+- **Each source's mode of inheritance is returned in the source's own words, and nothing harmonises it** (below).
+- **A named disease term the curations do not settle raises, rather than resolving to the nearest.** The rpc returns
+  every curated record on the requested term, under every mode and from every source, or, where the gene is not curated
+  for that term, every record on the one curated term that is a MONDO subclass of it. Whether one term is a kind of
+  another is a question the ontology answers, so code answers it. Where several distinct curated terms sit under the
+  requested one, or none does, choosing among them is the caller's, and the rpc says so rather than picking.
 - **The classification-to-gate-level translation is the library's, not the caller's.** Curators publish
   *classifications*, the gate is keyed by *levels*, and several published classifications name no level at all, so one
   map holds vocabulary, strength rank and gate level together. The level is a `GateLevel` wherever it appears — what the
   rpc states per entity, and what `themis.svcv4` takes. The framework partitions validity once; a second spelling inside
   the library would be one more thing to keep in step with it.
+
+**The sources' modes stay verbatim.** The obvious design maps each source's mode term onto one shared enum, so that a
+caller can ask for "the autosomal dominant entity" and code can pick the matching record. The two sources that curate
+entities do not share a vocabulary: ClinGen publishes a two-letter code and GenCC an HPO term. A shared enum is a third
+vocabulary that belongs to neither, and every mapping onto it loses something or fails. GenCC distinguishes X-linked
+dominant from X-linked recessive, which SVCv4 routes apart, while ClinGen curates a single X-linked mode, so a shared
+enum either drops GenCC's distinction or invents one for ClinGen. A term outside the mapping has nowhere to go: GenCC
+files one digenic assertion (`HP:0010984`) against CLCNKB, and a mapping that refuses a term it does not know fails
+every lookup of that gene.
+
+Nothing needs the shared enum. The gate reads a `GateLevel`, which comes from the record the analyst matched to the
+entity. The library's frequency and observation rules route on the framework's own five modes, which the caller states
+in `themis.svcv4`'s vocabulary ([`curation-surface.md`](curation-surface.md#one-vocabulary-per-concept)). So each
+curated record carries its source's mode term as published. A record is keyed by its source, its disease term and that
+source's mode term, where a mode-keyed lookup keyed it by the shared mode. The request names a disease term only. For a
+disease that ClinGen curates as autosomal dominant and GenCC as autosomal recessive, a request naming its MONDO term
+gets two records back, `(ClinGen, MONDO:…, "AD")` and `(GenCC, MONDO:…, HP:0000007)`. The entity's mode comes with the
+question: a request that names the entity states it, and a run that has to choose the entity from a presentation chooses
+its mode with it (SM21). Matching a record to that entity, by reading each source's mode term against the entity's mode,
+is the model's.
+
+The cost is that code no longer checks the mode of the record the analyst chose. A run that classifies an autosomal
+recessive entity off the gate level of the same disease's autosomal dominant record now gets a valid answer, where a
+mode-keyed lookup would have refused it. The record's mode term sits beside its gate level in the response, and the run
+states the mode it classified under, so a reviewer can check the two against each other.
 
 PanelApp asserts panel membership rather than validity, so it contributes no entity to any of this.
 
@@ -609,7 +636,8 @@ score read as the chosen entity's is the error that would scale the multiplier o
 **Worked example.** In the July 2026 ClinGen snapshot, 492 of 3,017 genes carry more than one curated entity, 315 of
 them at more than one classification; GenCC's submitters disagree on 5,319 of 15,464 entities; and 1,185 (gene, term)
 pairs are curated under more than one inheritance mode. A gene-wide maximum would have answered every one of those with
-the strongest classification on file.
+the strongest classification on file. A lookup by term alone returns each of the 1,185 pairs' records under every mode,
+and the analyst reads which one describes the entity.
 
 **Moving off the upstreams.** The live MONDO closure could be replaced by a precomputed one shipped with the tables, at
 the cost of a fifth object the interface cannot start without ([Alternatives](#alternatives-considered)).
@@ -1030,12 +1058,13 @@ the value types they exchange.
 **A type sits in the shared file only where more than one contract exchanges it.** Two kinds of type qualify. Provenance
 and a genomic span are exchanged by most of the interfaces — a ClinVar record and a transcript exon are placed by the
 same coordinates — so housing them in one source's file would make every other contract import that source's to name a
-coordinate. The two routing vocabularies, molecular consequence and mode of inheritance, cross a wider seam: an evidence
-interface answers them about a variant or a curated entity, and a curator states them on a worksheet, and a run's answer
-and a curator's are comparable only as one enum ([`curation-surface.md`](curation-surface.md) §One vocabulary per
-concept). The coding-coordinate types and the transcript-namespace enum have one exchanger each, so they live with it:
-the c. coordinate types in `clinvar.proto` and the namespace enum in `transcript.proto`. The shared file declares no
-service and imports no rpc file, so the dependency runs one way.
+coordinate. The routing vocabulary, molecular consequence, crosses a wider seam: an evidence interface answers it about
+a variant, a curator states it on a worksheet, and a run's answer and a curator's are comparable only as one enum
+([`curation-surface.md`](curation-surface.md) §One vocabulary per concept). The mode of inheritance is not in the shared
+file, because no interface answers it in the framework's terms; it is the framework's own enum, in `svcv4.proto`. The
+coding-coordinate types and the transcript-namespace enum have one exchanger each, so they live with it: the c.
+coordinate types in `clinvar.proto` and the namespace enum in `transcript.proto`. The shared file declares no service
+and imports no rpc file, so the dependency runs one way.
 
 **Every response layers the same three things**: the typed load-bearing fields, then the upstream material, then the
 provenance list. Typing only the load-bearing fields and passing the rest through is the "external data" posture
@@ -1163,9 +1192,14 @@ Each option weighed, and the reason it was rejected, grouped by what it is an al
   question the ontology answers: the first goes to the model with the full entity list, the second to code with the
   closure.
 - **Removing the entity parameter outright**, returning the list and nothing else. Rejected: it makes the three failures
-  impossible rather than correct, and it deletes the only code-side check on the entity choice — a missed lookup yields
-  an unset gate level the library raises on, where a wrongly-chosen entity off a returned list yields a *valid* gate key
-  and nothing raises.
+  impossible rather than correct, and it deletes the only code-side check on the entity's disease term — a missed lookup
+  yields an unset gate level the library raises on, where a wrongly-chosen entity off a returned list yields a *valid*
+  gate key and nothing raises.
+- **A finer harmonised mode enum**, one that splits X-linked dominant from recessive so GenCC's distinction survives. It
+  keeps a mode-keyed lookup and the check that lookup makes on the record the analyst chose. Rejected because it fixes
+  only the loss: ClinGen's single X-linked code still has no member to land on, a term outside the mapping still fails
+  the whole rpc, and nothing that consumes the response needs records selected by mode (§"The sources' modes stay
+  verbatim").
 - **A precomputed MONDO closure shipped with the reference tables.** It would remove the interface's one live
   dependency, at the cost of a fifth reference object the interface cannot start without. Deferred until the latency or
   the OLS4 dependency proves to matter.

@@ -1,8 +1,13 @@
-// The vocabularies an SVCv4 answer about a variant is stated in: the class it lands in, each
-// evidence code's status, and how open a call is. One vocabulary per concept, whether the answer was
-// reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate: two
-// sides that answer in different vocabularies cannot be compared, and a run's answer is read against
-// a curator's (docs/design/curation-surface.md).
+// The vocabularies an SVCv4 answer about a variant is stated in: the mode of inheritance of the
+// entity it is classified against, the class it lands in, each evidence code's status, and how open
+// a call is. One vocabulary per concept, whether the answer was reached by a point tally, stated by a
+// curator, or imposed by the gene-disease-validity gate: two sides that answer in different
+// vocabularies cannot be compared, and a run's answer is read against a curator's
+// (docs/design/curation-surface.md).
+//
+// The mode of inheritance is modelled from:
+//   ClinGen's svcv4-model `MOI` (github.com/clingen-data-model/svcv4-model, src/svcv4_model/case.py
+//     at ef66faff), which names the same five modes.
 //
 // The class is modelled from:
 //   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
@@ -16,6 +21,25 @@
 syntax = "proto3";
 
 package themis.svcv4.models;
+
+// The mode of inheritance of the Monogenic disease entity a variant is classified against, in the
+// framework's own terms. The mode is part of the entity: a gene and disease curated under two modes
+// are two entities, classified separately. The framework's rules route on it, and X-linked dominant
+// and recessive route apart (SM3's DAFT tables for female and combined-sex frequencies, SM4's tables
+// for an affected XX proband), so there is no unqualified X-linked member.
+//
+// A curated source's own mode term is not this vocabulary and is never mapped onto it by code: which
+// source record describes the entity being classified is the analyst's judgement
+// (docs/design/evidence-interfaces.md).
+enum ModeOfInheritance {
+  // No mode stated; refused wherever a mode is required.
+  MODE_OF_INHERITANCE_UNSPECIFIED = 0;
+  MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT = 1;
+  MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
+  MODE_OF_INHERITANCE_SEMIDOMINANT = 3;
+  MODE_OF_INHERITANCE_X_LINKED_DOMINANT = 4;
+  MODE_OF_INHERITANCE_X_LINKED_RECESSIVE = 5;
+}
 
 // Everything a classification can come out as: the five ordered classes, the two outcomes the
 // gene-disease-validity gate substitutes for a class, and "none established".

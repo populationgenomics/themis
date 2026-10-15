@@ -162,8 +162,10 @@ class _SeededDatabase:
     ledger: cloudsql.CloudSqlLedger
 
     def migrate(self) -> None:
-        """Apply what the ledger has not recorded — `0012`, which snapshots what has been written so far."""
-        migrate.run(migrate.discover(_MIGRATIONS_DIR), self.ledger, substitutions=_LOGINS)
+        """Apply `0012`, which snapshots what has been written so far, and nothing after it."""
+        migrations = migrate.discover(_MIGRATIONS_DIR)
+        vocabulary = next(m for m in migrations if m.name == _VOCABULARY_MIGRATION)
+        migrate.run([m for m in migrations if m.version <= vocabulary.version], self.ledger, substitutions=_LOGINS)
 
 
 @pytest.fixture

@@ -1,8 +1,13 @@
-// The vocabularies an SVCv4 answer about a variant is stated in: the class it lands in, each
-// evidence code's status, and how open a call is. One vocabulary per concept, whether the answer was
-// reached by a point tally, stated by a curator, or imposed by the gene-disease-validity gate: two
-// sides that answer in different vocabularies cannot be compared, and a run's answer is read against
-// a curator's (docs/design/curation-surface.md).
+// The vocabularies an SVCv4 answer about a variant is stated in: the mode of inheritance of the
+// entity it is classified against, the class it lands in, each evidence code's status, and how open
+// a call is. One vocabulary per concept, whether the answer was reached by a point tally, stated by a
+// curator, or imposed by the gene-disease-validity gate: two sides that answer in different
+// vocabularies cannot be compared, and a run's answer is read against a curator's
+// (docs/design/curation-surface.md).
+//
+// The mode of inheritance is modelled from:
+//   ClinGen's svcv4-model `MOI` (github.com/clingen-data-model/svcv4-model, src/svcv4_model/case.py
+//     at ef66faff), which names the same five modes.
 //
 // The class is modelled from:
 //   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
@@ -24,7 +29,60 @@ import { enumDesc, fileDesc } from "@bufbuild/protobuf/codegenv2";
  * Describes the file themis/svcv4/models/svcv4.proto.
  */
 export const file_themis_svcv4_models_svcv4: GenFile = /*@__PURE__*/
-  fileDesc("Ch90aGVtaXMvc3ZjdjQvbW9kZWxzL3N2Y3Y0LnByb3RvEhN0aGVtaXMuc3ZjdjQubW9kZWxzKs4CCg5DbGFzc2lmaWNhdGlvbhIeChpDTEFTU0lGSUNBVElPTl9VTlNQRUNJRklFRBAAEh0KGUNMQVNTSUZJQ0FUSU9OX1BBVEhPR0VOSUMQARIkCiBDTEFTU0lGSUNBVElPTl9MSUtFTFlfUEFUSE9HRU5JQxACEhYKEkNMQVNTSUZJQ0FUSU9OX1ZVUxADEiAKHENMQVNTSUZJQ0FUSU9OX0xJS0VMWV9CRU5JR04QBBIZChVDTEFTU0lGSUNBVElPTl9CRU5JR04QBRIiCh5DTEFTU0lGSUNBVElPTl9OT1RfRVNUQUJMSVNIRUQQBhI8CjhDTEFTU0lGSUNBVElPTl9WQVJJQU5UX0lOX0dFTkVfT0ZfVU5DRVJUQUlOX1NJR05JRklDQU5DRRAHEiAKHENMQVNTSUZJQ0FUSU9OX0RPX05PVF9SRVBPUlQQCCqYAQoQQXNzZXNzbWVudFN0YXR1cxIhCh1BU1NFU1NNRU5UX1NUQVRVU19VTlNQRUNJRklFRBAAEhwKGEFTU0VTU01FTlRfU1RBVFVTX1NDT1JFRBABEiQKIEFTU0VTU01FTlRfU1RBVFVTX05PVF9BUFBMSUNBQkxFEAISHQoZQVNTRVNTTUVOVF9TVEFUVVNfTk9fREFUQRADKm0KCkNvbmZpZGVuY2USGgoWQ09ORklERU5DRV9VTlNQRUNJRklFRBAAEhYKEkNPTkZJREVOQ0VfU0VUVExFRBABEhYKEkNPTkZJREVOQ0VfTEVBTklORxACEhMKD0NPTkZJREVOQ0VfT1BFThADYgZwcm90bzM");
+  fileDesc("Ch90aGVtaXMvc3ZjdjQvbW9kZWxzL3N2Y3Y0LnByb3RvEhN0aGVtaXMuc3ZjdjQubW9kZWxzKo4CChFNb2RlT2ZJbmhlcml0YW5jZRIjCh9NT0RFX09GX0lOSEVSSVRBTkNFX1VOU1BFQ0lGSUVEEAASKgomTU9ERV9PRl9JTkhFUklUQU5DRV9BVVRPU09NQUxfRE9NSU5BTlQQARIrCidNT0RFX09GX0lOSEVSSVRBTkNFX0FVVE9TT01BTF9SRUNFU1NJVkUQAhIkCiBNT0RFX09GX0lOSEVSSVRBTkNFX1NFTUlET01JTkFOVBADEikKJU1PREVfT0ZfSU5IRVJJVEFOQ0VfWF9MSU5LRURfRE9NSU5BTlQQBBIqCiZNT0RFX09GX0lOSEVSSVRBTkNFX1hfTElOS0VEX1JFQ0VTU0lWRRAFKs4CCg5DbGFzc2lmaWNhdGlvbhIeChpDTEFTU0lGSUNBVElPTl9VTlNQRUNJRklFRBAAEh0KGUNMQVNTSUZJQ0FUSU9OX1BBVEhPR0VOSUMQARIkCiBDTEFTU0lGSUNBVElPTl9MSUtFTFlfUEFUSE9HRU5JQxACEhYKEkNMQVNTSUZJQ0FUSU9OX1ZVUxADEiAKHENMQVNTSUZJQ0FUSU9OX0xJS0VMWV9CRU5JR04QBBIZChVDTEFTU0lGSUNBVElPTl9CRU5JR04QBRIiCh5DTEFTU0lGSUNBVElPTl9OT1RfRVNUQUJMSVNIRUQQBhI8CjhDTEFTU0lGSUNBVElPTl9WQVJJQU5UX0lOX0dFTkVfT0ZfVU5DRVJUQUlOX1NJR05JRklDQU5DRRAHEiAKHENMQVNTSUZJQ0FUSU9OX0RPX05PVF9SRVBPUlQQCCqYAQoQQXNzZXNzbWVudFN0YXR1cxIhCh1BU1NFU1NNRU5UX1NUQVRVU19VTlNQRUNJRklFRBAAEhwKGEFTU0VTU01FTlRfU1RBVFVTX1NDT1JFRBABEiQKIEFTU0VTU01FTlRfU1RBVFVTX05PVF9BUFBMSUNBQkxFEAISHQoZQVNTRVNTTUVOVF9TVEFUVVNfTk9fREFUQRADKm0KCkNvbmZpZGVuY2USGgoWQ09ORklERU5DRV9VTlNQRUNJRklFRBAAEhYKEkNPTkZJREVOQ0VfU0VUVExFRBABEhYKEkNPTkZJREVOQ0VfTEVBTklORxACEhMKD0NPTkZJREVOQ0VfT1BFThADYgZwcm90bzM");
+
+/**
+ * The mode of inheritance of the Monogenic disease entity a variant is classified against, in the
+ * framework's own terms. The mode is part of the entity: a gene and disease curated under two modes
+ * are two entities, classified separately. The framework's rules route on it, and X-linked dominant
+ * and recessive route apart (SM3's DAFT tables for female and combined-sex frequencies, SM4's tables
+ * for an affected XX proband), so there is no unqualified X-linked member.
+ *
+ * A curated source's own mode term is not this vocabulary and is never mapped onto it by code: which
+ * source record describes the entity being classified is the analyst's judgement
+ * (docs/design/evidence-interfaces.md).
+ *
+ * @generated from enum themis.svcv4.models.ModeOfInheritance
+ */
+export enum ModeOfInheritance {
+  /**
+   * No mode stated; refused wherever a mode is required.
+   *
+   * @generated from enum value: MODE_OF_INHERITANCE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT = 1;
+   */
+  AUTOSOMAL_DOMINANT = 1,
+
+  /**
+   * @generated from enum value: MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
+   */
+  AUTOSOMAL_RECESSIVE = 2,
+
+  /**
+   * @generated from enum value: MODE_OF_INHERITANCE_SEMIDOMINANT = 3;
+   */
+  SEMIDOMINANT = 3,
+
+  /**
+   * @generated from enum value: MODE_OF_INHERITANCE_X_LINKED_DOMINANT = 4;
+   */
+  X_LINKED_DOMINANT = 4,
+
+  /**
+   * @generated from enum value: MODE_OF_INHERITANCE_X_LINKED_RECESSIVE = 5;
+   */
+  X_LINKED_RECESSIVE = 5,
+}
+
+/**
+ * Describes the enum themis.svcv4.models.ModeOfInheritance.
+ */
+export const ModeOfInheritanceSchema: GenEnum<ModeOfInheritance> = /*@__PURE__*/
+  enumDesc(file_themis_svcv4_models_svcv4, 0);
 
 /**
  * Everything a classification can come out as: the five ordered classes, the two outcomes the
@@ -92,7 +150,7 @@ export enum Classification {
  * Describes the enum themis.svcv4.models.Classification.
  */
 export const ClassificationSchema: GenEnum<Classification> = /*@__PURE__*/
-  enumDesc(file_themis_svcv4_models_svcv4, 0);
+  enumDesc(file_themis_svcv4_models_svcv4, 1);
 
 /**
  * Whether an evidence code was scored, and if not, which kind of not: a curator's answer to a
@@ -129,7 +187,7 @@ export enum AssessmentStatus {
  * Describes the enum themis.svcv4.models.AssessmentStatus.
  */
 export const AssessmentStatusSchema: GenEnum<AssessmentStatus> = /*@__PURE__*/
-  enumDesc(file_themis_svcv4_models_svcv4, 1);
+  enumDesc(file_themis_svcv4_models_svcv4, 2);
 
 /**
  * How open whoever made a call considers it, a curator or a run. A reader treats a divergence inside
@@ -163,5 +221,5 @@ export enum Confidence {
  * Describes the enum themis.svcv4.models.Confidence.
  */
 export const ConfidenceSchema: GenEnum<Confidence> = /*@__PURE__*/
-  enumDesc(file_themis_svcv4_models_svcv4, 2);
+  enumDesc(file_themis_svcv4_models_svcv4, 3);
 

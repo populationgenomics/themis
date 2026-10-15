@@ -39,12 +39,13 @@ sees at a glance what would move the variant over a band edge.
 This section introduces the parts of SVCv4 the widget has to show. A reader who knows the framework can skip to
 §Non-goals.
 
-SVCv4, the ClinGen pilot of ACMG V4, classifies one variant against one monogenic disease entity (MDE): a gene, a
-disease, a mode of inheritance and a mechanism. Its rules are specified in numbered Supplementary Materials, cited here
-as SM*n*. Its unit of evidence is the **code**, named by a family and a concept: `POP_FRQ` is the population family's
-frequency code, `CLN_DNV` the clinical family's de novo code, `MIS_PRD` the missense family's predictor code. Each code
-carries points, positive towards pathogenic and negative towards benign, and the points sum to a total. The total falls
-in one of the framework's class bands:
+SVCv4, the ClinGen pilot of ACMG V4, classifies one variant against one Monogenic disease entity (MDE): a gene, a
+disease and a mode of inheritance, where an allelic disorder that arises by a different mechanism is a different disease
+(SM21). Its rules are specified in numbered Supplementary Materials, cited here as SM*n*. Its unit of evidence is the
+**code**, named by a family and a concept: `POP_FRQ` is the population family's frequency code, `CLN_DNV` the clinical
+family's de novo code, `MIS_PRD` the missense family's predictor code. Each code carries points, positive towards
+pathogenic and negative towards benign, and the points sum to a total. The total falls in one of the framework's class
+bands:
 
 ```
   total  ≤ -4      -4 < t ≤ -1    -1 < t < 2    2 ≤ t < 4    4 ≤ t < 6    6 ≤ t < 10    ≥ 10
@@ -252,10 +253,12 @@ out. That is the work the framework asks of it anyway.
 
 The payload names things the way the library does, since the library is what computes them. A per-observation row is the
 library's cell id. A class is `themis.svcv4.models.Classification`, the gate level the gene-disease rpc's `GateLevel`,
-the consequence and inheritance the evidence contracts' enums. A code's status and the agent's confidence in a call are
-enums the worksheet used to declare for itself, and they now live beside `Classification` in
-[`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto), because a run states both about each code as a
-curator does about each workflow.
+and the consequence the evidence contracts' enum. The entity's mode of inheritance is the framework's own five-member
+`ModeOfInheritance`, beside `Classification` in [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto), and
+never a curated source's term: which source record describes the entity is the agent's call
+([`evidence-interfaces.md`](evidence-interfaces.md#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
+A code's status and the agent's confidence in a call live in the same file, because a run states both about each code as
+a curator does about each workflow.
 
 That answers the question [`document-widgets.md`](document-widgets.md) left open, whether the payload reuses the
 curation contract's messages or maps onto them. It does neither: it is a message of its own that shares the worksheet's

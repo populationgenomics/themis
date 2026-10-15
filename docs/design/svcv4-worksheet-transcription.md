@@ -54,10 +54,10 @@ weight — `≥68–<82%` is the diagnostic-yield band, `3` is what SVCv4 pays f
 
 Two places need a decision rather than a transcription. **The mechanism × exon-relevance matrix is drawn as its two
 axes**, never as the multipliers the calculator prints in its cells: those cells *are* the arithmetic. **Which workflows
-are on screen is routed, as in the calculator**, by the mode of inheritance and the consequence class — both the
-curator's own statement ([`curation-surface.md`](curation-surface.md) §The mode of inheritance is the curator's answer)
-— and until each is answered the workflows it selects between are absent, with the page saying what each unanswered axis
-leaves off it.
+are on screen is routed, as in the calculator**, by the entity's mode of inheritance, which the registration states as
+part of the question ([`curation-surface.md`](curation-surface.md#the-registration-states-the-question-mode-included)),
+and by the consequence class, which the curator states. Until the consequence class is answered, the workflows it
+selects between are absent, and the page says what the unanswered choice leaves off it.
 
 **The reference material is mirrored too.** `POP_FRQ` carries the calculator's two pop-ups — the
 maximum-credible-frequency method, and SM3's six DAFT lookup tables with their gnomAD allele counts — since without them
@@ -165,7 +165,7 @@ is computed on both sides, so matching it says nothing. What stays curator-state
 derives from, and the prose on each barred workflow. Only the status moves: every field already captured stays,
 correcting the frequency gives back the status the gate displaced, and that restoration is held for the life of the page
 rather than stored. The gate is decided over *every* workflow, never the ones routing has put on screen, and it writes
-only where the curator has already answered — so a change of inheritance cannot read as the gate lifting, and no row the
+only where the curator has already answered — so a change of routing cannot read as the gate lifting, and no row the
 curator never wrote reaches a submission.
 
 ## Alternatives considered

@@ -46,6 +46,10 @@ Shared definitions so we use terms consistently (and so tooling has one source o
   index patient of a case. **Segregation** — how a variant tracks with disease through a pedigree. **Matchmaking** —
   connecting patients who share a candidate variant/phenotype across datasets (with consent).
 - **gnomAD / ClinVar / UCSC** — public variant-frequency / clinical-significance / genome reference resources.
+- **MDE** — Monogenic disease entity: a gene, a disease and a mode of inheritance, together the unit an ACMG V4
+  classification is made against. One gene can carry several, differing in disease or mode; an allelic disorder that
+  arises by a different mechanism is a different disease (SM21). Its mode is one of the framework's five: autosomal
+  dominant or recessive, semidominant, X-linked dominant or recessive.
 
 ## Method & infrastructure
 

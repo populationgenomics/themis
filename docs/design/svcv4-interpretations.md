@@ -40,13 +40,14 @@ fetched rather than reasoned about
 
 ## Background
 
-SVCv4 scores a variant against a **mono-disease entity** (MDE: gene × phenotype × inheritance × mechanism), not against
-a gene. Each evidence code contributes points, the points sum, and the sum bands to a class. Two structures make the sum
-more than addition. Positive *predictive* points are scaled by a **matrix** of molecular mechanism (Established / Likely
-/ Suspected / Uncertain → ×1.0 / 0.5 / 0.25 / 0) against exon relevance (**All / Most / Few**). And the curated
-**gene-disease validity** level both caps the resulting class and gates the mechanism multiplier. Codes are named by
-family — `POP_FRQ` / `POP_HMZ` frequency, `*_PRD` in-silico prediction, `*_INF` other classified variants at the same
-codon or exon, `*_FXN` functional assays, `CLN_*` clinical, `LOC_*` phenotype and segregation.
+SVCv4 scores a variant against a **Monogenic disease entity** (MDE: gene × disease × mode of inheritance), not against a
+gene; an allelic disorder that arises by a different mechanism is a different disease (SM21). Each evidence code
+contributes points, the points sum, and the sum bands to a class. Two structures make the sum more than addition.
+Positive *predictive* points are scaled by a **matrix** of molecular mechanism (Established / Likely / Suspected /
+Uncertain → ×1.0 / 0.5 / 0.25 / 0) against exon relevance (**All / Most / Few**). And the curated **gene-disease
+validity** level both caps the resulting class and gates the mechanism multiplier. Codes are named by family — `POP_FRQ`
+/ `POP_HMZ` frequency, `*_PRD` in-silico prediction, `*_INF` other classified variants at the same codon or exon,
+`*_FXN` functional assays, `CLN_*` clinical, `LOC_*` phenotype and segregation.
 
 The normative text is the per-topic **Supplementary Materials**, cited throughout as SM*n*. The full term list,
 including the abbreviations used below, is the vocabulary table in
@@ -344,6 +345,48 @@ Four readings are **not** settled. Each is a place where a convenience would hid
   silence for a negative;
 - and whether the two per-individual clinical codes carry a code-level cap, which the framework does not state.
 
+## X-linked entities: dominant and recessive
+
+An MDE's mode of inheritance is one of five: autosomal dominant, autosomal recessive, semidominant, X-linked dominant
+and X-linked recessive. ClinGen's own data model for the framework,
+[`svcv4-model`](https://github.com/clingen-data-model/svcv4-model), names exactly these five. Themis states every mode
+in that vocabulary, as `ModeOfInheritance` in [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto): the
+mode an entity is registered under for curation, the mode the library routes on, and the mode a run's classification
+record states. A curated source's own mode term is not mapped onto it, because which source record describes the entity
+is the analyst's call
+([`evidence-interfaces.md`](evidence-interfaces.md#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
+
+The obvious reading treats X-linked as a single mode. ClinGen's gene-validity curations do, and so do the calculator's
+workflow headings, which print "Autosomal Recessive / X-linked" as one branch. Two rules in the supplements break that
+reading, because each sends a dominant and a recessive X-linked entity to different tables.
+
+- **The frequency threshold.** SM3 says the calculator method should not be used for an X-linked MDE and recommends the
+  binning method instead (§34). Its binning tables are chosen by which prevalence the frequency is compared against and,
+  for two of the three, by the kind. A male prevalence reads Table 3, which serves either kind. A female prevalence
+  reads Table 4 for an X-linked dominant MDE and Table 5 for a recessive one. A combined-sex prevalence reads Table 6,
+  which SM3 prints for X-linked dominant only, so a recessive MDE scored on a combined prevalence has no binned
+  threshold at all.
+- **The affected proband.** SM4 counts an affected XY proband from its table for a monoallelic disorder whatever the
+  kind (§75). An affected XX proband is counted from that same table under an X-linked dominant MDE, and from the
+  biallelic table under a recessive one, where the points turn on whether a second variant was found in trans and how it
+  is classified. So one heterozygous affected woman is scored from a different table, and so lands in a different cell,
+  depending on the kind alone.
+
+Nothing else in the framework splits them. `POP_HMZ` weights a homozygous or hemizygous observation the same for every
+X-linked MDE (SM3 Table 7). The unaffected-observation table (`CLN_UAF`) groups X-linked with recessive disorders in one
+column, and SM5's segregation figure prints one block of X-linked rows. The kind is still stated on every X-linked
+entity, because a reading cannot know in advance which of its codes will reach SM3's or SM4's split.
+
+SM4's own paragraph on the split notes that the field is moving away from dividing X-linked inheritance into dominant
+and recessive, and that a later version of the framework will need a more nuanced treatment. Until it has one, the
+pilot's text is what is applied.
+
+**Where a worked example disagrees with the rule, the rule wins.** One of the pilot's practice variants is in an
+X-linked recessive MDE, and its frequency block names Table 6, the combined-prevalence table SM3 prints for dominant
+MDEs only. Following the example would score a recessive entity's frequency against a dominant entity's threshold. The
+rule is applied instead. A reference answer that follows such an example is corrected to the rule and records the
+departure, so a reader of the reference set sees that it deliberately differs from the practice block.
+
 ## Criteria specifications: a VCEP profile is ACMG-2015
 
 SM3 ranks a curated VCEP or community threshold first among its DAFT methods, so a panel's own specification outranks
@@ -390,6 +433,19 @@ The two per-individual clinical codes have the same shape and are read the same 
 states no code-level cap, so clamping either to the largest single tariff reads a tariff as a code range and truncates a
 legitimate multi-observation total in the benign direction. The calculator caps neither, so on those two no pin is
 needed: the oracle holds both sides to an unbounded benign direction.
+
+### Semidominant entities in `POP_HMZ` and `CLN_UAF`
+
+The calculator gives a semidominant entity both of its tables in two codes. `POP_HMZ` and `CLN_UAF` each come as a
+dominant workflow and a recessive/X-linked one, and the calculator admits semidominant inheritance in both versions of
+each. The supplements place a semidominant entity in one table per code. SM3's Table 7 prices a homozygous observation
+in a semidominant MDE at the recessive and X-linked rate, so `POP_HMZ` is scored from the recessive/X-linked table only.
+SM4's Table 5 puts semidominant in the same column as dominantly inherited disorders, so `CLN_UAF` is scored from the
+dominant table only. The supplements are applied, under the rule
+[§What this repository carries of the standard](#what-this-repository-carries-of-the-standard) sets for any disagreement
+between a supplement and the calculator. The curation worksheet keeps the calculator's wording, notes included, and
+routes on this reading, so a semidominant worksheet shows one table for each code while those tables' notes still
+mention semidominant inheritance.
 
 ### The validity gate against a benign call
 

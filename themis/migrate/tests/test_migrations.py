@@ -124,6 +124,20 @@ def test_curation_vocabulary_migration_keeps_the_trigger_body_whole() -> None:
     assert trailing[0].endswith("END'")
 
 
+def test_curation_registration_mode_migration_backfills_before_it_requires_a_mode() -> None:
+    registration = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'curation_registration_mode')
+    assert '${' not in registration.sql  # no substitutions — the web SA's grants cover the new column
+    # Order, not just presence: NOT NULL ahead of the backfill fails on every existing row, and ahead of
+    # the check it refuses a row the mapping missed without naming it. The check's body carries `;` of
+    # its own and has to arrive whole.
+    commands = [_command(s) for s in migrate.split_statements(registration.sql)]
+    assert commands[0].startswith('ALTER TABLE curation.variants ADD COLUMN mode_of_inheritance ')
+    assert commands[1].startswith('UPDATE curation.variants ')
+    assert commands[2].startswith("DO '")
+    assert commands[2].endswith("END'")
+    assert commands[3] == 'ALTER TABLE curation.variants ALTER COLUMN mode_of_inheritance SET NOT NULL'
+
+
 def test_deploy_provides_every_migration_substitution() -> None:
     """A `${VAR}` in a committed migration has an entry in every `THEMIS_MIGRATE_SUBSTITUTIONS` deploy passes."""
     workflow = yaml.safe_load(_DEPLOY_WORKFLOW.read_text('utf-8'))

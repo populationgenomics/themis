@@ -28,16 +28,23 @@ _DB_USERS = {
 }
 
 _VARIANT = (
-    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, created_by)'
-    " VALUES (%s, 'FBN1', %s, %s, 'Marfan syndrome', 'manager@example.org')"
+    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
+    " created_by) VALUES (%s, 'FBN1', %s, %s, 'Marfan syndrome', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT',"
+    " 'manager@example.org')"
 )
 
-# The tables `0012_curation_vocabulary` snapshots, the copy it takes of each, and the columns it then
-# drops from the source — which the copy, taken first, still carries.
+_ENTITY = (
+    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
+    " created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', %s, %s, 'manager@example.org')"
+)
+
+# The tables `0012_curation_vocabulary` snapshots, the copy it takes of each, the columns it then drops
+# from the source — which the copy, taken first, still carries — and the columns a later migration
+# adds to the source, which the copy never had.
 _SNAPSHOTS = {
-    'curation.assessments': ('curation.assessments_v1', ()),
-    'curation.drafts': ('curation.drafts_v1', ()),
-    'curation.variants': ('curation.variants_v1', ('inheritance',)),
+    'curation.assessments': ('curation.assessments_v1', (), ()),
+    'curation.drafts': ('curation.drafts_v1', (), ()),
+    'curation.variants': ('curation.variants_v1', ('inheritance',), ('mode_of_inheritance',)),
 }
 
 
@@ -102,6 +109,66 @@ def test_a_variant_split_across_the_two_columns_is_accepted(migrated: pg8000.dba
         assert list(cursor.fetchall()) == [['NM_000138.5', 'c.7003C>T']]
 
 
+@pytest.mark.parametrize('mode', ['', 'X_LINKED', 'INHERITANCE_AUTOSOMAL_DOMINANT', 'autosomal_dominant'])
+def test_a_variant_is_registered_under_one_of_the_five_modes(migrated: pg8000.dbapi.Connection, mode: str) -> None:
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='variants_mode_of_inheritance_check'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_ENTITY, ('probe', 'MONDO:0007947', mode))
+    migrated.rollback()
+
+
+def test_a_variant_is_registered_under_a_mode(migrated: pg8000.dbapi.Connection) -> None:
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='mode_of_inheritance'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_ENTITY, ('probe', 'MONDO:0007947', None))
+    migrated.rollback()
+
+
+@pytest.mark.parametrize('mondo_id', ['', 'mondo:0007947', 'MONDO:7947', 'Marfan syndrome'])
+def test_a_variant_is_registered_against_a_mondo_term(migrated: pg8000.dbapi.Connection, mondo_id: str) -> None:
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='variants_mondo_id_check'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_ENTITY, ('probe', mondo_id, 'AUTOSOMAL_DOMINANT'))
+    migrated.rollback()
+
+
+def test_a_variant_left_without_a_mondo_term_is_refused(migrated: pg8000.dbapi.Connection) -> None:
+    """The column has no default to fall back on: a registration states its term or is refused."""
+    with pytest.raises(pg8000.dbapi.DatabaseError, match='mondo_id'), contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(
+            'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mode_of_inheritance,'
+            " created_by) VALUES ('probe', 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
+            " 'AUTOSOMAL_DOMINANT', 'manager@example.org')"
+        )
+    migrated.rollback()
+
+
+def test_a_variant_is_registered_once_per_entity(migrated: pg8000.dbapi.Connection) -> None:
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(_ENTITY, ('first', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT'))
+    migrated.commit()
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='variants_registration_key'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_ENTITY, ('second', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT'))
+    migrated.rollback()
+
+
+def test_a_second_mode_of_one_disease_is_a_registration_of_its_own(migrated: pg8000.dbapi.Connection) -> None:
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(_ENTITY, ('dominant', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT'))
+        cursor.execute(_ENTITY, ('recessive', 'MONDO:0007947', 'AUTOSOMAL_RECESSIVE'))
+        cursor.execute('SELECT id FROM curation.variants ORDER BY id')
+        assert list(cursor.fetchall()) == [['dominant'], ['recessive']]
+
+
 def test_each_snapshot_carries_the_columns_of_the_table_it_was_taken_from(
     migrated: pg8000.dbapi.Connection,
 ) -> None:
@@ -111,11 +178,13 @@ def test_each_snapshot_carries_the_columns_of_the_table_it_was_taken_from(
     rollback the deploy runbook offers refills a dropped column out of the snapshot that kept it.
     """
     with contextlib.closing(migrated.cursor()) as cursor:
-        for source, (snapshot, dropped) in _SNAPSHOTS.items():
+        for source, (snapshot, dropped, added) in _SNAPSHOTS.items():
             columns = _columns(cursor, snapshot)
             # A copy taken after the drop matches the source column for column just as well.
             assert set(dropped) <= {name for name, _type in columns}
-            assert [column for column in columns if column[0] not in dropped] == _columns(cursor, source)
+            assert [column for column in columns if column[0] not in dropped] == [
+                column for column in _columns(cursor, source) if column[0] not in added
+            ]
 
 
 def _columns(cursor: pg8000.dbapi.Cursor, qualified: str) -> list[list[object]]:
