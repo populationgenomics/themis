@@ -18,7 +18,8 @@ One trusted process per Job execution. The dispatcher claims a work item and inj
 4. Run ``EnvironmentWorker.handle_item()`` — the SDK loop for the one claimed session. Its tools are the
    ``agent_toolset_20260401`` file tools (read/write/edit/glob/grep), which the SDK confines to ``workdir``
    (=/workspace) and so run in the trusted worker, plus ``shell`` — the sandboxed replacement for ``bash``
-   that marshals every command into the guest behind the hello/evidence-forwarding hatch.
+   that marshals every command into the guest behind the hello/evidence-forwarding hatch. A session with a memory
+   store attached is refused.
 5. Push every branch the agent committed and left unpushed, and exit (one execution per spawn — scale-to-zero
    preserved).
 
@@ -154,7 +155,19 @@ def _tools_for_session(
     the postern guest) is its isolated replacement. The remaining file tools resolve every path against
     ``ctx.workdir`` (=/workspace) and reject escapes, so they run in the trusted worker without weakening
     isolation.
+
+    Raises:
+        ValueError: If ``ctx`` carries no session, or the session has a memory store attached: the worker serves
+            none, so the agent would be told of memory it cannot reach. ``handle_item`` force-stops the work item
+            when this raises, as it does on any error while it holds the lease.
     """
+    if ctx.session is None:
+        raise ValueError('the tool context carries no session to check for memory stores')
+    stores = [resource for resource in ctx.session.resources if resource.type == 'memory_store']
+    if stores:
+        raise ValueError(
+            f'session {ctx.session.id} has {len(stores)} memory store(s) attached; this worker serves none'
+        )
     confined = [tool for tool in agent_toolset.beta_agent_toolset_20260401(ctx) if tool.name != 'bash']
     return [*confined, shell]
 
@@ -297,7 +310,11 @@ async def _serve() -> None:
                     return
                 shell = tool_mod.make_shell(sandbox)
                 worker = environments.EnvironmentWorker(
-                    client, tools=lambda ctx: _tools_for_session(ctx, shell), workdir=sandbox.workspace
+                    client,
+                    tools=lambda ctx: _tools_for_session(ctx, shell),
+                    workdir=sandbox.workspace,
+                    # Off, so no store is downloaded: `_tools_for_session` refuses a session that has one.
+                    memory_sync_interval=None,
                 )
                 try:
                     await worker.handle_item()

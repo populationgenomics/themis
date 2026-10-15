@@ -19,6 +19,8 @@ from typing import ClassVar, Self, cast
 import pytest
 from anthropic.lib import environments
 from anthropic.lib.tools import agent_toolset
+from anthropic.types import beta
+from anthropic.types.beta import sessions
 
 from themis import sheaf
 from themis.clients.sheaf import store as remote_mod
@@ -352,14 +354,33 @@ def test_the_profile_carries_the_host_identity_into_bwraps_credentials() -> None
     assert (worker._build_profile(None).host_uid, worker._build_profile(None).host_gid) == (None, None)
 
 
+def _session_with(*resources: object) -> beta.BetaManagedAgentsSession:
+    return beta.BetaManagedAgentsSession.model_construct(id='sesn_1', resources=list(resources))
+
+
+_SHELL = cast('environments.BetaAnyRunnableTool', object())  # appended verbatim as the final tool
+
+
 def test_session_tools_drop_bash_keep_file_tools_and_append_shell(tmp_path: pathlib.Path) -> None:
     # Only arbitrary execution (bash) is sandboxed; the workdir-confined file tools run in the trusted worker.
-    ctx = agent_toolset.AgentToolContext(workdir=tmp_path)
-    shell = cast('environments.BetaAnyRunnableTool', object())  # appended verbatim as the final tool
-    tools = worker._tools_for_session(ctx, shell)
-    file_names = {tool.name for tool in tools if tool is not shell}
+    file = sessions.BetaManagedAgentsFileResource.model_construct(type='file', file_id='file_1')
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(file))
+    tools = worker._tools_for_session(ctx, _SHELL)
+    file_names = {tool.name for tool in tools if tool is not _SHELL}
     assert file_names == {'read', 'write', 'edit', 'glob', 'grep'}
-    assert tools[-1] is shell
+    assert tools[-1] is _SHELL
+
+
+def test_a_session_with_a_memory_store_is_refused(tmp_path: pathlib.Path) -> None:
+    store = sessions.BetaManagedAgentsMemoryStoreResource.model_construct(type='memory_store', memory_store_id='m_1')
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(store))
+    with pytest.raises(ValueError, match='memory store'):
+        worker._tools_for_session(ctx, _SHELL)
+
+
+def test_a_context_without_a_session_is_refused(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match='no session'):
+        worker._tools_for_session(agent_toolset.AgentToolContext(workdir=tmp_path), _SHELL)
 
 
 @pytest.mark.usefixtures('_env')
