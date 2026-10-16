@@ -168,7 +168,7 @@ def _run_with[T](
     interceptors: tuple[grpc.aio.ClientInterceptor, ...],
 ) -> T:
     async def run() -> T:
-        servicer = servicer_mod.Servicer(backend)
+        servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
             interceptors=interceptors,
@@ -588,7 +588,7 @@ def test_a_repeated_request_asks_again_and_lets_the_task_name_dedup() -> None:
     # many and scales to zero, so the only durable dedup is the task name. A servicer that remembered
     # would drop the second request of a caller whose first task has since been deleted.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
-    servicer = servicer_mod.Servicer(backend)
+    servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
     request = literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])
 
     async def run() -> None:

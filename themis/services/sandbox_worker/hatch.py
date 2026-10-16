@@ -9,8 +9,8 @@ so the forward stubs dial over synchronous channels.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
-from typing import override
+from collections.abc import Callable, Iterator
+from typing import NoReturn, override
 
 import grpc
 from google.protobuf import message
@@ -58,13 +58,8 @@ _HATCH_WORKERS = 8
 GUEST_METHODS = _generated.GUEST_METHODS
 
 
-def _forward[Request: message.Message, Response: message.Message](
-    stub_method: grpc.UnaryUnaryMultiCallable[Request, Response],
-    request: Request,
-    metadata: claim_mod.Metadata,
-    context: grpc.ServicerContext,
-) -> Response:
-    """Forward one call under the caller's own budget, capped, restating a settled failure under its own code.
+def _restate(error: grpc.RpcError, context: grpc.ServicerContext) -> NoReturn:
+    """End the guest's rpc under a failed upstream call's own code, its details only where the servicer marked them.
 
     An ``RpcError`` left to escape a servicer reaches the guest as UNKNOWN, so a settled NOT_FOUND would read as
     a fault worth retrying rather than as the answer it is. The status crosses under any code; its ``details``
@@ -73,17 +68,67 @@ def _forward[Request: message.Message, Response: message.Message](
     ID-token plugin set UNAUTHENTICATED and PERMISSION_DENIED naming the audience. None of those carries the mark.
 
     Raises:
-        grpc.RpcError: Always, for a failed upstream call — either the original, when it carries no status, or
-            whatever ``context.abort`` raises to end the rpc under the upstream's own code.
+        grpc.RpcError: Always — either ``error`` itself, when it carries no status, or whatever ``context.abort``
+            raises to end the rpc under the upstream's own code.
+    """
+    if not isinstance(error, grpc.Call):
+        raise error
+    code = error.code()
+    details = error.details() if authored_status.authored(error) else None
+    context.abort(code, details or code.name)
+
+
+def _deadline(context: grpc.ServicerContext) -> float:
+    return min(context.time_remaining(), _FORWARD_CEILING_S)
+
+
+def _forward[Request: message.Message, Response: message.Message](
+    stub_method: grpc.UnaryUnaryMultiCallable[Request, Response],
+    request: Request,
+    metadata: claim_mod.Metadata,
+    context: grpc.ServicerContext,
+) -> Response:
+    """Forward one call under the caller's own budget, capped, restating a settled failure under its own code.
+
+    Raises:
+        grpc.RpcError: Always, for a failed upstream call (`_restate`).
     """
     try:
-        return stub_method(request, metadata=metadata, timeout=min(context.time_remaining(), _FORWARD_CEILING_S))
+        return stub_method(request, metadata=metadata, timeout=_deadline(context))
     except grpc.RpcError as error:
-        if not isinstance(error, grpc.Call):
-            raise
-        code = error.code()
-        details = error.details() if authored_status.authored(error) else None
-        context.abort(code, details or code.name)
+        _restate(error, context)
+
+
+def _forward_stream[Request: message.Message, Response: message.Message](
+    stub_method: grpc.UnaryStreamMultiCallable[Request, Response],
+    request: Request,
+    metadata: claim_mod.Metadata,
+    context: grpc.ServicerContext,
+) -> Iterator[Response]:
+    """Forward one server-streaming call as `_forward` does a unary one, passing each message on as it arrives.
+
+    The deadline covers the whole stream, and a failure is restated by the same rule whether it ends the call
+    before its first message or after some: what already reached the guest stays delivered, and the stream ends
+    under the upstream's code. The upstream call ends with the guest's — a guest that cancels or goes away cancels
+    it, rather than leaving it to run out its deadline holding a serving thread.
+
+    Raises:
+        grpc.RpcError: For a failed upstream call, at whatever point it fails (`_restate`).
+    """
+    responses = stub_method(request, metadata=metadata, timeout=_deadline(context))
+
+    def cancel() -> None:
+        responses.cancel()
+
+    if not context.add_callback(cancel):  # the guest's rpc already ended, so no callback will run
+        cancel()
+        return
+    try:
+        yield from responses
+    except grpc.RpcError as error:
+        _restate(error, context)
+    finally:
+        cancel()  # a no-op on a call that already ended
 
 
 class _Forwarder[Stub]:
@@ -294,6 +339,12 @@ class LiteratureForwarder(_Forwarder[literature_pb2_grpc.LiteratureStub], litera
         self, request: literature_pb2.GetMarkdownRequest, context: grpc.ServicerContext
     ) -> literature_pb2.GetMarkdownResponse:
         return _forward(self._stub.GetMarkdown, request, self._metadata, context)
+
+    @override
+    def ReadMarkdown(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.ServicerContext
+    ) -> Iterator[literature_pb2.ReadMarkdownResponse]:
+        return _forward_stream(self._stub.ReadMarkdown, request, self._metadata, context)
 
     @override
     def SearchEuropePmc(

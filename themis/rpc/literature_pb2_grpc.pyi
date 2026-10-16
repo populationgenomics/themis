@@ -108,6 +108,19 @@ class LiteratureStub:
     produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
     result for a known paper with no rendering at all (a fact about the store, not an error).
     """
+    ReadMarkdown: _grpc.UnaryStreamMultiCallable[_literature_pb2.ReadMarkdownRequest, _literature_pb2.ReadMarkdownResponse]
+    """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
+    agent's read path, whole, however long the rendering: a header naming the rendering, then its
+    bytes. See `ReadMarkdownResponse` for the shape. NOT_FOUND for an unknown doc_id (a broken
+    reference); INTERNAL for a rendering the manifest lists but the store cannot produce, or whose
+    bytes do not match its key (the store broke its own invariant, not a fact about the paper) —
+    after the header, when that is where it shows; an `unavailable` message for a known paper with
+    no rendering at all (a fact about the store, not an error). One call reads a manifest and one
+    rendering and reaches nothing outside the store: its cost is the size of a rendering the store
+    already holds, in reads of at most 1 MiB, ended by the caller's deadline (the sandbox hatch caps
+    each forwarded call's), and how many one session runs at once is bounded by its hatch's serving
+    threads.
+    """
     SearchEuropePmc: _grpc.UnaryUnaryMultiCallable[_literature_pb2.SearchEuropePmcRequest, _literature_pb2.SearchEuropePmcResponse]
     """Search the live Europe PMC index by keyword and return matching bibliographic records. The
     records are the index's, not the store's: a hit here says a paper exists, never that its text
@@ -204,6 +217,19 @@ class LiteratureAsyncStub(LiteratureStub):
     doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
     produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
     result for a known paper with no rendering at all (a fact about the store, not an error).
+    """
+    ReadMarkdown: _aio.UnaryStreamMultiCallable[_literature_pb2.ReadMarkdownRequest, _literature_pb2.ReadMarkdownResponse]  # type: ignore[assignment]
+    """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
+    agent's read path, whole, however long the rendering: a header naming the rendering, then its
+    bytes. See `ReadMarkdownResponse` for the shape. NOT_FOUND for an unknown doc_id (a broken
+    reference); INTERNAL for a rendering the manifest lists but the store cannot produce, or whose
+    bytes do not match its key (the store broke its own invariant, not a fact about the paper) —
+    after the header, when that is where it shows; an `unavailable` message for a known paper with
+    no rendering at all (a fact about the store, not an error). One call reads a manifest and one
+    rendering and reaches nothing outside the store: its cost is the size of a rendering the store
+    already holds, in reads of at most 1 MiB, ended by the caller's deadline (the sandbox hatch caps
+    each forwarded call's), and how many one session runs at once is bounded by its hatch's serving
+    threads.
     """
     SearchEuropePmc: _aio.UnaryUnaryMultiCallable[_literature_pb2.SearchEuropePmcRequest, _literature_pb2.SearchEuropePmcResponse]  # type: ignore[assignment]
     """Search the live Europe PMC index by keyword and return matching bibliographic records. The
@@ -340,6 +366,25 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
         produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
         result for a known paper with no rendering at all (a fact about the store, not an error).
+        """
+
+    @_abc_1.abstractmethod
+    def ReadMarkdown(
+        self,
+        request: _literature_pb2.ReadMarkdownRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_abc.Iterator[_literature_pb2.ReadMarkdownResponse], _abc.AsyncIterator[_literature_pb2.ReadMarkdownResponse]]:
+        """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
+        agent's read path, whole, however long the rendering: a header naming the rendering, then its
+        bytes. See `ReadMarkdownResponse` for the shape. NOT_FOUND for an unknown doc_id (a broken
+        reference); INTERNAL for a rendering the manifest lists but the store cannot produce, or whose
+        bytes do not match its key (the store broke its own invariant, not a fact about the paper) —
+        after the header, when that is where it shows; an `unavailable` message for a known paper with
+        no rendering at all (a fact about the store, not an error). One call reads a manifest and one
+        rendering and reaches nothing outside the store: its cost is the size of a rendering the store
+        already holds, in reads of at most 1 MiB, ended by the caller's deadline (the sandbox hatch caps
+        each forwarded call's), and how many one session runs at once is bounded by its hatch's serving
+        threads.
         """
 
     @_abc_1.abstractmethod

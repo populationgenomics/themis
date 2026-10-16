@@ -8,6 +8,10 @@ status through — rather than silently widening or drifting.
 from __future__ import annotations
 
 import concurrent.futures
+import inspect
+import threading
+import time
+from collections.abc import Callable, Iterator
 from typing import NoReturn, Protocol, cast, override
 
 import grpc
@@ -24,6 +28,7 @@ from themis.rpc import (
     gnomad_pb2_grpc,
     hello_pb2,
     literature_pb2,
+    literature_pb2_grpc,
     mavedb_pb2,
     sandbox_options_pb2,
     splice_pb2,
@@ -81,6 +86,14 @@ _FORWARDER_RPC_CASES = [
     for method in _service(fd, name).methods
 ]
 
+# The declared rpcs that stream their response, which a caller dials and a forwarder serves in a shape of their own.
+_SERVER_STREAMING = frozenset(
+    f'/{_service(fd, name).full_name}/{method.name}'
+    for fd, name, _ in _REACHABLE_SERVICES
+    for method in _service(fd, name).methods
+    if method.server_streaming
+)
+
 
 @pytest.mark.parametrize(('file_descriptor', 'service_full_name'), [(fd, name) for fd, name, _ in _REACHABLE_SERVICES])
 def test_every_reachable_service_has_an_allowlisted_rpc(
@@ -119,21 +132,73 @@ class _RecordingCall:
         return object()
 
 
+class _RecordedStream:
+    """What a stand-in server-streaming call returns: the messages it was given, then its error if it has one.
+
+    A real stub never raises when the call is made; a stream's failure arrives while it is read, which is the
+    shape a forwarder has to handle — after any number of messages, none included.
+    """
+
+    def __init__(self, messages: list[object], error: Exception | None) -> None:
+        self._messages = iter(messages)
+        self._error = error
+        self.cancelled = False
+
+    def __iter__(self) -> Iterator[object]:
+        return self
+
+    def __next__(self) -> object:
+        message = next(self._messages, None)
+        if message is not None:
+            return message
+        if self._error is not None:
+            raise self._error
+        raise StopIteration
+
+    def cancel(self) -> bool:
+        self.cancelled = True
+        return True
+
+
+class _RecordingStreamCall(_RecordingCall):
+    """A stand-in server-streaming stub method: records what `_RecordingCall` does, and answers with a stream."""
+
+    def __init__(self, error: Exception | None, messages: list[object]) -> None:
+        super().__init__(error=None)
+        self._stream_error = error
+        self._messages = messages
+        self.stream: _RecordedStream | None = None
+
+    @override
+    def __call__(self, request: object, metadata: object = None, timeout: float | None = None) -> _RecordedStream:
+        super().__call__(request, metadata, timeout)
+        self.stream = _RecordedStream(self._messages, self._stream_error)
+        return self.stream
+
+
 class _RecordingChannel:
     """The channel a forwarder is constructed over, so the real generated stub sits between it and the test.
 
     The stub binds one callable per rpc at construction time, each recorded here under its rpc name — and under
     its full method path, which is what says *which* channel a forwarder was handed. `error` makes every one of
-    them fail the call instead of recording a result.
+    them fail the call instead of recording a result; a streaming one fails after delivering `messages`.
     """
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, *, messages: tuple[object, ...] = ()) -> None:
         self.calls: dict[str, _RecordingCall] = {}
         self.methods: set[str] = set()
         self._error = error
+        self._messages = list(messages)
 
     def unary_unary(self, method: str, **_kwargs: object) -> _RecordingCall:
-        call = _RecordingCall(self._error)
+        return self._record(method, _RecordingCall(self._error))
+
+    def unary_stream(self, method: str, **_kwargs: object) -> _RecordingStreamCall:
+        call = _RecordingStreamCall(self._error, self._messages)
+        self._record(method, call)
+        return call
+
+    def _record[Call: _RecordingCall](self, method: str, call: Call) -> Call:
         self.calls[method.rsplit('/', 1)[1]] = call
         self.methods.add(method)
         return call
@@ -141,6 +206,16 @@ class _RecordingChannel:
 
 def _forwarder(forwarder_class: _ForwarderClass, channel: _RecordingChannel) -> object:
     return forwarder_class(cast('grpc.Channel', channel), session_token=_TOKEN)
+
+
+def _invoke(forwarder: object, method_name: str, request: object, context: grpc.ServicerContext) -> list[object]:
+    """Call one forwarder rpc the way the hatch's server does, reading a streamed response through to its end.
+
+    A streaming forwarder is a generator, so nothing is forwarded until it is read; a case that only called it
+    would pass having checked nothing.
+    """
+    result = getattr(forwarder, method_name)(request, context)
+    return list(result) if inspect.isgenerator(result) else [result]
 
 
 # What a synchronous servicer context reports for a caller that named no deadline: not an absence, but the
@@ -159,9 +234,16 @@ class _GuestContext:
         self.remaining = remaining
         self.code: grpc.StatusCode | None = None
         self.details: str | None = None
+        self.callbacks: list[Callable[[], None]] = []
+        self.accepts_callbacks = True
 
     def time_remaining(self) -> float:
         return self.remaining
+
+    def add_callback(self, callback: Callable[[], None]) -> bool:
+        if self.accepts_callbacks:
+            self.callbacks.append(callback)
+        return self.accepts_callbacks
 
     def abort(self, code: grpc.StatusCode, details: str) -> NoReturn:
         self.code = code
@@ -180,7 +262,7 @@ def test_forwarder_injects_the_session_token_on_every_rpc(forwarder_class: _Forw
     channel = _RecordingChannel()
     forwarder = _forwarder(forwarder_class, channel)
     request = object()
-    getattr(forwarder, method_name)(request, _context())
+    _invoke(forwarder, method_name, request, _context())
     call = channel.calls[method_name]
     assert call.request is request
     assert call.metadata == claim_mod.metadata_for(sandbox_options_pb2.CALLING_AS_AGENT_SESSION, _TOKEN)
@@ -228,7 +310,7 @@ def test_forwarder_carries_a_settled_upstream_status_through(
     forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
     context = _GuestContext()
     with pytest.raises(grpc.RpcError):
-        getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+        _invoke(forwarder, method_name, object(), cast('grpc.ServicerContext', context))
     assert context.code is grpc.StatusCode.NOT_FOUND
     assert context.details == 'the source holds no record'
 
@@ -259,7 +341,7 @@ def test_forwarder_withholds_details_the_servicer_did_not_mark(
     forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
     context = _GuestContext()
     with pytest.raises(grpc.RpcError):
-        getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+        _invoke(forwarder, method_name, object(), cast('grpc.ServicerContext', context))
     assert context.code is code
     assert context.details == code.name
 
@@ -275,7 +357,7 @@ def test_forwarder_carries_details_the_servicer_marked_as_its_own(
     forwarder = _forwarder(forwarder_class, _RecordingChannel(failure))
     context = _GuestContext()
     with pytest.raises(grpc.RpcError):
-        getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+        _invoke(forwarder, method_name, object(), cast('grpc.ServicerContext', context))
     assert context.code is grpc.StatusCode.UNAVAILABLE
     assert context.details == details
 
@@ -286,7 +368,7 @@ def test_forwarder_reraises_a_failure_carrying_no_status(forwarder_class: _Forwa
     forwarder = _forwarder(forwarder_class, _RecordingChannel(grpc.RpcError('no status')))
     context = _GuestContext()
     with pytest.raises(grpc.RpcError):
-        getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+        _invoke(forwarder, method_name, object(), cast('grpc.ServicerContext', context))
     assert context.code is None
 
 
@@ -297,7 +379,7 @@ def test_forwarder_forwards_under_a_deadline_shorter_than_the_ceiling(
     """A caller with less time left than the ceiling keeps its own budget: re-imposing one would outlast it."""
     channel = _RecordingChannel()
     forwarder = _forwarder(forwarder_class, channel)
-    getattr(forwarder, method_name)(object(), _context(12.5))
+    _invoke(forwarder, method_name, object(), _context(12.5))
     assert channel.calls[method_name].timeout == 12.5
 
 
@@ -309,13 +391,21 @@ def test_forwarder_caps_a_budget_beyond_the_ceiling(
     """A budget past the ceiling is capped, not honoured: the bound is not a default the caller can raise."""
     channel = _RecordingChannel()
     forwarder = _forwarder(forwarder_class, channel)
-    getattr(forwarder, method_name)(object(), _context(remaining))
+    _invoke(forwarder, method_name, object(), _context(remaining))
     assert channel.calls[method_name].timeout == hatch._FORWARD_CEILING_S
 
 
 def _service_of(method: str) -> str:
     """The `pkg.Service` an allowlisted `/pkg.Service/Method` path names."""
     return method.split('/')[1]
+
+
+def _dial(guest: grpc.Channel, method: str) -> None:
+    """Call `method` with an empty request in the shape it is declared, reading a stream through to its status."""
+    if method in _SERVER_STREAMING:
+        list(guest.unary_stream(method)(b'', timeout=10))
+    else:
+        guest.unary_unary(method)(b'', timeout=10)
 
 
 def test_build_hatch_hands_each_forwarder_the_channel_for_its_deployment() -> None:
@@ -354,9 +444,8 @@ def test_build_hatch_serves_every_allowlisted_method() -> None:
     try:
         with grpc.insecure_channel(f'unix:{hatch_server.socket_path}') as guest:
             for method in sorted(hatch.GUEST_METHODS):
-                call = guest.unary_unary(method)
                 with pytest.raises(grpc.RpcError) as raised:
-                    call(b'', timeout=10)
+                    _dial(guest, method)
                 call_error = cast('grpc.Call', raised.value)
                 code = call_error.code()
                 assert code is not grpc.StatusCode.UNIMPLEMENTED, f'{_service_of(method)} has no forwarder registered'
@@ -386,7 +475,7 @@ def test_the_hatch_refuses_every_declared_method_the_allowlist_omits() -> None:
         with grpc.insecure_channel(f'unix:{hatch_server.socket_path}') as guest:
             for method in omitted:
                 with pytest.raises(grpc.RpcError) as raised:
-                    guest.unary_unary(method)(b'', timeout=10)
+                    _dial(guest, method)
                 assert cast('grpc.Call', raised.value).code() is grpc.StatusCode.PERMISSION_DENIED, method
     finally:
         hatch_server.close()
@@ -457,3 +546,212 @@ def test_the_forwarding_ceiling_sits_under_the_command_bound() -> None:
     against that one — against the constant, not a number.
     """
     assert hatch._FORWARD_CEILING_S < tool.COMMAND_TIMEOUT_S
+
+
+# The forwarder cases for the rpcs that stream their response: what a stream adds is a failure after data.
+_STREAMING_FORWARDER_CASES = [
+    pytest.param(forwarder_class, method.name, id=f'{_service(fd, name).name}.{method.name}')
+    for fd, name, forwarder_class in _REACHABLE_SERVICES
+    for method in _service(fd, name).methods
+    if method.server_streaming
+]
+
+
+def test_some_forwarded_rpc_streams() -> None:
+    """Parametrising over an empty set skips every streaming case below and reports green."""
+    assert _STREAMING_FORWARDER_CASES, 'no reachable rpc streams its response — the streaming cases would be vacuous'
+
+
+@pytest.mark.parametrize(('marked', 'expected_details'), [(True, 'the rendering broke off'), (False, 'INTERNAL')])
+@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
+def test_a_stream_that_fails_after_data_delivers_what_arrived_and_ends_under_the_upstream_code(
+    forwarder_class: _ForwarderClass, method_name: str, *, marked: bool, expected_details: str
+) -> None:
+    # The authored-status rule does not lapse once data has crossed: the stream ends under the upstream's code,
+    # and its details cross only with the servicer's mark.
+    failure = _SettledFailure(grpc.StatusCode.INTERNAL, 'the rendering broke off', _MARKED if marked else ())
+    sent = (object(), object())
+    forwarder = _forwarder(forwarder_class, _RecordingChannel(failure, messages=sent))
+    context = _GuestContext()
+    received: list[object] = []
+    with pytest.raises(grpc.RpcError):  # noqa: PT012 — the messages before the failure are read inside the block
+        for response in getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context)):
+            received.append(response)
+    assert received == list(sent)
+    assert context.code is grpc.StatusCode.INTERNAL
+    assert context.details == expected_details
+
+
+@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
+def test_a_stream_passes_each_message_on_as_it_arrives(forwarder_class: _ForwarderClass, method_name: str) -> None:
+    sent = (object(), object(), object())
+    forwarder = _forwarder(forwarder_class, _RecordingChannel(messages=sent))
+    assert _invoke(forwarder, method_name, object(), _context()) == list(sent)
+
+
+@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
+def test_a_stream_the_guest_abandons_is_cancelled_upstream(forwarder_class: _ForwarderClass, method_name: str) -> None:
+    # A guest that stops reading must not leave the upstream call running out its deadline on a serving thread:
+    # the forwarder registers the cancellation with the guest's rpc, and grpc runs it when that rpc ends.
+    channel = _RecordingChannel(messages=(object(), object()))
+    forwarder = _forwarder(forwarder_class, channel)
+    context = _GuestContext()
+    responses = getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
+    next(responses)
+    stream = cast('_RecordingStreamCall', channel.calls[method_name]).stream
+    assert stream is not None
+    assert not stream.cancelled
+    for callback in context.callbacks:
+        callback()
+    assert stream.cancelled
+
+
+class _BreakingStream:
+    """A real streaming upstream for `Literature.ReadMarkdown`: two chunks, then a failure, marked or not.
+
+    Served through a generic handler rather than a `LiteratureServicer` subclass, which would have to stand in
+    for every other rpc of the service.
+    """
+
+    def __init__(self, *, marked: bool) -> None:
+        self.remaining: float | None = None
+        self._marked = marked
+
+    def __call__(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.ServicerContext
+    ) -> Iterator[literature_pb2.ReadMarkdownResponse]:
+        del request
+        self.remaining = context.time_remaining()
+        yield literature_pb2.ReadMarkdownResponse(chunk=b'first ')
+        yield literature_pb2.ReadMarkdownResponse(chunk=b'second')
+        if self._marked:
+            context.set_trailing_metadata(_MARKED)
+        context.abort(grpc.StatusCode.INTERNAL, 'the rendering broke off at 10.4.0.7')
+
+
+@pytest.mark.parametrize(
+    ('marked', 'expected_details'), [(True, 'the rendering broke off at 10.4.0.7'), (False, 'INTERNAL')]
+)
+def test_a_live_stream_crosses_the_hatch_and_its_late_failure_keeps_the_authored_rule(
+    *, marked: bool, expected_details: str
+) -> None:
+    """Over real channels: the chunks reach the guest, then the upstream's code, its details only when marked.
+
+    A fake context cannot show that a status set after messages were written still reaches the caller as the
+    stream's own, nor what deadline grpc hands a streaming servicer whose caller named none; this does both.
+    """
+    upstream_impl = _BreakingStream(marked=marked)
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    server = grpc.server(pool)
+    port = server.add_insecure_port('127.0.0.1:0')
+    server.add_generic_rpc_handlers(
+        (
+            grpc.method_handlers_generic_handler(
+                'themis.rpc.literature.Literature',
+                {
+                    'ReadMarkdown': grpc.unary_stream_rpc_method_handler(
+                        upstream_impl,
+                        request_deserializer=literature_pb2.ReadMarkdownRequest.FromString,
+                        response_serializer=literature_pb2.ReadMarkdownResponse.SerializeToString,
+                    )
+                },
+            ),
+        )
+    )
+    server.start()
+    upstream = grpc.insecure_channel(f'127.0.0.1:{port}')
+    hatch_server = hatch.build_hatch(hello_channel=upstream, evidence_channel=upstream, session_token=_TOKEN)
+    hatch_server.start()
+    received: list[bytes] = []
+    try:
+        with grpc.insecure_channel(f'unix:{hatch_server.socket_path}') as guest:
+            stub = literature_pb2_grpc.LiteratureStub(guest)
+            with pytest.raises(grpc.RpcError) as raised:  # noqa: PT012 — the chunks before the failure are read inside
+                for response in stub.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id='doc-1')):
+                    received.append(response.chunk)
+    finally:
+        hatch_server.close()
+        upstream.close()
+        server.stop(0).wait()
+        pool.shutdown(wait=False)
+    assert received == [b'first ', b'second']
+    failure = cast('grpc.Call', raised.value)
+    assert failure.code() is grpc.StatusCode.INTERNAL
+    assert failure.details() == expected_details
+    assert upstream_impl.remaining is not None, 'the upstream was never reached'
+    assert hatch._FORWARD_CEILING_S / 2 < upstream_impl.remaining <= hatch._FORWARD_CEILING_S + _DEADLINE_TOLERANCE_S
+
+
+@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
+def test_a_stream_whose_guest_already_left_is_cancelled_and_not_read(
+    forwarder_class: _ForwarderClass, method_name: str
+) -> None:
+    # grpc refuses a callback on an rpc that has ended and never runs it, so the cancellation is the forwarder's own.
+    channel = _RecordingChannel(messages=(object(),))
+    context = _GuestContext()
+    context.accepts_callbacks = False
+    responses = _invoke(
+        _forwarder(forwarder_class, channel), method_name, object(), cast('grpc.ServicerContext', context)
+    )
+    stream = cast('_RecordingStreamCall', channel.calls[method_name]).stream
+    assert stream is not None
+    assert stream.cancelled
+    assert responses == []
+
+
+class _EndlessStream:
+    """A real streaming upstream that sends one chunk, then holds the call open until it is cancelled.
+
+    It sends nothing more, so the hatch's serving thread never learns of the guest's departure from a failed
+    send: only the cancellation the forwarder registers with the guest's rpc can reach it.
+    """
+
+    def __init__(self) -> None:
+        self.abandoned = threading.Event()
+
+    def __call__(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.ServicerContext
+    ) -> Iterator[literature_pb2.ReadMarkdownResponse]:
+        del request
+        context.add_callback(self.abandoned.set)
+        yield literature_pb2.ReadMarkdownResponse(chunk=b'first')
+        while context.is_active():
+            time.sleep(0.01)
+
+
+def test_a_guest_that_cancels_a_live_stream_cancels_the_upstream() -> None:
+    """Over real channels: the guest's cancellation reaches the upstream, which stops rather than streaming on."""
+    upstream_impl = _EndlessStream()
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    server = grpc.server(pool)
+    port = server.add_insecure_port('127.0.0.1:0')
+    server.add_generic_rpc_handlers(
+        (
+            grpc.method_handlers_generic_handler(
+                'themis.rpc.literature.Literature',
+                {
+                    'ReadMarkdown': grpc.unary_stream_rpc_method_handler(
+                        upstream_impl,
+                        request_deserializer=literature_pb2.ReadMarkdownRequest.FromString,
+                        response_serializer=literature_pb2.ReadMarkdownResponse.SerializeToString,
+                    )
+                },
+            ),
+        )
+    )
+    server.start()
+    upstream = grpc.insecure_channel(f'127.0.0.1:{port}')
+    hatch_server = hatch.build_hatch(hello_channel=upstream, evidence_channel=upstream, session_token=_TOKEN)
+    hatch_server.start()
+    try:
+        with grpc.insecure_channel(f'unix:{hatch_server.socket_path}') as guest:
+            call = literature_pb2_grpc.LiteratureStub(guest).ReadMarkdown(literature_pb2.ReadMarkdownRequest())
+            next(call)
+            assert not upstream_impl.abandoned.is_set()
+            call.cancel()
+            assert upstream_impl.abandoned.wait(timeout=10)
+    finally:
+        hatch_server.close()
+        upstream.close()
+        server.stop(0).wait()
+        pool.shutdown(wait=False)

@@ -386,7 +386,7 @@ def _run_over_grpc[T](
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
             store = litcache_store.Store(bucket, http_client)
             backend = live_mod.LiveBackend(store, discovery_mod.Indexes(http_client))
-            servicer = servicer_mod.Servicer(backend)
+            servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
             async with in_process_grpc.serving(
                 lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
                 interceptors=(authz.InjectMetadata(authz.ADMITTED),),
@@ -1056,7 +1056,7 @@ def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
 
     async def run() -> literature_pb2.MaybeIngestPapersResponse:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
-            servicer = servicer_mod.Servicer(live_mod.LiveBackend(store, discovery_mod.Indexes(http_client)))
+            servicer = servicer_mod.Servicer(live_mod.LiveBackend(store, discovery_mod.Indexes(http_client)))  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
             async with in_process_grpc.serving(
                 lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
                 interceptors=(authz.InjectMetadata(authz.ADMITTED),),

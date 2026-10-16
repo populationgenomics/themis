@@ -18,6 +18,7 @@ GUEST_METHODS = frozenset(
         '/themis.rpc.literature.Literature/ListLitVarEntities',
         '/themis.rpc.literature.Literature/MaybeIngestPapers',
         '/themis.rpc.literature.Literature/PollFullTexts',
+        '/themis.rpc.literature.Literature/ReadMarkdown',
         '/themis.rpc.literature.Literature/SearchEuropePmc',
         '/themis.rpc.literature.Literature/SearchLitVar',
         '/themis.rpc.literature.Literature/Validate',

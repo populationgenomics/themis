@@ -69,6 +69,11 @@ class LiteratureStub:
                 request_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
                 _registered_method=True)
+        self.ReadMarkdown = channel.unary_stream(
+                '/themis.rpc.literature.Literature/ReadMarkdown',
+                request_serializer=themis_dot_rpc_dot_literature__pb2.ReadMarkdownRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_literature__pb2.ReadMarkdownResponse.FromString,
+                _registered_method=True)
         self.SearchEuropePmc = channel.unary_unary(
                 '/themis.rpc.literature.Literature/SearchEuropePmc',
                 request_serializer=themis_dot_rpc_dot_literature__pb2.SearchEuropePmcRequest.SerializeToString,
@@ -183,6 +188,23 @@ class LiteratureServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReadMarkdown(self, request, context):
+        """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
+        agent's read path, whole, however long the rendering: a header naming the rendering, then its
+        bytes. See `ReadMarkdownResponse` for the shape. NOT_FOUND for an unknown doc_id (a broken
+        reference); INTERNAL for a rendering the manifest lists but the store cannot produce, or whose
+        bytes do not match its key (the store broke its own invariant, not a fact about the paper) —
+        after the header, when that is where it shows; an `unavailable` message for a known paper with
+        no rendering at all (a fact about the store, not an error). One call reads a manifest and one
+        rendering and reaches nothing outside the store: its cost is the size of a rendering the store
+        already holds, in reads of at most 1 MiB, ended by the caller's deadline (the sandbox hatch caps
+        each forwarded call's), and how many one session runs at once is bounded by its hatch's serving
+        threads.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def SearchEuropePmc(self, request, context):
         """Search the live Europe PMC index by keyword and return matching bibliographic records. The
         records are the index's, not the store's: a hit here says a paper exists, never that its text
@@ -268,6 +290,11 @@ def add_LiteratureServicer_to_server(servicer, server):
                     servicer.GetMarkdown,
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.SerializeToString,
+            ),
+            'ReadMarkdown': grpc.unary_stream_rpc_method_handler(
+                    servicer.ReadMarkdown,
+                    request_deserializer=themis_dot_rpc_dot_literature__pb2.ReadMarkdownRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_literature__pb2.ReadMarkdownResponse.SerializeToString,
             ),
             'SearchEuropePmc': grpc.unary_unary_rpc_method_handler(
                     servicer.SearchEuropePmc,
@@ -479,6 +506,33 @@ class Literature:
             '/themis.rpc.literature.Literature/GetMarkdown',
             themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
             themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadMarkdown(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/themis.rpc.literature.Literature/ReadMarkdown',
+            themis_dot_rpc_dot_literature__pb2.ReadMarkdownRequest.SerializeToString,
+            themis_dot_rpc_dot_literature__pb2.ReadMarkdownResponse.FromString,
             options,
             channel_credentials,
             insecure,

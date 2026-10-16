@@ -265,6 +265,32 @@ class GetMarkdownResponse(_message.Message):
     unavailable: FullTextUnavailable
     def __init__(self, content: _Optional[_Union[PaperMarkdown, _Mapping]] = ..., unavailable: _Optional[_Union[FullTextUnavailable, _Mapping]] = ...) -> None: ...
 
+class ReadMarkdownRequest(_message.Message):
+    __slots__ = ("doc_id",)
+    DOC_ID_FIELD_NUMBER: _ClassVar[int]
+    doc_id: str
+    def __init__(self, doc_id: _Optional[str] = ...) -> None: ...
+
+class RenderingHeader(_message.Message):
+    __slots__ = ("rendering_key", "size_bytes", "provenance")
+    RENDERING_KEY_FIELD_NUMBER: _ClassVar[int]
+    SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
+    PROVENANCE_FIELD_NUMBER: _ClassVar[int]
+    rendering_key: str
+    size_bytes: int
+    provenance: TextProvenance
+    def __init__(self, rendering_key: _Optional[str] = ..., size_bytes: _Optional[int] = ..., provenance: _Optional[_Union[TextProvenance, str]] = ...) -> None: ...
+
+class ReadMarkdownResponse(_message.Message):
+    __slots__ = ("header", "chunk", "unavailable")
+    HEADER_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_FIELD_NUMBER: _ClassVar[int]
+    UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    header: RenderingHeader
+    chunk: bytes
+    unavailable: FullTextUnavailable
+    def __init__(self, header: _Optional[_Union[RenderingHeader, _Mapping]] = ..., chunk: _Optional[bytes] = ..., unavailable: _Optional[_Union[FullTextUnavailable, _Mapping]] = ...) -> None: ...
+
 class EuropePmcRecord(_message.Message):
     __slots__ = ("pmid", "title", "authors", "journal", "year", "doi", "abstract", "pmcid")
     PMID_FIELD_NUMBER: _ClassVar[int]
