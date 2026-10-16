@@ -39,6 +39,10 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants, sql
 
+# Crosswalk reads open unpooled Cloud SQL connections, as many per instance as its worker threads, so
+# the cap multiplies that against db-f1-micro's 25.
+_MAX_INSTANCES = 2
+
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
@@ -142,7 +146,9 @@ class EvidenceService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_ALL',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                ),
                 # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
                 # admits it; all traffic, since the auth run.app and the public upstream hosts both
                 # leave over the VPC (the services subnet's NAT provides the outbound path).

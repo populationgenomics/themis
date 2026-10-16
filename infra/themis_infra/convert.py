@@ -141,7 +141,10 @@ class ConvertWorker(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_ALL',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                # One conversion per instance, so the queue never needs more instances than it dispatches at once.
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_MAX_CONCURRENT_DISPATCHES
+                ),
                 # The conversion is the request (I/O-bound on the model API); Cloud Run keeps CPU
                 # allocated for its duration, up to this timeout.
                 timeout=_REQUEST_TIMEOUT,

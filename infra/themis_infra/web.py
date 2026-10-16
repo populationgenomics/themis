@@ -18,6 +18,9 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants, sql
 
+# Each instance pools up to 5 Cloud SQL connections, so 2 hold at most 10 of db-f1-micro's 25 (auth holds 12).
+_MAX_INSTANCES = 2
+
 # The service's own name is also an input to its IAP-assertion audience, so it is a
 # literal rather than the resource's output, which the template cannot read.
 _SERVICE_NAME = 'themis-web'
@@ -142,7 +145,9 @@ class WebService(pulumi.ComponentResource):
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 # Scale to zero — idle cost ≈ 0 at this traffic level.
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,

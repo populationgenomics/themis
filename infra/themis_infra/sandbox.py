@@ -21,6 +21,10 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants
 
+# One instance drains every webhook; the rest is headroom, since Anthropic disables an endpoint after
+# ~20 consecutive failed deliveries.
+_DISPATCHER_MAX_INSTANCES = 3
+
 
 def session_token_signing_key(
     *,
@@ -212,7 +216,9 @@ class DispatcherService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_ALL',  # public: Anthropic cannot present a GCP token; HMAC is the auth (§5)
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_DISPATCHER_MAX_INSTANCES
+                ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,

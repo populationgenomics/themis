@@ -11,6 +11,9 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+# The code-mode demo service; one instance serves every sandbox that calls it.
+_MAX_INSTANCES = 1
+
 
 class HelloService(pulumi.ComponentResource):
     """Cloud Run hello service (load-balancer ingress), resolving sessions through auth.
@@ -56,7 +59,9 @@ class HelloService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(min_instance_count=0),
+                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                ),
                 # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
                 # admits it; all traffic, since auth's run.app is a public hostname a private-ranges
                 # route would send straight out.
