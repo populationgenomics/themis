@@ -102,16 +102,17 @@ def clone_analysis(
         analysis_id: The Analysis whose repository to clone.
         destination: Where to clone to: absent, or an empty directory.
         project: The environment's GCP project.
-        service_url: The sheaf service's `https://` URL, or None to have `gcloud` describe it.
+        service_url: The sheaf service's `https://` URL, or None to read it from the Cloud Run Admin API.
         service_account: The account the token derivation and the bearer act as.
         key_version: The signing key version, or None for the one on the environment's key ring.
 
     Raises:
         CloneError: If `destination` is occupied, or the clone fails.
-        session_token.TokenError: If the Analysis does not exist, or the key ring cannot be listed or
-            holds anything but one MAC key.
-        clu.GcloudError: If `gcloud` or `git` is not on PATH, or `gcloud` cannot describe the service
-            or mint an identity token.
+        session_token.TokenError: If the Analysis does not exist, or the key ring holds anything but one
+            MAC key.
+        SystemExit: If `git` is not on PATH.
+        clu.GoogleCallError: If the service URL cannot be read, the key ring cannot be listed, or an
+            identity token cannot be minted.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
     if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
@@ -186,7 +187,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         '--service-url',
         default=None,
-        help=f'the sheaf service URL (default: gcloud describes {sheaf_remote.SERVICE} in --project)',
+        help=f'the sheaf service URL (default: looked up in Cloud Run for {sheaf_remote.SERVICE} in --project)',
     )
     parser.add_argument(
         '--key-version',
@@ -214,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
             service_account=service_account,
             key_version=args.key_version,
         )
-    except (CloneError, session_token.TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (CloneError, session_token.TokenError, clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:
         print('interrupted', file=sys.stderr)

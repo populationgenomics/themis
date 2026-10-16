@@ -31,7 +31,7 @@ def test_jwt_expiry_refuses_what_is_not_an_id_token(token: str) -> None:
 
 @pytest.fixture
 def minted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Stand in for gcloud: each mint is a fresh hour-long token, and the list records them."""
+    """Stand in for the IAM Credentials API: each mint is a fresh hour-long token, and the list records them."""
     tokens: list[str] = []
 
     def mint(service_account: str, audience: str) -> str:

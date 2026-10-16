@@ -28,6 +28,8 @@ import socket
 import subprocess
 import time
 
+from google.auth import exceptions
+
 from tools import clu
 
 _PROXY = 'cloud-sql-proxy'
@@ -41,22 +43,12 @@ def _free_loopback_port() -> int:
         return probe.getsockname()[1]
 
 
-def _active_gcloud_account() -> str:
-    result = subprocess.run(  # noqa: S603 — fixed argv, resolved path
-        [clu.resolve_binary('gcloud'), 'config', 'get-value', 'account'],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    account = result.stdout.strip()
-    if not account:
-        raise SystemExit('no active gcloud account; run `gcloud auth login` first')
-    return account
-
-
 def _login_role(impersonate: str | None) -> str:
-    """The Postgres role to log in as: the IAM principal, minus the suffix Cloud SQL strips off SAs."""
-    return clu.db_user(impersonate or _active_gcloud_account())
+    """The Postgres role to log in as: the IAM principal, minus the suffix Cloud SQL strips off SAs.
+
+    Without `impersonate` it is the caller's application-default login, the principal the proxy connects as.
+    """
+    return clu.db_user(impersonate or clu.caller_email())
 
 
 def _wait_until_listening(port: int, timeout: float = 15.0) -> None:
@@ -81,10 +73,11 @@ def _run(project: str, impersonate: str | None, psql_args: list[str]) -> int:
         proxy_cmd.append(f'--impersonate-service-account={impersonate}')
     proxy_cmd.append(connection_name)
 
+    login_role = _login_role(impersonate)
     proxy = subprocess.Popen(proxy_cmd)  # noqa: S603 — resolved path, argv from fixed config + flags
     try:
         _wait_until_listening(port)
-        dsn = f'host=127.0.0.1 port={port} dbname={clu.SQL_DATABASE} user={_login_role(impersonate)} sslmode=disable'
+        dsn = f'host=127.0.0.1 port={port} dbname={clu.SQL_DATABASE} user={login_role} sslmode=disable'
         return subprocess.run([psql_bin, dsn, *psql_args], check=False).returncode  # noqa: S603 — resolved path
     finally:
         proxy.terminate()
@@ -111,7 +104,7 @@ def main() -> None:
     impersonate = clu.service_account(args.project) if args.impersonate is None else args.impersonate
     try:
         status = _run(args.project, impersonate or None, psql_args)
-    except clu.GcloudError as exc:
+    except (clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     raise SystemExit(status)
 

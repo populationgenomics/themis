@@ -70,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         provenance.ProvenanceError,
         web_app.AccessRefusedError,
         web_app.RpcError,
-        clu.GcloudError,
+        clu.GoogleCallError,
         google_auth_exceptions.DefaultCredentialsError,
     ) as e:
         print(f'error: {e}', file=sys.stderr)
@@ -339,7 +339,7 @@ def _clone(project: str, service_account: str) -> Callable[[str, pathlib.Path], 
                 service_account=service_account,
                 key_version=None,
             )
-        except (clone_analysis.CloneError, session_token.TokenError, clu.GcloudError) as e:
+        except (clone_analysis.CloneError, session_token.TokenError, clu.GoogleCallError) as e:
             raise runner.CloneError(str(e)) from e
 
     return clone

@@ -2,20 +2,22 @@
 
 `themis-clu` is the service account the `themis-clu` group may impersonate; it holds the invoker
 bindings, the database login and the grants a tool needs, so a person never needs any of them
-directly (`docs/runbooks/hand-driving-a-service.md`). Two roads lead to it from a terminal and both
-start at the caller's own `gcloud` login: `google-auth` impersonated credentials for a client
-library, and `gcloud auth print-identity-token --impersonate-service-account` for the ID token a
-Cloud Run service admits, which a user credential cannot mint.
+directly (`docs/runbooks/hand-driving-a-service.md`). Every road to it starts at the caller's own
+application-default login (`gcloud auth application-default login`): impersonated credentials for a
+client library, an ID token minted from them for a Cloud Run service, which a user credential cannot
+mint itself, and `cloud-sql-proxy`'s own impersonation. The `gcloud` CLI's login plays no part.
 """
 
 from __future__ import annotations
 
+import http
 import shutil
-import subprocess
 
 import google.auth
+import requests
 from google.auth import credentials as credentials_mod
-from google.auth import impersonated_credentials
+from google.auth import exceptions, impersonated_credentials, jwt
+from google.auth.transport import requests as auth_requests
 
 DEFAULT_PROJECT = 'cpg-themis-dev'
 REGION = 'australia-southeast1'
@@ -23,10 +25,14 @@ SQL_INSTANCE = 'themis-sql'
 SQL_DATABASE = 'themis'
 _CLU_EMAIL = 'themis-clu@{project}.iam.gserviceaccount.com'
 _CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
+# A user login carries it already; a service-account login needs it asked for to read its own email.
+_USERINFO_EMAIL_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
+_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
+_RUN_SERVICE_URL = 'https://run.googleapis.com/v2/projects/{project}/locations/{region}/services/{service}'
 
 
-class GcloudError(Exception):
-    """`gcloud` is absent or refused, in its own words. A tool's `main` turns this into its exit."""
+class GoogleCallError(Exception):
+    """A call to a Google API failed, or answered with something unusable. A tool's `main` turns this into its exit."""
 
 
 def service_account(project: str) -> str:
@@ -43,83 +49,130 @@ def resolve_binary(name: str) -> str:
     """Absolute path to `name`.
 
     Raises:
-        GcloudError: If it is not on PATH.
+        SystemExit: If it is not on PATH.
     """
     path = shutil.which(name)
     if path is None:
-        raise GcloudError(f'{name!r} not found on PATH; install it before running this tool')
+        raise SystemExit(f'{name!r} not found on PATH; install it before running this tool')
     return path
 
 
-def impersonated(service_account: str) -> credentials_mod.Credentials:
-    """Credentials acting as `service_account`, sourced from the caller's application-default login.
+def caller_credentials(*, quota_project: str | None) -> credentials_mod.Credentials:
+    """The caller's own application-default credentials.
+
+    Args:
+        quota_project: The project a call is billed and quota-checked against, or None for the one
+            the login names. Naming the project a call reads keeps a login whose own quota project
+            lacks the API from failing it.
 
     Raises:
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login;
             `gcloud auth application-default login` creates one.
     """
-    source, _project = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
+    credentials, _project = google.auth.default(
+        scopes=[_CLOUD_PLATFORM_SCOPE, _USERINFO_EMAIL_SCOPE], quota_project_id=quota_project
+    )
+    return credentials
+
+
+def caller_email() -> str:
+    """The email of the principal the caller's application-default login acts as.
+
+    Raises:
+        GoogleCallError: If Google does not answer with a verified email for the login.
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
+    """
+    userinfo = _get_json(
+        caller_credentials(quota_project=None), _USERINFO_URL, purpose='read the email of the application-default login'
+    )
+    email = userinfo.get('email')
+    if not isinstance(email, str) or not email or userinfo.get('email_verified') is not True:
+        raise GoogleCallError(f'the application-default login has no verified email: {userinfo!r}')
+    return email
+
+
+def impersonated(service_account: str) -> impersonated_credentials.Credentials:
+    """Credentials acting as `service_account`, sourced from the caller's application-default login.
+
+    Raises:
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
+    """
     return impersonated_credentials.Credentials(
-        source_credentials=source, target_principal=service_account, target_scopes=[_CLOUD_PLATFORM_SCOPE]
+        source_credentials=caller_credentials(quota_project=None),
+        target_principal=service_account,
+        target_scopes=[_CLOUD_PLATFORM_SCOPE],
     )
 
 
 def identity_token(service_account: str, audience: str) -> str:
-    """An ID token for `audience`, minted by `gcloud` as `service_account`, carrying the account's email.
+    """An ID token for `audience`, minted as `service_account`, carrying the account's email.
 
-    The email claim is what a gated service verifies the caller from; `gcloud` omits it from an
-    impersonated token unless asked, and a token without it is `UNAUTHENTICATED` at every gate.
+    The email claim is what a gated service verifies the caller from; an impersonated token carries
+    it only when asked for, and a token without it is `UNAUTHENTICATED` at every gate.
 
     Raises:
-        GcloudError: If `gcloud` is absent or refuses, with its own message — membership of the
-            impersonating group is the usual cause. Raised as an ordinary exception because this runs
-            on a request thread of the loopback server, where an exit would end the thread silently.
+        GoogleCallError: If the token cannot be minted, with Google's own message (membership of the
+            impersonating group is the usual cause), or carries no email claim naming the account. An
+            absent application-default login is raised as this too. It is an ordinary exception
+            because this runs on a request thread of the loopback server, where an exit would end the
+            thread silently.
     """
-    result = subprocess.run(  # noqa: S603 — resolved path, argv from fixed flags
-        [
-            resolve_binary('gcloud'),
-            'auth',
-            'print-identity-token',
-            f'--impersonate-service-account={service_account}',
-            f'--audiences={audience}',
-            '--include-email',
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise GcloudError(f'gcloud could not mint an identity token as {service_account}:\n{result.stderr.strip()}')
-    token = result.stdout.strip()
-    if not token:
-        raise GcloudError('gcloud printed no identity token')
+    try:
+        credentials = impersonated_credentials.IDTokenCredentials(
+            target_credentials=impersonated(service_account), target_audience=audience, include_email=True
+        )
+        credentials.refresh(auth_requests.Request())
+    except (exceptions.GoogleAuthError, requests.RequestException) as exc:
+        raise GoogleCallError(f'could not mint an identity token as {service_account} for {audience}: {exc}') from exc
+    token = credentials.token
+    # Unverified: Google's IAM Credentials API minted it just now, over TLS, and `refresh` decoded it.
+    claims = jwt.decode(token, verify=False)
+    if claims.get('email') != service_account:
+        raise GoogleCallError(
+            f'the identity token minted as {service_account} carries email {claims.get("email")!r}, '
+            'and a gated service verifies the caller from that claim'
+        )
     return token
 
 
 def run_service_url(service: str, *, project: str) -> str:
-    """The URL of the Cloud Run `service`, as `gcloud run services describe` reports it.
+    """The URL of the Cloud Run `service`, read through the Cloud Run Admin API as the caller.
+
+    The caller's own login reads it, not `themis-clu`: the account holds invoke on the services but
+    not `run.services.get`, and reading a URL is no reason to widen what it can do.
 
     Raises:
-        GcloudError: If `gcloud` is absent or refuses, or reports no https URL.
+        GoogleCallError: If the service cannot be read, or reports no https URL.
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
-    result = subprocess.run(  # noqa: S603 — resolved path, argv from fixed flags
-        [
-            resolve_binary('gcloud'),
-            'run',
-            'services',
-            'describe',
-            service,
-            f'--region={REGION}',
-            f'--project={project}',
-            '--format=value(status.url)',
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    resource = _get_json(
+        caller_credentials(quota_project=project),
+        _RUN_SERVICE_URL.format(project=project, region=REGION, service=service),
+        purpose=f'read the Cloud Run service {service} in {project}',
     )
-    if result.returncode != 0:
-        raise GcloudError(f'gcloud could not describe {service}:\n{result.stderr.strip()}')
-    url = result.stdout.strip()
-    if not url.startswith('https://'):
-        raise GcloudError(f'gcloud reported no https URL for {service}: {url!r}')
+    url = resource.get('uri')
+    if not isinstance(url, str) or not url.startswith('https://'):
+        raise GoogleCallError(f'the Cloud Run service {service} in {project} reports no https URL: {url!r}')
     return url
+
+
+def _get_json(credentials: credentials_mod.Credentials, url: str, *, purpose: str) -> dict[str, object]:
+    """GET `url` as `credentials` and return the JSON object it answers.
+
+    Raises:
+        GoogleCallError: If the request fails, answers other than 200, or answers no JSON object.
+    """
+    with auth_requests.AuthorizedSession(credentials) as session:
+        try:
+            response = session.get(url)
+        except (exceptions.GoogleAuthError, requests.RequestException) as exc:
+            raise GoogleCallError(f'could not {purpose}: {exc}') from exc
+    if response.status_code != http.HTTPStatus.OK:
+        raise GoogleCallError(f'could not {purpose}: HTTP {response.status_code}: {response.text.strip()}')
+    try:
+        body = response.json()
+    except requests.JSONDecodeError as exc:
+        raise GoogleCallError(f'could not {purpose}: the answer is not JSON: {exc}') from exc
+    if not isinstance(body, dict):
+        raise GoogleCallError(f'could not {purpose}: the answer is not a JSON object: {body!r}')
+    return body

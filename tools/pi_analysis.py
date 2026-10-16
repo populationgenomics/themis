@@ -26,7 +26,6 @@ import argparse
 import asyncio
 import contextlib
 import pathlib
-import subprocess
 import uuid
 
 from google.auth import exceptions
@@ -41,24 +40,6 @@ from tools import clu, clu_database, session_token
 # What the workbench reads to know a run has no conversation of its own; keep in step with
 # `UNMANAGED_SESSION_PREFIX` in apps/web/src/lib/harness.ts.
 UNMANAGED_SESSION_PREFIX = 'pi_'
-
-
-def caller_email(project: str) -> str:
-    """The account `gcloud` is logged in as, recorded as the Analysis's creator.
-
-    Raises:
-        SystemExit: If gcloud names no active account.
-    """
-    result = subprocess.run(  # noqa: S603 — resolved path, argv from fixed flags
-        [clu.resolve_binary('gcloud'), 'config', 'get-value', 'account', f'--project={project}'],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    account = result.stdout.strip()
-    if result.returncode != 0 or not account or account == '(unset)':
-        raise SystemExit('gcloud names no active account; pass --created-by')
-    return account
 
 
 async def sign(key_version: str, session_id: str, service_account: str) -> str:
@@ -146,7 +127,12 @@ def main() -> None:
 
     analysis_id, session_id = new_ids()
     inputs = inputs_for(args.prompt)
-    created_by = args.created_by or caller_email(args.project)
+    try:
+        created_by = args.created_by or clu.caller_email()
+    except clu.GoogleCallError as exc:
+        raise SystemExit(f'{exc}; pass --created-by') from exc
+    except exceptions.DefaultCredentialsError as exc:
+        raise SystemExit(str(exc)) from exc
 
     if args.dry_run:
         print(f'analysis_id  {analysis_id}')
@@ -165,7 +151,7 @@ def main() -> None:
     try:
         key_version = args.key_version or session_token.signing_key_version(args.project)
         bearer = asyncio.run(sign(key_version, session_id, service_account))
-    except (session_token.TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (session_token.TokenError, clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
 
     insert(

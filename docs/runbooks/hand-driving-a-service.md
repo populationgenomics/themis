@@ -8,6 +8,11 @@ way across.
 The `themis-clu` group may impersonate the `themis-clu` service account, which holds the invoker bindings. Membership
 lives in `cpg-infrastructure-private`.
 
+The tools in this runbook need one login, your own application-default credentials from
+`gcloud auth application-default login`, not an impersonated one. They impersonate the account through `google-auth` and
+run no `gcloud` command, so the CLI's own login, which expires on its own schedule, plays no part in them. The `gcloud`
+commands below are for calling a service by hand.
+
 ## Mint a token and call a service
 
 ```bash
@@ -108,13 +113,13 @@ uv run --group tools_sheaf python -m tools.clone_analysis --analysis-id "$ANALYS
 ```
 
 The tool derives the Analysis's session token into a file in a private temporary directory. It then serves a loopback
-git remote in the same process, which presents that token on every call together with an ID token minted as above. It
-clones through the remote, stops it, and deletes the temporary directory with the token in it. The clone has the default
-branch checked out and every branch under `origin/`. It also holds the tags, and the refs that pushes and sheaf itself
-write outside branches and tags, under their own names. One of them, `refs/sheaf/reflog`, gains a commit on every
-publish, and that commit's message names each ref the publish moved. `git log --first-parent refs/sheaf/reflog` lists
-the publishes newest first, down to the root entry sheaf writes when the repository is created
-([`sheaf.md`](../design/sheaf.md#the-reflog-ref-says-what-was-current)).
+git remote in the same process, which presents that token on every call together with an ID token for the service,
+minted as `themis-clu`. It clones through the remote, stops it, and deletes the temporary directory with the token in
+it. The clone has the default branch checked out and every branch under `origin/`. It also holds the tags, and the refs
+that pushes and sheaf itself write outside branches and tags, under their own names. One of them, `refs/sheaf/reflog`,
+gains a commit on every publish, and that commit's message names each ref the publish moved.
+`git log --first-parent refs/sheaf/reflog` lists the publishes newest first, down to the root entry sheaf writes when
+the repository is created ([`sheaf.md`](../design/sheaf.md#the-reflog-ref-says-what-was-current)).
 
 The clone's `origin` names the stopped server, so a fetch or a push from it fails. Pushing needs a remote that keeps
 running, which takes the two steps separately, in two terminals:
@@ -143,9 +148,8 @@ with the migrator's rights. Where the stack opts in (`themis:cluDerivesSessionTo
 (`themis.clients.auth.derive`), and the login reads every `session_id`, so the account can act as any live session
 against a session-scoped service such as `themis-sheaf`. Each of these is a named capability in the Pulumi program
 (`infra/themis_infra/grants.py`); the account's grants are the `themis-clu` call sites there. The MAC call needs an
-access token as the account, not the ID token above —
-`gcloud auth application-default login --impersonate-service-account="$CLU"`, or impersonated credentials in code — and
-the key version, `pulumi stack output session_token_signing_key` plus `/cryptoKeyVersions/1`.
+access token as the account, not the ID token above (`tools.clu.impersonated` builds one from your own login), and the
+key version, `pulumi stack output session_token_signing_key` plus `/cryptoKeyVersions/1`.
 
 The convert worker is not among them, for want of a reason rather than on principle: nothing has needed to drive a
 conversion by hand yet, and doing it locally against a scratch bucket is the better first move anyway. Adding it is a

@@ -19,9 +19,12 @@ import argparse
 import asyncio
 import contextlib
 import pathlib
-import subprocess
 
+import requests
+from google.api_core import exceptions as api_exceptions
 from google.auth import exceptions
+from google.auth.transport import requests as auth_requests
+from google.cloud import kms_v1
 
 from themis.clients.auth import derive
 from themis.clients.sheaf import store as remote_mod
@@ -57,29 +60,23 @@ def session_id_for(analysis_id: str, *, project: str, service_account: str) -> s
 def signing_key_version(project: str) -> str:
     """The MAC key version every signer uses, found by purpose on the environment's key ring.
 
+    The caller's own login lists the key ring, not `themis-clu`: the account may sign with the key
+    but not list the ring.
+
     Raises:
-        TokenError: If `gcloud` cannot list the key ring, or it holds anything but one MAC key.
-        clu.GcloudError: If `gcloud` is not on PATH.
+        TokenError: If the key ring holds anything but one MAC key.
+        clu.GoogleCallError: If the key ring cannot be listed.
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
-    result = subprocess.run(  # noqa: S603 — resolved path, argv from fixed flags
-        [
-            clu.resolve_binary('gcloud'),
-            'kms',
-            'keys',
-            'list',
-            f'--keyring={_KEY_RING}',
-            f'--location={clu.REGION}',
-            f'--project={project}',
-            '--filter=purpose=MAC',
-            '--format=value(name)',
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise TokenError(f'gcloud could not list the {_KEY_RING} key ring:\n{result.stderr.strip()}')
-    keys = result.stdout.split()
+    key_ring = f'projects/{project}/locations/{clu.REGION}/keyRings/{_KEY_RING}'
+    credentials = clu.caller_credentials(quota_project=project)
+    try:
+        # Refreshed here: a refresh failing inside the gRPC call surfaces as a retried UNAVAILABLE.
+        credentials.refresh(auth_requests.Request())
+        with kms_v1.KeyManagementServiceClient(credentials=credentials) as client:
+            keys = [key.name for key in client.list_crypto_keys(request={'parent': key_ring, 'filter': 'purpose=MAC'})]
+    except (api_exceptions.GoogleAPIError, exceptions.GoogleAuthError, requests.RequestException) as exc:
+        raise clu.GoogleCallError(f'could not list the MAC keys on {key_ring}: {exc}') from exc
     if len(keys) != 1:
         raise TokenError(f'expected one MAC key on the {_KEY_RING} key ring, found {keys}; pass --key-version')
     return f'{keys[0]}/cryptoKeyVersions/{_KEY_VERSION}'
@@ -105,9 +102,8 @@ def derive_session_token(analysis_id: str, *, project: str, service_account: str
             key ring at the pinned version.
 
     Raises:
-        TokenError: If no such Analysis exists, or `gcloud` cannot list the key ring, or the key ring
-            holds anything but one MAC key.
-        clu.GcloudError: If `gcloud` is not on PATH.
+        TokenError: If no such Analysis exists, or the key ring holds anything but one MAC key.
+        clu.GoogleCallError: If the key ring cannot be listed.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
     key_version = key_version or signing_key_version(project)
@@ -150,7 +146,7 @@ def main() -> None:
         session_token = derive_session_token(
             args.analysis_id, project=args.project, service_account=service_account, key_version=args.key_version
         )
-    except (TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (TokenError, clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     args.session_token_file.parent.mkdir(parents=True, exist_ok=True)
     write_token_file(args.session_token_file, session_token)

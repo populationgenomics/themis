@@ -4,8 +4,9 @@
 every read going through ReadRefDoc and FetchPack and every push through Publish — the path the
 sandbox worker's mirror takes, driven by hand. The server is `themis.sheaf.wire.server` over a
 `themis.clients.sheaf.store.RemoteStore`; this tool supplies what a laptop has and a service
-account does not: an ID token for the service, minted by `gcloud` as `themis-clu` and kept fresh in
-the token file beside the session token `tools/session_token.py` wrote there.
+account does not: an ID token for the service, minted as `themis-clu` from the caller's
+application-default login and kept fresh in the token file beside the session token
+`tools/session_token.py` wrote there.
 
 Run: ``uv run --group tools_sheaf python -m tools.sheaf_remote --analysis-id <id> --session-token-file <path>``.
 Stop it with Ctrl-C; the bearer is removed from the token file on the way out. The caller needs
@@ -13,8 +14,8 @@ membership of the `themis-clu` group, which holds `run.invoker` on the service.
 
 The bearer is refreshed on demand rather than on a timer: before each request the server makes,
 the token's expiry is read from the JWT and a new one minted when it is within ten minutes — so a
-laptop that sleeps through the hour wakes to a valid token on its next `git` command, and `gcloud`
-runs about once an hour otherwise.
+laptop that sleeps through the hour wakes to a valid token on its next `git` command, and a token is
+minted about once an hour otherwise.
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ import threading
 import time
 from collections.abc import Iterator
 from typing import override
+
+from google.auth import exceptions
 
 from themis.clients.sheaf import store as remote_mod
 from themis.sheaf import errors
@@ -78,7 +81,7 @@ def _fresh(bearer: str) -> bool:
 class BearerKeeper:
     """Keeps the token file's bearer valid: mints one as `service_account` when the current one is near expiry.
 
-    `refresh` runs on the server's request threads, so a mint that fails raises `clu.GcloudError`
+    `refresh` runs on the server's request threads, so a mint that fails raises `clu.GoogleCallError`
     there and the request is answered 503 with the cause logged, rather than ending the thread.
     """
 
@@ -156,7 +159,7 @@ def serving(
         root: Directory for the bare mirror.
 
     Raises:
-        clu.GcloudError: If the first bearer cannot be minted.
+        clu.GoogleCallError: If the first bearer cannot be minted.
     """
     keeper = BearerKeeper(token_file, service_account=service_account, audience=service_url)
     keeper.refresh()
@@ -204,7 +207,9 @@ def main() -> None:
     )
     parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
     parser.add_argument(
-        '--service-url', default=None, help=f'the sheaf service URL (default: gcloud describes {SERVICE} in --project)'
+        '--service-url',
+        default=None,
+        help=f'the sheaf service URL (default: looked up in Cloud Run for {SERVICE} in --project)',
     )
     parser.add_argument('--port', type=int, default=0, help='loopback port to serve on (default: an ephemeral one)')
     parser.add_argument(
@@ -219,7 +224,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     service_account = args.impersonate or clu.service_account(args.project)
-    # Read before anything is minted, so a missing or malformed file fails here and not after gcloud ran.
+    # Read before anything is minted, so a missing or malformed file fails here and not after a token was minted.
     try:
         remote_mod.read_credentials(args.session_token_file)
     except errors.CredentialsUnusable as exc:
@@ -235,7 +240,7 @@ def main() -> None:
             port=args.port,
             root=root,
         )
-    except clu.GcloudError as exc:
+    except (clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     finally:
         if args.root is None:
