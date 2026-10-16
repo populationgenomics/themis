@@ -50,6 +50,10 @@ Shared definitions so we use terms consistently (and so tooling has one source o
   classification is made against. One gene can carry several, differing in disease or mode; an allelic disorder that
   arises by a different mechanism is a different disease (SM21). Its mode is one of the framework's five: autosomal
   dominant or recessive, semidominant, X-linked dominant or recessive.
+- **Clinical context** — the patient's clinical facts a classification or diagnosis starts from, drawn from the
+  referral: the presentation, the testing done, the family, other variants found. Prose, written by whoever asks the
+  question (the user starting an Analysis, or the person registering a variant for curation), and part of the question
+  rather than of any answer to it.
 
 ## Method & infrastructure
 

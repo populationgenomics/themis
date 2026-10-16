@@ -27,8 +27,10 @@ human's — has a reference authored by a human, in a shape a reader can compare
   *identity* is the one exception, retrieved by the manager who registers the variant.
 - **The registration states the question.** SVCv4 classifies a variant against an entity whose mode of inheritance is
   part of it, so a manager registers each variant against a disease term and a mode, and the same variant under another
-  mode is another registration. Curators answer the registered question and are shown its mode rather than asked for it,
-  so two curators of one variant always classify the same entity.
+  mode is another registration. The patient's clinical facts are part of the question as well, so the manager also
+  writes the referral's clinical context into the registration. Curators answer the registered question and are shown
+  its mode and clinical context rather than asked for them, so two curators of one variant always classify the same
+  entity from the same facts. A classification run is given that same question and nothing from their answers.
 - **Two curators answer each variant blind to one another, and both answers are kept.** Analyst-to-analyst spread is the
   measurement that says how much of a run's divergence is normal, and a split between the two is a finding the manager
   reads in a compare view, never a conflict to reconcile.
@@ -65,8 +67,10 @@ The loop's reference is a curator's code set with its recorded reasoning, and th
 database: each curator's latest submission per variant, as one row per workflow carrying the status, the evidence, the
 rationale, the nearest alternative and how open the call is; plus the routing the curator stated and the class they
 reached. The loop reads it in the shape it is stored — no projection into a second contract, no file passed between the
-two. How a run is read against that reference is the subject of `run-review-loop.md`; what this doc decides is what the
-reference has to contain for that reading to be possible.
+two. The run read against it is given the registration, which is the question both curators answered, and nothing from
+their submissions (§The clinical context is part of the question). How a run is read against that reference is the
+subject of `run-review-loop.md`; what this doc decides is what the reference has to contain for that reading to be
+possible.
 
 A divergence is only useful if it is *adjudicable*. A run that reaches the curator's cell by a route the curator would
 reject has not matched them; a run that differs by a step while reasoning better has found something. Neither judgement
@@ -84,7 +88,8 @@ without disobeying, and detecting that in prose is unreliable. The property a pr
 worksheet buys structurally: nothing on the screen the curator did not put there. What anchors a curator is a
 recommendation or a fact about the variant they are to assess — a frequency, a predicted effect, somebody else's
 classification; the variant's identity is the *question*, not an answer to it, which is why §Identity may be retrieved
-admits it. The entity it is classified against is part of the question too (§The registration states the question).
+admits it. The entity it is classified against is part of the question too (§The registration states the question), and
+so is the clinical context of the patient it was found in (§The clinical context is part of the question).
 
 ### Two curators, blind
 
@@ -188,16 +193,18 @@ Opening a worksheet:
  ● POP_FRQ   │ NM_000257.4:c.1988G>A
  ● POP_HMZ   │ MYH7 · hypertrophic cardiomyopathy · MONDO:0005045 · autosomal dominant
  ○ CLN_UAF   │
- ○ CLN_AFF   │ ┌ Routing ─────────────────────────────────────────────────────┐
- ○ CLN_DNV   │ │ Consequence class   [Missense ▾]                             │
- ○ CLN_ALT   │ │ Rationale ………                                                │
- ○ CLN_CCS   │ └──────────────────────────────────────────────────────────────┘
- ○ LOC_PHE   │ ┌ The case ────────────────────────────── none recorded · show ┐
- ○ LOC_SEG   │
- ○ MIS_PRD   │ POPULATION OBSERVATIONS (POP)
- ○ MIS_INF   │ ┌ POP_FRQ  Population Frequency ──────────────────────────────┐
- ○ MIS_FXN   │ │ (scored) (not applicable) (no data)                          │
-   …         │ │ Disease Allele Frequency Threshold  [1.18e-05]               │
+ ○ CLN_AFF   │ ┌ Clinical context ────────────────── as registered, read-only ┐
+ ○ CLN_DNV   │ │ Proband with a phenotype typical of the disease …            │
+ ○ CLN_ALT   │ └──────────────────────────────────────────────────────────────┘
+ ○ CLN_CCS   │ ┌ Routing ─────────────────────────────────────────────────────┐
+ ○ LOC_PHE   │ │ Consequence class   [Missense ▾]                             │
+ ○ LOC_SEG   │ │ Rationale ………                                                │
+ ○ MIS_PRD   │ └──────────────────────────────────────────────────────────────┘
+ ○ MIS_INF   │
+ ○ MIS_FXN   │ POPULATION OBSERVATIONS (POP)
+   …         │ ┌ POP_FRQ  Population Frequency ──────────────────────────────┐
+             │ │ (scored) (not applicable) (no data)                          │
+             │ │ Disease Allele Frequency Threshold  [1.18e-05]               │
              │ │           [Use Calculator Approach] [Use Binning Approach]   │
              │ │ Variant GrpMax Filtering Allele Frequency  [2.8e-07]         │
              │ │ 2.800e-7 / 1.18e-05 = 0.0237× DAFT                           │
@@ -222,8 +229,8 @@ so a curator can tell at a glance which text is theirs, and the framework's half
 prompt.
 
 The manager's view lists the registered variants with who is on each and how far they have got — counts and dates only,
-never an answer — with a form to register a variant and assign curators, and, once two curators have submitted, a link
-to the compare view:
+never an answer — with a form to register a variant, its entity and its clinical context, and to assign curators, and,
+once two curators have submitted, a link to the compare view:
 
 ```
 Variants under curation                                      [My worksheets]
@@ -236,10 +243,14 @@ Variants under curation                                      [My worksheets]
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The compare view lays the two submissions side by side, one section per workflow:
+The compare view states the registration's clinical context once, since both curators answered from it, and then lays
+the two submissions side by side, one section per workflow:
 
 ```
 Where the curators diverge               NM_000138.5:c.7003C>T · FBN1 · Marfan syndrome · AD
+┌ Clinical context ──────────────────────────────────────── stated by the registration ┐
+│ Proband with a phenotype typical of the disease …                                    │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ┌ CLN_AFF  cln_aff_ad ──────────────────────────────────────────────── different cells ┐
 │ a.curator@… · scored                       │ b.curator@… · scored                    │
 │ Highly specific phenotype — Heterozygous 3 │ Specific phenotype — Heterozygous 3     │
@@ -251,7 +262,7 @@ The lifecycle those pages drive:
 
 ```mermaid
 flowchart LR
-    reg["manager registers a variant against a disease and a mode<br>(identity typed or retrieved)"] --> assign["manager assigns curators<br>→ one worksheet each, pinned to a transcription version"]
+    reg["manager registers a variant against a disease and a mode,<br>with the referral's clinical context<br>(identity typed or retrieved)"] --> assign["manager assigns curators<br>→ one worksheet each, pinned to a transcription version"]
     assign --> draft["curator answers<br>auto-save upserts one draft row per workflow"]
     draft --> submit["curator submits<br>drafts copied whole into one submission"]
     submit --> draft
@@ -262,16 +273,16 @@ flowchart LR
 ### What is captured, and why
 
 Per workflow the curator records a status — scored, not applicable, or no data, three different findings — the cell they
-selected, and four text fields; per worksheet, the routing, the verdict and the case. The contract states what each
-field implies for a writer ([`curation.proto`](../../schema/proto/themis/curation/models/curation.proto)). Three
-decisions about the capture are the doc's:
+selected, and four text fields; per worksheet, the routing and the verdict. The contract states what each field implies
+for a writer ([`curation.proto`](../../schema/proto/themis/curation/models/curation.proto)). Three decisions about the
+capture are the doc's:
 
 **Evidence is kept apart from rationale.** What the call rests on — PMIDs, the database and its version, the values read
 — is the fact-recovery half; why this cell, given that evidence, is the assessment half. Recording them in one field
 would leave a reader unable to tell a divergence over the facts from a divergence over the reasoning, and the two fail
-independently and are fixed in different places. The same separation puts the facts bearing on several workflows at once
-— the case the curator worked from — in named slots of their own, so a reader can tell a different conclusion from
-different information.
+independently and are fixed in different places. The patient's clinical facts, which many calls are read from, are not
+the curator's to record, because the registration states them for both curators (§The clinical context is part of the
+question).
 
 **The nearest cell not chosen, and what ruled it out, is a field.** Adjacent SVCv4 cells differ by a clause in a
 supplement, which is where a run goes wrong; a curator who names the clause turns "the model picked the neighbouring
@@ -329,15 +340,104 @@ measure (§Two curators, blind). ClinGen's own data model for SVCv4 draws the sa
 [`svcv4-model`](https://github.com/clingen-data-model/svcv4-model) sets the variant, the entity and the mode once per
 classification, as what is classified, beside the evidence rather than inside it.
 
-A curator can still think the registered question is the wrong one to ask, because the case they worked from presents as
-the recessive disease, say. They answer the question as registered and make that case in the routing rationale, which is
-free text and part of the submission. A manager who agrees registers the other question as a registration of its own,
-and the first keeps its answers, since they answer the question it asked.
+A curator can still think the registered question is the wrong one to ask, because the registered clinical context
+presents as the recessive disease, say. They answer the question as registered and make that case in the routing
+rationale, which is free text and part of the submission. A manager who agrees registers the other question as a
+registration of its own, and the first keeps its answers, since they answer the question it asked.
 
 The cost is that a registration is the question for every curator on it. One stated wrongly, with a mode mistyped or a
 disease term broader than intended, is wrong for all of them at once, and the blind pair cannot catch it, because both
 curators answer the same wrong question consistently. It surfaces only where a curator's rationale or the manager's own
 reading says so.
+
+### The clinical context is part of the question
+
+A variant is classified in a patient, and the referral that brings it to a lab describes that patient: how they present,
+what was sequenced, who else in the family carries the variant, any other variant found with it, and any assay run on
+the patient's own sample. SVCv4's clinical and segregation codes are scored from those facts. `CLN_AFF` asks how
+specific the proband's phenotype is for the disease, and `LOC_SEG` asks how the variant tracks through the family, so
+the answer to each moves with the facts it is read from. Those facts, written as prose, are the variant's **clinical
+context**.
+
+The obvious place to keep them is the worksheet, beside the answers that rest on them. Each curator would write down the
+case they worked from, and that gets something right: a reader of the two submissions can tell a divergence over the
+information from a divergence over the reasoning. It breaks because the clinical context belongs to the question rather
+than to an answer, and it breaks the blind pair and the run-review loop alike.
+
+Take the blind pair first. Suppose a referral mentions, in its last line, an aunt with the same aortic disease who
+carries the variant. One curator transcribes her into their notes and the other's notes leave her out. At `LOC_SEG` the
+first scores an affected relative and the second has none to score, and the compare view shows a divergence that comes
+from how each extracted the case from the referral rather than from how each read the framework. The blind pair exists
+to measure the second kind (§Two curators, blind). A reader who sets the two sets of notes side by side can spot the
+first kind, but only by comparing prose, and the measurement has already counted it.
+
+The run-review loop gives a classification run the case it is to classify. Taking the case from a submission gives the
+run facts that were selected and worded by the curator it will be scored against. A curator who writes "a phenotype
+highly specific for Marfan syndrome" into their case notes has already stated their `CLN_AFF` cell, and a run handed
+those notes can read the answer off its input. Agreement between the two then measures less than it appears to, in the
+direction the loop exists to detect.
+
+So the manager writes the clinical context into the registration, as one field of prose, before any curator sees the
+variant. The worksheet shows it whole and read-only above the routing card, and nothing on the curator's side stores it.
+It is the whole of what a curator is given about the patient: a curator who has seen the referral elsewhere still
+answers the question the registration states. The referral is read once, by the manager, and both curators start from
+that reading. A curator can still overlook a fact the registration states, and that divergence stays in the measurement,
+as it should. What leaves the measurement is the variation in extracting the case from a referral: it moves onto the
+manager, where nothing measures it, and the compare view can no longer show two curators who worked from different
+facts.
+
+A classification run on the variant is given the registration and nothing else. The variant-classification scenario
+takes a transcript, a coding change and one prose clinical context ([`analysis-scenarios.md`](analysis-scenarios.md)),
+so the run's clinical context is a statement of the registered entity followed by the registration's clinical context;
+the run's instructions already treat an entity named there as the question to classify against. Nothing a curator
+submitted reaches the run. The registration's field is bounded, as a safeguard against storing a blob there by mistake
+rather than as a size a referral is expected to reach: a clinical context runs to a few hundred characters. The bound is
+the scenario's own limit, so the two cannot drift apart, and whether a run's whole clinical context fits, with the
+statement of the entity ahead of the registered text, is checked when that context is built. A registration whose text
+makes that composed context too long, a clinical context near the bound or an overlong disease label, would make the
+run's inputs fail their own validation, so it is refused when the run starts rather than truncated.
+
+A curator cannot amend the clinical context or keep a version of their own, for the reason they cannot choose the mode.
+A submission is an answer to the registered question. A curator who could edit the question would be answering one of
+their own, which no run is given and which the compare view would show as a divergence between the two curators. What a
+curator finds beyond the registration, such as a publication describing the same family, is evidence they looked up, and
+it goes in the evidence field of the workflow it bears on, as any other source does. A curator who thinks the clinical
+context is wrong or incomplete answers the question as registered and makes that case in the routing rationale, as they
+would for a registered entity they think is wrong.
+
+The field is one block of prose rather than named slots because a referral arrives as prose, and its facts do not divide
+cleanly. One sentence can name a second variant, its phase, and the parent it was inherited from. Slots would make the
+manager split that sentence across fields, and the run would be handed the pieces joined back together.
+
+A variant classified without a patient behind it, as some of the pilot's practice variants are, has a clinical context
+too, and it says so: "No referral: the variant is classified without a proband." An empty field is refused, because it
+cannot tell a variant with no patient from a registration nobody finished, and a run told nothing would have to read
+meaning into the silence.
+
+The clinical context does state facts about the variant, such as that it arose de novo or how it segregates in the
+family, and §Assistance anchors keeps such facts off the worksheet. The difference is where they come from. Those facts
+are the case's own observations, which every classification of this case starts from, and both curators and the run read
+the same text, so they cannot pull one side of the comparison away from the other. What §Assistance anchors rules out is
+evidence the surface would retrieve on the curator's behalf, which is the work being measured.
+
+The argument holds only for observations. A frequency, a prediction or another lab's classification pasted into the
+field would anchor both curators and the run at once, and so would an assessment of the observations: "a phenotype
+highly specific for Marfan syndrome" states a `CLN_AFF` cell, where "ectopia lentis and an aortic root z-score of 3.4"
+states what that cell is read from. The surface cannot tell the two apart, so keeping the field to the referral's
+observations is the manager's discipline. So is keeping it de-identified, with no name, date of birth or record number:
+the text is stored in the curation schema and handed to the model provider with every run of the registration.
+
+The clinical context is taken and worded from the referral alone, and nothing in it comes from a submission or a case
+note, whoever writes it. A manager who also curates the variant writes it under that rule, as does an operator writing
+an existing registration's context by hand. Consulting a submission to establish which referral a registration was made
+from is allowed; wording the context from one is not, because a run handed that wording would read part of an answer it
+is scored against.
+
+The cost is the one the mode carries, and larger, since prose is easier to get subtly wrong than a choice among five
+modes. A clinical context stated wrongly is wrong for every curator and every run of the registration, and the blind
+pair cannot catch it. A registration is insert-only and the surface offers no edit. A second registration of the same
+entity is refused by its uniqueness key, so a correction is an operator's edit by hand, and answers submitted before it
+were given against the earlier text, which nothing records (§Open questions).
 
 ### The workflows are the calculator's
 
@@ -389,9 +489,9 @@ layer over an already-authenticated caller, never the authentication. A verified
 forbidden rather than as a masked not-found: the surface's existence is not a secret, and telling someone they need
 access is more useful than a lie.
 
-A manager registers a variant (its identity, its disease term and its mode of inheritance) and assigns curators to it,
-which is what mints a worksheet. A submitted worksheet cannot be withdrawn — a reference the loop may already have read
-cannot be deleted out from under it.
+A manager registers a variant (its identity, its disease term, its mode of inheritance and its clinical context) and
+assigns curators to it, which is what mints a worksheet. A submitted worksheet cannot be withdrawn — a reference the
+loop may already have read cannot be deleted out from under it.
 
 Every read goes through one access object that resolves the caller's verified email to what they may see, and no route
 holds an unscoped store — the same default-deny shape the workbench's `AuthorizedBackend` gives Analyses
@@ -453,13 +553,16 @@ vendored registry response so a schema change there fails a test rather than mis
 Everything is in Postgres, in a `curation` schema of its own — so grants, ownership and the blast radius of a change are
 statable about the schema as a whole rather than reconstructed from a name prefix — applied by
 [`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql) under the ordinary migration discipline
-([`migrations.md`](migrations.md)). Nothing is in GCS and nothing reaches the model provider. Six tables:
+([`migrations.md`](migrations.md)). Nothing is in GCS, and the surface sends nothing to the model provider; a
+classification run on a registration is given its clinical context as any variant-classification Analysis is given its
+own. Six tables:
 
 - **roles** — who may reach the surface, and as what.
-- **variants** — one variant against one entity: the identity typed or retrieved by the manager, and the MONDO term and
-  mode of inheritance the manager typed (§The registration states the question). The entity sits on the variant rather
-  than on the worksheet, because two curators of one variant must be answering the same question, and a variant is
-  registered once per entity.
+- **variants** — one variant against one entity: the identity typed or retrieved by the manager, the MONDO term and mode
+  of inheritance the manager typed (§The registration states the question), and the clinical context the manager wrote
+  (§The clinical context is part of the question). The entity and the clinical context sit on the variant rather than on
+  the worksheet, because two curators of one variant must be answering the same question, and a variant is registered
+  once per entity.
 - **worksheets** — one curator on one variant, pinned to a transcription version; unique per pair.
 - **drafts** — auto-save scratch, one row per workflow, upserted.
 - **submissions** — one act of submitting, with its time and note.
@@ -488,17 +591,15 @@ one delete is a manager withdrawing a role or an unsubmitted assignment.
 of framework-fixed fields used as join keys, while the capture follows a pilot under revision — and proto is what makes
 the churning half safe to evolve: the compat gate lets a field go only with its name and number reserved, so an old row
 stays readable ([`proto.md`](proto.md) §Protos in Cloud SQL columns). A row holds one message, a required oneof over the
-four kinds of row a worksheet has — a workflow, or one of the three worksheet-level sections — addressed by the row's
-workflow id.
+three kinds of row a worksheet has — a workflow, the routing or the verdict — addressed by the row's workflow id.
 
-**Adopting the shared vocabularies is the one non-additive change the contract has taken.** Two of the three enums
-number their members differently from the curation-local ones they replace, so a row written under the old numbering
-decodes, with no error, to a member the curator never chose — the failure the schema-evolution rules exist to rule out.
-It is accepted because the alternative is a second vocabulary for the lifetime of the surface, and it is taken with the
-dev deployment's data retained:
-[`0012_curation_vocabulary.sql`](../../themis/migrate/migrations/0012_curation_vocabulary.sql) snapshots both assessment
-tiers and the variant registry before the rows are rewritten by a one-shot operator tool and verified against the
-snapshots. A closed window is needed because the deploy rolls Cloud Run before it applies migrations
+**Adopting the shared vocabularies renumbered stored enums.** Two of the three enums number their members differently
+from the curation-local ones they replace, so a row written under the old numbering decodes, with no error, to a member
+the curator never chose — the failure the schema-evolution rules exist to rule out. It is accepted because the
+alternative is a second vocabulary for the lifetime of the surface, and it is taken with the dev deployment's data
+retained: [`0012_curation_vocabulary.sql`](../../themis/migrate/migrations/0012_curation_vocabulary.sql) snapshots both
+assessment tiers and the variant registry before the rows are rewritten by a one-shot operator tool and verified against
+the snapshots. A closed window is needed because the deploy rolls Cloud Run before it applies migrations
 ([`migrations.md`](migrations.md) §How it runs), so a row saved in that gap would be renumbered twice with nothing able
 to tell. The snapshots are kept only while something reads them:
 [`0015_curation_snapshots_drop.sql`](../../themis/migrate/migrations/0015_curation_snapshots_drop.sql) drops them once
@@ -555,6 +656,58 @@ Before it writes anything, the backfill holds each stored mode against the mode 
 the two differ, the row records a curator who answered a different entity, so the backfill stops, naming the rows and
 writing nothing; its docstring names how such a row is settled.
 
+**The worksheet's case section is retired, and its stored rows are deleted rather than carried over.** The case section
+is the obvious answer of §The clinical context is part of the question: named slots of prose on each worksheet, saved
+and submitted as a row of their own, in which each curator records their own reading of the referral. Copying one
+curator's notes into the registration would make that reading the question for both curators, so the clinical context of
+each existing registration is written by hand from its referral instead.
+
+The section's member of the assessment's oneof is deleted with its number and name reserved, and its message is deleted
+too. That breaks the compat gate's rule against deleting a message from a contract that holds stored rows
+([`proto.md`](proto.md) §Retiring an RPC or a message), which exists because a deleted message leaves rows nobody can
+parse. Here the same deploy deletes every row that held the message, so nothing is left to parse. The gate cannot see
+that and has no override of its own, so the change merges past the failing check, as the retirement of the evidence
+plane's harmonised inheritance enum did.
+
+Deleting the submitted rows breaks the rule that a submission is never touched again, and it is taken on the rows' own
+grounds. Once the registration states the clinical context, no reader may use them: handing them to a run is what this
+change exists to stop, and a reader of the compare view is shown the registration's text instead. Keeping them would
+keep patient prose that nothing reads, in rows every reader of a submission would have to skip.
+
+The rollout takes two deploys, the contracts and then the implementation, and the clinical contexts are written between
+them. The case section cannot stop being written in the first deploy, because nothing on the worksheet yet shows the
+clinical context that replaces it.
+
+1. The first deploy applies
+   [`0016_curation_clinical_context.sql`](../../themis/migrate/migrations/0016_curation_clinical_context.sql), which
+   adds the column as nullable. Nothing reads it yet, and the registration form does not yet send it, so a variant
+   registered before the second deploy arrives without a clinical context too.
+1. An operator writes the clinical context of every registration by hand, from the referral it was registered from (§The
+   clinical context is part of the question). The text goes into the database and never into a tracked file, because the
+   repository is mirrored publicly. A registration with no referral to write from is a decision for the team: its
+   answers were given to a question nobody can now state, and the migration below refuses it until it has a context or
+   is removed.
+1. The second deploy rolls the web tier, which requires a clinical context for every new registration and refuses to
+   read a registration without one. Any page that reads such a registration fails, naming it, until it is given one.
+1. The second deploy's migration deletes the case rows from both tiers, drafts and assessments, and then requires the
+   column. It stops whole, naming the rows, on a registration still without a clinical context, and on a submission
+   whose only row is a case row, which the deletion would leave empty. A registration is given its context. An emptied
+   submission is deleted by hand with its row, since a submission of nothing records no answer; its worksheet's latest
+   submission is then the one before it, or none.
+
+[`proto.md`](proto.md) §Schema evolution would delete the section's message a deploy after the one that stops writing
+it. Taking both in the second deploy allows failures that the extra deploy would avoid. A tab still running the previous
+bundle cannot save its case section, so it cannot submit until it is reloaded. A worksheet or compare view holding a
+case row fails to load from the web roll until the migration has run, or for as long as the migration stays stopped.
+Both reach only the team, which is the condition [`migrations.md`](migrations.md) §How it runs sets for such a window.
+
+Submissions made before the second deploy were answered from each curator's own reading of the referral. The
+registration's text is written later, from the same referral, and those submissions stay answers to the registration.
+What each curator took from the referral is lost with their notes, so a pair that diverged over the facts reads in the
+compare view like any other divergence. A reader who needs to tell them apart can: a submission made before the second
+deploy's web roll, which the deploy's workflow run dates, was answered from the curator's own notes. The ledger's record
+of the migration is a later bound, equal to the web roll only when the migration applies on its first attempt.
+
 ### Auto-save, and the one write that is transactional
 
 One workflow is one draft row, so its status, selection and prose move together and can never be read half-written. A
@@ -586,6 +739,10 @@ partial.
   It lost because the mode defines the question rather than answering it (§The registration states the question): a
   curator who sets it chooses which question they answer, and two curators who set it differently answer two questions,
   which the compare view would then show as a divergence between them.
+- **Snapshot the case rows before deleting them**, as `0012` snapshotted the rows it rewrote. The notes would keep what
+  each curator took from the referral, and the operator writing the clinical contexts could check against them. It lost
+  because the operator writes from the referral itself, which the notes were taken from, and a snapshot would be a
+  second copy of patient prose in a table no surface reads.
 - **Retrieve the whole registry record, crosswalks included.** Puts somebody else's classification one click from a
   worksheet header.
 - **Restrict the consequence picker to the members the workflows branch on.** Makes the stored vocabulary a subset per
@@ -597,3 +754,14 @@ partial.
   this is a question about what counts as an independent answer, not about what can be stored. A revision made after the
   curator has seen the compare view is not blind, and nothing in the data says whether they had. The run-review loop is
   the consumer that has to decide it.
+- **How a clinical context is corrected once curators have answered against it.** The surface has no edit and the
+  uniqueness key refuses a second registration of the entity, so a correction is an operator's edit by hand, after which
+  nothing records which text an earlier submission was given. One remedy is to record the clinical context, or a digest
+  of it, on each submission, so an answer keeps the text it was given; another is to let a corrected context be a
+  registration of its own, which the key would have to admit. Neither is built until a correction is needed.
+- **What a second patient with the same variant is.** A variant is registered once per entity, so it carries one
+  clinical context. SVCv4 itself counts a second, unrelated proband as further `CLN_AFF` evidence for the same
+  classification. Treating the clinical context as part of the question is this surface's choice, made so the
+  measurement compares like with like, and a second referral would test it: either its facts join the first
+  registration's context, or it is a registration of its own, which the uniqueness key would have to admit. The team
+  decides when a referral raises it.

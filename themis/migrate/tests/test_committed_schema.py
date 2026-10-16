@@ -38,6 +38,12 @@ _ENTITY = (
     " created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', %s, %s, 'manager@example.org')"
 )
 
+_VARIANT_WITH_CLINICAL_CONTEXT = (
+    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
+    " clinical_context, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
+    " 'MONDO:0007947', 'AUTOSOMAL_DOMINANT', %s, 'manager@example.org')"
+)
+
 
 @pytest.fixture
 def migrated(docker_daemon: None) -> Iterator[pg8000.dbapi.Connection]:
@@ -158,3 +164,26 @@ def test_a_second_mode_of_one_disease_is_a_registration_of_its_own(migrated: pg8
         cursor.execute(_ENTITY, ('recessive', 'MONDO:0007947', 'AUTOSOMAL_RECESSIVE'))
         cursor.execute('SELECT id FROM curation.variants ORDER BY id')
         assert list(cursor.fetchall()) == [['dominant'], ['recessive']]
+
+
+@pytest.mark.parametrize('clinical_context', ['', '   ', '\n\t ', 'x' * 10001])
+def test_a_clinical_context_blank_or_over_the_bound_is_refused(
+    migrated: pg8000.dbapi.Connection, clinical_context: str
+) -> None:
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='variants_clinical_context_check'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_VARIANT_WITH_CLINICAL_CONTEXT, ('probe', clinical_context))
+    migrated.rollback()
+
+
+@pytest.mark.parametrize('clinical_context', [' Tall stature and ectopia lentis.\n', 'é' * 10000])
+def test_a_clinical_context_within_the_bound_is_accepted(
+    migrated: pg8000.dbapi.Connection, clinical_context: str
+) -> None:
+    """Whitespace around the prose is kept, and the bound counts characters, not bytes."""
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(_VARIANT_WITH_CLINICAL_CONTEXT, ('probe', clinical_context))
+        cursor.execute('SELECT clinical_context FROM curation.variants WHERE id = %s', ('probe',))
+        assert list(cursor.fetchall()) == [[clinical_context]]
