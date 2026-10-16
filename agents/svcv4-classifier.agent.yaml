@@ -26,7 +26,7 @@ skills:
     version: "20260709"
   - type: custom
     # Server-assigned when the skill is created, once (`tools.agents create-skill`); there is no name-based addressing.
-    skill_id: skill_01YHb9PXy6GXxDaV1XdeFp6U
+    skill_id: skill_01MYJGLbkKRETy17gFiZAfPW
     directory: classifying-sequence-variants
 tools:
   # The prebuilt `agent_toolset_20260401`, default-deny: a tool is on only where `configs` enables it, and

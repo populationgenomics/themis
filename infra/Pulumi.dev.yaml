@@ -31,30 +31,30 @@ config:
   themis:semanticScholarApiKey:
     secure: v1:R9mnb/QAg1sWkuIY:Qa4GUnAvokKtLhkzwa1BRjuQlfbPiN6O0EGVvzK0XYNPQBYrKeDyB4UX8aB23eRebq232Hyju/xDX0OJQpvCzc4d9ag=
   themis:anthropicEnvironmentKey:
-    secure: v1:V+8CUcyzFKaD2KMn:M4TeNL3dd5Lt64SFUehLx4xLiDQEQwV/EvKknrjCdSxPp1MP+6tAX0+4mIuccyas1PRnT8M2xIGhppV0FNXvl3HyleLHAt62h1t4/UwK0oeuL53eYfHqj4KMSkmvuN3xzrC8y4HsC3D7CEr0V8cUWJ7i/4DIYZ2IOE2w/g==
+    secure: v1:888fbKK1fq853U3+:c2vnbSDhPB75EIB0hJ4eIUOpJAsIbjiPywMkHOvsjUDRAscAikbaERWvAivUU6uvCjvI5MLxMW+6NDFcW49q/gDD1NhbOhRyehpO8JqOxvLKXBskvlr9Xi/o5vT2HPr3n/zuQDTRoSIZcZWzA7uzEZzD0LzorFdDachKug==
   themis:anthropicWebhookSigningKey:
-    secure: v1:cxtXcFEn84mlFKe5:L3JW9Sg9nGTTn26WwpR3CkSnHK5GuYyfRP/AkGCkNw2OGQB6n4U/j+Wz2NMbRh78lo9Dchfg/rfnGnkBN6Hapa6c
-  themis:anthropicEnvironmentId: env_019YrrWjcSDHPnHBUhvNHcVs
+    secure: v1:ohgEggt9+zC14UaX:IE+IC5KDR5/WvDO90CdXcX5Q18l9ePIWw3Kr8l66YsfbyOjlOry4cSXvUl37/rPRewHK0PkpzuAaibI38EGWuKza
+  themis:anthropicEnvironmentId: env_0151RnzYTzVpqjunmookpAwr
   # The Managed Agents agent the BFF opens sessions against.
-  themis:anthropicAgentId: agent_01Y9V9bZK731rzBMwLWGJciw
+  themis:anthropicAgentId: agent_01DcGE4w5BTrxL4Ay9pgu1H7
   # Anthropic Managed-Agents WIF (Path B) identifiers — plaintext, not credentials
   # (docs/runbooks/claude-api-wif.md).
-  themis:anthropicFederationRuleId: fdrl_01JXLFyrG8PnJ62qPFzTmp4P
-  themis:anthropicOrganizationId: 0c504942-5311-4fc0-a3a3-1f6a53666205
-  themis:anthropicServiceAccountId: svac_01ELDvWbrGpDNhcDdAaYniGJ
-  themis:anthropicWorkspaceId: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+  themis:anthropicFederationRuleId: fdrl_019dmRVVbye6txjip13uQTaj
+  themis:anthropicOrganizationId: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
+  themis:anthropicServiceAccountId: svac_01XmjrcCbPooxthkbWn5JcKg
+  themis:anthropicWorkspaceId: wrkspc_01LQBHT9sifFeFz3DQiuJKB7
   # The convert worker's own Path B identifiers — its own svac + rule, pinned to the worker SA
   # (docs/runbooks/claude-api-wif.md); the org and workspace above are shared.
-  themis:anthropicWorkerFederationRuleId: fdrl_01GQqwA9kP4Fve93ycq2q6kE
-  themis:anthropicWorkerServiceAccountId: svac_013a2rMRQihX3fzRKDnk7o2v
+  themis:anthropicWorkerFederationRuleId: fdrl_01Xjz2ApMWww5fKrB3H83AGY
+  themis:anthropicWorkerServiceAccountId: svac_016CYiKBMujVhnR8WYnRuWDU
   # The cost exporter's own Path B identifiers — its own svac + rule, pinned to the exporter SA
   # (docs/runbooks/claude-api-wif.md); the org and workspace above are shared.
-  themis:anthropicCostExporterFederationRuleId: fdrl_01GZB8c9yJ3B6QPjBg7rn3QR
-  themis:anthropicCostExporterServiceAccountId: svac_01Wh612pvuxbauiTokVBBNV7
+  themis:anthropicCostExporterFederationRuleId: fdrl_01DbotnmqhPPYMMyYSWJRnKG
+  themis:anthropicCostExporterServiceAccountId: svac_011Bznb6VLqXPL3gZWjebp5e
   # The deploy workflow's own Path B identifiers — its own svac + rule, pinned to the deploy SA
   # (docs/runbooks/claude-api-wif.md, the deploy workflow); the org and workspace above are shared.
-  themis:anthropicDeployFederationRuleId: fdrl_012w2xPusX3kCLVbvTu7cCVa
-  themis:anthropicDeployServiceAccountId: svac_01FZtKML114z6ek79DNXQvQA
+  themis:anthropicDeployFederationRuleId: fdrl_01JczBHeE62jFpt24KzD3oiQ
+  themis:anthropicDeployServiceAccountId: svac_01AhdNfFYgH3QoMjZWqe1YsR
   # The spend monitor's Slack channel (docs/design/cost-monitoring.md), by name for the alerts and by id for the
   # morning report's file uploads, and the alert tuning: a spike is this many cents of workspace spend, every
   # producer summed, within the window; freshness is how long the exporter's heartbeat may go unwritten before it

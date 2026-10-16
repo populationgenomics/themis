@@ -80,13 +80,13 @@ jobs:
         id: claude
         with:
           # WIF, not a stored key (a static key outranks federation and silently
-          # wins). Reuses the cpg-themis-ci-review svac via an added rule pinned
-          # to the schedule/main-ref subject. See docs/runbooks/claude-api-wif.md
+          # wins). The themis-ci svac, under its rule pinned to the
+          # schedule/main-ref subject. See docs/runbooks/claude-api-wif.md
           # Path C.
-          anthropic_federation_rule_id: fdrl_01KdBLWjujcYsH9s9j1K63Wb
-          anthropic_organization_id: 0c504942-5311-4fc0-a3a3-1f6a53666205
-          anthropic_service_account_id: svac_01KJXbuSvwDHvT8PFQkU7nef
-          anthropic_workspace_id: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+          anthropic_federation_rule_id: fdrl_01MbNvREUyFT4FLf76M8qZM4
+          anthropic_organization_id: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
+          anthropic_service_account_id: svac_01GPuQDLeVFJARY6KY6EgVzM
+          anthropic_workspace_id: wrkspc_01AeNbnez7whNdJhimodKZN9
           # Claude Code's OTel metrics export to Cloud Monitoring (docs/design/cost-monitoring.md).
           settings: |
             {

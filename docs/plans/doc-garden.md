@@ -70,9 +70,9 @@ additions: a GitHub App token step and a deterministic publish step.
 
 ### Auth
 
-- **Claude API via WIF**, no stored key. The scheduled run reuses the `cpg-themis-ci-review` service account through an
-  added federation rule pinned to the `ref:refs/heads/main` subject (a `schedule` / `workflow_dispatch` run's OIDC `sub`
-  is not `…:pull_request`, so the PR-review rule rejects it). Setup:
+- **Claude API via WIF**, no stored key. The scheduled run uses the `themis-ci` service account, as the PR review does,
+  through a federation rule of its own pinned to the `ref:refs/heads/main` subject (a `schedule` / `workflow_dispatch`
+  run's OIDC `sub` is not `…:pull_request`, so the PR-review rule rejects it). Setup:
   [`claude-api-wif.md`](../runbooks/claude-api-wif.md) Path C.
 - **GitHub App `themis-doc-garden`** (Contents + Pull-requests write, installed on `themis-internal`) opens the PR. This
   is required, not incidental: a PR opened by the default `GITHUB_TOKEN` does not emit `pull_request` events, so the
@@ -84,8 +84,8 @@ additions: a GitHub App token step and a deterministic publish step.
 
 The workflow cannot pass until these exist:
 
-1. The Path-C federation rule (`cpg-themis-ci-review-main-rule`) is provisioned and its `fdrl_…` id wired into the
-   workflow's `anthropic_federation_rule_id`.
+1. The Path-C federation rule (`themis-ci-main-rule`) is provisioned and its `fdrl_…` id wired into the workflow's
+   `anthropic_federation_rule_id`.
 1. The `themis-doc-garden` App is created and installed, with `DOC_GARDEN_APP_CLIENT_ID` (variable) and
    `DOC_GARDEN_APP_PRIVATE_KEY` (secret) stored on `themis-internal`.
 

@@ -155,12 +155,12 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         id: claude
         with:
-          # Path A's rule, unchanged: a `pull_request` event carries the same
+          # The review's Path A rule: a `pull_request` event carries the same
           # OIDC subject whatever its type. See docs/runbooks/claude-api-wif.md.
-          anthropic_federation_rule_id: fdrl_01PkjWwWtFLfGFoRXboKaLjR
-          anthropic_organization_id: 0c504942-5311-4fc0-a3a3-1f6a53666205
-          anthropic_service_account_id: svac_01KJXbuSvwDHvT8PFQkU7nef
-          anthropic_workspace_id: wrkspc_014YcYcGz7XBbARzLRHwvhZt
+          anthropic_federation_rule_id: fdrl_01TEh7DGQAz9r4wEPWD99S89
+          anthropic_organization_id: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
+          anthropic_service_account_id: svac_01GPuQDLeVFJARY6KY6EgVzM
+          anthropic_workspace_id: wrkspc_01AeNbnez7whNdJhimodKZN9
           allowed_bots: themis-doc-garden
           # Claude Code's OTel metrics export to Cloud Monitoring (docs/design/cost-monitoring.md).
           settings: |

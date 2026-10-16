@@ -12,16 +12,20 @@ Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The inf
 ## One-time setup (per environment)
 
 1. **Create the self-hosted environment** — `ant beta:environments create --config '{"type": "self_hosted"}'` (or
-   Console), matching `agents/selfhosted.environment.yaml`. Note the `env_…` id.
+   Console), matching `agents/selfhosted.environment.yaml`, in the environment's own Anthropic workspace
+   (`themis-<env>`, [`claude-api-wif.md`](claude-api-wif.md)): environments, agents and sessions all belong to a
+   workspace, and the agent's sessions can only bind an environment in theirs. Name it `themis-self-hosted-<env>`. Note
+   the `env_…` id.
 
-1. **Generate the environment key** (Console-only) — the `sk-ant-oat01-…` worker credential. Set it as the encrypted
-   stack config the dispatcher reads: `pulumi config set --secret themis:anthropicEnvironmentKey "$KEY"`. Cannot be
-   fast-revoked, so it never reaches the agent container (§7).
+1. **Generate the environment key** (Console-only) — the `sk-ant-oat01-…` worker credential. Name it after its holder
+   and the month it was issued (`themis-dispatcher-2026-10`): the dispatcher reads it and hands it to every sandbox job,
+   and the date tells the old key from the new during a rotation. Set it as the encrypted stack config the dispatcher
+   reads with `pulumi config set --secret themis:anthropicEnvironmentKey`, which prompts for the value and so keeps it
+   out of shell history. Cannot be fast-revoked, so it never reaches the agent container (§7).
 
-1. **Generate the webhook signing key** — register a webhook endpoint (Console) subscribed to
+1. **Generate the webhook signing key** — register a webhook endpoint (Console) in the same workspace, subscribed to
    **`session.status_run_started` only**, pointing at the dispatcher URL (`dispatcher_url` output)
-   `/webhooks/anthropic`. Store its `whsec_…` key:
-   `pulumi config set --secret themis:anthropicWebhookSigningKey "$WHSEC"`.
+   `/webhooks/anthropic`. Store its `whsec_…` key with `pulumi config set --secret themis:anthropicWebhookSigningKey`.
 
 1. **Set the environment id** — `pulumi config set themis:anthropicEnvironmentId "$ENV_ID"`.
 
