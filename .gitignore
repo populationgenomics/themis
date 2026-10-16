@@ -33,3 +33,7 @@ node_modules/
 
 # Scratch payloads written by the merge-follow-ups workflow.
 .followups/
+
+# Run-review rounds: they quote curators' rationales and case sections, and every tracked file is
+# mirrored to a public repository (docs/design/run-review-loop.md).
+tools/run_review/rounds/

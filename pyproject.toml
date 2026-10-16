@@ -194,9 +194,6 @@ sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==
 # working-document linter; markdown-it-py is the linter's markdown parser. Locked rather than a floating pip
 # install so the guest inherits the age gate and stays version-aligned with the worker's own grpcio/protobuf.
 guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", "markdown-it-py"]
-# classifier evaluation CLI: the libraries its session-log collector, agent preflight, web-app rounds and
-# supplied-papers check import.
-classifier_eval = ["anthropic", "google-cloud-storage", "google-auth", "requests", "pyyaml", "protobuf", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
 # schema compat gate (tools/schema/buf_compat.py, .github/workflows/schema-compat.yml): protobuf reads the
 # compiled descriptor sets; protovalidate is what themis.widgets decodes a payload's ownership rules with.
 schema_compat = ["protobuf", "protovalidate"]
@@ -209,12 +206,19 @@ resources = ["google-cloud-storage", "requests"]
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
+test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "run_review" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
 # response) and the cloudsql group reads the Analysis's session id.
 tools_sheaf = ["google-cloud-kms", "google-crc32c", { include-group = "session" }, { include-group = "sheaf" }, { include-group = "cloudsql" }]
+# run-review loop harness (tools/run_review): anthropic reads a run's session and event log and the agent's records;
+# google-auth signs the IAP JWT the web app's rpcs are called with (tools/web_app.py) and requests carries them;
+# pyyaml reads the app's domain from the Pulumi stack file; protobuf and protovalidate decode the stored rows and check
+# a kickoff against the create request's rules. pubmed_proto: the workbench contract imports the literature contract,
+# which embeds the PubMed record schema, so importing the generated stubs pulls in that wheel's message modules.
+# tools_sheaf clones a run's repository, and brings the Cloud SQL client the reference is read through.
+run_review = ["anthropic", "google-auth", "requests", "pyyaml", "protobuf", "protovalidate", "pubmed_proto==0.3.0", { include-group = "tools_sheaf" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp", "pyyaml"]
@@ -225,11 +229,11 @@ agents = ["anthropic", "pyyaml"]
 # config is the single source of truth for static checks — CI can't drift from
 # what runs locally. lxml-stubs: litcache/efetch.py parses efetch XML via lxml (a direct
 # dependency, unstubbed); pyright needs the stubs to resolve `lxml.etree`.
-lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "agents" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "classifier_eval" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "guest" }]
+lint = ["pre-commit", "ruff", "pyright", "pytest", "pyyaml", "types-PyYAML", "lxml-stubs", "testcontainers[postgres]", { include-group = "sheaf" }, { include-group = "protoc" }, { include-group = "infra" }, { include-group = "agents" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "migrate" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "run_review" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "guest" }]
 
 [tool.pytest.ini_options]
 # schema/tests holds the proto compat-gate tests (buf breaking, baseline helpers).
-testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/telemetry/tests", "themis/document_linter/tests", "themis/widgets/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
+testpaths = ["tests", "schema/tests", "infra/tests", "themis/common/tests", "themis/services/auth/tests", "themis/migrate/tests", "themis/clients/auth/tests", "themis/clients/work_queue/tests", "themis/clients/sheaf/tests", "themis/clients/tests", "tools/tests", "tools/run_review/tests", "themis/services/hello/tests", "themis/services/sheaf/tests", "themis/services/dispatcher/tests", "themis/services/sandbox_worker/tests", "themis/services/evidence/tests", "themis/services/evidence/literature/tests", "themis/services/convert_worker/tests", "themis/services/cost_exporter/tests", "themis/telemetry/tests", "themis/document_linter/tests", "themis/widgets/tests", "themis/testing/tests", "themis/svcv4/tests", "tools/svcv4-oracle", "themis/services/evidence/upstreams/tests", "themis/services/evidence/variant/tests", "themis/services/evidence/vep/tests", "themis/services/evidence/gnomad/tests", "themis/services/evidence/clinvar/tests", "themis/services/evidence/gene_disease/tests", "themis/services/evidence/transcript/tests", "themis/services/evidence/splice/tests", "themis/services/evidence/mavedb/tests", "themis/services/evidence/cspec/tests", "themis/sheaf/tests", "themis/curation/tests"]
 markers = [
   "sandbox: needs a real bubblewrap launch (Linux only)",
   "sandbox_root: needs a real bubblewrap launch from a root worker (the host uid drop); implies sandbox",
@@ -337,6 +341,10 @@ ignore = [
 "tools/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "S106",   # fixture session tokens are not secrets
+]
+"tools/run_review/tests/**" = [
+    "S101",   # asserts are the standard pytest idiom
+    "ARG002", # a stand-in for a port keeps the port's signature even where a test does not read a param
 ]
 "tools/svcv4-oracle/test_*.py" = [
     "S101",   # asserts are the standard pytest idiom

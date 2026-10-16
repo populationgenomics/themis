@@ -30,15 +30,13 @@ import subprocess
 import uuid
 
 from google.auth import exceptions
-from google.cloud.sql import connector
 
 from themis.clients.auth import derive
 from themis.clients.sheaf import store as remote_mod
-from themis.common import sql
 from themis.rpc import sandbox_options_pb2
 from themis.services.auth import backend as auth_backend
 from themis.workbench.models import workbench_pb2
-from tools import clu, session_token
+from tools import clu, clu_database, session_token
 
 # What the workbench reads to know a run has no conversation of its own; keep in step with
 # `UNMANAGED_SESSION_PREFIX` in apps/web/src/lib/harness.ts.
@@ -105,15 +103,7 @@ def insert(
     Raises:
         SystemExit: If the write is refused — a duplicate id, or an unknown Project.
     """
-    connection_name = f'{project}:{clu.REGION}:{clu.SQL_INSTANCE}'
-    with (
-        contextlib.closing(connector.Connector(credentials=clu.impersonated(service_account))) as pool,
-        contextlib.closing(
-            sql.iam_connect(
-                pool, connection_name=connection_name, database=clu.SQL_DATABASE, db_user=clu.db_user(service_account)
-            )
-        ) as conn,
-    ):
+    with clu_database.connect(project, service_account) as conn:
         try:
             with contextlib.closing(conn.cursor()) as cursor:
                 cursor.execute(
@@ -175,7 +165,7 @@ def main() -> None:
     try:
         key_version = args.key_version or session_token.signing_key_version(args.project)
         bearer = asyncio.run(sign(key_version, session_id, service_account))
-    except (clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (session_token.TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
 
     insert(

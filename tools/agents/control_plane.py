@@ -63,6 +63,19 @@ def record_key(directory: str) -> str:
     return f'{_RECORD_PREFIX}{directory}'
 
 
+def skill_records(metadata: Mapping[str, str]) -> dict[str, SkillRecord]:
+    """Every skill record an agent's metadata holds, by the directory it was published from.
+
+    Raises:
+        ControlPlaneError: If a value under a record key is not a record.
+    """
+    return {
+        key.removeprefix(_RECORD_PREFIX): SkillRecord.parse(key, value)
+        for key, value in metadata.items()
+        if key.startswith(_RECORD_PREFIX)
+    }
+
+
 @dataclasses.dataclass(frozen=True)
 class AgentParams:
     """The declaration as one `create` or `update` sends it: every field an update can set, so the agent is the yaml.

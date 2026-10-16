@@ -172,6 +172,7 @@ def test_an_empty_repository_clones_and_says_nothing_is_checked_out(
     destination = tmp_path / 'clone'
 
     _clone(destination)
+    clone_analysis.report('git', ANALYSIS_ID, destination)
 
     assert (destination / '.git').is_dir()
     assert 'Nothing is checked out' in capsys.readouterr().out
@@ -217,7 +218,7 @@ def test_the_token_directory_is_private_and_gone_after_a_clone(
 @pytest.mark.parametrize(
     ('served', 'fail_with', 'raised'),
     [
-        pytest.param('an_other', None, SystemExit, id='git-clone-fails'),
+        pytest.param('an_other', None, clone_analysis.CloneError, id='git-clone-fails'),
         pytest.param(ANALYSIS_ID, KeyboardInterrupt(), KeyboardInterrupt, id='interrupted'),
     ],
 )
@@ -246,7 +247,7 @@ def test_an_occupied_destination_is_refused_before_anything_is_derived(
     destination.mkdir()
     (destination / 'keep.md').write_text('mine\n', 'utf-8')
 
-    with pytest.raises(SystemExit, match='not an empty directory'):
+    with pytest.raises(clone_analysis.CloneError, match='not an empty directory'):
         _clone(destination)
 
     assert not seams.token_files

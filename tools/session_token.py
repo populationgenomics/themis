@@ -22,39 +22,35 @@ import pathlib
 import subprocess
 
 from google.auth import exceptions
-from google.cloud.sql import connector
 
 from themis.clients.auth import derive
 from themis.clients.sheaf import store as remote_mod
-from themis.common import sql
 from themis.rpc import sandbox_options_pb2
-from tools import clu
+from tools import clu, clu_database
 
 _KEY_RING = 'themis'
 # The version the deploy pins every signer to (infra/__main__.py, `session_token_key_version`).
 _KEY_VERSION = 1
 
 
+class TokenError(Exception):
+    """The token cannot be derived: no such Analysis, or no single signing key to derive it with."""
+
+
 def session_id_for(analysis_id: str, *, project: str, service_account: str) -> str:
     """The Anthropic session id of `analysis_id`, read from the environment's database as `service_account`.
 
     Raises:
-        SystemExit: If no such Analysis exists.
+        TokenError: If no such Analysis exists.
     """
-    connection_name = f'{project}:{clu.REGION}:{clu.SQL_INSTANCE}'
     with (
-        contextlib.closing(connector.Connector(credentials=clu.impersonated(service_account))) as pool,
-        contextlib.closing(
-            sql.iam_connect(
-                pool, connection_name=connection_name, database=clu.SQL_DATABASE, db_user=clu.db_user(service_account)
-            )
-        ) as conn,
+        clu_database.connect(project, service_account) as conn,
         contextlib.closing(conn.cursor()) as cursor,
     ):
         cursor.execute('SELECT session_id FROM analyses WHERE id = %s', (analysis_id,))
         row = cursor.fetchone()
     if row is None:
-        raise SystemExit(f'no Analysis {analysis_id!r} in {connection_name}/{clu.SQL_DATABASE}')
+        raise TokenError(f'no Analysis {analysis_id!r} in {clu_database.connection_name(project)}/{clu.SQL_DATABASE}')
     return row[0]
 
 
@@ -62,8 +58,8 @@ def signing_key_version(project: str) -> str:
     """The MAC key version every signer uses, found by purpose on the environment's key ring.
 
     Raises:
-        SystemExit: If the key ring holds anything but one MAC key.
-        clu.GcloudError: If `gcloud` is absent or refuses.
+        TokenError: If `gcloud` cannot list the key ring, or it holds anything but one MAC key.
+        clu.GcloudError: If `gcloud` is not on PATH.
     """
     result = subprocess.run(  # noqa: S603 — resolved path, argv from fixed flags
         [
@@ -82,10 +78,10 @@ def signing_key_version(project: str) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise SystemExit(f'gcloud could not list the {_KEY_RING} key ring:\n{result.stderr.strip()}')
+        raise TokenError(f'gcloud could not list the {_KEY_RING} key ring:\n{result.stderr.strip()}')
     keys = result.stdout.split()
     if len(keys) != 1:
-        raise SystemExit(f'expected one MAC key on the {_KEY_RING} key ring, found {keys}; pass --key-version')
+        raise TokenError(f'expected one MAC key on the {_KEY_RING} key ring, found {keys}; pass --key-version')
     return f'{keys[0]}/cryptoKeyVersions/{_KEY_VERSION}'
 
 
@@ -109,7 +105,7 @@ def derive_session_token(analysis_id: str, *, project: str, service_account: str
             key ring at the pinned version.
 
     Raises:
-        SystemExit: If no such Analysis exists, or `gcloud` cannot list the key ring, or the key ring
+        TokenError: If no such Analysis exists, or `gcloud` cannot list the key ring, or the key ring
             holds anything but one MAC key.
         clu.GcloudError: If `gcloud` is not on PATH.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
@@ -154,7 +150,7 @@ def main() -> None:
         session_token = derive_session_token(
             args.analysis_id, project=args.project, service_account=service_account, key_version=args.key_version
         )
-    except (clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     args.session_token_file.parent.mkdir(parents=True, exist_ok=True)
     write_token_file(args.session_token_file, session_token)

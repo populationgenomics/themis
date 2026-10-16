@@ -57,6 +57,10 @@ _FETCHED_NAMESPACES = tuple(
 _CREDENTIALS_FILE = 'token.json'
 
 
+class CloneError(Exception):
+    """The clone cannot be made: the destination is occupied, or `git clone` failed."""
+
+
 def clone(git: str, url: str, destination: pathlib.Path) -> None:
     """Clone the repository at `url` into `destination` with the `git` binary, sheaf's namespaces included.
 
@@ -64,7 +68,7 @@ def clone(git: str, url: str, destination: pathlib.Path) -> None:
     removes a half-made clone before the interrupt propagates.
 
     Raises:
-        SystemExit: If `git clone` fails.
+        CloneError: If `git clone` fails.
     """
     refspecs = [f'--config=remote.origin.fetch=+{namespace}*:{namespace}*' for namespace in _FETCHED_NAMESPACES]
     argv = [git, 'clone', *refspecs, '--', url, str(destination)]
@@ -77,7 +81,7 @@ def clone(git: str, url: str, destination: pathlib.Path) -> None:
             process.wait()
             raise
     if returncode != 0:
-        raise SystemExit(f'git clone of {url} failed with exit code {returncode}; its output is above')
+        raise CloneError(f'git clone of {url} failed with exit code {returncode}; its output is above')
 
 
 def clone_analysis(
@@ -103,14 +107,15 @@ def clone_analysis(
         key_version: The signing key version, or None for the one on the environment's key ring.
 
     Raises:
-        SystemExit: If `destination` is occupied, the Analysis does not exist, the key ring cannot be
-            listed, or the clone fails.
+        CloneError: If `destination` is occupied, or the clone fails.
+        session_token.TokenError: If the Analysis does not exist, or the key ring cannot be listed or
+            holds anything but one MAC key.
         clu.GcloudError: If `gcloud` or `git` is not on PATH, or `gcloud` cannot describe the service
             or mint an identity token.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
     if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
-        raise SystemExit(f'{destination} exists and is not an empty directory; name a new or empty one')
+        raise CloneError(f'{destination} exists and is not an empty directory; name a new or empty one')
     git = clu.resolve_binary('git')
     service_url = service_url or clu.run_service_url(sheaf_remote.SERVICE, project=project)
     # mkdtemp creates the directory readable, writable and searchable by its owner alone.
@@ -134,7 +139,6 @@ def clone_analysis(
             clone(git, instance.url(analysis_id), destination)
     finally:
         _remove_scratch(scratch)
-    _report(git, analysis_id, destination)
 
 
 def _remove_scratch(scratch: pathlib.Path) -> None:
@@ -150,7 +154,8 @@ def _remove_scratch(scratch: pathlib.Path) -> None:
         print(f'could not delete {scratch}; delete it yourself, as it may hold the session token', file=sys.stderr)
 
 
-def _report(git: str, analysis_id: str, destination: pathlib.Path) -> None:
+def report(git: str, analysis_id: str, destination: pathlib.Path) -> None:
+    """Print what the clone holds and how to fetch or push from it later."""
     where = shlex.quote(str(destination))
     namespaces = ', '.join(_FETCHED_NAMESPACES)
     checked_out = subprocess.run(  # noqa: S603 — resolved path, fixed flags
@@ -173,7 +178,7 @@ def _report(git: str, analysis_id: str, destination: pathlib.Path) -> None:
     print(f'    git -C {where} log --first-parent {refdoc.REFLOG_REF}')
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--analysis-id', required=True, help='the Analysis whose repository to clone')
     parser.add_argument('destination', type=pathlib.Path, help='where to clone to: absent, or an empty directory')
@@ -195,7 +200,7 @@ def main() -> None:
         default=None,
         help='derive the token and mint the identity token as this service account (default: themis-clu in --project)',
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     # These unwind like Ctrl-C, so the server stops and the token is deleted whichever ends the run.
     for signum in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, signal.default_int_handler)
@@ -209,11 +214,12 @@ def main() -> None:
             service_account=service_account,
             key_version=args.key_version,
         )
-    except (clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
+    except (CloneError, session_token.TokenError, clu.GcloudError, exceptions.DefaultCredentialsError) as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:
         print('interrupted', file=sys.stderr)
         raise SystemExit(128 + signal.SIGINT) from None
+    report(clu.resolve_binary('git'), args.analysis_id, args.destination)
 
 
 if __name__ == '__main__':

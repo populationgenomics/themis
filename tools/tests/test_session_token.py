@@ -25,12 +25,12 @@ def test_one_mac_key_names_its_pinned_version(monkeypatch: pytest.MonkeyPatch) -
 def test_anything_but_one_mac_key_is_refused(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
     monkeypatch.setattr(subprocess, 'run', lambda *_args, **_kwargs: _gcloud_listing(stdout))
     monkeypatch.setattr(session_token.clu, 'resolve_binary', lambda name: f'/bin/{name}')
-    with pytest.raises(SystemExit, match='--key-version'):
+    with pytest.raises(session_token.TokenError, match='--key-version'):
         session_token.signing_key_version('p')
 
 
 def test_a_gcloud_failure_is_reported_in_its_own_words(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, 'run', lambda *_args, **_kwargs: _gcloud_listing('', returncode=1))
     monkeypatch.setattr(session_token.clu, 'resolve_binary', lambda name: f'/bin/{name}')
-    with pytest.raises(SystemExit, match='denied'):
+    with pytest.raises(session_token.TokenError, match='denied'):
         session_token.signing_key_version('p')
