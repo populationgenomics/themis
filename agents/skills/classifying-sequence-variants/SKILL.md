@@ -134,7 +134,7 @@ trimming a value to fit.
 
 - **The entity.** The MDE, its mode of inheritance included, is the question the classification answers: the same
   variant against the same disease under another mode is another question with its own answer. Where the kickoff's
-  clinical context names the entity, as a curation round's names the registered disease term and mode, that is the
+  clinical context names the entity, as it does when it opens with a disease term and a mode of inheritance, that is the
   question: classify against that entity as stated. Where nothing names it, choosing the entity is part of the work: map
   a named condition to a MONDO term yourself, and choose the entity, mode included, that the presentation calls for.
   Where several MDEs are candidates, name them, say why you chose (SM21), and say which calls differ; a presentation too
@@ -197,13 +197,13 @@ trimming a value to fit.
 ## Intake
 
 The kickoff states the transcript, the coding change, and the clinical context, and nothing else. The clinical context
-is the referring clinician's words, or a curation round's statement of the entity followed by any case facts its
-curator recorded. Read the case facts the `CLN_*`/`LOC_*` codes need from that text, each with its basis: the phenotype and
-how specific it is, the proband count, phase, segregation, the assay modality and scope, the genes analysed and their
-coverage, other candidate variants, and the non-genetic work-up. Where the text is silent, state the absence ("the
-testing modality is not stated") and leave the code open or ND. Never default: an unstated modality is not exome, and
-silence about other variants is not "none found". Decide non-genetic etiology yourself, per MDE, or say it cannot be
-decided.
+is either a referring clinician's words or a disease term and a mode of inheritance naming the entity to classify
+against, followed by any description of the case. Read the case facts the `CLN_*`/`LOC_*` codes need from that text,
+each with its basis: the phenotype and how specific it is, the proband count, phase, segregation, the assay modality and
+scope, the genes analysed and their coverage, other candidate variants, and the non-genetic work-up. Where the text is
+silent, state the absence ("the testing modality is not stated") and leave the code open or ND. Never default: an
+unstated modality is not exome, and silence about other variants is not "none found". Decide non-genetic etiology
+yourself, per MDE, or say it cannot be decided.
 
 ## The workflow
 
