@@ -51,6 +51,7 @@ export default async function ManagePage() {
           diseaseLabel: variant.diseaseLabel,
           mondoId: variant.mondoId,
           modeOfInheritance: variant.modeOfInheritance,
+          clinicalContext: variant.clinicalContext,
           rows: rows.map((row) => ({
             curatorEmail: row.worksheet.curatorEmail,
             draftCount: row.draftCount,

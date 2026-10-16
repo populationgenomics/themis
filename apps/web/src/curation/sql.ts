@@ -20,13 +20,13 @@ import { type CurationStore, duplicateRegistration } from "./store";
 // search_path the pool does not set.
 
 const VARIANT_COLUMNS =
-  "id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, created_by, created_at";
-/** The uniqueness key `0013_curation_registration_mode` declares on `curation.variants`. */
+  "id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by, created_at";
+/** The uniqueness key `0014_curation_registration_mode` declares on `curation.variants`. */
 export const REGISTRATION_KEY = "variants_registration_key";
 const WORKSHEET_COLUMNS =
   "id, variant_id, curator_email, workflows_version, assigned_by, assigned_at";
 
-interface VariantRow {
+export interface VariantRow {
   id: string;
   gene: string;
   transcript: string;
@@ -35,6 +35,7 @@ interface VariantRow {
   disease_label: string;
   mondo_id: string;
   mode_of_inheritance: string;
+  clinical_context: string | null;
   created_by: string;
   created_at: Date;
 }
@@ -138,8 +139,8 @@ export class SqlCurationStore implements CurationStore {
     const rows = await this.query<{ created_at: Date }>(
       `INSERT INTO curation.variants
          (id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id,
-          mode_of_inheritance, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          mode_of_inheritance, clinical_context, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT ON CONSTRAINT ${REGISTRATION_KEY} DO NOTHING
        RETURNING created_at`,
       [
@@ -151,6 +152,7 @@ export class SqlCurationStore implements CurationStore {
         variant.diseaseLabel,
         variant.mondoId,
         modeColumn(variant.modeOfInheritance),
+        variant.clinicalContext,
         createdBy,
       ],
     );
@@ -339,7 +341,14 @@ export class SqlCurationStore implements CurationStore {
   }
 }
 
-function parseVariant(row: VariantRow): Variant {
+/** A `curation.variants` row as the variant it registers. Throws for a row with no clinical context,
+ *  naming it: the column is required, so one without a value is a fault in the database. */
+export function parseVariant(row: VariantRow): Variant {
+  if (row.clinical_context === null) {
+    throw new Error(
+      `curation.variants row ${row.id} holds no clinical context`,
+    );
+  }
   return {
     id: row.id,
     gene: row.gene,
@@ -349,6 +358,7 @@ function parseVariant(row: VariantRow): Variant {
     diseaseLabel: row.disease_label,
     mondoId: row.mondo_id,
     modeOfInheritance: modeFromColumn(row.mode_of_inheritance),
+    clinicalContext: row.clinical_context,
     createdBy: row.created_by,
     createdAt: row.created_at,
   };

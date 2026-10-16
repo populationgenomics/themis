@@ -15,7 +15,14 @@ import {
   ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { CONSEQUENCES } from "../consequence";
-import { CLASSIFICATIONS, Header, RoutingCard, VerdictCard } from "./worksheet";
+import {
+  CLASSIFICATIONS,
+  Header,
+  RoutingCard,
+  VerdictCard,
+  Worksheet,
+  type WorksheetInit,
+} from "./worksheet";
 
 // That the curator can say what the contract can hold, and is asked nothing the registration fixes.
 //
@@ -89,19 +96,54 @@ describe("the registered entity", () => {
           workflowsVersion: "v",
           submissionCount: 0,
           drafts: {},
-          variant: {
-            gene: "F8",
-            transcript: "NM_000132.4",
-            hgvsC: "c.1A>G",
-            diseaseLabel: "hemophilia A",
-            mondoId: "MONDO:0010602",
-            modeOfInheritance: ModeOfInheritance.X_LINKED_RECESSIVE,
-          },
+          variant: worksheetInit("x").variant,
         }}
       />,
     );
     expect(markup).toContain("MONDO:0010602");
     expect(markup).toContain("X-linked recessive");
+  });
+});
+
+function worksheetInit(clinicalContext: string): WorksheetInit {
+  return {
+    worksheetId: "ws",
+    workflowsVersion: "v",
+    submissionCount: 0,
+    drafts: {},
+    variant: {
+      gene: "F8",
+      transcript: "NM_000132.4",
+      hgvsC: "c.1A>G",
+      diseaseLabel: "hemophilia A",
+      mondoId: "MONDO:0010602",
+      modeOfInheritance: ModeOfInheritance.X_LINKED_RECESSIVE,
+      clinicalContext,
+    },
+  };
+}
+
+/** The markup of the clinical context card: from its heading to the routing card's. */
+function clinicalContextCard(markup: string): string {
+  const start = markup.indexOf(">Clinical context<");
+  const end = markup.indexOf(">Routing<");
+  if (start < 0 || end < start) {
+    throw new Error(
+      "the worksheet draws no clinical context ahead of its routing",
+    );
+  }
+  return markup.slice(start, end);
+}
+
+describe("the registered clinical context", () => {
+  const CONTEXT = "Bleeding after circumcision; factor VIII activity 3%.";
+
+  test("is shown ahead of the routing, with nothing in it the curator can edit", () => {
+    const card = clinicalContextCard(
+      renderToStaticMarkup(<Worksheet init={worksheetInit(CONTEXT)} />),
+    );
+    expect(card).toContain(CONTEXT);
+    expect(card).not.toMatch(/<(textarea|input|select)\b|contenteditable/i);
   });
 });
 

@@ -17,7 +17,7 @@ import {
   AssessmentStatus,
   Classification,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
-import { CASE_ID, ROUTING_ID, VERDICT_ID } from "../sections";
+import { ROUTING_ID, VERDICT_ID } from "../sections";
 import { WORKFLOWS_VERSION } from "../version";
 import { FRQ_DAFT, FRQ_FAF, withDerivedBin } from "../workflows/frequency";
 import { ALL_WORKFLOWS, workflowById } from "../workflows/registry";
@@ -64,6 +64,8 @@ function scored(workflow: WorkflowAssessment): JsonValue {
 
 const EMPTY = create(WorkflowAssessmentSchema, {});
 
+const CLINICAL_CONTEXT = "Infant with meconium ileus at birth.";
+
 /** A selection, stored the way every `ChoiceRows` body stores one: under the table's field id, with
  *  the chosen cell's id as the value. */
 function selected(fieldId: string, workflowId: string, cellId: string) {
@@ -76,7 +78,6 @@ describe("a submission", () => {
   test("splits into the worksheet's sections and its workflows", () => {
     const decoded = decodeSubmitted(
       answers("a@x", {
-        [CASE_ID]: json({ case: "caseContext", value: { assays: "an assay" } }),
         [ROUTING_ID]: json({ case: "routing", value: { rationale: "why" } }),
         [VERDICT_ID]: json({
           case: "verdict",
@@ -85,7 +86,6 @@ describe("a submission", () => {
         cds_fxn: scored(EMPTY),
       }),
     );
-    expect(decoded.caseContext?.assays).toBe("an assay");
     expect(decoded.routing?.rationale).toBe("why");
     expect(decoded.verdict?.classification).toBe(Classification.BENIGN);
     expect([...decoded.workflows.keys()]).toEqual(["cds_fxn"]);
@@ -207,12 +207,9 @@ describe("a stored value", () => {
 describe("the comparison", () => {
   const markup = renderToStaticMarkup(
     <Comparison
+      clinicalContext={CLINICAL_CONTEXT}
       answers={[
         answers("a@x", {
-          [CASE_ID]: json({
-            case: "caseContext",
-            value: { probandNarrative: "Meconium ileus." },
-          }),
           [ROUTING_ID]: json({
             case: "routing",
             value: { consequenceClass: Consequence.INFRAME_INDEL },
@@ -237,15 +234,15 @@ describe("the comparison", () => {
     />,
   );
 
-  test("draws the routing, the case, the workflows and the verdict, in that order", () => {
+  test("draws the clinical context, the routing, the workflows and the verdict, in that order", () => {
     const at = (text: string) => {
       const index = markup.indexOf(text);
       expect(index).toBeGreaterThanOrEqual(0);
       return index;
     };
     const titles = [
+      ">Clinical context<",
       ">Routing<",
-      ">The case<",
       registered("cds_fxn").title,
       ">Verdict<",
     ];
@@ -253,9 +250,8 @@ describe("the comparison", () => {
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 
-  test("names the case's slots as the worksheet does", () => {
-    expect(markup).toContain(">Presentation<");
-    expect(markup).toContain("Meconium ileus.");
+  test("states the registration's clinical context once, not per curator", () => {
+    expect(markup.split(CLINICAL_CONTEXT).length - 1).toBe(1);
   });
 
   test("names a workflow by its code and title, never its stored id", () => {
@@ -364,6 +360,7 @@ describe("a workflow's agreement", () => {
       // One worksheet pins an earlier version, where every value prints; agreement must not follow.
       const markup = renderToStaticMarkup(
         <Comparison
+          clinicalContext={CLINICAL_CONTEXT}
           answers={[
             answers("a@x", { [workflowId]: scored(first) }, "svcv4-earlier"),
             answers("b@x", { [workflowId]: scored(second) }),
@@ -378,6 +375,7 @@ describe("a workflow's agreement", () => {
 describe("an unscored answer", () => {
   const markup = renderToStaticMarkup(
     <Comparison
+      clinicalContext={CLINICAL_CONTEXT}
       answers={["a@x", "b@x"].map((curator) =>
         answers(curator, {
           cds_fxn: json({
@@ -410,6 +408,7 @@ describe("the transcription a worksheet pins", () => {
   const render = (versions: [string, string]) =>
     renderToStaticMarkup(
       <Comparison
+        clinicalContext={CLINICAL_CONTEXT}
         answers={[
           answers("a@x", { cds_fxn: scored(EMPTY) }, versions[0]),
           answers("b@x", { cds_fxn: scored(EMPTY) }, versions[1]),
@@ -443,6 +442,7 @@ describe("a class-determinative list naming one workflow twice", () => {
     // Server rendering does not report a key collision, so the keys themselves are checked above.
     const markup = renderToStaticMarkup(
       <Comparison
+        clinicalContext={CLINICAL_CONTEXT}
         answers={["a@x", "b@x"].map((curator) =>
           answers(curator, {
             [VERDICT_ID]: json({

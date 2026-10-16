@@ -25,7 +25,7 @@ import type {
   Variant,
   Worksheet,
 } from "./model";
-import { CASE_ID, ROUTING_ID, VERDICT_ID } from "./sections";
+import { ROUTING_ID, VERDICT_ID } from "./sections";
 import { type CurationStore, duplicateRegistration } from "./store";
 import { WORKFLOWS_VERSION } from "./version";
 
@@ -84,6 +84,8 @@ export class FixtureCurationStore implements CurationStore {
         diseaseLabel: "hypertrophic cardiomyopathy",
         mondoId: "MONDO:0005045",
         modeOfInheritance: ModeOfInheritance.AUTOSOMAL_DOMINANT,
+        clinicalContext:
+          "Proband, 14, referred after exertional syncope. Echocardiogram shows asymmetric septal hypertrophy of 21 mm with no outflow obstruction at rest. Father died suddenly at 38; no autopsy. A 48-gene cardiomyopathy panel found no other variant of interest. Relatives not yet tested.",
       },
       {
         gene: "CFTR",
@@ -93,6 +95,8 @@ export class FixtureCurationStore implements CurationStore {
         diseaseLabel: "cystic fibrosis",
         mondoId: "MONDO:0009061",
         modeOfInheritance: ModeOfInheritance.AUTOSOMAL_RECESSIVE,
+        clinicalContext:
+          "Infant, 4 months, with meconium ileus at birth and recurrent chest infections. Sweat chloride 98 mmol/L on two occasions. CFTR full-gene sequencing with MLPA found the variant homozygous; each parent carries one copy.",
       },
     ];
     for (const variant of seeded) {
@@ -444,16 +448,6 @@ const SUBMITTED_ANSWERS: ReadonlyMap<string, Entry[]> = new Map([
   [
     SECOND_CURATOR,
     [
-      section(CASE_ID, {
-        case: "caseContext",
-        value: {
-          probandNarrative:
-            "Meconium ileus at birth; sweat chloride 98 mmol/L on two occasions.",
-          testingPerformed: "CFTR full-gene sequencing with MLPA.",
-          coObservedVariant:
-            "Homozygous; each parent carries one copy, so the two alleles are in trans.",
-        },
-      }),
       section(ROUTING_ID, {
         case: "routing",
         value: {
@@ -502,14 +496,6 @@ const SUBMITTED_ANSWERS: ReadonlyMap<string, Entry[]> = new Map([
   [
     THIRD_CURATOR,
     [
-      section(CASE_ID, {
-        case: "caseContext",
-        value: {
-          probandNarrative:
-            "Recurrent chest infections from infancy; sweat chloride 98 mmol/L.",
-          segregation: "Both parents are heterozygous carriers.",
-        },
-      }),
       section(ROUTING_ID, {
         case: "routing",
         value: {

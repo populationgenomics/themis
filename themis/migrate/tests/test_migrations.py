@@ -138,6 +138,15 @@ def test_curation_registration_mode_migration_backfills_before_it_requires_a_mod
     assert commands[3] == 'ALTER TABLE curation.variants ALTER COLUMN mode_of_inheritance SET NOT NULL'
 
 
+def test_curation_case_retired_migration_keeps_its_check_whole() -> None:
+    retired = next(m for m in migrate.discover(_MIGRATIONS_DIR) if m.name == 'curation_case_retired')
+    assert '${' not in retired.sql  # no substitutions — the web SA's grants already cover both tables
+    # The check's body carries `;` of its own; split at one, it would surface only at deploy.
+    check = _command(migrate.split_statements(retired.sql)[0])
+    assert check.startswith("DO '")
+    assert check.endswith("END'")
+
+
 def test_deploy_provides_every_migration_substitution() -> None:
     """A `${VAR}` in a committed migration has an entry in every `THEMIS_MIGRATE_SUBSTITUTIONS` deploy passes."""
     workflow = yaml.safe_load(_DEPLOY_WORKFLOW.read_text('utf-8'))

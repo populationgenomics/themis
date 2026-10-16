@@ -6,8 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Assessment,
   AssessmentSchema,
-  type CaseAssessment,
-  CaseAssessmentSchema,
   type RoutingAssessment,
   RoutingAssessmentSchema,
   type VerdictAssessment,
@@ -23,7 +21,7 @@ import {
 } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { CONSEQUENCES } from "../consequence";
 import { inlineMode } from "../mode";
-import { CASE_ID, ROUTING_ID, VERDICT_ID } from "../sections";
+import { ROUTING_ID, VERDICT_ID } from "../sections";
 import { POP_FRQ_ID } from "../workflows/pop";
 import { barredWorkflowIds, barringBin } from "../workflows/rarity-gate";
 import {
@@ -34,6 +32,7 @@ import {
 } from "../workflows/registry";
 import type { Routing, WorkflowDef } from "../workflows/types";
 import { Autosave, type SaveState } from "./autosave";
+import { ClinicalContextPanel } from "./clinical-context";
 import {
   cellLabel,
   FrameworkNote,
@@ -42,7 +41,7 @@ import {
   WorkflowCard,
 } from "./primitives";
 
-// The worksheet screen. Every section's draft — a workflow's, the routing, the case, the verdict —
+// The worksheet screen. Every section's draft — a workflow's, the routing, the verdict —
 // reaches the server through one `Autosave`: after a short idle and on leaving a field, and never
 // for a payload matching what was last stored, or refocusing a field it did not change would write
 // a row saying so.
@@ -60,6 +59,8 @@ export interface WorksheetInit {
     mondoId: string;
     /** The registered mode, which routes the observation workflows. Never UNSPECIFIED. */
     modeOfInheritance: ModeOfInheritance;
+    /** The registered clinical context, shown read-only. */
+    clinicalContext: string;
   };
   workflowsVersion: string;
   submissionCount: number;
@@ -100,14 +101,12 @@ function decodeDrafts(drafts: Record<string, unknown>): {
   answers: Record<string, WorkflowAssessment>;
   routing?: RoutingAssessment;
   verdict?: VerdictAssessment;
-  caseContext?: CaseAssessment;
   payloads: Record<string, string>;
 } {
   const answers: Record<string, WorkflowAssessment> = {};
   const payloads: Record<string, string> = {};
   let routing: RoutingAssessment | undefined;
   let verdict: VerdictAssessment | undefined;
-  let caseContext: CaseAssessment | undefined;
   for (const [id, json] of Object.entries(drafts)) {
     const decoded = fromJson(AssessmentSchema, json as never);
     // What the server already holds, so an untouched workflow is not rewritten on its first blur.
@@ -115,8 +114,6 @@ function decodeDrafts(drafts: Record<string, unknown>): {
     if (decoded.kind.case === "workflow") answers[id] = decoded.kind.value;
     else if (decoded.kind.case === "routing") routing = decoded.kind.value;
     else if (decoded.kind.case === "verdict") verdict = decoded.kind.value;
-    else if (decoded.kind.case === "caseContext")
-      caseContext = decoded.kind.value;
     else {
       // The server refuses to render a worksheet holding one of these, so reaching here means the
       // two disagree. Report it and carry the rest: a throw here would stop the whole worksheet
@@ -124,7 +121,7 @@ function decodeDrafts(drafts: Record<string, unknown>): {
       console.error(`curation: draft ${id} carries no assessment; skipped`);
     }
   }
-  return { answers, routing, verdict, caseContext, payloads };
+  return { answers, routing, verdict, payloads };
 }
 
 export function Worksheet({ init }: { init: WorksheetInit }) {
@@ -150,9 +147,6 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
     }),
     [init.variant.modeOfInheritance, routingAnswer.consequenceClass],
   );
-  const [caseContext, setCaseContext] = useState<CaseAssessment>(
-    () => decoded.caseContext ?? create(CaseAssessmentSchema, {}),
-  );
   const [verdict, setVerdict] = useState<VerdictAssessment>(
     () => decoded.verdict ?? create(VerdictAssessmentSchema, {}),
   );
@@ -162,7 +156,7 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
   const [heldSections, setHeldSections] = useState<ReadonlySet<string>>(
     () =>
       new Set(
-        [CASE_ID, ROUTING_ID, VERDICT_ID].filter(
+        [ROUTING_ID, VERDICT_ID].filter(
           (id) => decoded.payloads[id] !== undefined,
         ),
       ),
@@ -253,6 +247,15 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
       <Ledger workflows={visible} answers={answers} />
       <div className="min-w-0 flex-1 space-y-5">
         <Header init={init} saveState={saveState} />
+        <ClinicalContextPanel
+          value={init.variant.clinicalContext}
+          heading={
+            <h2 className="framework-voice font-medium text-[17px] text-ink-primary">
+              Clinical context
+            </h2>
+          }
+          note="as registered, read-only"
+        />
         <RoutingCard
           value={routingAnswer}
           onChange={(next) => {
@@ -266,20 +269,6 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
             );
           }}
           onBlur={() => autosave.flush(ROUTING_ID)}
-        />
-        <CaseCard
-          value={caseContext}
-          onChange={(next) => {
-            setCaseContext(next);
-            setHeldSections((held) => new Set(held).add(CASE_ID));
-            autosave.schedule(
-              CASE_ID,
-              create(AssessmentSchema, {
-                kind: { case: "caseContext", value: next },
-              }),
-            );
-          }}
-          onBlur={() => autosave.flush(CASE_ID)}
         />
         <RoutingNotes routing={routing} />
         {groups.map((group) => (
@@ -461,9 +450,9 @@ function Ledger({
 }
 
 /** What the curator states before the workflows: the consequence class, which routes the
- *  predicted-effect workflows, and the reasoning behind their routing. The entity and its mode are
- *  part of the registered question, in the header above; the rationale is where a curator who
- *  thinks another entity is the question to ask says so. */
+ *  predicted-effect workflows, and the reasoning behind their routing. The entity, its mode and the
+ *  clinical context are the registered question, above; the rationale is where a curator who
+ *  thinks the registered question is the wrong one to ask says so. */
 export function RoutingCard({
   value,
   onChange,
@@ -481,8 +470,8 @@ export function RoutingCard({
       </h2>
       <p className="framework-voice mt-1 mb-4 text-[13px] text-ink-muted">
         The consequence class decides which predicted-effect workflows apply.
-        The entity, its mode of inheritance included, is the question the
-        registration asks, shown above.
+        The entity, its mode of inheritance and the clinical context are the
+        question the registration asks, shown above.
       </p>
       <label className="block sm:w-1/2">
         <span className="field-eyebrow text-ink-label">Consequence class</span>
@@ -505,7 +494,8 @@ export function RoutingCard({
       <div className="mt-4 mb-1.5 flex items-baseline gap-2">
         <span className="field-eyebrow text-ink-label">Rationale</span>
         <span className="framework-voice text-[12px] text-ink-faint">
-          why this class, and any reason another entity is the question to ask
+          why this class, and any reason the registered question is the wrong
+          one to ask
         </span>
       </div>
       <textarea
@@ -545,99 +535,6 @@ function RoutingNotes({ routing }: { routing: Routing }) {
     <div className="framework-voice rounded-md border border-line-primary border-dashed bg-surface-warm-panel px-5 py-8 text-center text-[13.5px] text-ink-muted">
       <p>{note}</p>
     </div>
-  );
-}
-
-// The message's own prose fields, named explicitly: `keyof CaseAssessment` also picks up
-// protobuf-es's `$typeName` and `$unknown`.
-export type CaseField =
-  | "probandNarrative"
-  | "testingPerformed"
-  | "coObservedVariant"
-  | "segregation"
-  | "assays"
-  | "other";
-
-/** Each slot of the case: its field, the name the curator reads it under, and the hint beside it. */
-export const CASE_FIELDS: [CaseField, string, string][] = [
-  [
-    "probandNarrative",
-    "Presentation",
-    "the phenotype, in the referring clinician's words",
-  ],
-  ["testingPerformed", "Testing performed", "what was sequenced and analysed"],
-  [
-    "coObservedVariant",
-    "Co-observed variant",
-    "identity, phase, how the phase was established, its own classification",
-  ],
-  ["segregation", "Segregation", "who carries it, who is affected"],
-  ["assays", "Assays", "functional and RNA data, controls, calibration"],
-  ["other", "Anything else", "whatever the slots above do not cover"],
-];
-
-/** The facts that bear on several workflows at once — the comp-het partner, the testing breadth,
- *  the assay — recorded once here instead of retyped into each workflow's evidence.
- *
- *  Collapsed by default: a curator reaches for it when the case needs it, and an empty six-field
- *  form at the top of the page would read as six more things demanded before they can start. */
-function CaseCard({
-  value,
-  onChange,
-  onBlur,
-}: {
-  value: CaseAssessment;
-  onChange: (next: CaseAssessment) => void;
-  /** Commit the current draft now — bound to a field losing focus. */
-  onBlur: () => void;
-}) {
-  const filled = CASE_FIELDS.filter(([key]) => value[key] !== "").length;
-  const [open, setOpen] = useState(filled > 0);
-  return (
-    <section className="rounded-md border border-line-primary bg-white p-5">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        className="flex w-full items-baseline justify-between gap-3 text-left"
-      >
-        <span>
-          <span className="framework-voice block font-medium text-[17px] text-ink-primary">
-            The case
-          </span>
-          <span className="framework-voice mt-1 block text-[13px] text-ink-muted">
-            Facts more than one workflow rests on. Recorded here so a reader can
-            tell a different conclusion from different information.
-          </span>
-        </span>
-        <span className="framework-voice shrink-0 text-[12.5px] text-ink-faint">
-          {filled > 0 ? `${filled} recorded` : "none recorded"} ·{" "}
-          {open ? "hide" : "show"}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-4 space-y-4 border-line-row border-t pt-4">
-          {CASE_FIELDS.map(([key, label, hint]) => (
-            <div key={key}>
-              <div className="mb-1.5 flex items-baseline gap-2">
-                <span className="field-eyebrow text-ink-label">{label}</span>
-                <span className="framework-voice text-[12px] text-ink-faint">
-                  {hint}
-                </span>
-              </div>
-              <textarea
-                aria-label={label}
-                value={value[key]}
-                rows={2}
-                onChange={(e) => onChange({ ...value, [key]: e.target.value })}
-                onBlur={onBlur}
-                className="curator-voice w-full resize-y rounded-sm border border-line-input bg-white px-3 py-2 text-ink-body focus:border-ink-ghost focus:outline-none"
-              />
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 

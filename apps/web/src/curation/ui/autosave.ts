@@ -4,8 +4,8 @@ import {
   AssessmentSchema,
 } from "@/gen/themis/curation/models/curation_pb";
 
-// The worksheet's one path to the server. A section — a workflow, the routing, the case, the
-// verdict — is written after a short idle or on leaving a field, skipped when its payload matches
+// The worksheet's one path to the server. A section — a workflow, the routing, the verdict — is
+// written after a short idle or on leaving a field, skipped when its payload matches
 // what the server last accepted, and retried on a timer when the write fails. The indicator reads
 // "saved" only when no write is out, in flight or failed: the rarity gate issues several writes at
 // once, and one landing must not read as all landed.

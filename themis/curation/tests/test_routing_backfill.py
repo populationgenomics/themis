@@ -109,8 +109,8 @@ class _Database:
         with contextlib.closing(self.conn.cursor()) as cursor:
             cursor.execute(
                 'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id,'
-                " mode_of_inheritance, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', %s, 'Marfan syndrome',"
-                " 'MONDO:0007947', %s, 'm@example.org')",
+                " mode_of_inheritance, clinical_context, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', %s,"
+                " 'Marfan syndrome', 'MONDO:0007947', %s, 'Tall stature.', 'm@example.org')",
                 (variant, f'c.{variant}', mode),
             )
             cursor.execute(

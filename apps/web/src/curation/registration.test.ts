@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { create } from "@bufbuild/protobuf";
+import { createValidator } from "@bufbuild/protovalidate";
 import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { VariantClassificationInputsSchema } from "@/gen/themis/workbench/models/workbench_pb";
 import { isClientInputError } from "@/server/errors";
 import { FixtureCurationStore } from "./fixture";
 import { toCurationErrorResponse } from "./http";
+import { CLINICAL_CONTEXT_MAX_LENGTH, clinicalContextLength } from "./model";
 import { parseRegistration } from "./registration";
 import { REGISTRATION_KEY } from "./sql";
 import { isDuplicateRegistrationError } from "./store";
 
-// A registration states the whole entity, and states it once.
+// A registration states the whole question, the entity and the clinical context, and states it
+// once.
 
 const BODY = {
   gene: "FBN1",
@@ -18,6 +23,7 @@ const BODY = {
   diseaseLabel: "Marfan syndrome",
   mondoId: "MONDO:0007947",
   modeOfInheritance: "MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT",
+  clinicalContext: "Tall stature, arachnodactyly and aortic root dilation.",
 };
 
 function refusal(body: Record<string, unknown>): string {
@@ -48,8 +54,85 @@ describe("a register request", () => {
       /not a mode of inheritance/,
     ],
     [{ modeOfInheritance: "X_LINKED" }, /not a mode of inheritance/],
+    [{ clinicalContext: undefined }, /clinicalContext is required/],
+    [{ clinicalContext: " \n\t " }, /clinicalContext is required/],
+    [
+      { clinicalContext: "x".repeat(CLINICAL_CONTEXT_MAX_LENGTH + 1) },
+      /a registration states at most 10000/,
+    ],
   ])("%p is refused", (change, message) => {
     expect(refusal({ ...BODY, ...change })).toMatch(message);
+  });
+
+  test("keeps the clinical context as written, without the whitespace around it", () => {
+    expect(
+      parseRegistration({
+        ...BODY,
+        clinicalContext: "\n Line one.\nLine two. ",
+      }).clinicalContext,
+    ).toBe("Line one.\nLine two.");
+  });
+});
+
+describe("a clinical context's length", () => {
+  test("leaves out the whitespace around the prose", () => {
+    expect(clinicalContextLength("\n  ab c \t")).toBe(4);
+  });
+
+  test("puts the maximum within the bound and one more over it", () => {
+    for (const [extra, over] of [
+      [0, false],
+      [1, true],
+    ] as const) {
+      const raw = ` ${"x".repeat(CLINICAL_CONTEXT_MAX_LENGTH + extra)} `;
+      expect(clinicalContextLength(raw) > CLINICAL_CONTEXT_MAX_LENGTH).toBe(
+        over,
+      );
+    }
+  });
+});
+
+describe("the longest clinical context a registration takes", () => {
+  const validator = createValidator();
+  const run = (length: number) =>
+    validator.validate(
+      VariantClassificationInputsSchema,
+      create(VariantClassificationInputsSchema, {
+        transcript: "NM_000138.5",
+        hgvsC: "c.7003C>T",
+        clinicalContext: "x".repeat(length),
+      }),
+    ).kind;
+
+  test("is the bound the classification scenario sets on a run's clinical context", () => {
+    expect(run(CLINICAL_CONTEXT_MAX_LENGTH)).toBe("valid");
+    expect(run(CLINICAL_CONTEXT_MAX_LENGTH + 1)).toBe("invalid");
+  });
+
+  test("is accepted by the register request", () => {
+    expect(
+      parseRegistration({
+        ...BODY,
+        clinicalContext: "x".repeat(CLINICAL_CONTEXT_MAX_LENGTH),
+      }).clinicalContext,
+    ).toHaveLength(CLINICAL_CONTEXT_MAX_LENGTH);
+  });
+
+  test("is the bound the latest migration to bound the column declares", () => {
+    // A context the surface accepts and the database refuses would fail the register as a 500.
+    const migrations = join(
+      import.meta.dir,
+      "../../../../themis/migrate/migrations",
+    );
+    const bounds = readdirSync(migrations)
+      .sort()
+      .flatMap((name) => [
+        ...readFileSync(join(migrations, name), "utf-8").matchAll(
+          /char_length\(clinical_context\) <= (\d+)/g,
+        ),
+      ])
+      .map((match) => Number(match[1]));
+    expect(bounds.at(-1)).toBe(CLINICAL_CONTEXT_MAX_LENGTH);
   });
 });
 

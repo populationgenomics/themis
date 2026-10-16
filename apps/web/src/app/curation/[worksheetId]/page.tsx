@@ -48,6 +48,7 @@ export default async function WorksheetPage({
           diseaseLabel: detail.variant.diseaseLabel,
           mondoId: detail.variant.mondoId,
           modeOfInheritance: detail.variant.modeOfInheritance,
+          clinicalContext: detail.variant.clinicalContext,
         },
       }}
     />

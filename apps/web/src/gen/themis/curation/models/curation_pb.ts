@@ -29,7 +29,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/curation/models/curation.proto.
  */
 export const file_themis_curation_models_curation: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvY3VyYXRpb24vbW9kZWxzL2N1cmF0aW9uLnByb3RvEh90aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uInkKCkZpZWxkVmFsdWUSHAoIZmllbGRfaWQYASABKAlCCrpIB3IFEAEYgAESGQoHY2VsbF9pZBgCIAEoCUIIukgFcgMYgAESGQoFbGFiZWwYAyABKAlCCrpIB3IFEAEYgBASFwoFdmFsdWUYBCABKAlCCLpIBXIDGIAgItUDChJXb3JrZmxvd0Fzc2Vzc21lbnQSPwoGc3RhdHVzGAEgASgOMiUudGhlbWlzLnN2Y3Y0Lm1vZGVscy5Bc3Nlc3NtZW50U3RhdHVzQgi6SAWCAQIQARJFCgZmaWVsZHMYAiADKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWVCCLpIBZIBAhBAEiAKDXN0YXR1c19yZWFzb24YAyABKAlCCbpIBnIEGKCcARIbCghldmlkZW5jZRgEIAEoCUIJukgGcgQYoJwBEhwKCXJhdGlvbmFsZRgFIAEoCUIJukgGcgQYoJwBEkgKE25lYXJlc3RfYWx0ZXJuYXRpdmUYBiABKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWUSLQoabmVhcmVzdF9hbHRlcm5hdGl2ZV9yZWFzb24YByABKAlCCbpIBnIEGKCcARI9Cgpjb25maWRlbmNlGAggASgOMh8udGhlbWlzLnN2Y3Y0Lm1vZGVscy5Db25maWRlbmNlQgi6SAWCAQIQARIiCg9jb25maWRlbmNlX25vdGUYCSABKAlCCbpIBnIEGKCcASLZAQoOQ2FzZUFzc2Vzc21lbnQSJAoRcHJvYmFuZF9uYXJyYXRpdmUYASABKAlCCbpIBnIEGKCcARIkChF0ZXN0aW5nX3BlcmZvcm1lZBgCIAEoCUIJukgGcgQYoJwBEiYKE2NvX29ic2VydmVkX3ZhcmlhbnQYAyABKAlCCbpIBnIEGKCcARIeCgtzZWdyZWdhdGlvbhgEIAEoCUIJukgGcgQYoJwBEhkKBmFzc2F5cxgFIAEoCUIJukgGcgQYoJwBEhgKBW90aGVyGAYgASgJQgm6SAZyBBignAEirAEKEVJvdXRpbmdBc3Nlc3NtZW50EkgKEWNvbnNlcXVlbmNlX2NsYXNzGAIgASgOMiMudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Db25zZXF1ZW5jZUIIukgFggECEAESHAoJcmF0aW9uYWxlGAUgASgJQgm6SAZyBBignAFKBAgBEAJKBAgDEARKBAgEEAVSC2luaGVyaXRhbmNlUgZlbnRpdHlSCG1vbmRvX2lkIqgBChFWZXJkaWN0QXNzZXNzbWVudBJFCg5jbGFzc2lmaWNhdGlvbhgBIAEoDjIjLnRoZW1pcy5zdmN2NC5tb2RlbHMuQ2xhc3NpZmljYXRpb25CCLpIBYIBAhABEhwKCXJhdGlvbmFsZRgCIAEoCUIJukgGcgQYoJwBEi4KE2NsYXNzX2RldGVybWluYXRpdmUYAyADKAlCEbpIDpIBCxBAIgdyBRABGIABIrsCCgpBc3Nlc3NtZW50EkcKCHdvcmtmbG93GAEgASgLMjMudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Xb3JrZmxvd0Fzc2Vzc21lbnRIABJFCgdyb3V0aW5nGAIgASgLMjIudGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5Sb3V0aW5nQXNzZXNzbWVudEgAEkUKB3ZlcmRpY3QYAyABKAsyMi50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLlZlcmRpY3RBc3Nlc3NtZW50SAASRwoMY2FzZV9jb250ZXh0GAQgASgLMi8udGhlbWlzLmN1cmF0aW9uLm1vZGVscy5jdXJhdGlvbi5DYXNlQXNzZXNzbWVudEgAQg0KBGtpbmQSBbpIAggBYgZwcm90bzM", [file_buf_validate_validate, file_themis_evidence_models_evidence, file_themis_svcv4_models_svcv4]);
+  fileDesc("CiV0aGVtaXMvY3VyYXRpb24vbW9kZWxzL2N1cmF0aW9uLnByb3RvEh90aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uInkKCkZpZWxkVmFsdWUSHAoIZmllbGRfaWQYASABKAlCCrpIB3IFEAEYgAESGQoHY2VsbF9pZBgCIAEoCUIIukgFcgMYgAESGQoFbGFiZWwYAyABKAlCCrpIB3IFEAEYgBASFwoFdmFsdWUYBCABKAlCCLpIBXIDGIAgItUDChJXb3JrZmxvd0Fzc2Vzc21lbnQSPwoGc3RhdHVzGAEgASgOMiUudGhlbWlzLnN2Y3Y0Lm1vZGVscy5Bc3Nlc3NtZW50U3RhdHVzQgi6SAWCAQIQARJFCgZmaWVsZHMYAiADKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWVCCLpIBZIBAhBAEiAKDXN0YXR1c19yZWFzb24YAyABKAlCCbpIBnIEGKCcARIbCghldmlkZW5jZRgEIAEoCUIJukgGcgQYoJwBEhwKCXJhdGlvbmFsZRgFIAEoCUIJukgGcgQYoJwBEkgKE25lYXJlc3RfYWx0ZXJuYXRpdmUYBiABKAsyKy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLkZpZWxkVmFsdWUSLQoabmVhcmVzdF9hbHRlcm5hdGl2ZV9yZWFzb24YByABKAlCCbpIBnIEGKCcARI9Cgpjb25maWRlbmNlGAggASgOMh8udGhlbWlzLnN2Y3Y0Lm1vZGVscy5Db25maWRlbmNlQgi6SAWCAQIQARIiCg9jb25maWRlbmNlX25vdGUYCSABKAlCCbpIBnIEGKCcASKsAQoRUm91dGluZ0Fzc2Vzc21lbnQSSAoRY29uc2VxdWVuY2VfY2xhc3MYAiABKA4yIy50aGVtaXMuZXZpZGVuY2UubW9kZWxzLkNvbnNlcXVlbmNlQgi6SAWCAQIQARIcCglyYXRpb25hbGUYBSABKAlCCbpIBnIEGKCcAUoECAEQAkoECAMQBEoECAQQBVILaW5oZXJpdGFuY2VSBmVudGl0eVIIbW9uZG9faWQiqAEKEVZlcmRpY3RBc3Nlc3NtZW50EkUKDmNsYXNzaWZpY2F0aW9uGAEgASgOMiMudGhlbWlzLnN2Y3Y0Lm1vZGVscy5DbGFzc2lmaWNhdGlvbkIIukgFggECEAESHAoJcmF0aW9uYWxlGAIgASgJQgm6SAZyBBignAESLgoTY2xhc3NfZGV0ZXJtaW5hdGl2ZRgDIAMoCUIRukgOkgELEEAiB3IFEAEYgAEihgIKCkFzc2Vzc21lbnQSRwoId29ya2Zsb3cYASABKAsyMy50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLldvcmtmbG93QXNzZXNzbWVudEgAEkUKB3JvdXRpbmcYAiABKAsyMi50aGVtaXMuY3VyYXRpb24ubW9kZWxzLmN1cmF0aW9uLlJvdXRpbmdBc3Nlc3NtZW50SAASRQoHdmVyZGljdBgDIAEoCzIyLnRoZW1pcy5jdXJhdGlvbi5tb2RlbHMuY3VyYXRpb24uVmVyZGljdEFzc2Vzc21lbnRIAEINCgRraW5kEgW6SAIIAUoECAQQBVIMY2FzZV9jb250ZXh0YgZwcm90bzM", [file_buf_validate_validate, file_themis_evidence_models_evidence, file_themis_svcv4_models_svcv4]);
 
 /**
  * One control's value, and the framework cell it answers. Uniform across the two shapes the
@@ -150,76 +150,14 @@ export const WorkflowAssessmentSchema: GenMessage<WorkflowAssessment> = /*@__PUR
   messageDesc(file_themis_curation_models_curation, 1);
 
 /**
- * The case the curator worked from: the facts that bear on several workflows at once, recorded
- * once here rather than retyped into each workflow's evidence.
- *
- * Named slots of prose, not a data model, so two curators put the same fact in the same place;
- * `other` takes what the named slots do not cover.
- *
- * @generated from message themis.curation.models.curation.CaseAssessment
- */
-export type CaseAssessment = Message<"themis.curation.models.curation.CaseAssessment"> & {
-  /**
-   * The presentation, in the referring clinician's words.
-   *
-   * @generated from field: string proband_narrative = 1;
-   */
-  probandNarrative: string;
-
-  /**
-   * What was sequenced and analysed — the input to "all relevant genes for disorder tested".
-   *
-   * @generated from field: string testing_performed = 2;
-   */
-  testingPerformed: string;
-
-  /**
-   * A variant observed with this one: its identity, its phase, how the phase was established, and
-   * its own classification. Referenced by the affected, unaffected and alternate-cause workflows
-   * alike, which is why it is here rather than in any one of them.
-   *
-   * @generated from field: string co_observed_variant = 3;
-   */
-  coObservedVariant: string;
-
-  /**
-   * Family observations: who carries it, who is affected, how the relationships were confirmed.
-   *
-   * @generated from field: string segregation = 4;
-   */
-  segregation: string;
-
-  /**
-   * Functional and RNA assays, their controls and their calibration.
-   *
-   * @generated from field: string assays = 5;
-   */
-  assays: string;
-
-  /**
-   * Anything the named slots do not cover.
-   *
-   * @generated from field: string other = 6;
-   */
-  other: string;
-};
-
-/**
- * Describes the message themis.curation.models.curation.CaseAssessment.
- * Use `create(CaseAssessmentSchema)` to create a new message.
- */
-export const CaseAssessmentSchema: GenMessage<CaseAssessment> = /*@__PURE__*/
-  messageDesc(file_themis_curation_models_curation, 2);
-
-/**
  * The routing the curator states before any workflow applies. A run that routes differently is not
  * disagreeing about codes, so this is recorded and reasoned about in its own right.
  *
- * The registration states the question, the entity with its disease and its mode of inheritance,
- * and the curator answers it without restating it (curation-surface.md). The curator's own
- * statements here are the consequence class, where UNSPECIFIED means not yet chosen and the
- * workflows it routes between do not apply, and the rationale, which is also where a curator argues
- * that another entity is the question to ask.
+ * The registration states the question: the entity with its disease and its mode of inheritance,
+ * and the clinical context. The curator answers it without restating it (curation-surface.md). The
+ * curator's own statements here are the consequence class, where UNSPECIFIED means not yet chosen
+ * and the workflows it routes between do not apply, and the rationale, which is also where a curator
+ * argues that the registered question is the wrong one to ask.
  *
  * @generated from message themis.curation.models.curation.RoutingAssessment
  */
@@ -240,7 +178,7 @@ export type RoutingAssessment = Message<"themis.curation.models.curation.Routing
  * Use `create(RoutingAssessmentSchema)` to create a new message.
  */
 export const RoutingAssessmentSchema: GenMessage<RoutingAssessment> = /*@__PURE__*/
-  messageDesc(file_themis_curation_models_curation, 3);
+  messageDesc(file_themis_curation_models_curation, 2);
 
 /**
  * The curator's classification and its reasoning. No total and no band: the class is stated, not
@@ -273,7 +211,7 @@ export type VerdictAssessment = Message<"themis.curation.models.curation.Verdict
  * Use `create(VerdictAssessmentSchema)` to create a new message.
  */
 export const VerdictAssessmentSchema: GenMessage<VerdictAssessment> = /*@__PURE__*/
-  messageDesc(file_themis_curation_models_curation, 4);
+  messageDesc(file_themis_curation_models_curation, 3);
 
 /**
  * One stored row of a worksheet, in either tier. The `workflow_id` column addresses it; this
@@ -303,12 +241,6 @@ export type Assessment = Message<"themis.curation.models.curation.Assessment"> &
      */
     value: VerdictAssessment;
     case: "verdict";
-  } | {
-    /**
-     * @generated from field: themis.curation.models.curation.CaseAssessment case_context = 4;
-     */
-    value: CaseAssessment;
-    case: "caseContext";
   } | { case: undefined; value?: undefined };
 };
 
@@ -317,5 +249,5 @@ export type Assessment = Message<"themis.curation.models.curation.Assessment"> &
  * Use `create(AssessmentSchema)` to create a new message.
  */
 export const AssessmentSchema: GenMessage<Assessment> = /*@__PURE__*/
-  messageDesc(file_themis_curation_models_curation, 5);
+  messageDesc(file_themis_curation_models_curation, 4);
 

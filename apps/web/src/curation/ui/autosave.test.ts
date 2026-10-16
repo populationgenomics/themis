@@ -11,7 +11,7 @@ import { Autosave, type SaveState } from "./autosave";
 
 const IDLE_MS = 20;
 const RETRY_MS = 20;
-const CASE = "case";
+const VERDICT = "verdict";
 const WORKFLOW = "pop_frq";
 const ROUTING = "routing";
 
@@ -19,7 +19,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function prose(text: string): Assessment {
   return create(AssessmentSchema, {
-    kind: { case: "caseContext", value: { other: text } },
+    kind: { case: "verdict", value: { rationale: text } },
   });
 }
 
@@ -40,9 +40,9 @@ class Harness {
         if (delay !== undefined) await sleep(delay);
         if (this.down.has(sectionId)) throw new Error("503");
         const decoded = JSON.parse(payload) as {
-          caseContext: { other: string };
+          verdict: { rationale: string };
         };
-        this.writes.push({ sectionId, text: decoded.caseContext.other });
+        this.writes.push({ sectionId, text: decoded.verdict.rationale });
       },
       onState: (state) => this.states.push(state),
       idleMs: IDLE_MS,
@@ -64,31 +64,31 @@ class Harness {
 describe("typing", () => {
   test("several edits inside the idle window yield one write, of the last", async () => {
     const h = new Harness();
-    h.autosave.schedule(CASE, prose("a"));
-    h.autosave.schedule(CASE, prose("ab"));
-    h.autosave.schedule(CASE, prose("abc"));
+    h.autosave.schedule(VERDICT, prose("a"));
+    h.autosave.schedule(VERDICT, prose("ab"));
+    h.autosave.schedule(VERDICT, prose("abc"));
     await sleep(IDLE_MS * 3);
-    expect(h.texts(CASE)).toEqual(["abc"]);
+    expect(h.texts(VERDICT)).toEqual(["abc"]);
     expect(h.lastState).toBe("saved");
   });
 
   test("leaving the field writes at once, and the idle timer does not write again", async () => {
     const h = new Harness();
-    h.autosave.schedule(CASE, prose("a"));
-    h.autosave.flush(CASE);
+    h.autosave.schedule(VERDICT, prose("a"));
+    h.autosave.flush(VERDICT);
     await sleep(1);
-    expect(h.texts(CASE)).toEqual(["a"]);
+    expect(h.texts(VERDICT)).toEqual(["a"]);
     await sleep(IDLE_MS * 3);
-    expect(h.texts(CASE)).toEqual(["a"]);
+    expect(h.texts(VERDICT)).toEqual(["a"]);
   });
 
   test("a section the server already holds is not rewritten", async () => {
     // The stored payload in the server's own shape: proto-JSON, as the page hands it over.
     const h = new Harness({
-      [CASE]: JSON.stringify({ caseContext: { other: "a" } }),
+      [VERDICT]: JSON.stringify({ verdict: { rationale: "a" } }),
     });
-    await h.autosave.commit(CASE, prose("a"));
-    h.autosave.flush(CASE);
+    await h.autosave.commit(VERDICT, prose("a"));
+    h.autosave.flush(VERDICT);
     await sleep(1);
     expect(h.writes).toEqual([]);
     expect(h.states).toEqual([]);
@@ -115,12 +115,12 @@ describe("a write that fails", () => {
 
   test("is saved again once the section is reverted to what the server holds", async () => {
     const h = new Harness({
-      [CASE]: JSON.stringify({ caseContext: { other: "a" } }),
+      [VERDICT]: JSON.stringify({ verdict: { rationale: "a" } }),
     });
-    h.down.add(CASE);
-    await h.autosave.commit(CASE, prose("ab"));
+    h.down.add(VERDICT);
+    await h.autosave.commit(VERDICT, prose("ab"));
     expect(h.lastState).toBe("failed");
-    await h.autosave.commit(CASE, prose("a"));
+    await h.autosave.commit(VERDICT, prose("a"));
     expect(h.lastState).toBe("saved");
     // No retry left armed: nothing writes after the revert.
     await sleep(RETRY_MS * 3);
@@ -129,12 +129,12 @@ describe("a write that fails", () => {
 
   test("is retried with the newest value, never the one that failed", async () => {
     const h = new Harness();
-    h.down.add(CASE);
-    await h.autosave.commit(CASE, prose("a"));
-    h.autosave.schedule(CASE, prose("ab"));
-    h.down.delete(CASE);
+    h.down.add(VERDICT);
+    await h.autosave.commit(VERDICT, prose("a"));
+    h.autosave.schedule(VERDICT, prose("ab"));
+    h.down.delete(VERDICT);
     await sleep(Math.max(IDLE_MS, RETRY_MS) * 3);
-    expect(h.texts(CASE)).toEqual(["ab"]);
+    expect(h.texts(VERDICT)).toEqual(["ab"]);
     expect(h.lastState).toBe("saved");
   });
 });
@@ -143,10 +143,10 @@ describe("writes in flight", () => {
   test("to one section land in the order they were made", async () => {
     const h = new Harness();
     h.delays.push(30, 0);
-    void h.autosave.commit(CASE, prose("a"));
-    void h.autosave.commit(CASE, prose("ab"));
+    void h.autosave.commit(VERDICT, prose("a"));
+    void h.autosave.commit(VERDICT, prose("ab"));
     await sleep(60);
-    expect(h.texts(CASE)).toEqual(["a", "ab"]);
+    expect(h.texts(VERDICT)).toEqual(["a", "ab"]);
   });
 
   test("read as saving until every one has landed", async () => {
@@ -165,10 +165,10 @@ describe("writes in flight", () => {
 describe("settling", () => {
   test("lands every pending value before it resolves", async () => {
     const h = new Harness();
-    h.autosave.schedule(CASE, prose("a"));
+    h.autosave.schedule(VERDICT, prose("a"));
     h.autosave.schedule(WORKFLOW, prose("x"));
     await h.autosave.settle();
-    expect(h.texts(CASE)).toEqual(["a"]);
+    expect(h.texts(VERDICT)).toEqual(["a"]);
     expect(h.texts(WORKFLOW)).toEqual(["x"]);
     expect(h.lastState).toBe("saved");
   });
@@ -176,27 +176,27 @@ describe("settling", () => {
   test("waits for a write already in flight", async () => {
     const h = new Harness();
     h.delays.push(30);
-    void h.autosave.commit(CASE, prose("a"));
+    void h.autosave.commit(VERDICT, prose("a"));
     await h.autosave.settle();
-    expect(h.texts(CASE)).toEqual(["a"]);
+    expect(h.texts(VERDICT)).toEqual(["a"]);
   });
 
   test("rejects while a section is still failing, naming it, and leaves its retry armed", async () => {
     const h = new Harness();
-    h.down.add(CASE);
-    h.autosave.schedule(CASE, prose("a"));
-    await expect(h.autosave.settle()).rejects.toThrow(/not saved: case/);
+    h.down.add(VERDICT);
+    h.autosave.schedule(VERDICT, prose("a"));
+    await expect(h.autosave.settle()).rejects.toThrow(/not saved: verdict/);
     expect(h.lastState).toBe("failed");
-    h.down.delete(CASE);
+    h.down.delete(VERDICT);
     await sleep(RETRY_MS * 3);
-    expect(h.texts(CASE)).toEqual(["a"]);
+    expect(h.texts(VERDICT)).toEqual(["a"]);
     expect(h.lastState).toBe("saved");
   });
 });
 
 test("disposal stops the timers", async () => {
   const h = new Harness();
-  h.autosave.schedule(CASE, prose("a"));
+  h.autosave.schedule(VERDICT, prose("a"));
   h.autosave.dispose();
   await sleep(IDLE_MS * 3);
   expect(h.writes).toEqual([]);

@@ -1,7 +1,12 @@
 import { ClientInputError } from "@/server/errors";
 import { optionalString, requiredString } from "./http";
 import { MODES, modeFromName, modeName } from "./mode";
-import { MONDO_ID, type NewVariant } from "./model";
+import {
+  CLINICAL_CONTEXT_MAX_LENGTH,
+  clinicalContextLength,
+  MONDO_ID,
+  type NewVariant,
+} from "./model";
 import { CLINGEN_ALLELE_ID } from "./resolver";
 
 /** A register request's body as the variant it registers. Throws `ClientInputError`, naming the
@@ -29,6 +34,14 @@ export function parseRegistration(body: Record<string, unknown>): NewVariant {
       `${named} is not a mode of inheritance: expected one of ${MODES.map((m) => modeName(m.mode)).join(", ")}`,
     );
   }
+  // Trimmed as a run's own is: the whitespace around the prose states nothing.
+  const clinicalContext = requiredString(body, "clinicalContext").trim();
+  const length = clinicalContextLength(clinicalContext);
+  if (length > CLINICAL_CONTEXT_MAX_LENGTH) {
+    throw new ClientInputError(
+      `clinicalContext is ${length} characters; a registration states at most ${CLINICAL_CONTEXT_MAX_LENGTH}`,
+    );
+  }
   return {
     gene: requiredString(body, "gene").trim(),
     // Trimmed because both are part of the uniqueness key: a trailing space would register the same
@@ -39,5 +52,6 @@ export function parseRegistration(body: Record<string, unknown>): NewVariant {
     diseaseLabel: requiredString(body, "diseaseLabel"),
     mondoId,
     modeOfInheritance,
+    clinicalContext,
   };
 }

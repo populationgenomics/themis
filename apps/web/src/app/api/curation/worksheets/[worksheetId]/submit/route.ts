@@ -8,8 +8,8 @@ import {
 import { ClientInputError } from "@/server/errors";
 
 /** POST /api/curation/worksheets/[worksheetId]/submit — commit the drafts of the workflows the
- *  worksheet shows, named in `workflowIds`, as one submission; the worksheet's three sections always
- *  go with them.
+ *  worksheet shows, named in `workflowIds`, as one submission; the worksheet's two sections, the
+ *  routing and the verdict, always go with them.
  *
  *  Transactional in the store: either every one of those drafts lands under the new submission or
  *  none does. Refused where none of them holds an answer. */

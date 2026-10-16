@@ -12,7 +12,7 @@ import type {
   WorksheetProgress,
 } from "./model";
 import type { ResolvedAllele, VariantResolver } from "./resolver";
-import { CASE_ID, ROUTING_ID, VERDICT_ID } from "./sections";
+import { ROUTING_ID, VERDICT_ID } from "./sections";
 import type { CurationStore } from "./store";
 
 // The one place a caller's verified email becomes permission to read or write something. Every
@@ -132,7 +132,7 @@ export class CurationAccess {
     await this.store.putDraft(worksheetId, entry);
   }
 
-  /** Commit the drafts of the workflows the worksheet shows, and of its three sections, as one
+  /** Commit the drafts of the workflows the worksheet shows, and of its two sections, as one
    *  submission. `shownWorkflowIds` is what the routing put on the curator's screen: a draft for a
    *  workflow the routing has since hidden stays a draft, because the curator cannot see what it
    *  would submit.
@@ -147,7 +147,7 @@ export class CurationAccess {
     shownWorkflowIds: readonly string[],
   ): Promise<Submission> {
     await this.ownWorksheet(worksheetId);
-    const submitted = [...shownWorkflowIds, CASE_ID, ROUTING_ID, VERDICT_ID];
+    const submitted = [...shownWorkflowIds, ROUTING_ID, VERDICT_ID];
     const unreasoned: string[] = [];
     for (const entry of await this.store.drafts(worksheetId)) {
       if (!submitted.includes(entry.workflowId)) continue;
@@ -205,6 +205,12 @@ export class CurationAccess {
   async listVariants(): Promise<Variant[]> {
     this.requireManager("listing variants");
     return this.store.listVariants();
+  }
+
+  /** One registered variant. Manager-only, as `listVariants` is. */
+  async getVariant(variantId: string): Promise<Variant | undefined> {
+    this.requireManager("reading a variant");
+    return this.store.getVariant(variantId);
   }
 
   async createVariant(variant: NewVariant): Promise<Variant> {

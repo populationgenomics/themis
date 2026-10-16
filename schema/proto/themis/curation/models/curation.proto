@@ -73,41 +73,14 @@ message WorkflowAssessment {
   string confidence_note = 9 [(buf.validate.field).string.max_len = 20000];
 }
 
-// The case the curator worked from: the facts that bear on several workflows at once, recorded
-// once here rather than retyped into each workflow's evidence.
-//
-// Named slots of prose, not a data model, so two curators put the same fact in the same place;
-// `other` takes what the named slots do not cover.
-message CaseAssessment {
-  // The presentation, in the referring clinician's words.
-  string proband_narrative = 1 [(buf.validate.field).string.max_len = 20000];
-
-  // What was sequenced and analysed — the input to "all relevant genes for disorder tested".
-  string testing_performed = 2 [(buf.validate.field).string.max_len = 20000];
-
-  // A variant observed with this one: its identity, its phase, how the phase was established, and
-  // its own classification. Referenced by the affected, unaffected and alternate-cause workflows
-  // alike, which is why it is here rather than in any one of them.
-  string co_observed_variant = 3 [(buf.validate.field).string.max_len = 20000];
-
-  // Family observations: who carries it, who is affected, how the relationships were confirmed.
-  string segregation = 4 [(buf.validate.field).string.max_len = 20000];
-
-  // Functional and RNA assays, their controls and their calibration.
-  string assays = 5 [(buf.validate.field).string.max_len = 20000];
-
-  // Anything the named slots do not cover.
-  string other = 6 [(buf.validate.field).string.max_len = 20000];
-}
-
 // The routing the curator states before any workflow applies. A run that routes differently is not
 // disagreeing about codes, so this is recorded and reasoned about in its own right.
 //
-// The registration states the question, the entity with its disease and its mode of inheritance,
-// and the curator answers it without restating it (curation-surface.md). The curator's own
-// statements here are the consequence class, where UNSPECIFIED means not yet chosen and the
-// workflows it routes between do not apply, and the rationale, which is also where a curator argues
-// that another entity is the question to ask.
+// The registration states the question: the entity with its disease and its mode of inheritance,
+// and the clinical context. The curator answers it without restating it (curation-surface.md). The
+// curator's own statements here are the consequence class, where UNSPECIFIED means not yet chosen
+// and the workflows it routes between do not apply, and the rationale, which is also where a curator
+// argues that the registered question is the wrong one to ask.
 message RoutingAssessment {
   reserved 1, 3, 4;
   reserved "inheritance", "entity", "mondo_id";
@@ -138,12 +111,14 @@ message VerdictAssessment {
 // One stored row of a worksheet, in either tier. The `workflow_id` column addresses it; this
 // message carries what was recorded there.
 message Assessment {
+  reserved 4;
+  reserved "case_context";
+
   oneof kind {
     option (buf.validate.oneof).required = true;
 
     WorkflowAssessment workflow = 1;
     RoutingAssessment routing = 2;
     VerdictAssessment verdict = 3;
-    CaseAssessment case_context = 4;
   }
 }

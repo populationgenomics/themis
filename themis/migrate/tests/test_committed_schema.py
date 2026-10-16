@@ -29,13 +29,14 @@ _DB_USERS = {
 
 _VARIANT = (
     'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
-    " created_by) VALUES (%s, 'FBN1', %s, %s, 'Marfan syndrome', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT',"
-    " 'manager@example.org')"
+    " clinical_context, created_by) VALUES (%s, 'FBN1', %s, %s, 'Marfan syndrome', 'MONDO:0007947',"
+    " 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
 )
 
 _ENTITY = (
     'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
-    " created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', %s, %s, 'manager@example.org')"
+    " clinical_context, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', %s, %s,"
+    " 'Tall stature.', 'manager@example.org')"
 )
 
 _VARIANT_WITH_CLINICAL_CONTEXT = (
@@ -140,8 +141,8 @@ def test_a_variant_left_without_a_mondo_term_is_refused(migrated: pg8000.dbapi.C
     with pytest.raises(pg8000.dbapi.DatabaseError, match='mondo_id'), contextlib.closing(migrated.cursor()) as cursor:
         cursor.execute(
             'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mode_of_inheritance,'
-            " created_by) VALUES ('probe', 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
-            " 'AUTOSOMAL_DOMINANT', 'manager@example.org')"
+            " clinical_context, created_by) VALUES ('probe', 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
+            " 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
         )
     migrated.rollback()
 
@@ -187,3 +188,12 @@ def test_a_clinical_context_within_the_bound_is_accepted(
         cursor.execute(_VARIANT_WITH_CLINICAL_CONTEXT, ('probe', clinical_context))
         cursor.execute('SELECT clinical_context FROM curation.variants WHERE id = %s', ('probe',))
         assert list(cursor.fetchall()) == [[clinical_context]]
+
+
+def test_a_variant_is_registered_with_a_clinical_context(migrated: pg8000.dbapi.Connection) -> None:
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='clinical_context'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_VARIANT_WITH_CLINICAL_CONTEXT, ('probe', None))
+    migrated.rollback()

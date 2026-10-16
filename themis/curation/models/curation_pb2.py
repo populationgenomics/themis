@@ -27,7 +27,7 @@ from themis.evidence.models import evidence_pb2 as themis_dot_evidence_dot_model
 from themis.svcv4.models import svcv4_pb2 as themis_dot_svcv4_dot_models_dot_svcv4__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/curation/models/curation.proto\x12\x1fthemis.curation.models.curation\x1a\x1b\x62uf/validate/validate.proto\x1a%themis/evidence/models/evidence.proto\x1a\x1fthemis/svcv4/models/svcv4.proto\"y\n\nFieldValue\x12\x1c\n\x08\x66ield_id\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01\x12\x19\n\x07\x63\x65ll_id\x18\x02 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01\x12\x19\n\x05label\x18\x03 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x10\x12\x17\n\x05value\x18\x04 \x01(\tB\x08\xbaH\x05r\x03\x18\x80 \"\xd5\x03\n\x12WorkflowAssessment\x12?\n\x06status\x18\x01 \x01(\x0e\x32%.themis.svcv4.models.AssessmentStatusB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x45\n\x06\x66ields\x18\x02 \x03(\x0b\x32+.themis.curation.models.curation.FieldValueB\x08\xbaH\x05\x92\x01\x02\x10@\x12 \n\rstatus_reason\x18\x03 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x1b\n\x08\x65vidence\x18\x04 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x1c\n\trationale\x18\x05 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12H\n\x13nearest_alternative\x18\x06 \x01(\x0b\x32+.themis.curation.models.curation.FieldValue\x12-\n\x1anearest_alternative_reason\x18\x07 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12=\n\nconfidence\x18\x08 \x01(\x0e\x32\x1f.themis.svcv4.models.ConfidenceB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\"\n\x0f\x63onfidence_note\x18\t \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\"\xd9\x01\n\x0e\x43\x61seAssessment\x12$\n\x11proband_narrative\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12$\n\x11testing_performed\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12&\n\x13\x63o_observed_variant\x18\x03 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x1e\n\x0bsegregation\x18\x04 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x19\n\x06\x61ssays\x18\x05 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x18\n\x05other\x18\x06 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\"\xac\x01\n\x11RoutingAssessment\x12H\n\x11\x63onsequence_class\x18\x02 \x01(\x0e\x32#.themis.evidence.models.ConsequenceB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x1c\n\trationale\x18\x05 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\x0binheritanceR\x06\x65ntityR\x08mondo_id\"\xa8\x01\n\x11VerdictAssessment\x12\x45\n\x0e\x63lassification\x18\x01 \x01(\x0e\x32#.themis.svcv4.models.ClassificationB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x1c\n\trationale\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12.\n\x13\x63lass_determinative\x18\x03 \x03(\tB\x11\xbaH\x0e\x92\x01\x0b\x10@\"\x07r\x05\x10\x01\x18\x80\x01\"\xbb\x02\n\nAssessment\x12G\n\x08workflow\x18\x01 \x01(\x0b\x32\x33.themis.curation.models.curation.WorkflowAssessmentH\x00\x12\x45\n\x07routing\x18\x02 \x01(\x0b\x32\x32.themis.curation.models.curation.RoutingAssessmentH\x00\x12\x45\n\x07verdict\x18\x03 \x01(\x0b\x32\x32.themis.curation.models.curation.VerdictAssessmentH\x00\x12G\n\x0c\x63\x61se_context\x18\x04 \x01(\x0b\x32/.themis.curation.models.curation.CaseAssessmentH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/curation/models/curation.proto\x12\x1fthemis.curation.models.curation\x1a\x1b\x62uf/validate/validate.proto\x1a%themis/evidence/models/evidence.proto\x1a\x1fthemis/svcv4/models/svcv4.proto\"y\n\nFieldValue\x12\x1c\n\x08\x66ield_id\x18\x01 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x01\x12\x19\n\x07\x63\x65ll_id\x18\x02 \x01(\tB\x08\xbaH\x05r\x03\x18\x80\x01\x12\x19\n\x05label\x18\x03 \x01(\tB\n\xbaH\x07r\x05\x10\x01\x18\x80\x10\x12\x17\n\x05value\x18\x04 \x01(\tB\x08\xbaH\x05r\x03\x18\x80 \"\xd5\x03\n\x12WorkflowAssessment\x12?\n\x06status\x18\x01 \x01(\x0e\x32%.themis.svcv4.models.AssessmentStatusB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x45\n\x06\x66ields\x18\x02 \x03(\x0b\x32+.themis.curation.models.curation.FieldValueB\x08\xbaH\x05\x92\x01\x02\x10@\x12 \n\rstatus_reason\x18\x03 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x1b\n\x08\x65vidence\x18\x04 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12\x1c\n\trationale\x18\x05 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12H\n\x13nearest_alternative\x18\x06 \x01(\x0b\x32+.themis.curation.models.curation.FieldValue\x12-\n\x1anearest_alternative_reason\x18\x07 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12=\n\nconfidence\x18\x08 \x01(\x0e\x32\x1f.themis.svcv4.models.ConfidenceB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\"\n\x0f\x63onfidence_note\x18\t \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\"\xac\x01\n\x11RoutingAssessment\x12H\n\x11\x63onsequence_class\x18\x02 \x01(\x0e\x32#.themis.evidence.models.ConsequenceB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x1c\n\trationale\x18\x05 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01J\x04\x08\x01\x10\x02J\x04\x08\x03\x10\x04J\x04\x08\x04\x10\x05R\x0binheritanceR\x06\x65ntityR\x08mondo_id\"\xa8\x01\n\x11VerdictAssessment\x12\x45\n\x0e\x63lassification\x18\x01 \x01(\x0e\x32#.themis.svcv4.models.ClassificationB\x08\xbaH\x05\x82\x01\x02\x10\x01\x12\x1c\n\trationale\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x18\xa0\x9c\x01\x12.\n\x13\x63lass_determinative\x18\x03 \x03(\tB\x11\xbaH\x0e\x92\x01\x0b\x10@\"\x07r\x05\x10\x01\x18\x80\x01\"\x86\x02\n\nAssessment\x12G\n\x08workflow\x18\x01 \x01(\x0b\x32\x33.themis.curation.models.curation.WorkflowAssessmentH\x00\x12\x45\n\x07routing\x18\x02 \x01(\x0b\x32\x32.themis.curation.models.curation.RoutingAssessmentH\x00\x12\x45\n\x07verdict\x18\x03 \x01(\x0b\x32\x32.themis.curation.models.curation.VerdictAssessmentH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01J\x04\x08\x04\x10\x05R\x0c\x63\x61se_contextb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -58,18 +58,6 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_WORKFLOWASSESSMENT'].fields_by_name['confidence']._serialized_options = b'\272H\005\202\001\002\020\001'
   _globals['_WORKFLOWASSESSMENT'].fields_by_name['confidence_note']._loaded_options = None
   _globals['_WORKFLOWASSESSMENT'].fields_by_name['confidence_note']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['proband_narrative']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['proband_narrative']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['testing_performed']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['testing_performed']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['co_observed_variant']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['co_observed_variant']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['segregation']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['segregation']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['assays']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['assays']._serialized_options = b'\272H\006r\004\030\240\234\001'
-  _globals['_CASEASSESSMENT'].fields_by_name['other']._loaded_options = None
-  _globals['_CASEASSESSMENT'].fields_by_name['other']._serialized_options = b'\272H\006r\004\030\240\234\001'
   _globals['_ROUTINGASSESSMENT'].fields_by_name['consequence_class']._loaded_options = None
   _globals['_ROUTINGASSESSMENT'].fields_by_name['consequence_class']._serialized_options = b'\272H\005\202\001\002\020\001'
   _globals['_ROUTINGASSESSMENT'].fields_by_name['rationale']._loaded_options = None
@@ -86,12 +74,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_FIELDVALUE']._serialized_end=296
   _globals['_WORKFLOWASSESSMENT']._serialized_start=299
   _globals['_WORKFLOWASSESSMENT']._serialized_end=768
-  _globals['_CASEASSESSMENT']._serialized_start=771
-  _globals['_CASEASSESSMENT']._serialized_end=988
-  _globals['_ROUTINGASSESSMENT']._serialized_start=991
-  _globals['_ROUTINGASSESSMENT']._serialized_end=1163
-  _globals['_VERDICTASSESSMENT']._serialized_start=1166
-  _globals['_VERDICTASSESSMENT']._serialized_end=1334
-  _globals['_ASSESSMENT']._serialized_start=1337
-  _globals['_ASSESSMENT']._serialized_end=1652
+  _globals['_ROUTINGASSESSMENT']._serialized_start=771
+  _globals['_ROUTINGASSESSMENT']._serialized_end=943
+  _globals['_VERDICTASSESSMENT']._serialized_start=946
+  _globals['_VERDICTASSESSMENT']._serialized_end=1114
+  _globals['_ASSESSMENT']._serialized_start=1117
+  _globals['_ASSESSMENT']._serialized_end=1379
 # @@protoc_insertion_point(module_scope)

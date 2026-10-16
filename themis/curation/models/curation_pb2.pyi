@@ -43,22 +43,6 @@ class WorkflowAssessment(_message.Message):
     confidence_note: str
     def __init__(self, status: _Optional[_Union[_svcv4_pb2.AssessmentStatus, str]] = ..., fields: _Optional[_Iterable[_Union[FieldValue, _Mapping]]] = ..., status_reason: _Optional[str] = ..., evidence: _Optional[str] = ..., rationale: _Optional[str] = ..., nearest_alternative: _Optional[_Union[FieldValue, _Mapping]] = ..., nearest_alternative_reason: _Optional[str] = ..., confidence: _Optional[_Union[_svcv4_pb2.Confidence, str]] = ..., confidence_note: _Optional[str] = ...) -> None: ...
 
-class CaseAssessment(_message.Message):
-    __slots__ = ("proband_narrative", "testing_performed", "co_observed_variant", "segregation", "assays", "other")
-    PROBAND_NARRATIVE_FIELD_NUMBER: _ClassVar[int]
-    TESTING_PERFORMED_FIELD_NUMBER: _ClassVar[int]
-    CO_OBSERVED_VARIANT_FIELD_NUMBER: _ClassVar[int]
-    SEGREGATION_FIELD_NUMBER: _ClassVar[int]
-    ASSAYS_FIELD_NUMBER: _ClassVar[int]
-    OTHER_FIELD_NUMBER: _ClassVar[int]
-    proband_narrative: str
-    testing_performed: str
-    co_observed_variant: str
-    segregation: str
-    assays: str
-    other: str
-    def __init__(self, proband_narrative: _Optional[str] = ..., testing_performed: _Optional[str] = ..., co_observed_variant: _Optional[str] = ..., segregation: _Optional[str] = ..., assays: _Optional[str] = ..., other: _Optional[str] = ...) -> None: ...
-
 class RoutingAssessment(_message.Message):
     __slots__ = ("consequence_class", "rationale")
     CONSEQUENCE_CLASS_FIELD_NUMBER: _ClassVar[int]
@@ -78,13 +62,11 @@ class VerdictAssessment(_message.Message):
     def __init__(self, classification: _Optional[_Union[_svcv4_pb2.Classification, str]] = ..., rationale: _Optional[str] = ..., class_determinative: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Assessment(_message.Message):
-    __slots__ = ("workflow", "routing", "verdict", "case_context")
+    __slots__ = ("workflow", "routing", "verdict")
     WORKFLOW_FIELD_NUMBER: _ClassVar[int]
     ROUTING_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
-    CASE_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     workflow: WorkflowAssessment
     routing: RoutingAssessment
     verdict: VerdictAssessment
-    case_context: CaseAssessment
-    def __init__(self, workflow: _Optional[_Union[WorkflowAssessment, _Mapping]] = ..., routing: _Optional[_Union[RoutingAssessment, _Mapping]] = ..., verdict: _Optional[_Union[VerdictAssessment, _Mapping]] = ..., case_context: _Optional[_Union[CaseAssessment, _Mapping]] = ...) -> None: ...
+    def __init__(self, workflow: _Optional[_Union[WorkflowAssessment, _Mapping]] = ..., routing: _Optional[_Union[RoutingAssessment, _Mapping]] = ..., verdict: _Optional[_Union[VerdictAssessment, _Mapping]] = ...) -> None: ...

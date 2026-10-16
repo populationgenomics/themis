@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import {
   type Assessment,
   AssessmentSchema,
-  type CaseAssessment,
   type FieldValue,
   type RoutingAssessment,
   type VerdictAssessment,
@@ -17,11 +16,12 @@ import {
   Classification,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { consequenceLabel } from "../consequence";
-import { CASE_ID, ROUTING_ID, VERDICT_ID } from "../sections";
+import { ROUTING_ID, VERDICT_ID } from "../sections";
 import { WORKFLOWS_VERSION } from "../version";
 import { ALL_WORKFLOWS, workflowById } from "../workflows/registry";
 import type { WorkflowDef } from "../workflows/types";
-import { CASE_FIELDS, classificationLabel } from "./worksheet";
+import { ClinicalContextPanel } from "./clinical-context";
+import { classificationLabel } from "./worksheet";
 
 // The sections of the comparison page (app/curation/compare). A client module because the workflow
 // registry is one: its workflows carry their bodies, which a server component cannot import.
@@ -34,18 +34,16 @@ export interface CuratorAnswers {
   entries: Record<string, JsonValue>;
 }
 
-/** One curator's submission, split into the worksheet's three sections and its workflows. */
+/** One curator's submission, split into the worksheet's two sections and its workflows. */
 export interface Submitted {
   curator: string;
   workflowsVersion: string;
-  caseContext?: CaseAssessment;
   routing?: RoutingAssessment;
   verdict?: VerdictAssessment;
   workflows: Map<string, WorkflowAssessment>;
 }
 
 const SECTION_KINDS: ReadonlyMap<string, Assessment["kind"]["case"]> = new Map([
-  [CASE_ID, "caseContext"],
   [ROUTING_ID, "routing"],
   [VERDICT_ID, "verdict"],
 ]);
@@ -68,9 +66,6 @@ export function decodeSubmitted(answers: CuratorAnswers): Submitted {
       );
     }
     switch (kind.case) {
-      case "caseContext":
-        submitted.caseContext = kind.value;
-        break;
       case "routing":
         submitted.routing = kind.value;
         break;
@@ -183,15 +178,26 @@ export function keyedByOccurrence(
   });
 }
 
-export function Comparison({ answers }: { answers: CuratorAnswers[] }) {
+export function Comparison({
+  clinicalContext,
+  answers,
+}: {
+  /** The registration's, which every curator answered from. */
+  clinicalContext: string;
+  answers: CuratorAnswers[];
+}) {
   const submitted = answers.map(decodeSubmitted);
   // Answers given against different transcriptions say so beside each curator's name: the reader
   // has to know a row's wording may have moved between them.
   const versioned = new Set(submitted.map((s) => s.workflowsVersion)).size > 1;
   return (
     <div className="space-y-4">
+      <ClinicalContextPanel
+        value={clinicalContext}
+        heading={<SectionTitle>Clinical context</SectionTitle>}
+        note="stated by the registration"
+      />
       <RoutingComparison submitted={submitted} versioned={versioned} />
-      <CaseComparison submitted={submitted} versioned={versioned} />
       {workflowOrder(submitted).map((workflowId) => (
         <WorkflowComparison
           key={workflowId}
@@ -348,38 +354,6 @@ function RoutingComparison({ submitted, versioned }: SectionProps) {
           )}
         </div>
       ))}
-    </ComparisonSection>
-  );
-}
-
-/** The facts each curator recorded once for several workflows, under the worksheet's slot names.
- *  No agreement is read: two curators citing the same facts in different words have not diverged. */
-function CaseComparison({ submitted, versioned }: SectionProps) {
-  return (
-    <ComparisonSection heading={<SectionTitle>The case</SectionTitle>}>
-      {submitted.map((s) => {
-        const { caseContext } = s;
-        const filled = CASE_FIELDS.filter(
-          ([key]) => caseContext !== undefined && caseContext[key] !== "",
-        );
-        return (
-          <div key={s.curator}>
-            <CuratorHeading submitted={s} versioned={versioned} />
-            {caseContext !== undefined && filled.length > 0 ? (
-              <div className="space-y-3">
-                {filled.map(([key, label]) => (
-                  <div key={key}>
-                    <Eyebrow>{label}</Eyebrow>
-                    <CuratorProse>{caseContext[key]}</CuratorProse>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <NothingRecorded />
-            )}
-          </div>
-        );
-      })}
     </ComparisonSection>
   );
 }

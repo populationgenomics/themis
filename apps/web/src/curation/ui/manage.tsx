@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 import { inlineMode, MODES, modeName } from "../mode";
+import { CLINICAL_CONTEXT_MAX_LENGTH, clinicalContextLength } from "../model";
 import type { ResolvedAllele } from "../resolver";
 import {
   VARIANT_STATUS_LABELS,
@@ -11,6 +12,7 @@ import {
   type VariantStatus,
   variantProgress,
 } from "../status";
+import { ClinicalContextText } from "./clinical-context";
 import {
   type SortBy,
   SortControl,
@@ -30,6 +32,7 @@ export interface VariantRow {
   diseaseLabel: string;
   mondoId: string;
   modeOfInheritance: ModeOfInheritance;
+  clinicalContext: string;
   rows: {
     curatorEmail: string;
     draftCount: number;
@@ -66,6 +69,11 @@ export function NewVariantForm() {
   const [retrieving, setRetrieving] = useState(false);
   const [resolved, setResolved] = useState<ResolvedAllele | null>(null);
   const [identity, setIdentity] = useState<FormIdentity>(BLANK_IDENTITY);
+  // Counted rather than capped with `maxLength`, which would cut a pasted referral's tail unseen.
+  const [clinicalContext, setClinicalContext] = useState("");
+  const contextLength = clinicalContextLength(clinicalContext);
+  const overLong = contextLength > CLINICAL_CONTEXT_MAX_LENGTH;
+  const contextId = useId();
 
   async function retrieve(caid: string): Promise<void> {
     setRetrieving(true);
@@ -154,8 +162,9 @@ export function NewVariantForm() {
       </h2>
       <p className="framework-voice mb-4 text-[13px] text-ink-muted">
         One variant against one disease entity, named by its MONDO term and its
-        mode of inheritance. Both curators of it answer this same question. A
-        disease the gene causes under two modes is two registrations.
+        mode of inheritance, in the clinical context of its referral. Both
+        curators of it answer this same question. A disease the gene causes
+        under two modes is two registrations.
       </p>
       <div className="mb-4 rounded-sm border border-line-row bg-surface-warm-panel p-3">
         <div className="flex flex-wrap items-end gap-2">
@@ -242,11 +251,50 @@ export function NewVariantForm() {
             ))}
           </select>
         </label>
+        <div className="sm:col-span-2">
+          <label htmlFor={contextId} className="field-eyebrow text-ink-label">
+            Clinical context
+          </label>
+          <p
+            id={`${contextId}-hint`}
+            className="framework-voice mt-0.5 text-[12px] text-ink-faint"
+          >
+            The referral's observations: presentation, testing, family, other
+            variants found. No assessments, frequencies, predictions or other
+            labs' classifications. De-identified: no name, date of birth or
+            record number. Curators and every classification run read it as
+            written, and it cannot be edited once registered.
+          </p>
+          <textarea
+            id={contextId}
+            aria-describedby={`${contextId}-hint ${contextId}-count`}
+            aria-invalid={overLong}
+            name="clinicalContext"
+            required
+            rows={4}
+            value={clinicalContext}
+            onChange={(e) => setClinicalContext(e.target.value)}
+            className="framework-voice mt-1 w-full aria-invalid:border-destructive resize-y rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13.5px] text-ink-body focus:border-ink-ghost focus:outline-none"
+          />
+          <p
+            id={`${contextId}-count`}
+            className={`framework-voice mt-0.5 text-[12px] ${overLong ? "text-destructive" : "text-ink-faint"}`}
+          >
+            {overLong
+              ? `${contextLength} characters; a registration states at most ${CLINICAL_CONTEXT_MAX_LENGTH}. Shorten it to register.`
+              : `${contextLength} of ${CLINICAL_CONTEXT_MAX_LENGTH} characters`}
+          </p>
+          <p aria-live="polite" className="sr-only">
+            {overLong
+              ? `The clinical context is over ${CLINICAL_CONTEXT_MAX_LENGTH} characters; shorten it to register.`
+              : ""}
+          </p>
+        </div>
       </div>
       <div className="mt-4 flex items-center gap-2">
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || overLong || contextLength === 0}
           className="framework-voice rounded-sm bg-primary px-3.5 py-1.5 text-[13.5px] text-primary-foreground disabled:opacity-40"
         >
           {busy ? "Adding…" : "Add variant"}
@@ -456,6 +504,10 @@ function VariantCard({
           ) : null}
         </span>
       </div>
+      <RegisteredClinicalContext
+        value={variant.clinicalContext}
+        variant={`${variant.transcript}:${variant.hgvsC}`}
+      />
       <ul className="mt-3 divide-y divide-line-row border-line-row border-t">
         {variant.rows.map((row) => (
           <li
@@ -530,5 +582,29 @@ function VariantCard({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** The registration's clinical context, folded away: the manager wrote it and reads it on demand. */
+function RegisteredClinicalContext({
+  value,
+  variant,
+}: {
+  value: string;
+  /** The variant the context belongs to, named for a reader moving between the folds. */
+  variant: string;
+}) {
+  return (
+    <details className="mt-2">
+      <summary
+        aria-label={`Clinical context of ${variant}`}
+        className="framework-voice cursor-pointer text-[12.5px] text-ink-faint hover:text-ink-body"
+      >
+        Clinical context
+      </summary>
+      <div className="mt-1.5">
+        <ClinicalContextText value={value} />
+      </div>
+    </details>
   );
 }

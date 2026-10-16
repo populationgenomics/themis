@@ -61,8 +61,11 @@ export default async function ComparePage({
     throw error;
   }
 
-  const variant = await access.listVariants();
-  const subject = variant.find((v) => v.id === variantId);
+  // `comparison` has found curators on the variant, so a registration missing here is a fault.
+  const subject = await access.getVariant(variantId);
+  if (subject === undefined) {
+    throw new Error(`variant ${variantId} has answers but no registration`);
+  }
 
   const submitted: CuratorAnswers[] = answers.map((answer) => ({
     curator: answer.worksheet.curatorEmail,
@@ -87,19 +90,20 @@ export default async function ComparePage({
         <h1 className="framework-voice font-medium text-[22px] text-ink-primary">
           Where the curators diverge
         </h1>
-        {subject ? (
-          <p className="mt-1 font-mono text-[13px] text-ink-muted">
-            {subject.transcript}:{subject.hgvsC} · {subject.gene} ·{" "}
-            {subject.diseaseLabel} · {inlineMode(subject.modeOfInheritance)}
-          </p>
-        ) : null}
+        <p className="mt-1 font-mono text-[13px] text-ink-muted">
+          {subject.transcript}:{subject.hgvsC} · {subject.gene} ·{" "}
+          {subject.diseaseLabel} · {inlineMode(subject.modeOfInheritance)}
+        </p>
         <p className="framework-voice mt-2 text-[13px] text-ink-muted">
           A disagreement inside the framework's own analyst spread is data about
           the framework, not a defect. Read the reasoning, not the count.
         </p>
       </header>
 
-      <Comparison answers={submitted} />
+      <Comparison
+        clinicalContext={subject.clinicalContext}
+        answers={submitted}
+      />
     </main>
   );
 }
