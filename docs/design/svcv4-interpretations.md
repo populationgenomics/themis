@@ -8,9 +8,9 @@
 > standard and the [ClinGen Pilot Calculator](https://calculator.clinicalgenome.org/v4/pilot/ui/classification).
 
 **Related:** [`evidence-interfaces.md`](evidence-interfaces.md) (the rpcs and the in-sandbox library that apply these
-readings), [`analysis-scenarios.md`](analysis-scenarios.md) (the graded reference set a reading is scored against),
-[`literature-evidence-layer.md`](literature-evidence-layer.md) (the paper-derived evidence beside the curated sources),
-[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §6 facts + judgement, §12 the Spike); terms in
+readings), [`run-review-loop.md`](run-review-loop.md) (the loop that reads classification runs against curators'
+worksheets), [`literature-evidence-layer.md`](literature-evidence-layer.md) (the paper-derived evidence beside the
+curated sources), [`../PRODUCT.md`](../PRODUCT.md) (the product frame: §6 facts + judgement, §12 the Spike); terms in
 [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview

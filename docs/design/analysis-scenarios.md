@@ -221,8 +221,9 @@ read one way.
 
 **A classification asks for "the disease entity or entities", never "the entity".** A gene can map to several
 non-mutually-exclusive disease entities — the case SVCv4's SM21 rule exists for — so asking for one presupposes the
-count before the run has looked. The same text starts a round of the classifier-evaluation loop, which scores that step
-against a reference set, and the kickoff closes with the working document's outline
+count before the run has looked. The same text starts every run of the run-review loop
+([`run-review-loop.md`](run-review-loop.md)), whose clinical context states the entity the variant is registered
+against, so the run classifies against that one entity; the kickoff closes with the working document's outline
 ([`kickoff.ts`](../../apps/web/src/server/kickoff.ts)).
 
 **A case analysis asks the agent to diagnose, not to classify one variant.** Establish the disease frame from the

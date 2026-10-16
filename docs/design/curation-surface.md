@@ -69,8 +69,8 @@ rationale, the nearest alternative and how open the call is; plus the routing th
 reached. The loop reads it in the shape it is stored — no projection into a second contract, no file passed between the
 two. The run read against it is given the registration, which is the question both curators answered, and nothing from
 their submissions (§The clinical context is part of the question). How a run is read against that reference is the
-subject of `run-review-loop.md`; what this doc decides is what the reference has to contain for that reading to be
-possible.
+subject of [`run-review-loop.md`](run-review-loop.md); what this doc decides is what the reference has to contain for
+that reading to be possible.
 
 A divergence is only useful if it is *adjudicable*. A run that reaches the curator's cell by a route the curator would
 reject has not matched them; a run that differs by a step while reasoning better has found something. Neither judgement
@@ -750,10 +750,6 @@ partial.
 
 ## Open questions
 
-- **Whether a round may use a resubmission.** The schema permits one — a second submission — and keeps both sets, so
-  this is a question about what counts as an independent answer, not about what can be stored. A revision made after the
-  curator has seen the compare view is not blind, and nothing in the data says whether they had. The run-review loop is
-  the consumer that has to decide it.
 - **How a clinical context is corrected once curators have answered against it.** The surface has no edit and the
   uniqueness key refuses a second registration of the entity, so a correction is an operator's edit by hand, after which
   nothing records which text an earlier submission was given. One remedy is to record the clinical context, or a digest

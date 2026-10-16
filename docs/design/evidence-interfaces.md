@@ -20,7 +20,7 @@ source), [`proto.md`](proto.md) (schema and serialisation posture), [`sandbox-rp
 (how an rpc becomes agent-callable), [`security.md`](security.md) (the default-on chokepoint rule the tool surface
 follows), [`sandbox-worker.md`](sandbox-worker.md) (the bubblewrap guest, its empty network namespace, and the gRPC
 hatch), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (the sandbox architecture around that
-guest), [`analysis-scenarios.md`](analysis-scenarios.md) (the reference set the eval scores against),
+guest), [`run-review-loop.md`](run-review-loop.md) (the loop that reads runs against the curation worksheet),
 [`../PRODUCT.md`](../PRODUCT.md) (the product frame: §4 tool layer, §6 facts + judgement, §12 the Spike); terms in
 [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
@@ -79,7 +79,7 @@ SVCv4 brings its own terms; each is used throughout and defined once here.
 | **pext**                        | gnomAD's proportion-expressed-across-transcripts: how much of a gene's expression includes a given base.                                                                                                                                                                                                                                                   |
 | **Splice colour**               | The trichotomy a splice prediction routes on — likely / indeterminate / unlikely disruptive — which each workflow prices per colour.                                                                                                                                                                                                                       |
 | **SVCv4 corpus**                | Our private checkout of the pilot's documentation set: the supplements as received, the practice variants, and our transcriptions of both. The reference's citations and the reference set point into it. Distinct from the literature corpus the `literature` interface serves.                                                                           |
-| **Reference set**               | The graded evaluation cases the classifier loop scores against ([`analysis-scenarios.md`](analysis-scenarios.md)), drawn from the SVCv4 corpus.                                                                                                                                                                                                            |
+| **Reference set**               | The variants curators have classified on the curation worksheet, which the run-review loop reads runs against ([`run-review-loop.md`](run-review-loop.md)).                                                                                                                                                                                                |
 
 ### SVCv4's shape drives the tool set
 
@@ -926,7 +926,8 @@ It holds:
 Its data is the SVCv4 reference — typed value modules in the package — and the predictor policy beside them; the ten
 workflow-diagram transcriptions its per-variant-type structure is read from stay in the corpus, at the revision the
 reference's citation pin names. Where a transcription flags a diagram-versus-text numeric conflict, the ClinGen Pilot
-Calculator is the tie-breaking **oracle** (see [Eval](#eval-the-contract-the-graded-cases-then-the-calculator-oracle)).
+Calculator is the tie-breaking **oracle** (see
+[Eval](#eval-the-contract-runs-read-against-curations-then-the-calculator-oracle)).
 
 **Two of its numbers are explicit caller inputs rather than derivations**: the stop-lost NSD branch, routed through the
 null path, and the exon-duplication not-tandem cap. Neither has a worked case anywhere in the standard to check a
@@ -1012,7 +1013,7 @@ and neither names a gene or states a case's answer.
 > state, by the rule above. The corpus holds complete transcriptions of the same tables, so re-reading one of them into
 > the reference is the likeliest way an omission gets helpfully closed. Guard it whenever a value is re-read.
 
-### Eval: the contract, the graded cases, then the calculator oracle
+### Eval: the contract, runs read against curations, then the calculator oracle
 
 Three layers, each answering a different question.
 
@@ -1021,10 +1022,10 @@ Three layers, each answering a different question.
   from a variant's consequence, so the path from a wire message to a scored tally is exercised whole rather than only in
   pieces.
 
-- **Graded cases against curated ground truth.** Whether a class is *right* for a real variant is not something the
+- **Runs read against curated ground truth.** Whether a class is *right* for a real variant is not something the
   library's own tests can settle: an expected class derived from the framework and applied to transcribed inputs is the
-  arithmetic under test, run twice. It has to come from a curation instead — which is the classifier-evaluation loop
-  scoring against the reference set ([`analysis-scenarios.md`](analysis-scenarios.md)), not a test suite.
+  arithmetic under test, run twice. It has to come from a curation instead — which is the run-review loop reading runs
+  against the curation worksheet ([`run-review-loop.md`](run-review-loop.md)), not a test suite.
 
 - **The calculator oracle — the gold-standard diff.** The ClinGen Pilot Calculator computes classifications client-side,
   so the oracle fetches the bundle at runtime and evaluates it in an isolated JavaScript context with no ambient
@@ -1044,10 +1045,10 @@ Three layers, each answering a different question.
   > in memory; nothing from it is vendored, quoted or copied into a tracked file, apart from the calculator-side ranges
   > the pinned divergences state.
 
-**Predictor-attributable divergence is recorded, not scored wrong.** Where the reference set derives `MIS_PRD` from a
-different predictor than the policy names, both choices are valid — each was pre-selected — so the divergence is
-recorded with both predictors and both scores, the treatment the reference set gives any divergent answer. Diverging on
-the policy's *own* predictor is an error.
+**Predictor-attributable divergence is recorded, not scored wrong.** Where a curator's worksheet derives `MIS_PRD` from
+a different predictor than the policy names, both choices are valid — each was pre-selected — so the run-review loop's
+reader records the divergence with both predictors and both scores rather than grading the run on it. Diverging on the
+policy's *own* predictor is an error.
 
 ### Proto layout
 
