@@ -66,8 +66,8 @@ export const file_themis_rpc_transcript: GenFile = /*@__PURE__*/
  *                           transcripts depress every exon of a gene alike, so 0.70 can be the
  *                           gene's maximum while reading as "30% of transcripts skip this exon".
  *                           (2) SM18 asks the question in the disease-relevant TISSUE, and the
- *                           cross-tissue mean errs both ways — ANO5 exon 4 sits at 0.04 of its gene
- *                           median across tissues but 0.63 of it in skeletal muscle, so the
+ *                           cross-tissue mean errs both ways — an exon can sit at 0.04 of its gene
+ *                           median across tissues but 0.63 of it in the disease tissue, so the
  *                           cross-tissue figure alone condemns a healthy exon. Name tissues in the
  *                           request to get per-tissue values; unnamed, each exon carries the
  *                           cross-tissue mean alone, which SM18's assessment cannot be made on.
@@ -144,16 +144,16 @@ export type AssessExonRelevanceRequest = Message<"themis.rpc.transcript.AssessEx
    * expression and the per-exon pext. Empty = every tissue for GTEx (summarised at each transcript's
    * peak) and cross-tissue means alone for pext.
    *
-   * Three ways a tissue can fail to answer, each reported as itself, none collapsed into a value and
-   * none silently replaced by another tissue. An id GTEx does not know is INVALID_ARGUMENT naming
-   * the accepted ids — which is also how "the disease tissue is not sampled" arrives, since GTEx has
-   * no retina at all (USH2A, RS1), so no tissue-level assessment exists for such a gene and the
-   * caller has to say so rather than substitute one. An id GTEx knows but holds no expression row
-   * for is listed in `raw.gtex_isoforms.tissues_without_rows` — including when NO requested tissue
-   * has one, which is a fact about the gene and does not fail the rpc, since pext answers the same
-   * request from a source GTEx's coverage does not bound. An id GTEx samples but gnomAD's pext does
-   * not carry (5 of GTEx's 54: Bladder, Cervix_Ectocervix, Cervix_Endocervix, Fallopian_Tube,
-   * Kidney_Medulla) is listed in `tissues_without_pext`.
+   * Three ways a tissue can fail to answer, each reported as itself, none collapsed into a value
+   * and none silently replaced by another tissue. An id GTEx does not know is INVALID_ARGUMENT
+   * naming the accepted ids — which is also how "the disease tissue is not sampled" arrives, since
+   * GTEx has no retina at all, so no tissue-level assessment exists for a gene whose disease tissue
+   * is the retina and the caller has to say so rather than substitute one. An id GTEx knows but
+   * holds no expression row for is listed in `raw.gtex_isoforms.tissues_without_rows` — including
+   * when NO requested tissue has one, which is a fact about the gene and does not fail the rpc,
+   * since pext answers the same request from a source GTEx's coverage does not bound. An id GTEx
+   * samples but gnomAD's pext does not carry (5 of GTEx's 54: Bladder, Cervix_Ectocervix,
+   * Cervix_Endocervix, Fallopian_Tube, Kidney_Medulla) is listed in `tissues_without_pext`.
    *
    * @generated from field: repeated string tissues = 6;
    */
@@ -434,8 +434,8 @@ export type ExonPext = Message<"themis.rpc.transcript.ExonPext"> & {
    * exon and weighted by how much of it each covers. Absent when no region covers the exon at all —
    * which is not a pext of 0, and is why the field carries presence. NOT the mean of `tissues`:
    * gnomAD's summary and its per-tissue values are separately defined statistics and do not agree
-   * (ANO5's first region publishes 0.8277 where its 49 tissue values average 0.7907), so compare a
-   * mean against a mean and a tissue against the same tissue.
+   * (one region publishes 0.8277 where its 49 tissue values average 0.7907), so compare a mean
+   * against a mean and a tissue against the same tissue.
    *
    * @generated from field: optional double mean = 2;
    */
@@ -453,8 +453,8 @@ export type ExonPext = Message<"themis.rpc.transcript.ExonPext"> & {
   /**
    * How much of the exon the covering regions span, against the exon's own length. gnomAD publishes
    * pext over CODING bases, so a UTR-bearing terminal exon is measured on a fraction of itself —
-   * ANO5 exon 1 is 40 bases of 448, exon 22 is 219 of 3814 — and without this its value reads as
-   * strongly as a fully covered exon's in the same profile.
+   * one mostly-UTR terminal exon is covered on 40 of its 448 bases — and without this its value
+   * reads as strongly as a fully covered exon's in the same profile.
    *
    * @generated from field: int32 covered_bases = 4;
    */
@@ -612,10 +612,10 @@ export type AssessExonRelevanceResponse = Message<"themis.rpc.transcript.AssessE
   /**
    * Keyed, since a caller reads these by name:
    *   gnomad_gene              -> the gnomAD gene object (constraint, regional missense constraint),
-   *                               its `pext` block removed — 49 tissue values per region is 175 kB
-   *                               on NF1, and `pext` above carries the requested tissues per exon.
-   *                               A tissue the request did not name is therefore not in the response
-   *                               at all: ask for it, rather than mining `raw` for it.
+   *                               its `pext` block removed — 49 tissue values per region reach 175 kB
+   *                               on a large gene, and `pext` above carries the requested tissues per
+   *                               exon. A tissue the request did not name is therefore not in the
+   *                               response at all: ask for it, rather than mining `raw` for it.
    *   pext_regions             -> the regions gnomAD publishes, as {start, stop, mean}: the raw
    *                               genomic intervals behind `pext`, for a caller bucketing them some
    *                               other way. Cross-tissue means only; the per-tissue values are

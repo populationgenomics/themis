@@ -107,16 +107,17 @@ enum SpecificationStatus {
   // a review state rather than `Released`. Its own text is still the last position the panel
   // approved, and there is no newer released document for the gene, so it is neither IN_FORCE nor a
   // draft. Quote it as the panel's last approved position and say the panel has it under revision;
-  // ATM, PALB2 and SERPINC1 are all in this state, so it is not a corner. Distinct from a released
-  // document whose revision has not touched its own state (which stays IN_FORCE).
+  // several released specifications are in this state, so it is not a corner. Distinct from a
+  // released document whose revision has not touched its own state (which stays IN_FORCE).
   SPECIFICATION_STATUS_RELEASED_UNDER_REVISION = 5;
 }
 
-// Whether a criterion, or one strength of it, applies at all under this specification. The
-// determination that decided the ACTC1 case: the Cardiomyopathy panel marks PVS1 not applicable, and
-// a run that could not read that scored a null variant. `applicability_term` carries the registry's
-// own wording beside it — the registry spells one determination several ways, including in two
-// letter cases, so a caller must not compare the term as a string.
+// Whether a criterion, or one strength of it, applies at all under this specification. A panel can
+// rule a criterion out for its gene (PVS1, for instance, where loss of function is not an
+// established disease mechanism), and a caller that misses the determination scores a criterion the
+// panel excluded. `applicability_term` carries the registry's own wording beside it — the registry
+// spells one determination several ways, including in two letter cases, so a caller must not
+// compare the term as a string.
 enum Applicability {
   // The record states none. Ordinary at the criterion level (the per-strength determinations are
   // what that specification states); never returned for a strength, which always carries one.
@@ -282,9 +283,9 @@ message CriterionSpecification {
   // The panel's criterion-level instructions, where it states them apart from the per-strength
   // wording. A string on some records and a list on others; both arrive as a list.
   repeated string instructions = 10;
-  // The panel's criterion-level free-text note. This is where a "not applicable" is explained — ACTC1
-  // PVS1 carries "Not currently applicable to ACTC1. See PM4 for truncating variants that do NOT
-  // undergo NMD." — so read it whenever `applicability` is NOT_APPLICABLE.
+  // The panel's criterion-level free-text note. This is where a "not applicable" is explained, and it
+  // can name the criterion that applies instead, so read it whenever `applicability` is
+  // NOT_APPLICABLE.
   string additional_comments = 11;
   // The works this criterion cites, where it cites any apart from the specification's own list.
   repeated SpecificationReference references = 12;

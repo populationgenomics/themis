@@ -70,12 +70,12 @@ message NormalizeResponse {
   // archive rather than inferred here.
   //
   // EMPTY says the crosswalk names no ClinVar variation for the allele AS OF ITS LAST ClinVar
-  // INGEST. The crosswalk tracks ClinVar's releases and lags them — MYH7 c.1543A>G is registered as
-  // CA389050360 whose record carries no ClinVar link, while the VCV004884318 that classifies it was
-  // evaluated 2026-08-04 — so an empty list is a release-bounded absence, and that is what a novelty
-  // finding rests on and all it rests on. An expression the registry registers NO allele for has no
-  // `caid` and fails the rpc, so an empty list is always the crosswalk's answer about a registered
-  // allele, never an unregistered one read as novel.
+  // INGEST. The crosswalk tracks ClinVar's releases and lags them — an allele ClinVar has recently
+  // classified can still carry no ClinVar link in the registry — so an empty list is a
+  // release-bounded absence, and that is what a novelty finding rests on and all it rests on. An
+  // expression the registry registers NO allele for has no `caid` and fails the rpc, so an empty
+  // list is always the crosswalk's answer about a registered allele, never an unregistered one read
+  // as novel.
   repeated ClinVarVariation clinvar_variations = 8;
   // ClinVar's own ALLELE records for this allele, where the crosswalk names any.
   repeated ClinVarAllele clinvar_alleles = 9;

@@ -92,11 +92,11 @@ import "themis/evidence/models/evidence.proto";
 //                          risk allele", "Uncertain significance/Uncertain risk allele"), and
 //                          neither is "Conflicting classifications of pathogenicity" under any
 //                          suffix — a substring test on "athogenic" admits the conflicting ones
-//                          (measured on MYH7: a ninefold DAFT inflation, anchored on a synonymous
-//                          variant). SM3's pathogenic-variants DAFT reads the same pool through a
-//                          strictly narrower gate, excluding the low-penetrance and risk-allele
-//                          terms — a frequency condition SM19 does not state — and applies it itself
-//                          in themis.svcv4.clinvar_classification, not here.
+//                          (measured on one gene: a ninefold DAFT inflation). SM3's
+//                          pathogenic-variants DAFT reads the same pool through a strictly narrower
+//                          gate, excluding the low-penetrance and risk-allele terms — a frequency
+//                          condition SM19 does not state — and applies it itself in
+//                          themis.svcv4.clinvar_classification, not here.
 //   review_stars        -> each record's gold-star count, mapped from its review status. The pool is
 //                          filtered on `DescribeVariantRequest.review_status_floor` and on nothing else, so
 //                          what arrives is what the caller asked for. The floor is in the SEARCH
@@ -350,10 +350,10 @@ message DescribeVariantResponse {
 // THE SPAN, NOT THE GENE, IS THE UNIT, because that is what the rules key on: SM19's *_INF codes ask
 // about the same CODON (MIS_INF) or the same EXON (NUL_INF, SPL_INF), never about the gene. A
 // gene-wide all-classification pool would be wrong-shaped twice over — it answers a question no rule
-// asks, and where it matters most it is unfetchable (LDLR alone carries 2304 pathogenic records at
-// floor 0, before any other classification), so a bound would cut it to a prefix that says nothing
-// about any one codon. Span-scoped, the census is complete and small: 3 records at SCN2A codon 370,
-// 17 across a 51-nt TRDN exon (measured, August 2026).
+// asks, and where it matters most it is unfetchable (a well-studied gene can carry over two thousand
+// pathogenic records at floor 0, before any other classification), so a bound would cut it to a
+// prefix that says nothing about any one codon. Span-scoped, the census is complete and small: 3
+// records at one codon and 17 across a 51-nt exon (measured, August 2026).
 //
 // HOW THE SPAN IS SEARCHED, since it decides what lands in it. ClinVar's Entrez index has no c.
 // coordinate to search on — `einfo` lists `[Base Position]` and no transcript-relative field — so the
