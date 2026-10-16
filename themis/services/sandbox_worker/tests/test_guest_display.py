@@ -231,6 +231,13 @@ def test_a_non_positive_size_is_rejected(max_field_size: int) -> None:
         display.render(literature_pb2.PaperInfo(), max_field_size=max_field_size)
 
 
+def test_a_streamed_response_is_refused_rather_than_rendered_as_one_message() -> None:
+    # A server-streaming call answers with an iterator; rendering it would print an object's repr, not the answer.
+    streamed = iter([literature_pb2.ReadMarkdownResponse(chunk=b'text')])
+    with pytest.raises(TypeError, match=r'fulltext\.capture_markdown'):
+        display.render(streamed)  # pyright: ignore[reportArgumentType]
+
+
 def test_a_max_chars_too_small_to_hold_its_own_markers_is_rejected() -> None:
     with pytest.raises(ValueError, match='at least'):
         display.render(literature_pb2.PaperInfo(), max_chars=10)

@@ -33,8 +33,8 @@ class LiveBackend(literature_backend.LiteratureBackend):
         return await self._store.describe_paper(doc_id)
 
     @override
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
-        return await self._store.get_markdown(doc_id, max_chars)
+    async def read_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
+        return await self._store.read_markdown(doc_id)
 
     @override
     async def resolve_content(

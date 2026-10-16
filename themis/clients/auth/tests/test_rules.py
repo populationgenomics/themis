@@ -45,12 +45,12 @@ def test_the_same_account_id_in_another_project_is_not_the_principal() -> None:
 
 def test_a_session_claimed_by_a_self_acting_caller_admits_nothing_extra() -> None:
     # web is named on DescribePaper calling as itself; a session on the call is attribution, not a way in.
-    rule = _rule(_LITERATURE, 'GetMarkdown')
+    rule = _rule(_LITERATURE, 'Validate')
     assert not rule.admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
 
 
 def test_the_agent_is_the_job_account_claiming_the_agent_s_session_that_resolves() -> None:
-    rule = _rule(_LITERATURE, 'GetMarkdown')
+    rule = _rule(_LITERATURE, 'Validate')
     assert rules.Principal('themis-sandbox-job', _AGENT_SESSION) in rule.principals
     assert rule.admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
     assert not rule.admits(_auth(_JOB, _AGENT_SESSION, None), project=_PROJECT)  # the session did not resolve
@@ -58,7 +58,7 @@ def test_the_agent_is_the_job_account_claiming_the_agent_s_session_that_resolves
 
 def test_the_worker_s_claim_is_not_the_agent_s() -> None:
     # Same account; the claim decides which member the call is, and FetchPack names only the worker's.
-    assert not _rule(_LITERATURE, 'GetMarkdown').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
+    assert not _rule(_LITERATURE, 'Validate').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
     assert _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
     assert not _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
 
@@ -87,7 +87,7 @@ def test_the_developer_identity_is_admitted_on_every_rpc_without_being_named() -
     # CLU exists to exercise a deployed system by hand; the contract names it nowhere and the rule admits it
     # everywhere. Its claim rules still hold: a session it claims is resolved, and the wrong claim is not it.
     for service, method in (
-        (_LITERATURE, 'GetMarkdown'),
+        (_LITERATURE, 'Validate'),
         (_SHEAF, 'FetchPack'),
         (_LITERATURE, 'MaybeIngestPapers'),
     ):

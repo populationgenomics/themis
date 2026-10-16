@@ -112,9 +112,16 @@ def render(
         the trailing marker is what says so.
 
     Raises:
+        TypeError: If ``msg`` is not a protobuf message — a server-streaming rpc's response among them,
+            which is an iterator of messages rather than one.
         ValueError: If ``max_field_size`` is not positive, or ``max_chars`` leaves too little room
             for a body once this message's full name is paid for.
     """
+    if not isinstance(msg, message.Message):
+        raise TypeError(
+            f'display renders one protobuf message, not a {type(msg).__name__}. A streaming rpc answers with an '
+            'iterator of messages: read a paper with fulltext.capture_markdown, and show a message at a time.'
+        )
     if max_field_size < 1:
         raise ValueError(f'max_field_size must be positive, got {max_field_size}')
     header = f'{msg.DESCRIPTOR.full_name}\n'

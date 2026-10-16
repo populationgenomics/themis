@@ -5,9 +5,10 @@ from __future__ import annotations
 import ast
 import asyncio
 import datetime
+import hashlib
 import pathlib
 import typing
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import override
 
 import grpc
@@ -150,7 +151,11 @@ def _run_over[T](
     call, so a gated read reaches the servicer admitted without each `stub_call` threading it. A test of
     the gate itself drives `_run_unauthorized`, which injects nothing.
     """
-    return _run_with(backend, stub_call, interceptors=(authz.InjectMetadata(authz.ADMITTED),))
+    return _run_with(
+        backend,
+        stub_call,
+        interceptors=(authz.InjectMetadata(authz.ADMITTED), authz.InjectStreamMetadata(authz.ADMITTED)),
+    )
 
 
 def _run_unauthorized[T](
@@ -168,7 +173,7 @@ def _run_with[T](
     interceptors: tuple[grpc.aio.ClientInterceptor, ...],
 ) -> T:
     async def run() -> T:
-        servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
+        servicer = servicer_mod.Servicer(backend)
         async with in_process_grpc.serving(
             lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
             interceptors=interceptors,
@@ -588,7 +593,7 @@ def test_a_repeated_request_asks_again_and_lets_the_task_name_dedup() -> None:
     # many and scales to zero, so the only durable dedup is the task name. A servicer that remembered
     # would drop the second request of a caller whose first task has since been deleted.
     backend = _ConversionRecordingBackend(SEED, RECORDS, ENTITIES)
-    servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
+    servicer = servicer_mod.Servicer(backend)
     request = literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])
 
     async def run() -> None:
@@ -961,61 +966,199 @@ def test_the_fixture_backend_ingests_nothing_and_says_so(caplog: pytest.LogCaptu
     assert DOI_UNKNOWN in caplog.text
 
 
-def test_get_markdown_serves_the_rendering_text() -> None:
-    result = _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id=DOC_XML)))
-    assert result.WhichOneof('result') == 'content'
-    assert result.content.markdown == MARKDOWN_XML
-    assert result.content.total_chars == len(MARKDOWN_XML) == len(result.content.markdown)  # served whole
+async def _drained(
+    responses: AsyncIterable[literature_pb2.ReadMarkdownResponse],
+) -> list[literature_pb2.ReadMarkdownResponse]:
+    return [response async for response in responses]
 
 
-def test_get_markdown_cuts_to_the_requested_budget_and_reports_the_whole_length() -> None:
-    # The census is what tells a whole paper from a clipped one: a caller reading only the text
-    # cannot tell that it was cut, and quoting past a cut is exactly what the marker exists to stop.
-    long_markdown = '# A long paper\n\n' + 'A line of prose that fills the rendering.\n' * 80
-    backend = fixture_mod.FixtureBackend(
+def _read_markdown(
+    doc_id: str, *, backend: literature_backend.LiteratureBackend | None = None
+) -> list[literature_pb2.ReadMarkdownResponse]:
+    return _run(lambda s: _drained(s.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id=doc_id))), backend=backend)
+
+
+def _joined(responses: Sequence[literature_pb2.ReadMarkdownResponse]) -> bytes:
+    """The bytes of a stream's chunks, refusing a chunk anywhere but after the header."""
+    assert responses[0].WhichOneof('part') == 'header'
+    assert all(response.WhichOneof('part') == 'chunk' for response in responses[1:])
+    return b''.join(response.chunk for response in responses[1:])
+
+
+def test_read_markdown_streams_the_rendering_whole_behind_a_header_naming_it() -> None:
+    responses = _read_markdown(DOC_XML)
+    data = MARKDOWN_XML.encode('utf-8')
+    header = responses[0].header
+    assert header.rendering_key == hashlib.sha256(data).hexdigest()
+    assert header.size_bytes == len(data)
+    assert header.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
+    assert _joined(responses) == data
+
+
+def _seeded_with(doc_id: str, text: str) -> fixture_mod.FixtureBackend:
+    return fixture_mod.FixtureBackend(
         {
-            'doc-long': fixture_mod.SeededPaper(
-                title='A long paper', markdown_gcs_uri='gs://fulltext/doc-long/r.md', markdown_text=long_markdown
+            doc_id: fixture_mod.SeededPaper(
+                title=doc_id, markdown_gcs_uri=f'gs://fulltext/{doc_id}/r.md', markdown_text=text
             )
         },
         RECORDS,
         ENTITIES,
     )
-    asked = servicer_mod._MAX_CHARS_FLOOR  # under the rendering, so the cut is reached
-    result = _run_over(
-        backend, lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id='doc-long', max_chars=asked))
-    )
-    assert result.content.total_chars == len(long_markdown) > asked  # how much lies past the cut
-    assert len(result.content.markdown) <= asked  # the marker rides inside the budget
-    kept, marker = result.content.markdown.split('\n\n---\n\n', 1)
-    assert long_markdown.startswith(kept)
-    assert 'cannot be quoted or cited' in marker
 
 
-def test_get_markdown_without_a_budget_takes_the_service_default() -> None:
-    result = _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id=DOC_XML)))
-    assert result.content.markdown == MARKDOWN_XML  # the seeded rendering is far under the default
-    assert result.content.total_chars == len(MARKDOWN_XML)
+def test_read_markdown_serves_a_rendering_past_one_message_in_chunks_a_character_can_straddle() -> None:
+    # Past one message, with a two-byte character astride the first chunk boundary: every byte arrives, no message
+    # is over the bound, and the chunks are bytes because one of them cannot decode on its own.
+    text = 'a' * (servicer_mod._CHUNK_BYTES - 1) + 'é' + 'ü' * servicer_mod._CHUNK_BYTES
+    responses = _read_markdown('doc-long', backend=_seeded_with('doc-long', text))
+    chunks = [response.chunk for response in responses[1:]]
+    assert len(chunks) > 1
+    assert all(0 < len(chunk) <= servicer_mod._CHUNK_BYTES for chunk in chunks)
+    with pytest.raises(UnicodeDecodeError):
+        chunks[0].decode('utf-8')
+    assert _joined(responses).decode('utf-8') == text
+    assert responses[0].header.size_bytes == len(text.encode('utf-8'))
 
 
-def test_get_markdown_reports_a_paper_without_a_rendering_as_a_fact_about_the_store() -> None:
-    result = _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id=DOC_OCR)))
-    assert result.WhichOneof('result') == 'unavailable'
-    assert result.unavailable.state == literature_pb2.FULL_TEXT_STATE_PENDING
+def test_read_markdown_of_an_empty_rendering_is_its_header_alone() -> None:
+    responses = _read_markdown('doc-empty', backend=_seeded_with('doc-empty', ''))
+    assert [response.WhichOneof('part') for response in responses] == ['header']
+    assert responses[0].header.size_bytes == 0
+    assert responses[0].header.rendering_key == hashlib.sha256(b'').hexdigest()
 
 
-def test_get_markdown_for_an_unknown_doc_is_not_found() -> None:
+def test_read_markdown_reports_a_paper_without_a_rendering_as_a_fact_about_the_store() -> None:
+    responses = _read_markdown(DOC_OCR)
+    assert [response.WhichOneof('part') for response in responses] == ['unavailable']
+    assert responses[0].unavailable.state == literature_pb2.FULL_TEXT_STATE_PENDING
+
+
+@pytest.mark.parametrize('doc_id', ['nope', ''], ids=['unknown', 'unset'])
+def test_read_markdown_for_a_doc_id_the_store_holds_no_paper_for_is_not_found(doc_id: str) -> None:
+    # An unset doc_id is an id the store holds no paper for, as every sibling rpc answers it.
     with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id='nope')))
+        _read_markdown(doc_id)
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
 
 
-def test_get_markdown_without_a_doc_id_is_not_found() -> None:
-    # An unset doc_id is an id the store holds no paper for, as every sibling rpc answers it: the
-    # proto promises NOT_FOUND for an unknown doc_id, and the empty string is one.
+def _serving(
+    data: bytes, *, key: str | None = None, size_bytes: int | None = None, fail_after: int | None = None
+) -> fixture_mod.FixtureBackend:
+    """The seeded backend serving `data` for every rendering, under a stated key and size that may not match it.
+
+    `fail_after` makes the bytes go missing once that many have been read, as an object deleted mid-read does.
+    """
+    backend = _seeded()
+
+    async def blocks() -> AsyncGenerator[bytes]:
+        if fail_after is None:
+            yield data
+            return
+        yield data[:fail_after]
+        raise literature_backend.MissingRenderingBlobError('doc-xml rendering r1 went missing while it was read')
+
+    async def read_markdown(doc_id: str) -> literature_backend.Rendering:
+        del doc_id
+        return literature_backend.Rendering(
+            key=hashlib.sha256(data).hexdigest() if key is None else key,
+            size_bytes=len(data) if size_bytes is None else size_bytes,
+            provenance=literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS,
+            blocks=blocks(),
+        )
+
+    backend.read_markdown = read_markdown  # pyright: ignore[reportAttributeAccessIssue]
+    return backend
+
+
+_BYTES = MARKDOWN_XML.encode('utf-8')
+
+
+class _Stalling:
+    """A seeded backend whose rendering yields one block and then stalls, recording when the store is released."""
+
+    def __init__(self) -> None:
+        self.backend = _seeded()
+        self.released = False
+        self.backend.read_markdown = self._read_markdown  # pyright: ignore[reportAttributeAccessIssue]
+
+    async def _blocks(self) -> AsyncGenerator[bytes]:
+        try:
+            yield _BYTES[:10]
+            await asyncio.sleep(3600)
+            yield _BYTES[10:]
+        finally:
+            self.released = True
+
+    async def _read_markdown(self, doc_id: str) -> literature_backend.Rendering:
+        del doc_id
+        return literature_backend.Rendering(
+            key=hashlib.sha256(_BYTES).hexdigest(),
+            size_bytes=len(_BYTES),
+            provenance=literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS,
+            blocks=self._blocks(),
+        )
+
+
+def test_a_store_read_that_stalls_ends_the_stream_under_the_rpc_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The deadline holds each store read, so a hung one ends as this service's own answer, not the caller's timeout.
+    monkeypatch.setattr(serving, '_RPC_DEADLINE_S', 0.05)
+    stalling = _Stalling()
+    received: list[literature_pb2.ReadMarkdownResponse] = []
+
+    async def read(stub: literature_pb2_grpc.LiteratureAsyncStub) -> None:
+        async for response in stub.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id=DOC_XML)):
+            received.append(response)
+
     with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run(lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest()))
-    assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+        _run(read, backend=stalling.backend)
+    assert exc.value.code() is grpc.StatusCode.DEADLINE_EXCEEDED
+    assert authored_status.authored(exc.value)
+    assert [response.WhichOneof('part') for response in received] == ['header', 'chunk']
+    assert stalling.released
+
+
+def test_a_reader_that_cancels_mid_stream_releases_the_store() -> None:
+    stalling = _Stalling()
+
+    async def read(stub: literature_pb2_grpc.LiteratureAsyncStub) -> bool:
+        call = stub.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id=DOC_XML))
+        await call.read()
+        await call.read()
+        call.cancel()
+        async with asyncio.timeout(10):
+            while not stalling.released:
+                await asyncio.sleep(0.01)
+        return stalling.released
+
+    assert _run(read, backend=stalling.backend)
+
+
+@pytest.mark.parametrize(
+    'backend',
+    [
+        _serving(_BYTES, key='0' * 64),
+        _serving(_BYTES, size_bytes=len(_BYTES) + 1),
+        _serving(_BYTES, size_bytes=len(_BYTES) - 1),
+        _serving(_BYTES, fail_after=10),
+    ],
+    ids=['key', 'short', 'long', 'gone'],
+)
+def test_a_read_whose_bytes_are_not_the_rendering_named_ends_internal_after_what_was_sent(
+    backend: literature_backend.LiteratureBackend,
+) -> None:
+    # The header has already gone out, so the only way left to say "this is not that rendering" is the status.
+    received: list[literature_pb2.ReadMarkdownResponse] = []
+
+    async def read(stub: literature_pb2_grpc.LiteratureAsyncStub) -> None:
+        async for response in stub.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id=DOC_XML)):
+            received.append(response)
+
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run(read, backend=backend)
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
+    assert authored_status.authored(exc.value)
+    assert received[0].WhichOneof('part') == 'header'
 
 
 # --- Discovery ------------------------------------------------------------------------------------
@@ -1043,14 +1186,6 @@ def test_clamp_variant_max_results(requested: int, expected: int) -> None:
 @pytest.mark.parametrize(('requested', 'expected'), [(0, 50), (5, 5), (200, 200), (5000, 200)])
 def test_clamp_gene_entities(requested: int, expected: int) -> None:
     assert servicer_mod._clamp_gene_entities(requested) == expected
-
-
-@pytest.mark.parametrize(
-    ('requested', 'expected'),
-    [(0, 500_000), (500, 1_000), (5_000, 5_000), (1_000_000, 1_000_000), (9_000_000, 1_000_000)],
-)
-def test_clamp_max_chars(requested: int, expected: int) -> None:
-    assert servicer_mod._clamp_max_chars(requested) == expected
 
 
 def test_a_search_for_nothing_is_refused() -> None:
@@ -1184,7 +1319,7 @@ class _IndexOnlyBackend(literature_backend.LiteratureBackend):
         raise AssertionError('no store call is exercised here')
 
     @override
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
+    async def read_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
         raise AssertionError('no store call is exercised here')
 
     @override
@@ -1449,14 +1584,26 @@ _REFUSALS: list[
     ),
     (
         'markdown.unknown',
-        lambda s: s.GetMarkdown(_S.GetMarkdownRequest(doc_id='nope')),
+        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id='nope'))),
         None,
         grpc.StatusCode.NOT_FOUND,
     ),
     (
         'markdown.blob',
-        lambda s: s.GetMarkdown(_S.GetMarkdownRequest(doc_id=DOC_XML)),
-        _raising('get_markdown', literature_backend.MissingRenderingBlobError('doc-xml rendering r1 is missing')),
+        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id=DOC_XML))),
+        _raising('read_markdown', literature_backend.MissingRenderingBlobError('doc-xml rendering r1 is missing')),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'markdown.mismatch',
+        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id=DOC_XML))),
+        _serving(_BYTES, key='0' * 64),
+        grpc.StatusCode.INTERNAL,
+    ),
+    (
+        'markdown.gone',
+        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id=DOC_XML))),
+        _serving(_BYTES, fail_after=10),
         grpc.StatusCode.INTERNAL,
     ),
     (

@@ -26,7 +26,7 @@ from themis.services.evidence.upstreams import europe_pmc, pubmed
 # One distinguishable answer per method: the forward has to return this object, not merely something
 # of the right type.
 _PAPER_INFO = literature_pb2.PaperInfo(doc_id='doc-1', title='from the store')
-_MARKDOWN = literature_pb2.GetMarkdownResponse(content=literature_pb2.PaperMarkdown(markdown='from the store'))
+_MARKDOWN = literature_pb2.FullTextUnavailable(state=literature_pb2.FULL_TEXT_STATE_FAILED)
 _CONTENT = literature_pb2.ContentLocation(gcs_uri='gs://from-the-store/x.md', media_type='text/markdown')
 _LOCATED = literature_pb2.LocateResponse(offsets=literature_pb2.TextOffsets(start=3, end=9))
 _VALIDATED = literature_pb2.ValidateResponse(ok=True, located_in=[literature_pb2.REPRESENTATION_MARKDOWN])
@@ -55,8 +55,8 @@ class _RecordingStore(litcache_store.Store):
         return _PAPER_INFO
 
     @override
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
-        self.calls.append(('get_markdown', doc_id, max_chars))
+    async def read_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
+        self.calls.append(('read_markdown', doc_id))
         return _MARKDOWN
 
     @override
@@ -136,7 +136,7 @@ _Forward = Callable[[live_mod.LiveBackend], Coroutine[None, None, object]]
 
 _FORWARDS: list[tuple[str, _Forward, object, tuple[object, ...]]] = [
     ('describe_paper', lambda b: b.describe_paper('doc-1'), _PAPER_INFO, ('describe_paper', 'doc-1')),
-    ('get_markdown', lambda b: b.get_markdown('doc-2', 1000), _MARKDOWN, ('get_markdown', 'doc-2', 1000)),
+    ('read_markdown', lambda b: b.read_markdown('doc-2'), _MARKDOWN, ('read_markdown', 'doc-2')),
     (
         'resolve_content',
         lambda b: b.resolve_content('doc-3', _SELECTOR),

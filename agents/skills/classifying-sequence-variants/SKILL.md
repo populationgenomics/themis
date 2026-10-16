@@ -242,8 +242,11 @@ evidence. The sweep:
   `raw['panelapp']`.
 - `MaybeIngestPapers` once over every id you mean to read. An `_UNKNOWN_PAPER` goes on the deposit-request list.
 - `PollFullTexts` before finalising; a paper still `_PENDING` goes on the deposit list with its state.
-- `GetMarkdown` each `_READY` paper and save it verbatim to `/workspace/scratch/captured/<doc_id>.md` before quoting it.
-  Report a text that `total_chars` shows was cut as read only up to the cut.
+- Capture each `_READY` paper before quoting it: `fulltext.capture_markdown(doc_id,
+  f'/workspace/scratch/captured/{doc_id}.md')` (`from themis.agent import fulltext`) streams `ReadMarkdown` into the
+  file, whole, and returns where it is, its size, provenance and rendering key; print that, not the text. Read the
+  file with `grep` and line ranges rather than whole. A `FullTextUnavailable` back means no file, and its `state` says
+  why.
 - `Validate` every quote before it enters the document.
 - `FetchPubmedArticles` for any PMID the store cannot serve; its `book_articles` are where GeneReviews chapters arrive.
 - A paper the store does not hold goes on the deposit list with the question it would answer. Never substitute a

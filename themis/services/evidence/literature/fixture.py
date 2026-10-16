@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import hashlib
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import NamedTuple, override
 
 import anchorite
@@ -201,20 +202,17 @@ class FixtureBackend(literature_backend.LiteratureBackend):
         )
 
     @override
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
+    async def read_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
         paper = self._paper(doc_id)
         if paper.markdown_gcs_uri is None:
-            return literature_pb2.GetMarkdownResponse(
-                unavailable=literature_pb2.FullTextUnavailable(state=_seeded_readiness(paper))
-            )
-        markdown, total_chars = literature_backend.capped_markdown(self._rendering_text(doc_id, paper), max_chars)
-        return literature_pb2.GetMarkdownResponse(
-            content=literature_pb2.PaperMarkdown(
-                doc_id=doc_id,
-                markdown=markdown,
-                provenance=paper.provenance,
-                total_chars=total_chars,
-            )
+            return literature_pb2.FullTextUnavailable(state=_seeded_readiness(paper))
+        data = self._rendering_text(doc_id, paper).encode('utf-8')
+        # Keyed by its bytes, as the store keys a rendering, so a reader checks a seeded read as it does a real one.
+        return literature_backend.Rendering(
+            key=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+            provenance=paper.provenance,
+            blocks=_whole(data),
         )
 
     @override
@@ -376,6 +374,10 @@ class FixtureBackend(literature_backend.LiteratureBackend):
             if any(symbol.casefold() == wanted for symbol in seeded.labels.genes)
         ]
         return variants.gene_inventory(listed, contains=contains, max_results=max_results)
+
+
+async def _whole(data: bytes) -> AsyncGenerator[bytes]:
+    yield data
 
 
 def _seeded_readiness(paper: SeededPaper) -> literature_pb2.FullTextState:
@@ -550,9 +552,8 @@ def backend_from_seed(store: object, index: object, *, store_source: str, index_
     the one a seed that says nothing means. ``readiness`` states why a paper without a rendering has
     no text; a paper seeding both it and a ``markdown`` is rejected, since the rendering already says
     the text is there, as is one seeding locations in a representation it has no rendering for.
-    ``markdown.text`` is what ``GetMarkdown`` serves, under the same per-read budget the deployed
-    store serves under; a ``markdown`` without one is a paper the store lists a rendering for but
-    cannot produce the text of.
+    ``markdown.text`` is what ``ReadMarkdown`` streams, whole; a ``markdown`` without one is a paper
+    the store lists a rendering for but cannot produce the text of.
 
     The index section is one JSON object with three lists:
 

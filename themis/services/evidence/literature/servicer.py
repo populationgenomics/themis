@@ -32,13 +32,17 @@ The discovery rpcs also own the ceilings: a request's ``max_results`` is clamped
 response carries the source's own total, so a truncated answer is legible as one. Every rpc answers within
 the image's per-rpc deadline (``serving.within_deadline``), the database-backed interfaces' bound and this one's
 alike: a discovery fan-out that outruns the caller's budget and a store read hung on GCS or Cloud
-SQL both end as this service's own DEADLINE_EXCEEDED naming the rpc.
+SQL both end as this service's own DEADLINE_EXCEEDED naming the rpc. ``ReadMarkdown`` streams, so the
+bound holds each store read it makes rather than the whole stream, whose length is the rendering's
+and whose end is the caller's deadline.
 """
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import logging
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import override
 
 import grpc
@@ -71,13 +75,8 @@ _MAX_ENTITIES = 8
 # ceiling bounds what a caller reads rather than any fan-out.
 _GENE_ENTITIES_CEILING = 200
 _DEFAULT_GENE_ENTITIES = 50
-# Characters of markdown per read. The budget guards the reading run's context rather than any
-# fan-out, so the ceiling is a modest multiple of the default: a run that hits a cut and needs what
-# lay past it re-asks for more, and past the ceiling the remainder stays unreachable. The floor is
-# what keeps a cut read able to carry its truncation marker within the budget.
-_MAX_CHARS_CEILING = 1_000_000
-_MAX_CHARS_FLOOR = 1_000
-_DEFAULT_MAX_CHARS = 500_000
+# The most of a rendering one `ReadMarkdown` message carries, as the proto states it.
+_CHUNK_BYTES = 1 << 20
 # The wire value for each verdict on an identifier; an unmapped member raises on lookup.
 _AGREEMENT = {
     variants.Agreement.UNCOMPARED: literature_pb2.IdentifierAgreement.AGREEMENT_UNCOMPARED,
@@ -102,7 +101,8 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
     """One bound per rpc: the public method holds the deadline, the work it bounds sits behind it.
 
     The split is what keeps the bound whole — a handler's validation, its backend calls and the
-    response it builds all run inside the budget, so nothing an rpc awaits sits outside it.
+    response it builds all run inside the budget, so nothing an rpc awaits sits outside it. The one
+    stream, ``ReadMarkdown``, holds each store read it awaits to the bound instead.
     """
 
     def __init__(self, backend: literature_backend.LiteratureBackend) -> None:
@@ -131,20 +131,63 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
             await authored_status.abort(context, grpc.StatusCode.INTERNAL, str(e))
 
     @override
-    async def GetMarkdown(
-        self, request: literature_pb2.GetMarkdownRequest, context: grpc.aio.ServicerContext
-    ) -> literature_pb2.GetMarkdownResponse:
-        return await serving.within_deadline(context, 'GetMarkdown', self._get_markdown(request, context))
+    async def ReadMarkdown(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.aio.ServicerContext
+    ) -> AsyncIterator[literature_pb2.ReadMarkdownResponse]:
+        """The header, then the rendering's bytes, checked against the header as they pass.
 
-    async def _get_markdown(
-        self, request: literature_pb2.GetMarkdownRequest, context: grpc.aio.ServicerContext
-    ) -> literature_pb2.GetMarkdownResponse:
+        The bytes are hashed on their way out, so a rendering that does not match its key or its size
+        ends the stream INTERNAL rather than OK: the reader has what was sent, and is told it is not the
+        rendering the header named.
+        """
+        opened = await self._open_markdown(request, context)
+        if isinstance(opened, literature_pb2.FullTextUnavailable):
+            yield literature_pb2.ReadMarkdownResponse(unavailable=opened)
+            return
+        yield literature_pb2.ReadMarkdownResponse(
+            header=literature_pb2.RenderingHeader(
+                rendering_key=opened.key, size_bytes=opened.size_bytes, provenance=opened.provenance
+            )
+        )
+        digest = hashlib.sha256()
+        sent = 0
+        async with contextlib.aclosing(opened.blocks) as blocks:
+            while (block := await self._next_block(blocks, context)) is not None:
+                digest.update(block)
+                sent += len(block)
+                if sent > opened.size_bytes:
+                    break
+                for start in range(0, len(block), _CHUNK_BYTES):
+                    yield literature_pb2.ReadMarkdownResponse(chunk=block[start : start + _CHUNK_BYTES])
+        if sent != opened.size_bytes:
+            mismatch = f'the store served {"more" if sent > opened.size_bytes else sent} bytes'
+        elif digest.hexdigest() != opened.key:
+            mismatch = 'the bytes the store served do not hash to its key'
+        else:
+            return
+        await authored_status.abort(
+            context,
+            grpc.StatusCode.INTERNAL,
+            f'{request.doc_id} rendering {opened.key} is {opened.size_bytes} bytes, and {mismatch}: what arrived is '
+            'not the rendering the header named.',
+        )
+
+    async def _open_markdown(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.aio.ServicerContext
+    ) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
         try:
-            return await self._view().get_markdown(request.doc_id, _clamp_max_chars(request.max_chars))
+            return await serving.within_deadline(context, 'ReadMarkdown', self._view().read_markdown(request.doc_id))
         except literature_backend.UnknownPaperError:
             await authored_status.abort(
                 context, grpc.StatusCode.NOT_FOUND, trailer.clipped(f'unknown doc_id {request.doc_id!r}')
             )
+        except literature_backend.MissingRenderingBlobError as e:
+            await authored_status.abort(context, grpc.StatusCode.INTERNAL, str(e))
+
+    async def _next_block(self, blocks: AsyncIterator[bytes], context: grpc.aio.ServicerContext) -> bytes | None:
+        """The rendering's next run of bytes, or ``None`` past its end — one store read, under the rpc deadline."""
+        try:
+            return await serving.within_deadline(context, 'ReadMarkdown', anext(blocks, None))
         except literature_backend.MissingRenderingBlobError as e:
             await authored_status.abort(context, grpc.StatusCode.INTERNAL, str(e))
 
@@ -560,10 +603,6 @@ def _clamp_variant_max_results(requested: int) -> int:
 
 def _clamp_gene_entities(requested: int) -> int:
     return _clamp(requested, default=_DEFAULT_GENE_ENTITIES, ceiling=_GENE_ENTITIES_CEILING)
-
-
-def _clamp_max_chars(requested: int) -> int:
-    return max(_clamp(requested, default=_DEFAULT_MAX_CHARS, ceiling=_MAX_CHARS_CEILING), _MAX_CHARS_FLOOR)
 
 
 def _variant_entity(entity: variants.VariantEntity) -> literature_pb2.VariantEntity:

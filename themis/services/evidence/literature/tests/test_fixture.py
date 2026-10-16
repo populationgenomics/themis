@@ -7,6 +7,7 @@ half is indistinguishable from one the store or the index genuinely holds nothin
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 import pytest
 from pubmed_proto import pubmed_pb2
@@ -14,7 +15,6 @@ from pubmed_proto import pubmed_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import fixture, variants
-from themis.services.evidence.literature import servicer as servicer_mod
 from themis.services.evidence.upstreams import europe_pmc, litvar
 
 _STORE_SOURCE = "THEMIS_LITERATURE_FIXTURE 'store'"
@@ -80,18 +80,18 @@ def test_pdf_location_rects_must_be_quads() -> None:
 
 def test_a_rendering_without_text_is_the_store_fault_on_every_read_that_needs_it() -> None:
     # A seeded rendering with no text is the manifest-promises-what-the-store-cannot-produce state;
-    # the live store raises it from GetMarkdown, Locate and Validate alike, so the fixture must too —
+    # the live store raises it from ReadMarkdown, Locate and Validate alike, so the fixture must too —
     # a fixture validating a quote against a text it cannot serve answers from nowhere.
     faulty = _store_seeded({'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://x'}}})
     with pytest.raises(literature_backend.MissingRenderingBlobError):
-        asyncio.run(faulty.get_markdown('doc-1', 1000))
+        asyncio.run(faulty.read_markdown('doc-1'))
     with pytest.raises(literature_backend.MissingRenderingBlobError):
         asyncio.run(faulty.locate('doc-1', 'a quote', literature_pb2.REPRESENTATION_MARKDOWN))
     with pytest.raises(literature_backend.MissingRenderingBlobError):
         asyncio.run(faulty.validate('doc-1', 'a quote'))
 
 
-def test_locate_and_validate_answer_from_the_text_getmarkdown_serves() -> None:
+def test_locate_and_validate_answer_from_the_text_readmarkdown_serves() -> None:
     # One copy of the text answers all three, through the live matcher, so the offline quote
     # answers can never contradict the markdown a consumer just read.
     text = '# A paper\n\nThe assay showed reduced channel activity in vitro.\n'
@@ -177,41 +177,38 @@ def test_readiness_follows_what_the_paper_holds() -> None:
     }
 
 
-def test_a_seeded_paper_serves_the_text_its_seed_gives_it() -> None:
-    text = '# A paper\n\nThe channel showed markedly reduced ATP sensitivity.\n'
+def _read(backend: fixture.FixtureBackend, doc_id: str) -> tuple[literature_backend.Rendering, bytes]:
+    """The rendering `doc_id` opens to, and every byte it then yields."""
+
+    async def read() -> tuple[literature_backend.Rendering, bytes]:
+        opened = await backend.read_markdown(doc_id)
+        assert isinstance(opened, literature_backend.Rendering)
+        return opened, b''.join([block async for block in opened.blocks])
+
+    return asyncio.run(read())
+
+
+def test_a_seeded_paper_serves_the_text_its_seed_gives_it_whole_under_the_key_of_its_bytes() -> None:
+    # An offline read serves the whole text, as the deployed store does, however long it is.
+    text = '# A paper\n\nThe channel showed markedly reduced ATP sensitivity — ü.\n' * 50_000
     seed = {'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://c/r.md', 'text': text}}}
-    result = asyncio.run(_store_seeded(seed).get_markdown('doc-1', servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.WhichOneof('result') == 'content'
-    assert result.content.markdown == text
-    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
-
-
-def test_a_seeded_paper_is_served_under_the_same_read_budget_as_the_store() -> None:
-    # The budget is the reader's bound on what it may quote, so an offline run has to meet the same
-    # one: a fixture serving whole text would let a capture anchor quotes the deployed read cuts.
-    budget = servicer_mod._DEFAULT_MAX_CHARS
-    line = 'The channel showed markedly reduced ATP sensitivity in vitro.\n'
-    oversized = line * (1 + budget // len(line))
-    seed = {'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://c/r.md', 'text': oversized}}}
-    result = asyncio.run(_store_seeded(seed).get_markdown('doc-1', budget))
-    assert result.content.total_chars == len(oversized) > budget  # the cut, and how much lies past it
-    kept, marker = result.content.markdown.split('\n\n---\n\n', 1)
-    assert len(kept) <= budget
-    assert kept.endswith('in vitro.')  # the cut lands between lines, never mid-sentence
-    assert 'cannot be quoted or cited' in marker
+    rendering, data = _read(_store_seeded(seed), 'doc-1')
+    assert data.decode('utf-8') == text
+    assert rendering.size_bytes == len(data)
+    assert rendering.key == hashlib.sha256(data).hexdigest()
+    assert rendering.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
 
 
 def test_provenance_is_seedable_and_reaches_the_text_it_qualifies() -> None:
     seed = {'doc-1': {'title': 'A', 'provenance': 'SUPPLIED', 'markdown': {'gcs_uri': 'gs://c/r.md', 'text': '# A'}}}
-    result = asyncio.run(_store_seeded(seed).get_markdown('doc-1', servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_SUPPLIED
+    rendering, _ = _read(_store_seeded(seed), 'doc-1')
+    assert rendering.provenance == literature_pb2.TEXT_PROVENANCE_SUPPLIED
 
 
 def test_a_paper_without_a_rendering_reports_why_rather_than_empty_text() -> None:
     seed = {'doc-1': {'title': 'A', 'readiness': 'NO_FULL_TEXT'}}
-    result = asyncio.run(_store_seeded(seed).get_markdown('doc-1', servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.WhichOneof('result') == 'unavailable'
-    assert result.unavailable.state == literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT
+    result = asyncio.run(_store_seeded(seed).read_markdown('doc-1'))
+    assert result == literature_pb2.FullTextUnavailable(state=literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT)
 
 
 def test_a_rendering_the_seed_gives_no_text_for_is_a_store_fault() -> None:
@@ -219,7 +216,7 @@ def test_a_rendering_the_seed_gives_no_text_for_is_a_store_fault() -> None:
     # empty markdown instead would read as a paper that says nothing.
     seed = {'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://c/r.md'}}}
     with pytest.raises(literature_backend.MissingRenderingBlobError):
-        asyncio.run(_store_seeded(seed).get_markdown('doc-1', servicer_mod._DEFAULT_MAX_CHARS))
+        asyncio.run(_store_seeded(seed).read_markdown('doc-1'))
 
 
 def test_seeding_both_a_rendering_and_a_terminal_readiness_is_rejected() -> None:

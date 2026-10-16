@@ -110,40 +110,10 @@ message ValidateResponse {
   string reason = 3;
 }
 
-message GetMarkdownRequest {
-  string doc_id = 1;
-  // Maximum characters to return. Unset takes the service default; above the service ceiling clamps
-  // to it, and below the service floor likewise — a budget under the floor could not carry the
-  // truncation marker a cut read ends in.
-  uint32 max_chars = 2;
-}
-
-// The canonical rendering's text.
-message PaperMarkdown {
-  string doc_id = 1;
-  string markdown = 2;
-  TextProvenance provenance = 3;
-  // The rendering's full character count — Unicode code points, as `TextOffsets` counts them. The
-  // text came whole iff this does not exceed `markdown`'s length; above it the payload was cut at a
-  // line boundary behind an inline marker, and this says how much lies past the cut. The cut text,
-  // marker included, stays within the granted budget, which is what keeps that test sound. The way
-  // past a cut is a re-ask with a larger `max_chars`, up to the service ceiling; past it the
-  // remainder stays unreachable, since the request carries no offset or cursor. `Validate` still runs
-  // against the whole rendering, so quoting within what was read is the reader's to hold to.
-  int32 total_chars = 4;
-}
-
 // The store holds the paper but has no servable rendering — a fact about the paper, not an error.
 message FullTextUnavailable {
   // Never READY (there would be text to serve) nor UNKNOWN_PAPER (that doc_id is a NOT_FOUND).
   FullTextState state = 1;
-}
-
-message GetMarkdownResponse {
-  oneof result {
-    PaperMarkdown content = 1;
-    FullTextUnavailable unavailable = 2;
-  }
 }
 
 message ReadMarkdownRequest {
@@ -197,7 +167,7 @@ message EuropePmcRecord {
   string doi = 6;
   // The abstract as the index states it, empty where it states none. Readable, never quotable: no
   // discovery record is anchored in the full-text store, so nothing here can anchor a
-  // `:quote[doc_id, …]` directive — only the markdown `GetMarkdown` serves can.
+  // `:quote[doc_id, …]` directive — only the markdown `ReadMarkdown` serves can.
   string abstract = 7;
   // The PMC identifier as the index states it (`PMC…`), empty where it states none — the door's key
   // for the PMC-only deposit no PubMed id names.
@@ -252,7 +222,7 @@ message FetchPubmedArticlesResponse {
   // comment, an editorial, and for older records; that is what the index states, not proof the work
   // was published without one. Abstract text is readable, never quotable: no discovery record is
   // anchored in the full-text store, so nothing here can anchor a `:quote[doc_id, …]` directive —
-  // only the markdown `GetMarkdown` serves can.
+  // only the markdown `ReadMarkdown` serves can.
   repeated pubmed.PubmedArticle articles = 1;
   // The requested PMIDs (normalised) nothing is indexed under in PubMed/MEDLINE — most often a wrong
   // identifier. Not retryable, and depositing the paper in the store answers nothing here: whether
@@ -482,11 +452,6 @@ service Literature {
   // miss: an outage affects the batch, and a caller reading it per-id would write papers off
   // permanently.
   rpc MaybeIngestPapers(MaybeIngestPapersRequest) returns (MaybeIngestPapersResponse);
-  // The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-  // doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-  // produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-  // result for a known paper with no rendering at all (a fact about the store, not an error).
-  rpc GetMarkdown(GetMarkdownRequest) returns (GetMarkdownResponse);
   // The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
   // agent's read path, whole, however long the rendering: a header naming the rendering, then its
   // bytes. See `ReadMarkdownResponse` for the shape. NOT_FOUND for an unknown doc_id (a broken

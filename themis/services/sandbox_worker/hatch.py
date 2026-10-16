@@ -335,12 +335,6 @@ class LiteratureForwarder(_Forwarder[literature_pb2_grpc.LiteratureStub], litera
         return _forward(self._stub.MaybeIngestPapers, request, self._metadata, context)
 
     @override
-    def GetMarkdown(
-        self, request: literature_pb2.GetMarkdownRequest, context: grpc.ServicerContext
-    ) -> literature_pb2.GetMarkdownResponse:
-        return _forward(self._stub.GetMarkdown, request, self._metadata, context)
-
-    @override
     def ReadMarkdown(
         self, request: literature_pb2.ReadMarkdownRequest, context: grpc.ServicerContext
     ) -> Iterator[literature_pb2.ReadMarkdownResponse]:

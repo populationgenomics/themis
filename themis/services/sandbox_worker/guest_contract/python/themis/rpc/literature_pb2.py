@@ -25,19 +25,19 @@ _sym_db = _symbol_database.Default()
 from pubmed_proto import pubmed_pb2 as pubmed__proto_dot_pubmed__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bthemis/rpc/literature.proto\x12\x15themis.rpc.literature\x1a\x19pubmed_proto/pubmed.proto\"X\n\x11\x46ullTextReadiness\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x33\n\x05state\x18\x02 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"\'\n\x14PollFullTextsRequest\x12\x0f\n\x07\x64oc_ids\x18\x01 \x03(\t\"T\n\x15PollFullTextsResponse\x12;\n\treadiness\x18\x01 \x03(\x0b\x32(.themis.rpc.literature.FullTextReadiness\"j\n\x0ePaperReadiness\x12\x13\n\x0b\x65xternal_id\x18\x01 \x01(\t\x12\x0e\n\x06\x64oc_id\x18\x02 \x01(\t\x12\x33\n\x05state\x18\x03 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"0\n\x18MaybeIngestPapersRequest\x12\x14\n\x0c\x65xternal_ids\x18\x01 \x03(\t\"U\n\x19MaybeIngestPapersResponse\x12\x38\n\treadiness\x18\x01 \x03(\x0b\x32%.themis.rpc.literature.PaperReadiness\"0\n\x0fValidateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\"i\n\x10ValidateResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x39\n\nlocated_in\x18\x02 \x03(\x0e\x32%.themis.rpc.literature.Representation\x12\x0e\n\x06reason\x18\x03 \x01(\t\"7\n\x12GetMarkdownRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x11\n\tmax_chars\x18\x02 \x01(\r\"\x81\x01\n\rPaperMarkdown\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x10\n\x08markdown\x18\x02 \x01(\t\x12\x39\n\nprovenance\x18\x03 \x01(\x0e\x32%.themis.rpc.literature.TextProvenance\x12\x13\n\x0btotal_chars\x18\x04 \x01(\x05\"J\n\x13\x46ullTextUnavailable\x12\x33\n\x05state\x18\x01 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"\x9b\x01\n\x13GetMarkdownResponse\x12\x37\n\x07\x63ontent\x18\x01 \x01(\x0b\x32$.themis.rpc.literature.PaperMarkdownH\x00\x12\x41\n\x0bunavailable\x18\x02 \x01(\x0b\x32*.themis.rpc.literature.FullTextUnavailableH\x00\x42\x08\n\x06result\"%\n\x13ReadMarkdownRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\"w\n\x0fRenderingHeader\x12\x15\n\rrendering_key\x18\x01 \x01(\t\x12\x12\n\nsize_bytes\x18\x02 \x01(\x04\x12\x39\n\nprovenance\x18\x03 \x01(\x0e\x32%.themis.rpc.literature.TextProvenance\"\xac\x01\n\x14ReadMarkdownResponse\x12\x38\n\x06header\x18\x01 \x01(\x0b\x32&.themis.rpc.literature.RenderingHeaderH\x00\x12\x0f\n\x05\x63hunk\x18\x02 \x01(\x0cH\x00\x12\x41\n\x0bunavailable\x18\x03 \x01(\x0b\x32*.themis.rpc.literature.FullTextUnavailableH\x00\x42\x06\n\x04part\"\x8c\x01\n\x0f\x45uropePmcRecord\x12\x0c\n\x04pmid\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07\x61uthors\x18\x03 \x03(\t\x12\x0f\n\x07journal\x18\x04 \x01(\t\x12\x0c\n\x04year\x18\x05 \x01(\t\x12\x0b\n\x03\x64oi\x18\x06 \x01(\t\x12\x10\n\x08\x61\x62stract\x18\x07 \x01(\t\x12\r\n\x05pmcid\x18\x08 \x01(\t\"<\n\x16SearchEuropePmcRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\x13\n\x0bmax_results\x18\x02 \x01(\r\"i\n\x17SearchEuropePmcResponse\x12\x37\n\x07records\x18\x01 \x03(\x0b\x32&.themis.rpc.literature.EuropePmcRecord\x12\x15\n\rtotal_matched\x18\x02 \x01(\x05\"+\n\x1a\x46\x65tchPubmedArticlesRequest\x12\r\n\x05pmids\x18\x01 \x03(\t\"\x96\x01\n\x1b\x46\x65tchPubmedArticlesResponse\x12\'\n\x08\x61rticles\x18\x01 \x03(\x0b\x32\x15.pubmed.PubmedArticle\x12\x1c\n\x14pmids_without_record\x18\x02 \x03(\t\x12\x30\n\rbook_articles\x18\x03 \x03(\x0b\x32\x19.pubmed.PubmedBookArticle\"\x98\x01\n\x13SearchLitVarRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x0e\n\x06hgvs_c\x18\x02 \x01(\t\x12\x16\n\x0eprotein_change\x18\x03 \x01(\t\x12\x0c\n\x04rsid\x18\x04 \x01(\t\x12\x1c\n\x14max_pmids_per_entity\x18\x05 \x01(\r\x12\x0c\n\x04\x63\x61id\x18\x06 \x01(\t\x12\x11\n\tentity_id\x18\x07 \x01(\t\"f\n\x14SearchLitVarResponse\x12\x36\n\x08\x65ntities\x18\x01 \x03(\x0b\x32$.themis.rpc.literature.VariantEntity\x12\x16\n\x0etotal_entities\x18\x02 \x01(\x05\"\xaf\x03\n\x13IdentifierAgreement\x12\x42\n\x04gene\x18\x01 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x42\n\x04rsid\x18\x02 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x42\n\x04\x63\x61id\x18\x03 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x44\n\x06\x63hange\x18\x04 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\"\x85\x01\n\tAgreement\x12\x19\n\x15\x41GREEMENT_UNSPECIFIED\x10\x00\x12\x14\n\x10\x41GREEMENT_AGREES\x10\x01\x12\x15\n\x11\x41GREEMENT_DIFFERS\x10\x02\x12\x16\n\x12\x41GREEMENT_UNSTATED\x10\x03\x12\x18\n\x14\x41GREEMENT_UNCOMPARED\x10\x04\"\xbc\x01\n\rVariantEntity\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04rsid\x18\x02 \x01(\t\x12\r\n\x05\x63\x61ids\x18\x03 \x03(\t\x12\r\n\x05genes\x18\x04 \x03(\t\x12\x0e\n\x06\x63hange\x18\x05 \x01(\t\x12=\n\tagreement\x18\x06 \x01(\x0b\x32*.themis.rpc.literature.IdentifierAgreement\x12\x15\n\rtotal_records\x18\x07 \x01(\x05\x12\r\n\x05pmids\x18\x08 \x03(\t\"P\n\x19ListLitVarEntitiesRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x10\n\x08\x63ontains\x18\x02 \x01(\t\x12\x13\n\x0bmax_results\x18\x03 \x01(\r\"M\n\x0cListedEntity\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04rsid\x18\x02 \x01(\t\x12\x0c\n\x04\x63\x61id\x18\x03 \x01(\t\x12\x15\n\rtotal_records\x18\x04 \x01(\x05\"\x81\x01\n\x1aListLitVarEntitiesResponse\x12\x35\n\x08\x65ntities\x18\x01 \x03(\x0b\x32#.themis.rpc.literature.ListedEntity\x12\x15\n\rtotal_in_gene\x18\x02 \x01(\x05\x12\x15\n\rtotal_matched\x18\x03 \x01(\x05*e\n\x0eRepresentation\x12\x1e\n\x1aREPRESENTATION_UNSPECIFIED\x10\x00\x12\x1b\n\x17REPRESENTATION_MARKDOWN\x10\x01\x12\x16\n\x12REPRESENTATION_PDF\x10\x02*p\n\x0eTextProvenance\x12\x1f\n\x1bTEXT_PROVENANCE_UNSPECIFIED\x10\x00\x12\x1f\n\x1bTEXT_PROVENANCE_OPEN_ACCESS\x10\x01\x12\x1c\n\x18TEXT_PROVENANCE_SUPPLIED\x10\x02*\xc9\x01\n\rFullTextState\x12\x1f\n\x1b\x46ULL_TEXT_STATE_UNSPECIFIED\x10\x00\x12\x19\n\x15\x46ULL_TEXT_STATE_READY\x10\x01\x12\x1b\n\x17\x46ULL_TEXT_STATE_PENDING\x10\x02\x12 \n\x1c\x46ULL_TEXT_STATE_NO_FULL_TEXT\x10\x03\x12\x1a\n\x16\x46ULL_TEXT_STATE_FAILED\x10\x04\x12!\n\x1d\x46ULL_TEXT_STATE_UNKNOWN_PAPER\x10\x05\x32\xf2\x07\n\nLiterature\x12[\n\x08Validate\x12&.themis.rpc.literature.ValidateRequest\x1a\'.themis.rpc.literature.ValidateResponse\x12j\n\rPollFullTexts\x12+.themis.rpc.literature.PollFullTextsRequest\x1a,.themis.rpc.literature.PollFullTextsResponse\x12v\n\x11MaybeIngestPapers\x12/.themis.rpc.literature.MaybeIngestPapersRequest\x1a\x30.themis.rpc.literature.MaybeIngestPapersResponse\x12\x64\n\x0bGetMarkdown\x12).themis.rpc.literature.GetMarkdownRequest\x1a*.themis.rpc.literature.GetMarkdownResponse\x12i\n\x0cReadMarkdown\x12*.themis.rpc.literature.ReadMarkdownRequest\x1a+.themis.rpc.literature.ReadMarkdownResponse0\x01\x12p\n\x0fSearchEuropePmc\x12-.themis.rpc.literature.SearchEuropePmcRequest\x1a..themis.rpc.literature.SearchEuropePmcResponse\x12|\n\x13\x46\x65tchPubmedArticles\x12\x31.themis.rpc.literature.FetchPubmedArticlesRequest\x1a\x32.themis.rpc.literature.FetchPubmedArticlesResponse\x12g\n\x0cSearchLitVar\x12*.themis.rpc.literature.SearchLitVarRequest\x1a+.themis.rpc.literature.SearchLitVarResponse\x12y\n\x12ListLitVarEntities\x12\x30.themis.rpc.literature.ListLitVarEntitiesRequest\x1a\x31.themis.rpc.literature.ListLitVarEntitiesResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bthemis/rpc/literature.proto\x12\x15themis.rpc.literature\x1a\x19pubmed_proto/pubmed.proto\"X\n\x11\x46ullTextReadiness\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x33\n\x05state\x18\x02 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"\'\n\x14PollFullTextsRequest\x12\x0f\n\x07\x64oc_ids\x18\x01 \x03(\t\"T\n\x15PollFullTextsResponse\x12;\n\treadiness\x18\x01 \x03(\x0b\x32(.themis.rpc.literature.FullTextReadiness\"j\n\x0ePaperReadiness\x12\x13\n\x0b\x65xternal_id\x18\x01 \x01(\t\x12\x0e\n\x06\x64oc_id\x18\x02 \x01(\t\x12\x33\n\x05state\x18\x03 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"0\n\x18MaybeIngestPapersRequest\x12\x14\n\x0c\x65xternal_ids\x18\x01 \x03(\t\"U\n\x19MaybeIngestPapersResponse\x12\x38\n\treadiness\x18\x01 \x03(\x0b\x32%.themis.rpc.literature.PaperReadiness\"0\n\x0fValidateRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\r\n\x05quote\x18\x02 \x01(\t\"i\n\x10ValidateResponse\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x39\n\nlocated_in\x18\x02 \x03(\x0e\x32%.themis.rpc.literature.Representation\x12\x0e\n\x06reason\x18\x03 \x01(\t\"J\n\x13\x46ullTextUnavailable\x12\x33\n\x05state\x18\x01 \x01(\x0e\x32$.themis.rpc.literature.FullTextState\"%\n\x13ReadMarkdownRequest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\"w\n\x0fRenderingHeader\x12\x15\n\rrendering_key\x18\x01 \x01(\t\x12\x12\n\nsize_bytes\x18\x02 \x01(\x04\x12\x39\n\nprovenance\x18\x03 \x01(\x0e\x32%.themis.rpc.literature.TextProvenance\"\xac\x01\n\x14ReadMarkdownResponse\x12\x38\n\x06header\x18\x01 \x01(\x0b\x32&.themis.rpc.literature.RenderingHeaderH\x00\x12\x0f\n\x05\x63hunk\x18\x02 \x01(\x0cH\x00\x12\x41\n\x0bunavailable\x18\x03 \x01(\x0b\x32*.themis.rpc.literature.FullTextUnavailableH\x00\x42\x06\n\x04part\"\x8c\x01\n\x0f\x45uropePmcRecord\x12\x0c\n\x04pmid\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07\x61uthors\x18\x03 \x03(\t\x12\x0f\n\x07journal\x18\x04 \x01(\t\x12\x0c\n\x04year\x18\x05 \x01(\t\x12\x0b\n\x03\x64oi\x18\x06 \x01(\t\x12\x10\n\x08\x61\x62stract\x18\x07 \x01(\t\x12\r\n\x05pmcid\x18\x08 \x01(\t\"<\n\x16SearchEuropePmcRequest\x12\r\n\x05query\x18\x01 \x01(\t\x12\x13\n\x0bmax_results\x18\x02 \x01(\r\"i\n\x17SearchEuropePmcResponse\x12\x37\n\x07records\x18\x01 \x03(\x0b\x32&.themis.rpc.literature.EuropePmcRecord\x12\x15\n\rtotal_matched\x18\x02 \x01(\x05\"+\n\x1a\x46\x65tchPubmedArticlesRequest\x12\r\n\x05pmids\x18\x01 \x03(\t\"\x96\x01\n\x1b\x46\x65tchPubmedArticlesResponse\x12\'\n\x08\x61rticles\x18\x01 \x03(\x0b\x32\x15.pubmed.PubmedArticle\x12\x1c\n\x14pmids_without_record\x18\x02 \x03(\t\x12\x30\n\rbook_articles\x18\x03 \x03(\x0b\x32\x19.pubmed.PubmedBookArticle\"\x98\x01\n\x13SearchLitVarRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x0e\n\x06hgvs_c\x18\x02 \x01(\t\x12\x16\n\x0eprotein_change\x18\x03 \x01(\t\x12\x0c\n\x04rsid\x18\x04 \x01(\t\x12\x1c\n\x14max_pmids_per_entity\x18\x05 \x01(\r\x12\x0c\n\x04\x63\x61id\x18\x06 \x01(\t\x12\x11\n\tentity_id\x18\x07 \x01(\t\"f\n\x14SearchLitVarResponse\x12\x36\n\x08\x65ntities\x18\x01 \x03(\x0b\x32$.themis.rpc.literature.VariantEntity\x12\x16\n\x0etotal_entities\x18\x02 \x01(\x05\"\xaf\x03\n\x13IdentifierAgreement\x12\x42\n\x04gene\x18\x01 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x42\n\x04rsid\x18\x02 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x42\n\x04\x63\x61id\x18\x03 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\x12\x44\n\x06\x63hange\x18\x04 \x01(\x0e\x32\x34.themis.rpc.literature.IdentifierAgreement.Agreement\"\x85\x01\n\tAgreement\x12\x19\n\x15\x41GREEMENT_UNSPECIFIED\x10\x00\x12\x14\n\x10\x41GREEMENT_AGREES\x10\x01\x12\x15\n\x11\x41GREEMENT_DIFFERS\x10\x02\x12\x16\n\x12\x41GREEMENT_UNSTATED\x10\x03\x12\x18\n\x14\x41GREEMENT_UNCOMPARED\x10\x04\"\xbc\x01\n\rVariantEntity\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04rsid\x18\x02 \x01(\t\x12\r\n\x05\x63\x61ids\x18\x03 \x03(\t\x12\r\n\x05genes\x18\x04 \x03(\t\x12\x0e\n\x06\x63hange\x18\x05 \x01(\t\x12=\n\tagreement\x18\x06 \x01(\x0b\x32*.themis.rpc.literature.IdentifierAgreement\x12\x15\n\rtotal_records\x18\x07 \x01(\x05\x12\r\n\x05pmids\x18\x08 \x03(\t\"P\n\x19ListLitVarEntitiesRequest\x12\x0c\n\x04gene\x18\x01 \x01(\t\x12\x10\n\x08\x63ontains\x18\x02 \x01(\t\x12\x13\n\x0bmax_results\x18\x03 \x01(\r\"M\n\x0cListedEntity\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04rsid\x18\x02 \x01(\t\x12\x0c\n\x04\x63\x61id\x18\x03 \x01(\t\x12\x15\n\rtotal_records\x18\x04 \x01(\x05\"\x81\x01\n\x1aListLitVarEntitiesResponse\x12\x35\n\x08\x65ntities\x18\x01 \x03(\x0b\x32#.themis.rpc.literature.ListedEntity\x12\x15\n\rtotal_in_gene\x18\x02 \x01(\x05\x12\x15\n\rtotal_matched\x18\x03 \x01(\x05*e\n\x0eRepresentation\x12\x1e\n\x1aREPRESENTATION_UNSPECIFIED\x10\x00\x12\x1b\n\x17REPRESENTATION_MARKDOWN\x10\x01\x12\x16\n\x12REPRESENTATION_PDF\x10\x02*p\n\x0eTextProvenance\x12\x1f\n\x1bTEXT_PROVENANCE_UNSPECIFIED\x10\x00\x12\x1f\n\x1bTEXT_PROVENANCE_OPEN_ACCESS\x10\x01\x12\x1c\n\x18TEXT_PROVENANCE_SUPPLIED\x10\x02*\xc9\x01\n\rFullTextState\x12\x1f\n\x1b\x46ULL_TEXT_STATE_UNSPECIFIED\x10\x00\x12\x19\n\x15\x46ULL_TEXT_STATE_READY\x10\x01\x12\x1b\n\x17\x46ULL_TEXT_STATE_PENDING\x10\x02\x12 \n\x1c\x46ULL_TEXT_STATE_NO_FULL_TEXT\x10\x03\x12\x1a\n\x16\x46ULL_TEXT_STATE_FAILED\x10\x04\x12!\n\x1d\x46ULL_TEXT_STATE_UNKNOWN_PAPER\x10\x05\x32\x8c\x07\n\nLiterature\x12[\n\x08Validate\x12&.themis.rpc.literature.ValidateRequest\x1a\'.themis.rpc.literature.ValidateResponse\x12j\n\rPollFullTexts\x12+.themis.rpc.literature.PollFullTextsRequest\x1a,.themis.rpc.literature.PollFullTextsResponse\x12v\n\x11MaybeIngestPapers\x12/.themis.rpc.literature.MaybeIngestPapersRequest\x1a\x30.themis.rpc.literature.MaybeIngestPapersResponse\x12i\n\x0cReadMarkdown\x12*.themis.rpc.literature.ReadMarkdownRequest\x1a+.themis.rpc.literature.ReadMarkdownResponse0\x01\x12p\n\x0fSearchEuropePmc\x12-.themis.rpc.literature.SearchEuropePmcRequest\x1a..themis.rpc.literature.SearchEuropePmcResponse\x12|\n\x13\x46\x65tchPubmedArticles\x12\x31.themis.rpc.literature.FetchPubmedArticlesRequest\x1a\x32.themis.rpc.literature.FetchPubmedArticlesResponse\x12g\n\x0cSearchLitVar\x12*.themis.rpc.literature.SearchLitVarRequest\x1a+.themis.rpc.literature.SearchLitVarResponse\x12y\n\x12ListLitVarEntities\x12\x30.themis.rpc.literature.ListLitVarEntitiesRequest\x1a\x31.themis.rpc.literature.ListLitVarEntitiesResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.literature_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_REPRESENTATION']._serialized_start=3145
-  _globals['_REPRESENTATION']._serialized_end=3246
-  _globals['_TEXTPROVENANCE']._serialized_start=3248
-  _globals['_TEXTPROVENANCE']._serialized_end=3360
-  _globals['_FULLTEXTSTATE']._serialized_start=3363
-  _globals['_FULLTEXTSTATE']._serialized_end=3564
+  _globals['_REPRESENTATION']._serialized_start=2798
+  _globals['_REPRESENTATION']._serialized_end=2899
+  _globals['_TEXTPROVENANCE']._serialized_start=2901
+  _globals['_TEXTPROVENANCE']._serialized_end=3013
+  _globals['_FULLTEXTSTATE']._serialized_start=3016
+  _globals['_FULLTEXTSTATE']._serialized_end=3217
   _globals['_FULLTEXTREADINESS']._serialized_start=81
   _globals['_FULLTEXTREADINESS']._serialized_end=169
   _globals['_POLLFULLTEXTSREQUEST']._serialized_start=171
@@ -54,46 +54,40 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_VALIDATEREQUEST']._serialized_end=591
   _globals['_VALIDATERESPONSE']._serialized_start=593
   _globals['_VALIDATERESPONSE']._serialized_end=698
-  _globals['_GETMARKDOWNREQUEST']._serialized_start=700
-  _globals['_GETMARKDOWNREQUEST']._serialized_end=755
-  _globals['_PAPERMARKDOWN']._serialized_start=758
-  _globals['_PAPERMARKDOWN']._serialized_end=887
-  _globals['_FULLTEXTUNAVAILABLE']._serialized_start=889
-  _globals['_FULLTEXTUNAVAILABLE']._serialized_end=963
-  _globals['_GETMARKDOWNRESPONSE']._serialized_start=966
-  _globals['_GETMARKDOWNRESPONSE']._serialized_end=1121
-  _globals['_READMARKDOWNREQUEST']._serialized_start=1123
-  _globals['_READMARKDOWNREQUEST']._serialized_end=1160
-  _globals['_RENDERINGHEADER']._serialized_start=1162
-  _globals['_RENDERINGHEADER']._serialized_end=1281
-  _globals['_READMARKDOWNRESPONSE']._serialized_start=1284
-  _globals['_READMARKDOWNRESPONSE']._serialized_end=1456
-  _globals['_EUROPEPMCRECORD']._serialized_start=1459
-  _globals['_EUROPEPMCRECORD']._serialized_end=1599
-  _globals['_SEARCHEUROPEPMCREQUEST']._serialized_start=1601
-  _globals['_SEARCHEUROPEPMCREQUEST']._serialized_end=1661
-  _globals['_SEARCHEUROPEPMCRESPONSE']._serialized_start=1663
-  _globals['_SEARCHEUROPEPMCRESPONSE']._serialized_end=1768
-  _globals['_FETCHPUBMEDARTICLESREQUEST']._serialized_start=1770
-  _globals['_FETCHPUBMEDARTICLESREQUEST']._serialized_end=1813
-  _globals['_FETCHPUBMEDARTICLESRESPONSE']._serialized_start=1816
-  _globals['_FETCHPUBMEDARTICLESRESPONSE']._serialized_end=1966
-  _globals['_SEARCHLITVARREQUEST']._serialized_start=1969
-  _globals['_SEARCHLITVARREQUEST']._serialized_end=2121
-  _globals['_SEARCHLITVARRESPONSE']._serialized_start=2123
-  _globals['_SEARCHLITVARRESPONSE']._serialized_end=2225
-  _globals['_IDENTIFIERAGREEMENT']._serialized_start=2228
-  _globals['_IDENTIFIERAGREEMENT']._serialized_end=2659
-  _globals['_IDENTIFIERAGREEMENT_AGREEMENT']._serialized_start=2526
-  _globals['_IDENTIFIERAGREEMENT_AGREEMENT']._serialized_end=2659
-  _globals['_VARIANTENTITY']._serialized_start=2662
-  _globals['_VARIANTENTITY']._serialized_end=2850
-  _globals['_LISTLITVARENTITIESREQUEST']._serialized_start=2852
-  _globals['_LISTLITVARENTITIESREQUEST']._serialized_end=2932
-  _globals['_LISTEDENTITY']._serialized_start=2934
-  _globals['_LISTEDENTITY']._serialized_end=3011
-  _globals['_LISTLITVARENTITIESRESPONSE']._serialized_start=3014
-  _globals['_LISTLITVARENTITIESRESPONSE']._serialized_end=3143
-  _globals['_LITERATURE']._serialized_start=3567
-  _globals['_LITERATURE']._serialized_end=4577
+  _globals['_FULLTEXTUNAVAILABLE']._serialized_start=700
+  _globals['_FULLTEXTUNAVAILABLE']._serialized_end=774
+  _globals['_READMARKDOWNREQUEST']._serialized_start=776
+  _globals['_READMARKDOWNREQUEST']._serialized_end=813
+  _globals['_RENDERINGHEADER']._serialized_start=815
+  _globals['_RENDERINGHEADER']._serialized_end=934
+  _globals['_READMARKDOWNRESPONSE']._serialized_start=937
+  _globals['_READMARKDOWNRESPONSE']._serialized_end=1109
+  _globals['_EUROPEPMCRECORD']._serialized_start=1112
+  _globals['_EUROPEPMCRECORD']._serialized_end=1252
+  _globals['_SEARCHEUROPEPMCREQUEST']._serialized_start=1254
+  _globals['_SEARCHEUROPEPMCREQUEST']._serialized_end=1314
+  _globals['_SEARCHEUROPEPMCRESPONSE']._serialized_start=1316
+  _globals['_SEARCHEUROPEPMCRESPONSE']._serialized_end=1421
+  _globals['_FETCHPUBMEDARTICLESREQUEST']._serialized_start=1423
+  _globals['_FETCHPUBMEDARTICLESREQUEST']._serialized_end=1466
+  _globals['_FETCHPUBMEDARTICLESRESPONSE']._serialized_start=1469
+  _globals['_FETCHPUBMEDARTICLESRESPONSE']._serialized_end=1619
+  _globals['_SEARCHLITVARREQUEST']._serialized_start=1622
+  _globals['_SEARCHLITVARREQUEST']._serialized_end=1774
+  _globals['_SEARCHLITVARRESPONSE']._serialized_start=1776
+  _globals['_SEARCHLITVARRESPONSE']._serialized_end=1878
+  _globals['_IDENTIFIERAGREEMENT']._serialized_start=1881
+  _globals['_IDENTIFIERAGREEMENT']._serialized_end=2312
+  _globals['_IDENTIFIERAGREEMENT_AGREEMENT']._serialized_start=2179
+  _globals['_IDENTIFIERAGREEMENT_AGREEMENT']._serialized_end=2312
+  _globals['_VARIANTENTITY']._serialized_start=2315
+  _globals['_VARIANTENTITY']._serialized_end=2503
+  _globals['_LISTLITVARENTITIESREQUEST']._serialized_start=2505
+  _globals['_LISTLITVARENTITIESREQUEST']._serialized_end=2585
+  _globals['_LISTEDENTITY']._serialized_start=2587
+  _globals['_LISTEDENTITY']._serialized_end=2664
+  _globals['_LISTLITVARENTITIESRESPONSE']._serialized_start=2667
+  _globals['_LISTLITVARENTITIESRESPONSE']._serialized_end=2796
+  _globals['_LITERATURE']._serialized_start=3220
+  _globals['_LITERATURE']._serialized_end=4128
 # @@protoc_insertion_point(module_scope)

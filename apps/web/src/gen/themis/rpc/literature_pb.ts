@@ -30,7 +30,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/rpc/literature.proto.
  */
 export const file_themis_rpc_literature: GenFile = /*@__PURE__*/
-  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiWAoRRnVsbFRleHRSZWFkaW5lc3MSDgoGZG9jX2lkGAEgASgJEjMKBXN0YXRlGAIgASgOMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0U3RhdGUiJwoUUG9sbEZ1bGxUZXh0c1JlcXVlc3QSDwoHZG9jX2lkcxgBIAMoCSJUChVQb2xsRnVsbFRleHRzUmVzcG9uc2USOwoJcmVhZGluZXNzGAEgAygLMigudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0UmVhZGluZXNzImoKDlBhcGVyUmVhZGluZXNzEhMKC2V4dGVybmFsX2lkGAEgASgJEg4KBmRvY19pZBgCIAEoCRIzCgVzdGF0ZRgDIAEoDjIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GdWxsVGV4dFN0YXRlIjAKGE1heWJlSW5nZXN0UGFwZXJzUmVxdWVzdBIUCgxleHRlcm5hbF9pZHMYASADKAkiVQoZTWF5YmVJbmdlc3RQYXBlcnNSZXNwb25zZRI4CglyZWFkaW5lc3MYASADKAsyJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGFwZXJSZWFkaW5lc3MiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJIjcKEkdldE1hcmtkb3duUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSEQoJbWF4X2NoYXJzGAIgASgNIoEBCg1QYXBlck1hcmtkb3duEg4KBmRvY19pZBgBIAEoCRIQCghtYXJrZG93bhgCIAEoCRI5Cgpwcm92ZW5hbmNlGAMgASgOMiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLlRleHRQcm92ZW5hbmNlEhMKC3RvdGFsX2NoYXJzGAQgASgFIkoKE0Z1bGxUZXh0VW5hdmFpbGFibGUSMwoFc3RhdGUYASABKA4yJC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRTdGF0ZSKbAQoTR2V0TWFya2Rvd25SZXNwb25zZRI3Cgdjb250ZW50GAEgASgLMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVyTWFya2Rvd25IABJBCgt1bmF2YWlsYWJsZRgCIAEoCzIqLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GdWxsVGV4dFVuYXZhaWxhYmxlSABCCAoGcmVzdWx0IiUKE1JlYWRNYXJrZG93blJlcXVlc3QSDgoGZG9jX2lkGAEgASgJIncKD1JlbmRlcmluZ0hlYWRlchIVCg1yZW5kZXJpbmdfa2V5GAEgASgJEhIKCnNpemVfYnl0ZXMYAiABKAQSOQoKcHJvdmVuYW5jZRgDIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0UHJvdmVuYW5jZSKsAQoUUmVhZE1hcmtkb3duUmVzcG9uc2USOAoGaGVhZGVyGAEgASgLMiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlJlbmRlcmluZ0hlYWRlckgAEg8KBWNodW5rGAIgASgMSAASQQoLdW5hdmFpbGFibGUYAyABKAsyKi50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRVbmF2YWlsYWJsZUgAQgYKBHBhcnQijAEKD0V1cm9wZVBtY1JlY29yZBIMCgRwbWlkGAEgASgJEg0KBXRpdGxlGAIgASgJEg8KB2F1dGhvcnMYAyADKAkSDwoHam91cm5hbBgEIAEoCRIMCgR5ZWFyGAUgASgJEgsKA2RvaRgGIAEoCRIQCghhYnN0cmFjdBgHIAEoCRINCgVwbWNpZBgIIAEoCSI8ChZTZWFyY2hFdXJvcGVQbWNSZXF1ZXN0Eg0KBXF1ZXJ5GAEgASgJEhMKC21heF9yZXN1bHRzGAIgASgNImkKF1NlYXJjaEV1cm9wZVBtY1Jlc3BvbnNlEjcKB3JlY29yZHMYASADKAsyJi50aGVtaXMucnBjLmxpdGVyYXR1cmUuRXVyb3BlUG1jUmVjb3JkEhUKDXRvdGFsX21hdGNoZWQYAiABKAUiKwoaRmV0Y2hQdWJtZWRBcnRpY2xlc1JlcXVlc3QSDQoFcG1pZHMYASADKAkilgEKG0ZldGNoUHVibWVkQXJ0aWNsZXNSZXNwb25zZRInCghhcnRpY2xlcxgBIAMoCzIVLnB1Ym1lZC5QdWJtZWRBcnRpY2xlEhwKFHBtaWRzX3dpdGhvdXRfcmVjb3JkGAIgAygJEjAKDWJvb2tfYXJ0aWNsZXMYAyADKAsyGS5wdWJtZWQuUHVibWVkQm9va0FydGljbGUimAEKE1NlYXJjaExpdFZhclJlcXVlc3QSDAoEZ2VuZRgBIAEoCRIOCgZoZ3ZzX2MYAiABKAkSFgoOcHJvdGVpbl9jaGFuZ2UYAyABKAkSDAoEcnNpZBgEIAEoCRIcChRtYXhfcG1pZHNfcGVyX2VudGl0eRgFIAEoDRIMCgRjYWlkGAYgASgJEhEKCWVudGl0eV9pZBgHIAEoCSJmChRTZWFyY2hMaXRWYXJSZXNwb25zZRI2CghlbnRpdGllcxgBIAMoCzIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYXJpYW50RW50aXR5EhYKDnRvdGFsX2VudGl0aWVzGAIgASgFIq8DChNJZGVudGlmaWVyQWdyZWVtZW50EkIKBGdlbmUYASABKA4yNC50aGVtaXMucnBjLmxpdGVyYXR1cmUuSWRlbnRpZmllckFncmVlbWVudC5BZ3JlZW1lbnQSQgoEcnNpZBgCIAEoDjI0LnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5JZGVudGlmaWVyQWdyZWVtZW50LkFncmVlbWVudBJCCgRjYWlkGAMgASgOMjQudGhlbWlzLnJwYy5saXRlcmF0dXJlLklkZW50aWZpZXJBZ3JlZW1lbnQuQWdyZWVtZW50EkQKBmNoYW5nZRgEIAEoDjI0LnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5JZGVudGlmaWVyQWdyZWVtZW50LkFncmVlbWVudCKFAQoJQWdyZWVtZW50EhkKFUFHUkVFTUVOVF9VTlNQRUNJRklFRBAAEhQKEEFHUkVFTUVOVF9BR1JFRVMQARIVChFBR1JFRU1FTlRfRElGRkVSUxACEhYKEkFHUkVFTUVOVF9VTlNUQVRFRBADEhgKFEFHUkVFTUVOVF9VTkNPTVBBUkVEEAQivAEKDVZhcmlhbnRFbnRpdHkSCgoCaWQYASABKAkSDAoEcnNpZBgCIAEoCRINCgVjYWlkcxgDIAMoCRINCgVnZW5lcxgEIAMoCRIOCgZjaGFuZ2UYBSABKAkSPQoJYWdyZWVtZW50GAYgASgLMioudGhlbWlzLnJwYy5saXRlcmF0dXJlLklkZW50aWZpZXJBZ3JlZW1lbnQSFQoNdG90YWxfcmVjb3JkcxgHIAEoBRINCgVwbWlkcxgIIAMoCSJQChlMaXN0TGl0VmFyRW50aXRpZXNSZXF1ZXN0EgwKBGdlbmUYASABKAkSEAoIY29udGFpbnMYAiABKAkSEwoLbWF4X3Jlc3VsdHMYAyABKA0iTQoMTGlzdGVkRW50aXR5EgoKAmlkGAEgASgJEgwKBHJzaWQYAiABKAkSDAoEY2FpZBgDIAEoCRIVCg10b3RhbF9yZWNvcmRzGAQgASgFIoEBChpMaXN0TGl0VmFyRW50aXRpZXNSZXNwb25zZRI1CghlbnRpdGllcxgBIAMoCzIjLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5MaXN0ZWRFbnRpdHkSFQoNdG90YWxfaW5fZ2VuZRgCIAEoBRIVCg10b3RhbF9tYXRjaGVkGAMgASgFKmUKDlJlcHJlc2VudGF0aW9uEh4KGlJFUFJFU0VOVEFUSU9OX1VOU1BFQ0lGSUVEEAASGwoXUkVQUkVTRU5UQVRJT05fTUFSS0RPV04QARIWChJSRVBSRVNFTlRBVElPTl9QREYQAipYCghGaWxlUm9sZRIZChVGSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIUChBGSUxFX1JPTEVfRklHVVJFEAESGwoXRklMRV9ST0xFX1NVUFBMRU1FTlRBUlkQAipwCg5UZXh0UHJvdmVuYW5jZRIfChtURVhUX1BST1ZFTkFOQ0VfVU5TUEVDSUZJRUQQABIfChtURVhUX1BST1ZFTkFOQ0VfT1BFTl9BQ0NFU1MQARIcChhURVhUX1BST1ZFTkFOQ0VfU1VQUExJRUQQAirJAQoNRnVsbFRleHRTdGF0ZRIfChtGVUxMX1RFWFRfU1RBVEVfVU5TUEVDSUZJRUQQABIZChVGVUxMX1RFWFRfU1RBVEVfUkVBRFkQARIbChdGVUxMX1RFWFRfU1RBVEVfUEVORElORxACEiAKHEZVTExfVEVYVF9TVEFURV9OT19GVUxMX1RFWFQQAxIaChZGVUxMX1RFWFRfU1RBVEVfRkFJTEVEEAQSIQodRlVMTF9URVhUX1NUQVRFX1VOS05PV05fUEFQRVIQBTLnCgoKTGl0ZXJhdHVyZRJlCg1EZXNjcmliZVBhcGVyEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLkRlc2NyaWJlUGFwZXJSZXF1ZXN0GiAudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBhcGVySW5mbyIForUYAQESbQoOUmVzb2x2ZUNvbnRlbnQSLC50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVzb2x2ZUNvbnRlbnRSZXF1ZXN0GiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLkNvbnRlbnRMb2NhdGlvbiIForUYAQESXAoGTG9jYXRlEiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlcXVlc3QaJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuTG9jYXRlUmVzcG9uc2UiBaK1GAEBEmIKCFZhbGlkYXRlEiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLlZhbGlkYXRlUmVxdWVzdBonLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlc3BvbnNlIgWitRgBAxJxCg1Qb2xsRnVsbFRleHRzEisudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBvbGxGdWxsVGV4dHNSZXF1ZXN0GiwudGhlbWlzLnJwYy5saXRlcmF0dXJlLlBvbGxGdWxsVGV4dHNSZXNwb25zZSIForUYAQMSfQoRTWF5YmVJbmdlc3RQYXBlcnMSLy50aGVtaXMucnBjLmxpdGVyYXR1cmUuTWF5YmVJbmdlc3RQYXBlcnNSZXF1ZXN0GjAudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1heWJlSW5nZXN0UGFwZXJzUmVzcG9uc2UiBaK1GAEDEmsKC0dldE1hcmtkb3duEikudGhlbWlzLnJwYy5saXRlcmF0dXJlLkdldE1hcmtkb3duUmVxdWVzdBoqLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5HZXRNYXJrZG93blJlc3BvbnNlIgWitRgBAxJwCgxSZWFkTWFya2Rvd24SKi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVhZE1hcmtkb3duUmVxdWVzdBorLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWFkTWFya2Rvd25SZXNwb25zZSIForUYAQMwARJ3Cg9TZWFyY2hFdXJvcGVQbWMSLS50aGVtaXMucnBjLmxpdGVyYXR1cmUuU2VhcmNoRXVyb3BlUG1jUmVxdWVzdBouLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5TZWFyY2hFdXJvcGVQbWNSZXNwb25zZSIForUYAQMSgwEKE0ZldGNoUHVibWVkQXJ0aWNsZXMSMS50aGVtaXMucnBjLmxpdGVyYXR1cmUuRmV0Y2hQdWJtZWRBcnRpY2xlc1JlcXVlc3QaMi50aGVtaXMucnBjLmxpdGVyYXR1cmUuRmV0Y2hQdWJtZWRBcnRpY2xlc1Jlc3BvbnNlIgWitRgBAxJuCgxTZWFyY2hMaXRWYXISKi50aGVtaXMucnBjLmxpdGVyYXR1cmUuU2VhcmNoTGl0VmFyUmVxdWVzdBorLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5TZWFyY2hMaXRWYXJSZXNwb25zZSIForUYAQMSgAEKEkxpc3RMaXRWYXJFbnRpdGllcxIwLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5MaXN0TGl0VmFyRW50aXRpZXNSZXF1ZXN0GjEudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxpc3RMaXRWYXJFbnRpdGllc1Jlc3BvbnNlIgWitRgBA2IGcHJvdG8z", [file_pubmed_proto_pubmed, file_themis_rpc_sandbox_options]);
+  fileDesc("Cht0aGVtaXMvcnBjL2xpdGVyYXR1cmUucHJvdG8SFXRoZW1pcy5ycGMubGl0ZXJhdHVyZSImChREZXNjcmliZVBhcGVyUmVxdWVzdBIOCgZkb2NfaWQYASABKAkiWwoIRmlsZUluZm8SDAoEbmFtZRgBIAEoCRItCgRyb2xlGAIgASgOMh8udGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVSb2xlEhIKCm1lZGlhX3R5cGUYAyABKAki4wEKCVBhcGVySW5mbxIOCgZkb2NfaWQYASABKAkSDQoFdGl0bGUYAiABKAkSFAoMaGFzX21hcmtkb3duGAMgASgIEhkKEW1hcmtkb3duX2Zyb21feG1sGAQgASgIEg8KB2hhc19wZGYYBSABKAgSRQoWZGVmYXVsdF9yZXByZXNlbnRhdGlvbhgGIAEoDjIlLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZXByZXNlbnRhdGlvbhIuCgVmaWxlcxgHIAMoCzIfLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GaWxlSW5mbyISChBNYXJrZG93blNlbGVjdG9yIg0KC1BkZlNlbGVjdG9yIhwKDEZpbGVTZWxlY3RvchIMCgRuYW1lGAEgASgJItgBChVSZXNvbHZlQ29udGVudFJlcXVlc3QSDgoGZG9jX2lkGAEgASgJEjsKCG1hcmtkb3duGAIgASgLMicudGhlbWlzLnJwYy5saXRlcmF0dXJlLk1hcmtkb3duU2VsZWN0b3JIABIxCgNwZGYYAyABKAsyIi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGRmU2VsZWN0b3JIABIzCgRmaWxlGAQgASgLMiMudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZpbGVTZWxlY3RvckgAQgoKCHNlbGVjdG9yIjYKD0NvbnRlbnRMb2NhdGlvbhIPCgdnY3NfdXJpGAEgASgJEhIKCm1lZGlhX3R5cGUYAiABKAkibQoNTG9jYXRlUmVxdWVzdBIOCgZkb2NfaWQYASABKAkSDQoFcXVvdGUYAiABKAkSPQoOcmVwcmVzZW50YXRpb24YAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24iKQoLVGV4dE9mZnNldHMSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFIjsKBFJlY3QSCQoBeBgBIAEoAhIJCgF5GAIgASgCEg0KBXdpZHRoGAMgASgCEg4KBmhlaWdodBgEIAEoAiJFCglQZGZSZWdpb24SDAoEcGFnZRgBIAEoBRIqCgVyZWN0cxgCIAMoCzIbLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWN0IhEKD1F1b3RlTm90TG9jYXRlZCLEAQoOTG9jYXRlUmVzcG9uc2USNQoHb2Zmc2V0cxgBIAEoCzIiLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5UZXh0T2Zmc2V0c0gAEjIKBnJlZ2lvbhgCIAEoCzIgLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QZGZSZWdpb25IABI9Cgtub3RfbG9jYXRlZBgDIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5RdW90ZU5vdExvY2F0ZWRIAEIICgZyZXN1bHQiWAoRRnVsbFRleHRSZWFkaW5lc3MSDgoGZG9jX2lkGAEgASgJEjMKBXN0YXRlGAIgASgOMiQudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0U3RhdGUiJwoUUG9sbEZ1bGxUZXh0c1JlcXVlc3QSDwoHZG9jX2lkcxgBIAMoCSJUChVQb2xsRnVsbFRleHRzUmVzcG9uc2USOwoJcmVhZGluZXNzGAEgAygLMigudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0UmVhZGluZXNzImoKDlBhcGVyUmVhZGluZXNzEhMKC2V4dGVybmFsX2lkGAEgASgJEg4KBmRvY19pZBgCIAEoCRIzCgVzdGF0ZRgDIAEoDjIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5GdWxsVGV4dFN0YXRlIjAKGE1heWJlSW5nZXN0UGFwZXJzUmVxdWVzdBIUCgxleHRlcm5hbF9pZHMYASADKAkiVQoZTWF5YmVJbmdlc3RQYXBlcnNSZXNwb25zZRI4CglyZWFkaW5lc3MYASADKAsyJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUGFwZXJSZWFkaW5lc3MiMAoPVmFsaWRhdGVSZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCRINCgVxdW90ZRgCIAEoCSJpChBWYWxpZGF0ZVJlc3BvbnNlEgoKAm9rGAEgASgIEjkKCmxvY2F0ZWRfaW4YAiADKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVwcmVzZW50YXRpb24SDgoGcmVhc29uGAMgASgJIkoKE0Z1bGxUZXh0VW5hdmFpbGFibGUSMwoFc3RhdGUYASABKA4yJC50aGVtaXMucnBjLmxpdGVyYXR1cmUuRnVsbFRleHRTdGF0ZSIlChNSZWFkTWFya2Rvd25SZXF1ZXN0Eg4KBmRvY19pZBgBIAEoCSJ3Cg9SZW5kZXJpbmdIZWFkZXISFQoNcmVuZGVyaW5nX2tleRgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgEEjkKCnByb3ZlbmFuY2UYAyABKA4yJS50aGVtaXMucnBjLmxpdGVyYXR1cmUuVGV4dFByb3ZlbmFuY2UirAEKFFJlYWRNYXJrZG93blJlc3BvbnNlEjgKBmhlYWRlchgBIAEoCzImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZW5kZXJpbmdIZWFkZXJIABIPCgVjaHVuaxgCIAEoDEgAEkEKC3VuYXZhaWxhYmxlGAMgASgLMioudGhlbWlzLnJwYy5saXRlcmF0dXJlLkZ1bGxUZXh0VW5hdmFpbGFibGVIAEIGCgRwYXJ0IowBCg9FdXJvcGVQbWNSZWNvcmQSDAoEcG1pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIPCgdhdXRob3JzGAMgAygJEg8KB2pvdXJuYWwYBCABKAkSDAoEeWVhchgFIAEoCRILCgNkb2kYBiABKAkSEAoIYWJzdHJhY3QYByABKAkSDQoFcG1jaWQYCCABKAkiPAoWU2VhcmNoRXVyb3BlUG1jUmVxdWVzdBINCgVxdWVyeRgBIAEoCRITCgttYXhfcmVzdWx0cxgCIAEoDSJpChdTZWFyY2hFdXJvcGVQbWNSZXNwb25zZRI3CgdyZWNvcmRzGAEgAygLMiYudGhlbWlzLnJwYy5saXRlcmF0dXJlLkV1cm9wZVBtY1JlY29yZBIVCg10b3RhbF9tYXRjaGVkGAIgASgFIisKGkZldGNoUHVibWVkQXJ0aWNsZXNSZXF1ZXN0Eg0KBXBtaWRzGAEgAygJIpYBChtGZXRjaFB1Ym1lZEFydGljbGVzUmVzcG9uc2USJwoIYXJ0aWNsZXMYASADKAsyFS5wdWJtZWQuUHVibWVkQXJ0aWNsZRIcChRwbWlkc193aXRob3V0X3JlY29yZBgCIAMoCRIwCg1ib29rX2FydGljbGVzGAMgAygLMhkucHVibWVkLlB1Ym1lZEJvb2tBcnRpY2xlIpgBChNTZWFyY2hMaXRWYXJSZXF1ZXN0EgwKBGdlbmUYASABKAkSDgoGaGd2c19jGAIgASgJEhYKDnByb3RlaW5fY2hhbmdlGAMgASgJEgwKBHJzaWQYBCABKAkSHAoUbWF4X3BtaWRzX3Blcl9lbnRpdHkYBSABKA0SDAoEY2FpZBgGIAEoCRIRCgllbnRpdHlfaWQYByABKAkiZgoUU2VhcmNoTGl0VmFyUmVzcG9uc2USNgoIZW50aXRpZXMYASADKAsyJC50aGVtaXMucnBjLmxpdGVyYXR1cmUuVmFyaWFudEVudGl0eRIWCg50b3RhbF9lbnRpdGllcxgCIAEoBSKvAwoTSWRlbnRpZmllckFncmVlbWVudBJCCgRnZW5lGAEgASgOMjQudGhlbWlzLnJwYy5saXRlcmF0dXJlLklkZW50aWZpZXJBZ3JlZW1lbnQuQWdyZWVtZW50EkIKBHJzaWQYAiABKA4yNC50aGVtaXMucnBjLmxpdGVyYXR1cmUuSWRlbnRpZmllckFncmVlbWVudC5BZ3JlZW1lbnQSQgoEY2FpZBgDIAEoDjI0LnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5JZGVudGlmaWVyQWdyZWVtZW50LkFncmVlbWVudBJECgZjaGFuZ2UYBCABKA4yNC50aGVtaXMucnBjLmxpdGVyYXR1cmUuSWRlbnRpZmllckFncmVlbWVudC5BZ3JlZW1lbnQihQEKCUFncmVlbWVudBIZChVBR1JFRU1FTlRfVU5TUEVDSUZJRUQQABIUChBBR1JFRU1FTlRfQUdSRUVTEAESFQoRQUdSRUVNRU5UX0RJRkZFUlMQAhIWChJBR1JFRU1FTlRfVU5TVEFURUQQAxIYChRBR1JFRU1FTlRfVU5DT01QQVJFRBAEIrwBCg1WYXJpYW50RW50aXR5EgoKAmlkGAEgASgJEgwKBHJzaWQYAiABKAkSDQoFY2FpZHMYAyADKAkSDQoFZ2VuZXMYBCADKAkSDgoGY2hhbmdlGAUgASgJEj0KCWFncmVlbWVudBgGIAEoCzIqLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5JZGVudGlmaWVyQWdyZWVtZW50EhUKDXRvdGFsX3JlY29yZHMYByABKAUSDQoFcG1pZHMYCCADKAkiUAoZTGlzdExpdFZhckVudGl0aWVzUmVxdWVzdBIMCgRnZW5lGAEgASgJEhAKCGNvbnRhaW5zGAIgASgJEhMKC21heF9yZXN1bHRzGAMgASgNIk0KDExpc3RlZEVudGl0eRIKCgJpZBgBIAEoCRIMCgRyc2lkGAIgASgJEgwKBGNhaWQYAyABKAkSFQoNdG90YWxfcmVjb3JkcxgEIAEoBSKBAQoaTGlzdExpdFZhckVudGl0aWVzUmVzcG9uc2USNQoIZW50aXRpZXMYASADKAsyIy50aGVtaXMucnBjLmxpdGVyYXR1cmUuTGlzdGVkRW50aXR5EhUKDXRvdGFsX2luX2dlbmUYAiABKAUSFQoNdG90YWxfbWF0Y2hlZBgDIAEoBSplCg5SZXByZXNlbnRhdGlvbhIeChpSRVBSRVNFTlRBVElPTl9VTlNQRUNJRklFRBAAEhsKF1JFUFJFU0VOVEFUSU9OX01BUktET1dOEAESFgoSUkVQUkVTRU5UQVRJT05fUERGEAIqWAoIRmlsZVJvbGUSGQoVRklMRV9ST0xFX1VOU1BFQ0lGSUVEEAASFAoQRklMRV9ST0xFX0ZJR1VSRRABEhsKF0ZJTEVfUk9MRV9TVVBQTEVNRU5UQVJZEAIqcAoOVGV4dFByb3ZlbmFuY2USHwobVEVYVF9QUk9WRU5BTkNFX1VOU1BFQ0lGSUVEEAASHwobVEVYVF9QUk9WRU5BTkNFX09QRU5fQUNDRVNTEAESHAoYVEVYVF9QUk9WRU5BTkNFX1NVUFBMSUVEEAIqyQEKDUZ1bGxUZXh0U3RhdGUSHwobRlVMTF9URVhUX1NUQVRFX1VOU1BFQ0lGSUVEEAASGQoVRlVMTF9URVhUX1NUQVRFX1JFQURZEAESGwoXRlVMTF9URVhUX1NUQVRFX1BFTkRJTkcQAhIgChxGVUxMX1RFWFRfU1RBVEVfTk9fRlVMTF9URVhUEAMSGgoWRlVMTF9URVhUX1NUQVRFX0ZBSUxFRBAEEiEKHUZVTExfVEVYVF9TVEFURV9VTktOT1dOX1BBUEVSEAUy+gkKCkxpdGVyYXR1cmUSZQoNRGVzY3JpYmVQYXBlchIrLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5EZXNjcmliZVBhcGVyUmVxdWVzdBogLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5QYXBlckluZm8iBaK1GAEBEm0KDlJlc29sdmVDb250ZW50EiwudGhlbWlzLnJwYy5saXRlcmF0dXJlLlJlc29sdmVDb250ZW50UmVxdWVzdBomLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Db250ZW50TG9jYXRpb24iBaK1GAEBElwKBkxvY2F0ZRIkLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Mb2NhdGVSZXF1ZXN0GiUudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxvY2F0ZVJlc3BvbnNlIgWitRgBARJiCghWYWxpZGF0ZRImLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5WYWxpZGF0ZVJlcXVlc3QaJy50aGVtaXMucnBjLmxpdGVyYXR1cmUuVmFsaWRhdGVSZXNwb25zZSIForUYAQMScQoNUG9sbEZ1bGxUZXh0cxIrLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Qb2xsRnVsbFRleHRzUmVxdWVzdBosLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5Qb2xsRnVsbFRleHRzUmVzcG9uc2UiBaK1GAEDEn0KEU1heWJlSW5nZXN0UGFwZXJzEi8udGhlbWlzLnJwYy5saXRlcmF0dXJlLk1heWJlSW5nZXN0UGFwZXJzUmVxdWVzdBowLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5NYXliZUluZ2VzdFBhcGVyc1Jlc3BvbnNlIgWitRgBAxJwCgxSZWFkTWFya2Rvd24SKi50aGVtaXMucnBjLmxpdGVyYXR1cmUuUmVhZE1hcmtkb3duUmVxdWVzdBorLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5SZWFkTWFya2Rvd25SZXNwb25zZSIForUYAQMwARJ3Cg9TZWFyY2hFdXJvcGVQbWMSLS50aGVtaXMucnBjLmxpdGVyYXR1cmUuU2VhcmNoRXVyb3BlUG1jUmVxdWVzdBouLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5TZWFyY2hFdXJvcGVQbWNSZXNwb25zZSIForUYAQMSgwEKE0ZldGNoUHVibWVkQXJ0aWNsZXMSMS50aGVtaXMucnBjLmxpdGVyYXR1cmUuRmV0Y2hQdWJtZWRBcnRpY2xlc1JlcXVlc3QaMi50aGVtaXMucnBjLmxpdGVyYXR1cmUuRmV0Y2hQdWJtZWRBcnRpY2xlc1Jlc3BvbnNlIgWitRgBAxJuCgxTZWFyY2hMaXRWYXISKi50aGVtaXMucnBjLmxpdGVyYXR1cmUuU2VhcmNoTGl0VmFyUmVxdWVzdBorLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5TZWFyY2hMaXRWYXJSZXNwb25zZSIForUYAQMSgAEKEkxpc3RMaXRWYXJFbnRpdGllcxIwLnRoZW1pcy5ycGMubGl0ZXJhdHVyZS5MaXN0TGl0VmFyRW50aXRpZXNSZXF1ZXN0GjEudGhlbWlzLnJwYy5saXRlcmF0dXJlLkxpc3RMaXRWYXJFbnRpdGllc1Jlc3BvbnNlIgWitRgBA2IGcHJvdG8z", [file_pubmed_proto_pubmed, file_themis_rpc_sandbox_options]);
 
 /**
  * @generated from message themis.rpc.literature.DescribePaperRequest
@@ -604,74 +604,6 @@ export const ValidateResponseSchema: GenMessage<ValidateResponse> = /*@__PURE__*
   messageDesc(file_themis_rpc_literature, 21);
 
 /**
- * @generated from message themis.rpc.literature.GetMarkdownRequest
- */
-export type GetMarkdownRequest = Message<"themis.rpc.literature.GetMarkdownRequest"> & {
-  /**
-   * @generated from field: string doc_id = 1;
-   */
-  docId: string;
-
-  /**
-   * Maximum characters to return. Unset takes the service default; above the service ceiling clamps
-   * to it, and below the service floor likewise — a budget under the floor could not carry the
-   * truncation marker a cut read ends in.
-   *
-   * @generated from field: uint32 max_chars = 2;
-   */
-  maxChars: number;
-};
-
-/**
- * Describes the message themis.rpc.literature.GetMarkdownRequest.
- * Use `create(GetMarkdownRequestSchema)` to create a new message.
- */
-export const GetMarkdownRequestSchema: GenMessage<GetMarkdownRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 22);
-
-/**
- * The canonical rendering's text.
- *
- * @generated from message themis.rpc.literature.PaperMarkdown
- */
-export type PaperMarkdown = Message<"themis.rpc.literature.PaperMarkdown"> & {
-  /**
-   * @generated from field: string doc_id = 1;
-   */
-  docId: string;
-
-  /**
-   * @generated from field: string markdown = 2;
-   */
-  markdown: string;
-
-  /**
-   * @generated from field: themis.rpc.literature.TextProvenance provenance = 3;
-   */
-  provenance: TextProvenance;
-
-  /**
-   * The rendering's full character count — Unicode code points, as `TextOffsets` counts them. The
-   * text came whole iff this does not exceed `markdown`'s length; above it the payload was cut at a
-   * line boundary behind an inline marker, and this says how much lies past the cut. The cut text,
-   * marker included, stays within the granted budget, which is what keeps that test sound. The way
-   * past a cut is a re-ask with a larger `max_chars`, up to the service ceiling; past it the
-   * remainder stays unreachable, since the request carries no offset or cursor. `Validate` still runs
-   * against the whole rendering, so quoting within what was read is the reader's to hold to.
-   *
-   * @generated from field: int32 total_chars = 4;
-   */
-  totalChars: number;
-};
-
-/**
- * Describes the message themis.rpc.literature.PaperMarkdown.
- * Use `create(PaperMarkdownSchema)` to create a new message.
- */
-export const PaperMarkdownSchema: GenMessage<PaperMarkdown> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 23);
-
-/**
  * The store holds the paper but has no servable rendering — a fact about the paper, not an error.
  *
  * @generated from message themis.rpc.literature.FullTextUnavailable
@@ -690,36 +622,7 @@ export type FullTextUnavailable = Message<"themis.rpc.literature.FullTextUnavail
  * Use `create(FullTextUnavailableSchema)` to create a new message.
  */
 export const FullTextUnavailableSchema: GenMessage<FullTextUnavailable> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 24);
-
-/**
- * @generated from message themis.rpc.literature.GetMarkdownResponse
- */
-export type GetMarkdownResponse = Message<"themis.rpc.literature.GetMarkdownResponse"> & {
-  /**
-   * @generated from oneof themis.rpc.literature.GetMarkdownResponse.result
-   */
-  result: {
-    /**
-     * @generated from field: themis.rpc.literature.PaperMarkdown content = 1;
-     */
-    value: PaperMarkdown;
-    case: "content";
-  } | {
-    /**
-     * @generated from field: themis.rpc.literature.FullTextUnavailable unavailable = 2;
-     */
-    value: FullTextUnavailable;
-    case: "unavailable";
-  } | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message themis.rpc.literature.GetMarkdownResponse.
- * Use `create(GetMarkdownResponseSchema)` to create a new message.
- */
-export const GetMarkdownResponseSchema: GenMessage<GetMarkdownResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 25);
+  messageDesc(file_themis_rpc_literature, 22);
 
 /**
  * @generated from message themis.rpc.literature.ReadMarkdownRequest
@@ -736,7 +639,7 @@ export type ReadMarkdownRequest = Message<"themis.rpc.literature.ReadMarkdownReq
  * Use `create(ReadMarkdownRequestSchema)` to create a new message.
  */
 export const ReadMarkdownRequestSchema: GenMessage<ReadMarkdownRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 26);
+  messageDesc(file_themis_rpc_literature, 23);
 
 /**
  * Which rendering a `ReadMarkdown` stream carries, sent before any of its bytes.
@@ -771,7 +674,7 @@ export type RenderingHeader = Message<"themis.rpc.literature.RenderingHeader"> &
  * Use `create(RenderingHeaderSchema)` to create a new message.
  */
 export const RenderingHeaderSchema: GenMessage<RenderingHeader> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 27);
+  messageDesc(file_themis_rpc_literature, 24);
 
 /**
  * One message of a `ReadMarkdown` stream. A stream is either one `unavailable` message and nothing
@@ -818,7 +721,7 @@ export type ReadMarkdownResponse = Message<"themis.rpc.literature.ReadMarkdownRe
  * Use `create(ReadMarkdownResponseSchema)` to create a new message.
  */
 export const ReadMarkdownResponseSchema: GenMessage<ReadMarkdownResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 28);
+  messageDesc(file_themis_rpc_literature, 25);
 
 /**
  * A hit in Europe PMC's own shape (docs/design/literature-evidence-layer.md, "A discovery rpc is a
@@ -870,7 +773,7 @@ export type EuropePmcRecord = Message<"themis.rpc.literature.EuropePmcRecord"> &
   /**
    * The abstract as the index states it, empty where it states none. Readable, never quotable: no
    * discovery record is anchored in the full-text store, so nothing here can anchor a
-   * `:quote[doc_id, …]` directive — only the markdown `GetMarkdown` serves can.
+   * `:quote[doc_id, …]` directive — only the markdown `ReadMarkdown` serves can.
    *
    * @generated from field: string abstract = 7;
    */
@@ -890,7 +793,7 @@ export type EuropePmcRecord = Message<"themis.rpc.literature.EuropePmcRecord"> &
  * Use `create(EuropePmcRecordSchema)` to create a new message.
  */
 export const EuropePmcRecordSchema: GenMessage<EuropePmcRecord> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 29);
+  messageDesc(file_themis_rpc_literature, 26);
 
 /**
  * A literature query and the cap on how many records to return.
@@ -921,7 +824,7 @@ export type SearchEuropePmcRequest = Message<"themis.rpc.literature.SearchEurope
  * Use `create(SearchEuropePmcRequestSchema)` to create a new message.
  */
 export const SearchEuropePmcRequestSchema: GenMessage<SearchEuropePmcRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 30);
+  messageDesc(file_themis_rpc_literature, 27);
 
 /**
  * The records matching a query, most-relevant first, with the index's own census of the match.
@@ -949,7 +852,7 @@ export type SearchEuropePmcResponse = Message<"themis.rpc.literature.SearchEurop
  * Use `create(SearchEuropePmcResponseSchema)` to create a new message.
  */
 export const SearchEuropePmcResponseSchema: GenMessage<SearchEuropePmcResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 31);
+  messageDesc(file_themis_rpc_literature, 28);
 
 /**
  * The PubMed records to fetch, as a batch: PMIDs reached from outside this service — a submission's
@@ -978,7 +881,7 @@ export type FetchPubmedArticlesRequest = Message<"themis.rpc.literature.FetchPub
  * Use `create(FetchPubmedArticlesRequestSchema)` to create a new message.
  */
 export const FetchPubmedArticlesRequestSchema: GenMessage<FetchPubmedArticlesRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 32);
+  messageDesc(file_themis_rpc_literature, 29);
 
 /**
  * Every distinct requested PMID lands in exactly one of the three outcomes — a journal record, a
@@ -999,7 +902,7 @@ export type FetchPubmedArticlesResponse = Message<"themis.rpc.literature.FetchPu
    * comment, an editorial, and for older records; that is what the index states, not proof the work
    * was published without one. Abstract text is readable, never quotable: no discovery record is
    * anchored in the full-text store, so nothing here can anchor a `:quote[doc_id, …]` directive —
-   * only the markdown `GetMarkdown` serves can.
+   * only the markdown `ReadMarkdown` serves can.
    *
    * @generated from field: repeated pubmed.PubmedArticle articles = 1;
    */
@@ -1030,7 +933,7 @@ export type FetchPubmedArticlesResponse = Message<"themis.rpc.literature.FetchPu
  * Use `create(FetchPubmedArticlesResponseSchema)` to create a new message.
  */
 export const FetchPubmedArticlesResponseSchema: GenMessage<FetchPubmedArticlesResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 33);
+  messageDesc(file_themis_rpc_literature, 30);
 
 /**
  * A variant to find literature for, in the identifiers LitVar2 can resolve. An empty string means not
@@ -1123,7 +1026,7 @@ export type SearchLitVarRequest = Message<"themis.rpc.literature.SearchLitVarReq
  * Use `create(SearchLitVarRequestSchema)` to create a new message.
  */
 export const SearchLitVarRequestSchema: GenMessage<SearchLitVarRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 34);
+  messageDesc(file_themis_rpc_literature, 31);
 
 /**
  * Every LitVar2 entity the request's identifiers reached, unmerged: each keeps its own id, its own
@@ -1172,7 +1075,7 @@ export type SearchLitVarResponse = Message<"themis.rpc.literature.SearchLitVarRe
  * Use `create(SearchLitVarResponseSchema)` to create a new message.
  */
 export const SearchLitVarResponseSchema: GenMessage<SearchLitVarResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 35);
+  messageDesc(file_themis_rpc_literature, 32);
 
 /**
  * Whether an entity's own labels agree with the identifiers the request supplied, one verdict per
@@ -1224,7 +1127,7 @@ export type IdentifierAgreement = Message<"themis.rpc.literature.IdentifierAgree
  * Use `create(IdentifierAgreementSchema)` to create a new message.
  */
 export const IdentifierAgreementSchema: GenMessage<IdentifierAgreement> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 36);
+  messageDesc(file_themis_rpc_literature, 33);
 
 /**
  * @generated from enum themis.rpc.literature.IdentifierAgreement.Agreement
@@ -1272,7 +1175,7 @@ export enum IdentifierAgreement_Agreement {
  * Describes the enum themis.rpc.literature.IdentifierAgreement.Agreement.
  */
 export const IdentifierAgreement_AgreementSchema: GenEnum<IdentifierAgreement_Agreement> = /*@__PURE__*/
-  enumDesc(file_themis_rpc_literature, 36, 0);
+  enumDesc(file_themis_rpc_literature, 33, 0);
 
 /**
  * One LitVar2 entity and the slice of its literature this request bought — a candidate for the
@@ -1347,7 +1250,7 @@ export type VariantEntity = Message<"themis.rpc.literature.VariantEntity"> & {
  * Use `create(VariantEntitySchema)` to create a new message.
  */
 export const VariantEntitySchema: GenMessage<VariantEntity> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 37);
+  messageDesc(file_themis_rpc_literature, 34);
 
 /**
  * The gene whose entity inventory to list. Enumeration is the route to an entity no identifier the
@@ -1392,7 +1295,7 @@ export type ListLitVarEntitiesRequest = Message<"themis.rpc.literature.ListLitVa
  * Use `create(ListLitVarEntitiesRequestSchema)` to create a new message.
  */
 export const ListLitVarEntitiesRequestSchema: GenMessage<ListLitVarEntitiesRequest> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 38);
+  messageDesc(file_themis_rpc_literature, 35);
 
 /**
  * One row of a gene's inventory: what the index states about an entity before anything is fetched for
@@ -1435,7 +1338,7 @@ export type ListedEntity = Message<"themis.rpc.literature.ListedEntity"> & {
  * Use `create(ListedEntitySchema)` to create a new message.
  */
 export const ListedEntitySchema: GenMessage<ListedEntity> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 39);
+  messageDesc(file_themis_rpc_literature, 36);
 
 /**
  * A gene's entities, most-published first. `total_matched` above `entities.size()` means the list
@@ -1471,7 +1374,7 @@ export type ListLitVarEntitiesResponse = Message<"themis.rpc.literature.ListLitV
  * Use `create(ListLitVarEntitiesResponseSchema)` to create a new message.
  */
 export const ListLitVarEntitiesResponseSchema: GenMessage<ListLitVarEntitiesResponse> = /*@__PURE__*/
-  messageDesc(file_themis_rpc_literature, 40);
+  messageDesc(file_themis_rpc_literature, 37);
 
 /**
  * Which rendering of a paper a request concerns. Markdown is a converter's output; PDF is the
@@ -1720,19 +1623,6 @@ export const Literature: GenService<{
     methodKind: "unary";
     input: typeof MaybeIngestPapersRequestSchema;
     output: typeof MaybeIngestPapersResponseSchema;
-  },
-  /**
-   * The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-   * doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-   * produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-   * result for a known paper with no rendering at all (a fact about the store, not an error).
-   *
-   * @generated from rpc themis.rpc.literature.Literature.GetMarkdown
-   */
-  getMarkdown: {
-    methodKind: "unary";
-    input: typeof GetMarkdownRequestSchema;
-    output: typeof GetMarkdownResponseSchema;
   },
   /**
    * The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the

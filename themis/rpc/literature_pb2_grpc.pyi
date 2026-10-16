@@ -102,12 +102,6 @@ class LiteratureStub:
     miss: an outage affects the batch, and a caller reading it per-id would write papers off
     permanently.
     """
-    GetMarkdown: _grpc.UnaryUnaryMultiCallable[_literature_pb2.GetMarkdownRequest, _literature_pb2.GetMarkdownResponse]
-    """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-    doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-    produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-    result for a known paper with no rendering at all (a fact about the store, not an error).
-    """
     ReadMarkdown: _grpc.UnaryStreamMultiCallable[_literature_pb2.ReadMarkdownRequest, _literature_pb2.ReadMarkdownResponse]
     """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
     agent's read path, whole, however long the rendering: a header naming the rendering, then its
@@ -211,12 +205,6 @@ class LiteratureAsyncStub(LiteratureStub):
     A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
     miss: an outage affects the batch, and a caller reading it per-id would write papers off
     permanently.
-    """
-    GetMarkdown: _aio.UnaryUnaryMultiCallable[_literature_pb2.GetMarkdownRequest, _literature_pb2.GetMarkdownResponse]  # type: ignore[assignment]
-    """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-    doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-    produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-    result for a known paper with no rendering at all (a fact about the store, not an error).
     """
     ReadMarkdown: _aio.UnaryStreamMultiCallable[_literature_pb2.ReadMarkdownRequest, _literature_pb2.ReadMarkdownResponse]  # type: ignore[assignment]
     """The paper's canonical rendering (the manifest's `markdown` ref) as a stream of its bytes — the
@@ -354,18 +342,6 @@ class LiteratureServicer(metaclass=_abc_1.ABCMeta):
         A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
         miss: an outage affects the batch, and a caller reading it per-id would write papers off
         permanently.
-        """
-
-    @_abc_1.abstractmethod
-    def GetMarkdown(
-        self,
-        request: _literature_pb2.GetMarkdownRequest,
-        context: _ServicerContext,
-    ) -> _typing.Union[_literature_pb2.GetMarkdownResponse, _abc.Awaitable[_literature_pb2.GetMarkdownResponse]]:
-        """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-        doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-        produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-        result for a known paper with no rendering at all (a fact about the store, not an error).
         """
 
     @_abc_1.abstractmethod

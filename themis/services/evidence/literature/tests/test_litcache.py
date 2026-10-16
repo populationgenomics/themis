@@ -13,7 +13,7 @@ import hashlib
 import json
 import time
 import typing
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 
 import grpc
 import grpc.aio
@@ -386,15 +386,35 @@ def _run_over_grpc[T](
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
             store = litcache_store.Store(bucket, http_client)
             backend = live_mod.LiveBackend(store, discovery_mod.Indexes(http_client))
-            servicer = servicer_mod.Servicer(backend)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
+            servicer = servicer_mod.Servicer(backend)
             async with in_process_grpc.serving(
                 lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
-                interceptors=(authz.InjectMetadata(authz.ADMITTED),),
+                interceptors=(authz.InjectMetadata(authz.ADMITTED), authz.InjectStreamMetadata(authz.ADMITTED)),
                 server_interceptors=authz.server_interceptors(),
             ) as channel:
                 return await call(literature_pb2_grpc.LiteratureStub(channel))
 
     return asyncio.run(run())
+
+
+async def _drained(
+    responses: AsyncIterable[literature_pb2.ReadMarkdownResponse],
+) -> list[literature_pb2.ReadMarkdownResponse]:
+    return [response async for response in responses]
+
+
+def _read_over_grpc(bucket: storage.Bucket, doc_id: str = _DOC) -> list[literature_pb2.ReadMarkdownResponse]:
+    return _run_over_grpc(bucket, lambda s: _drained(s.ReadMarkdown(literature_pb2.ReadMarkdownRequest(doc_id=doc_id))))
+
+
+def _opened(bucket: storage.Bucket) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
+    return asyncio.run(_store(bucket).read_markdown(_DOC))
+
+
+def _provenance_of(bucket: storage.Bucket) -> literature_pb2.TextProvenance:
+    opened = _opened(bucket)
+    assert isinstance(opened, literature_backend.Rendering)
+    return opened.provenance
 
 
 def test_locate_pdf_is_unimplemented_over_grpc(gcs_bucket: storage.Bucket) -> None:
@@ -460,16 +480,27 @@ def test_locate_maps_a_missing_rendering_blob_to_internal(gcs_bucket: storage.Bu
     assert exc.value.code() is grpc.StatusCode.INTERNAL
 
 
-def test_get_markdown_serves_the_canonical_rendering(gcs_bucket: storage.Bucket) -> None:
-    _seed_paper(gcs_bucket, sources=[_xml_source()])
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.WhichOneof('result') == 'content'
-    assert result.content.markdown == _MARKDOWN
-    assert result.content.total_chars == len(_MARKDOWN) == len(result.content.markdown)  # served whole
-    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
+def test_read_markdown_streams_the_canonical_rendering_under_its_record_key(gcs_bucket: storage.Bucket) -> None:
+    rendering_hash = _seed_paper(gcs_bucket, sources=[_xml_source()])
+    responses = _read_over_grpc(gcs_bucket)
+    header = responses[0].header
+    assert header.rendering_key == rendering_hash
+    assert header.size_bytes == len(_MARKDOWN.encode('utf-8'))
+    assert header.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
+    assert b''.join(response.chunk for response in responses[1:]).decode('utf-8') == _MARKDOWN
 
 
-def test_get_markdown_reports_a_failed_conversion(gcs_bucket: storage.Bucket) -> None:
+def test_read_markdown_streams_a_rendering_larger_than_one_read_whole(gcs_bucket: storage.Bucket) -> None:
+    # Past one ranged read and past one message, with multi-byte characters a read boundary can split.
+    oversized = 'The channel showed markedly reduced ATP sensitivity — in vitro, ü.\n' * 40_000
+    assert len(oversized.encode('utf-8')) > 2 * litcache_store._READ_BYTES
+    _seed_paper(gcs_bucket, sources=[_xml_source()], markdown=oversized)
+    responses = _read_over_grpc(gcs_bucket)
+    assert len(responses) > 3  # the header, and more than one chunk
+    assert b''.join(response.chunk for response in responses[1:]).decode('utf-8') == oversized
+
+
+def test_read_markdown_reports_a_failed_conversion(gcs_bucket: storage.Bucket) -> None:
     _seed_paper(gcs_bucket, sources=[_pdf_source()], markdown=None)
     litcache_outcome.write_outcome(
         gcs_bucket,
@@ -478,48 +509,68 @@ def test_get_markdown_reports_a_failed_conversion(gcs_bucket: storage.Bucket) ->
             kind=litcache_outcome.OutcomeKind.FAILED, at=_CAPTURED, error='ocr refused the scan'
         ),
     )
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.WhichOneof('result') == 'unavailable'
-    assert result.unavailable.state == literature_pb2.FULL_TEXT_STATE_FAILED
+    assert _opened(gcs_bucket) == literature_pb2.FullTextUnavailable(state=literature_pb2.FULL_TEXT_STATE_FAILED)
 
 
-def test_get_markdown_reports_a_paper_the_ladder_found_no_source_for(gcs_bucket: storage.Bucket) -> None:
+def test_read_markdown_reports_a_paper_the_ladder_found_no_source_for(gcs_bucket: storage.Bucket) -> None:
     _seed_paper(gcs_bucket, markdown=None)
     litcache_outcome.write_outcome(
         gcs_bucket,
         _DOC,
         litcache_outcome.FetchOutcome(kind=litcache_outcome.OutcomeKind.NO_FULL_TEXT, at=_CAPTURED),
     )
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.unavailable.state == literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT
+    assert _opened(gcs_bucket) == literature_pb2.FullTextUnavailable(state=literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT)
 
 
-def test_get_markdown_reports_a_source_still_convertible_as_pending(gcs_bucket: storage.Bucket) -> None:
+def test_read_markdown_reports_a_source_still_convertible_as_pending(gcs_bucket: storage.Bucket) -> None:
     # A PDF with no rendering and no terminal marker: the conversion can still produce one, so this
     # is not a paper without full text — a caller that gave up here would be giving up early.
     _seed_paper(gcs_bucket, sources=[_pdf_source()], markdown=None)
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.unavailable.state == literature_pb2.FULL_TEXT_STATE_PENDING
+    responses = _read_over_grpc(gcs_bucket)
+    assert [response.WhichOneof('part') for response in responses] == ['unavailable']
+    assert responses[0].unavailable.state == literature_pb2.FULL_TEXT_STATE_PENDING
 
 
-def test_get_markdown_for_an_unknown_paper_is_not_found_over_grpc(gcs_bucket: storage.Bucket) -> None:
+def test_read_markdown_for_an_unknown_paper_is_not_found_over_grpc(gcs_bucket: storage.Bucket) -> None:
     # A doc_id no manifest answers is a broken reference, never the modelled unavailable arm.
     with pytest.raises(grpc.aio.AioRpcError) as exc:
-        _run_over_grpc(gcs_bucket, lambda s: s.GetMarkdown(literature_pb2.GetMarkdownRequest(doc_id='no-such-doc')))
+        _read_over_grpc(gcs_bucket, 'no-such-doc')
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
 
 
-def test_get_markdown_cuts_an_oversized_rendering_at_a_line_boundary(gcs_bucket: storage.Bucket) -> None:
-    budget = servicer_mod._DEFAULT_MAX_CHARS
-    line = 'The channel showed markedly reduced ATP sensitivity in vitro.\n'
-    oversized = line * (1 + budget // len(line))
-    _seed_paper(gcs_bucket, sources=[_xml_source()], markdown=oversized)
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, budget))
-    assert result.content.total_chars == len(oversized) > budget  # the cut, and how much lies past it
-    kept, marker = result.content.markdown.split('\n\n---\n\n', 1)
-    assert len(kept) <= budget
-    assert kept.endswith('in vitro.')  # the cut lands between lines, never mid-sentence
-    assert 'cannot be quoted or cited' in marker
+def _drain_after(bucket: storage.Bucket, change: Callable[[storage.Blob], object]) -> bytes:
+    """Open the rendering, apply `change` to its object, then read every byte the open rendering yields."""
+
+    async def read() -> bytes:
+        opened = await _store(bucket).read_markdown(_DOC)
+        assert isinstance(opened, literature_backend.Rendering)
+        change(bucket.blob(f'papers/{_DOC}/renderings/{opened.key}.md'))
+        return b''.join([block async for block in opened.blocks])
+
+    return asyncio.run(read())
+
+
+def test_a_rendering_deleted_after_it_was_opened_is_missing_rather_than_cut_short(gcs_bucket: storage.Bucket) -> None:
+    # The emulator ignores a generation precondition on a download, so the rewritten case — the same name, other
+    # bytes — is not provable here; the servicer's hash check is what refuses those bytes offline.
+    _seed_paper(gcs_bucket, sources=[_xml_source()])
+    with pytest.raises(literature_backend.MissingRenderingBlobError):
+        _drain_after(gcs_bucket, lambda blob: blob.delete())
+
+
+def test_an_empty_rendering_is_read_as_no_bytes(gcs_bucket: storage.Bucket) -> None:
+    _seed_paper(gcs_bucket, sources=[_xml_source()], markdown='')
+    responses = _read_over_grpc(gcs_bucket)
+    assert [response.WhichOneof('part') for response in responses] == ['header']
+    assert responses[0].header.size_bytes == 0
+
+
+def test_read_markdown_maps_a_missing_rendering_blob_to_internal(gcs_bucket: storage.Bucket) -> None:
+    rendering_hash = _seed_paper(gcs_bucket)
+    gcs_bucket.blob(f'papers/{_DOC}/renderings/{rendering_hash}.md').delete()
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _read_over_grpc(gcs_bucket)
+    assert exc.value.code() is grpc.StatusCode.INTERNAL
 
 
 def _captured_by_an_institution() -> litcache_pb2.Source:
@@ -566,10 +617,7 @@ def test_provenance_states_only_what_the_lineage_supports(
     # neither free-to-read nor human-captured gets no answer rather than the permissive one:
     # OPEN_ACCESS is a claim about how the text was obtained, not a default for an unclear lineage.
     _seed_paper(gcs_bucket, sources=[source()], rendering=_rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR))
-    assert (
-        asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS)).content.provenance
-        == provenance
-    )
+    assert _provenance_of(gcs_bucket) == provenance
 
 
 def test_provenance_of_a_rendering_the_manifest_cannot_place_is_unspecified(gcs_bucket: storage.Bucket) -> None:
@@ -578,8 +626,7 @@ def test_provenance_of_a_rendering_the_manifest_cannot_place_is_unspecified(gcs_
     rendering = _rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR)
     rendering.deps[:] = ['gone']
     _seed_paper(gcs_bucket, sources=[_uploaded()], rendering=rendering)
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
+    assert _provenance_of(gcs_bucket) == literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
 
 
 def test_validate_aborts_on_a_missing_rendering_blob_rather_than_answering(gcs_bucket: storage.Bucket) -> None:
@@ -1056,7 +1103,7 @@ def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
 
     async def run() -> literature_pb2.MaybeIngestPapersResponse:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
-            servicer = servicer_mod.Servicer(live_mod.LiveBackend(store, discovery_mod.Indexes(http_client)))  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
+            servicer = servicer_mod.Servicer(live_mod.LiveBackend(store, discovery_mod.Indexes(http_client)))
             async with in_process_grpc.serving(
                 lambda server: literature_pb2_grpc.add_LiteratureServicer_to_server(servicer, server),
                 interceptors=(authz.InjectMetadata(authz.ADMITTED),),
@@ -1085,5 +1132,4 @@ def test_bytes_held_on_two_sets_of_terms_take_the_least_restrictive(gcs_bucket: 
         sources=[supplied, found_open],
         rendering=_rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR),
     )
-    result = asyncio.run(_store(gcs_bucket).get_markdown(_DOC, servicer_mod._DEFAULT_MAX_CHARS))
-    assert result.content.provenance == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
+    assert _provenance_of(gcs_bucket) == literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS

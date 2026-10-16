@@ -49,11 +49,6 @@ class LiteratureStub:
                 request_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
                 response_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
                 _registered_method=True)
-        self.GetMarkdown = channel.unary_unary(
-                '/themis.rpc.literature.Literature/GetMarkdown',
-                request_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
-                response_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
-                _registered_method=True)
         self.ReadMarkdown = channel.unary_stream(
                 '/themis.rpc.literature.Literature/ReadMarkdown',
                 request_serializer=themis_dot_rpc_dot_literature__pb2.ReadMarkdownRequest.SerializeToString,
@@ -128,16 +123,6 @@ class LiteratureServicer:
         A crosswalk or upstream that cannot be reached is UNAVAILABLE for the whole call, never a per-id
         miss: an outage affects the batch, and a caller reading it per-id would write papers off
         permanently.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetMarkdown(self, request, context):
-        """The paper's canonical rendering as markdown — the agent's read path. NOT_FOUND for an unknown
-        doc_id (a broken reference); INTERNAL for a rendering the manifest lists but the store cannot
-        produce (the store broke its own invariant, not a fact about the paper); an `unavailable`
-        result for a known paper with no rendering at all (a fact about the store, not an error).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -225,11 +210,6 @@ def add_LiteratureServicer_to_server(servicer, server):
                     servicer.MaybeIngestPapers,
                     request_deserializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.FromString,
                     response_serializer=themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.SerializeToString,
-            ),
-            'GetMarkdown': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetMarkdown,
-                    request_deserializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.FromString,
-                    response_serializer=themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.SerializeToString,
             ),
             'ReadMarkdown': grpc.unary_stream_rpc_method_handler(
                     servicer.ReadMarkdown,
@@ -338,33 +318,6 @@ class Literature:
             '/themis.rpc.literature.Literature/MaybeIngestPapers',
             themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersRequest.SerializeToString,
             themis_dot_rpc_dot_literature__pb2.MaybeIngestPapersResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetMarkdown(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/themis.rpc.literature.Literature/GetMarkdown',
-            themis_dot_rpc_dot_literature__pb2.GetMarkdownRequest.SerializeToString,
-            themis_dot_rpc_dot_literature__pb2.GetMarkdownResponse.FromString,
             options,
             channel_credentials,
             insecure,

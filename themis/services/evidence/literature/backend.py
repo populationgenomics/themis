@@ -12,15 +12,15 @@ Port methods are ``async``: the servicer runs on ``grpc.aio``, so an adapter off
 I/O (GCS, anchorite, Cloud SQL) to a thread and issues its HTTP calls on the shared client, rather
 than stalling the single event loop.
 
-The pure rules every adapter serves through — the per-read markdown budget, the canonical
-representation — live beside the port, so an offline run is bounded exactly as a deployed one is.
+The pure rule every adapter serves through — which representation is canonical — lives beside the
+port, so an offline run answers exactly as a deployed one does.
 """
 
 from __future__ import annotations
 
 import abc
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 
 from themis.clients.auth import context as auth_context
 from themis.litcache import ingest
@@ -30,14 +30,6 @@ from themis.services.evidence.upstreams import europe_pmc, pubmed
 
 # The crosswalk key prefix a PubMed identifier is minted under (`themis.litcache.identity`).
 _PMID_PREFIX = 'pmid:'
-
-# Beyond the read's character budget the text is cut at a line boundary and carries this marker, so a
-# reader can tell a whole paper from a clipped one — and cannot quote past the cut.
-_TRUNCATION_MARKER = (
-    '\n\n---\n\n**[Capture truncated: the full text exceeded {budget} characters and '
-    '{dropped} were dropped. Nothing beyond this point is part of the captured snapshot, so it '
-    'cannot be quoted or cited.]**'
-)
 
 # Re-exported so the servicer can filter on it without reaching into litcache: the schemes an unknown
 # paper can be ingested under, which is what the metadata ladder can resolve.
@@ -165,6 +157,27 @@ ContentSelector = MarkdownContent | PdfContent | FileContent
 
 
 @dataclasses.dataclass(frozen=True)
+class Rendering:
+    """A paper's canonical rendering, opened for reading: which bytes they are, then the bytes themselves.
+
+    ``blocks`` yields the rendering's bytes in order, in runs of whatever size the adapter reads, and is
+    read once. It holds the store open while it runs, so a reader that stops early closes it
+    (``contextlib.aclosing``). It raises ``MissingRenderingBlobError`` if the bytes go missing partway.
+
+    Attributes:
+        key: The rendering's record key — the lowercase hex sha256 of its bytes.
+        size_bytes: How many bytes ``blocks`` yields in all.
+        provenance: How the rendering's text entered the store.
+        blocks: The bytes, as they are read.
+    """
+
+    key: str
+    size_bytes: int
+    provenance: literature_pb2.TextProvenance
+    blocks: AsyncGenerator[bytes]
+
+
+@dataclasses.dataclass(frozen=True)
 class LiteratureView:
     """The corpus as one call may see it — the route every corpus read takes, and the masking seam.
 
@@ -180,8 +193,8 @@ class LiteratureView:
     async def describe_paper(self, doc_id: str) -> literature_pb2.PaperInfo:
         return await self._backend.describe_paper(doc_id)
 
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
-        return await self._backend.get_markdown(doc_id, max_chars)
+    async def read_markdown(self, doc_id: str) -> Rendering | literature_pb2.FullTextUnavailable:
+        return await self._backend.read_markdown(doc_id)
 
     async def resolve_content(self, doc_id: str, selector: ContentSelector) -> literature_pb2.ContentLocation:
         return await self._backend.resolve_content(doc_id, selector)
@@ -227,16 +240,16 @@ class LiteratureBackend(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
-        """The paper's canonical rendering as markdown, or why the store cannot serve it.
+    async def read_markdown(self, doc_id: str) -> Rendering | literature_pb2.FullTextUnavailable:
+        """The paper's canonical rendering, opened for reading whole, or why the store cannot serve it.
 
-        A known paper with no rendering is the ``unavailable`` arm carrying its ``FullTextState`` — a
-        fact about the paper, not an error. ``max_chars`` is the already-clamped budget; the text is
-        served through ``capped_markdown``, with the rendering's whole ``total_chars`` beside it.
+        A known paper with no rendering is a ``FullTextUnavailable`` carrying its ``FullTextState`` — a
+        fact about the paper, not an error. Opening reads what names the rendering, not its bytes: those
+        arrive through ``Rendering.blocks``, so a rendering of any size is served without being held.
 
         Raises:
             UnknownPaperError: no such doc_id — a broken reference, not a fact about the store.
-            MissingRenderingBlobError: the manifest lists a rendering whose text is absent.
+            MissingRenderingBlobError: the manifest lists a rendering whose bytes are absent.
         """
         ...
 
@@ -417,37 +430,6 @@ class LiteratureBackend(abc.ABC):
         yields empty rows and a zero census — a fact.
         """
         ...
-
-
-def capped_markdown(markdown: str, max_chars: int) -> tuple[str, int]:
-    """``markdown`` within ``max_chars``, and the whole rendering's character count.
-
-    ``max_chars`` is the budget the servicer already clamped, never a caller's raw ask. The count is
-    of the rendering as a whole, so a caller tells a clipped read from a complete one by comparing it
-    against the text's own length, and learns how much lies past the cut. The cut lands on a line
-    boundary and carries a marker naming it — inside the budget, so the comparison stays sound — and
-    what the cut removed cannot be quoted. Every backend serves through this, so what an offline run
-    may quote is bounded exactly as a deployed one is.
-
-    Raises:
-        ValueError: ``max_chars`` is too small to carry the truncation marker; the servicer's floor
-            keeps a caller's budget above this.
-    """
-    total_chars = len(markdown)
-    if total_chars <= max_chars:
-        return markdown, total_chars
-    # The marker rides inside the budget, so the returned text never exceeds it — which is what lets
-    # a reader test "came whole" as total_chars against the text's own length. `dropped` is bounded
-    # by total_chars, so reserving for that spelling reserves enough for the real one.
-    reserve = len(_TRUNCATION_MARKER.format(budget=max_chars, dropped=total_chars))
-    if max_chars <= reserve:
-        raise ValueError(f'max_chars {max_chars} cannot carry the truncation marker ({reserve} chars)')
-    cut = markdown.rfind('\n', 0, max_chars - reserve)
-    if cut <= 0:
-        cut = max_chars - reserve
-    kept = markdown[:cut].rstrip()
-    marker = _TRUNCATION_MARKER.format(budget=max_chars, dropped=total_chars - len(kept))
-    return kept + marker, total_chars
 
 
 def default_representation(has_markdown: bool, markdown_from_xml: bool, has_pdf: bool) -> literature_pb2.Representation:

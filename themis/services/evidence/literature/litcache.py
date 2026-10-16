@@ -2,8 +2,8 @@
 
 Resolves a canonical ``doc_id`` against the real litcache GCS layout: reads ``papers/{doc_id}/
 manifest.pb``, follows its ``markdown`` ref to the rendering readers are served, and names the
-GCS object for a rendering, the current PDF revision, or an associated file — or serves that
-rendering's text itself, up to a per-read budget. ``locate``/``validate`` run
+GCS object for a rendering, the current PDF revision, or an associated file — or streams that
+rendering's bytes itself, whole, in ranged reads. ``locate``/``validate`` run
 anchorite's quote-to-offset location over the rendering bytes — manifest +
 rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, decoded as
 the ``PaperMetadata`` envelope and titled by whichever index's record states one; its absence falls
@@ -35,12 +35,13 @@ import contextlib
 import dataclasses
 import logging
 import mimetypes
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 
 import anchorite
 import httpx2
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage
+from google.cloud.storage import fileio
 from google.protobuf import message as _message
 
 from themis.common import sql
@@ -82,6 +83,9 @@ _TRANSIENT_ENQUEUE_ERRORS = (
     api_exceptions.Aborted,  # a concurrent write to the same queue lost
     api_exceptions.RetryError,  # api-core gave up on a retryable code
 )
+
+# One ranged read of a rendering streamed to a reader: the most of it held in memory at once.
+_READ_BYTES = 1 << 20
 
 # litcache associated-file role -> evidence FileRole (values align; mapped by name to stay explicit).
 _FILE_ROLE = {
@@ -163,8 +167,8 @@ class Store:
             ],
         )
 
-    async def get_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
-        return await asyncio.to_thread(self._read_markdown, doc_id, max_chars)
+    async def read_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
+        return await asyncio.to_thread(self._open_markdown, doc_id)
 
     async def resolve_content(
         self, doc_id: str, selector: literature_backend.ContentSelector
@@ -359,30 +363,33 @@ class Store:
         """The manifest and the ``metadata.pb`` bytes (absent ⇒ the title falls back)."""
         return self._read_manifest(doc_id), self._download(writer.metadata_path(doc_id))
 
-    def _read_markdown(self, doc_id: str, max_chars: int) -> literature_pb2.GetMarkdownResponse:
+    def _open_markdown(self, doc_id: str) -> literature_backend.Rendering | literature_pb2.FullTextUnavailable:
+        """The canonical rendering, opened on its object's metadata, or why there is none."""
         paper = self._read_manifest(doc_id)
         if paper.rendering is None:
             # The manifest is already in hand, so the readiness derivation takes it rather than
             # downloading it a second time through `outcome.read_readiness`.
             readiness = outcome.readiness_from_manifest(self._bucket, doc_id, paper.manifest)
-            return literature_pb2.GetMarkdownResponse(
-                unavailable=literature_pb2.FullTextUnavailable(state=_READINESS_STATE[readiness])
-            )
+            return literature_pb2.FullTextUnavailable(state=_READINESS_STATE[readiness])
         rendering_hash, rendering = paper.rendering
-        markdown, total_chars = literature_backend.capped_markdown(
-            self._read_rendering(doc_id, rendering_hash), max_chars
-        )
-        return literature_pb2.GetMarkdownResponse(
-            content=literature_pb2.PaperMarkdown(
-                doc_id=doc_id,
-                markdown=markdown,
-                provenance=_provenance(paper.manifest, rendering),
-                total_chars=total_chars,
-            )
+        blob = self._bucket.blob(_rendering_path(doc_id, rendering_hash))
+        try:
+            blob.reload()
+        except api_exceptions.NotFound:
+            raise literature_backend.MissingRenderingBlobError(
+                f'{doc_id} rendering {rendering_hash} is missing'
+            ) from None
+        if blob.size is None or blob.generation is None:  # set by every metadata read
+            raise ValueError(f'{doc_id} rendering {rendering_hash} reports no size or generation')
+        return literature_backend.Rendering(
+            key=rendering_hash,
+            size_bytes=blob.size,
+            provenance=_provenance(paper.manifest, rendering),
+            blocks=_blocks(doc_id, rendering_hash, blob, size=blob.size, generation=blob.generation),
         )
 
     def _read_rendering(self, doc_id: str, rendering_hash: str) -> str:
-        markdown = self._download(f'{writer.paper_dir(doc_id)}/renderings/{rendering_hash}.md')
+        markdown = self._download(_rendering_path(doc_id, rendering_hash))
         if markdown is None:
             raise literature_backend.MissingRenderingBlobError(f'{doc_id} rendering {rendering_hash} is missing')
         return markdown.decode('utf-8')
@@ -404,6 +411,38 @@ class Store:
     def _location(self, doc_id: str, rel_path: str, media_type: str) -> literature_pb2.ContentLocation:
         uri = f'gs://{self._bucket.name}/{writer.paper_dir(doc_id)}/{rel_path}'
         return literature_pb2.ContentLocation(gcs_uri=uri, media_type=media_type)
+
+
+def _rendering_path(doc_id: str, rendering_hash: str) -> str:
+    return f'{writer.paper_dir(doc_id)}/renderings/{rendering_hash}.md'
+
+
+async def _blocks(
+    doc_id: str, rendering_hash: str, blob: storage.Blob, *, size: int, generation: int
+) -> AsyncGenerator[bytes]:
+    """The ``size`` bytes of the object's ``generation``, in ranged reads offloaded so none stalls the loop.
+
+    A read the deadline abandons runs on in its worker thread until GCS answers it.
+
+    Raises:
+        MissingRenderingBlobError: the object is gone partway, replaced by another generation, or
+            shorter than its metadata — the store deleting or rewriting what its manifest names.
+    """
+    remaining = size
+    with fileio.BlobReader(blob, chunk_size=_READ_BYTES, if_generation_match=generation) as reader:
+        try:
+            while remaining > 0:
+                block = await asyncio.to_thread(reader.read, min(_READ_BYTES, remaining))
+                if not block:
+                    raise literature_backend.MissingRenderingBlobError(
+                        f'{doc_id} rendering {rendering_hash} ended {remaining} bytes short of its {size}'
+                    )
+                remaining -= len(block)
+                yield block
+        except (api_exceptions.NotFound, api_exceptions.PreconditionFailed):
+            raise literature_backend.MissingRenderingBlobError(
+                f'{doc_id} rendering {rendering_hash} went missing while it was read'
+            ) from None
 
 
 def _report(doc_ids: Sequence[str], outcomes: Sequence[bool | BaseException]) -> None:

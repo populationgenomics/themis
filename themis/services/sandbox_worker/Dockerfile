@@ -54,8 +54,8 @@ RUN --mount=type=bind,source=pyproject.toml,target=/tmp/uvproj/pyproject.toml \
 # `test_guest_rootfs.py` holds the stage to these two directories and to the import closure of everything it
 # lands. The clinvar and literature stubs reach the upstream record schemas (`clinvar_proto`, `pubmed_proto`),
 # wheels the `guest` group installs above; `themis/rpc` and `themis/evidence/models` take no `__init__.py` and resolve as namespace packages under
-# the `themis` package this stage touches into place. Then the code-mode `services`, `retry`, `display` and `widgets`
-# helpers (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the
+# the `themis` package this stage touches into place. Then the code-mode `services`, `retry`, `display`, `fulltext`
+# and `widgets` helpers (shipped under `themis.agent.` — the stable names the agent's prompt imports) with the `channel` the
 # accessors ride, the working-document linter, the SVCv4 scoring library, and the widgets library: the payload stubs
 # and the asset contract the `widgets` helper writes through and the linter reads through, with the buf.validate stub
 # protovalidate reads their rules off (the `protovalidate` wheel ships none), and the payload schemas for the model
@@ -73,7 +73,7 @@ COPY buf/validate/validate_pb2.py buf/validate/validate_pb2.pyi /usr/local/lib/p
 COPY schema/proto/themis/widgets/models/*.proto /usr/local/share/themis/widgets/
 COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_worker/guest/channel.py \
     themis/services/sandbox_worker/guest/retry.py themis/services/sandbox_worker/guest/display.py \
-    themis/services/sandbox_worker/guest/widgets.py \
+    themis/services/sandbox_worker/guest/fulltext.py themis/services/sandbox_worker/guest/widgets.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py

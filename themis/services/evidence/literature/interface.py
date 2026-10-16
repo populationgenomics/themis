@@ -25,4 +25,4 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
             Admission is not this interface's: the server `deps.authorizer` gates carries the auth
             interceptor, and each rpc's contract says who it admits (rpc-authorization.md).
     """
-    literature_pb2_grpc.add_LiteratureServicer_to_server(servicer.Servicer(config.backend_from_env(deps)), server)  # pyright: ignore[reportAbstractUsage] — ReadMarkdown is declared ahead of its handler
+    literature_pb2_grpc.add_LiteratureServicer_to_server(servicer.Servicer(config.backend_from_env(deps)), server)

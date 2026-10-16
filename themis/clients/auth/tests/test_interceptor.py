@@ -72,7 +72,7 @@ def _register(seen: _Seen) -> Callable[[grpc.aio.Server], None]:
                 passthrough(
                     _LITERATURE,
                     {
-                        'GetMarkdown': (literature_pb2.GetMarkdownRequest.FromString, _serialize),
+                        'Validate': (literature_pb2.ValidateRequest.FromString, _serialize),
                         'DescribePaper': (literature_pb2.DescribePaperRequest.FromString, _serialize),
                         'MaybeIngestPapers': (literature_pb2.MaybeIngestPapersRequest.FromString, _serialize),
                     },
@@ -108,7 +108,7 @@ def _call(
 
 
 def test_the_agent_reaches_an_rpc_naming_it_with_its_context_hydrated_from_the_claim() -> None:
-    code, auth = _call(f'/{_LITERATURE}/GetMarkdown', fixture.AGENT)
+    code, auth = _call(f'/{_LITERATURE}/Validate', fixture.AGENT)
     assert code is grpc.StatusCode.OK
     assert auth == auth_context.AuthContext(
         caller=fixture.SANDBOX_JOB_EMAIL, calling_as=_AGENT_SESSION, session=fixture.SESSION
@@ -131,7 +131,7 @@ def test_the_worker_s_claim_reaches_the_host_only_rpc_and_not_the_agent_s() -> N
     code, auth = _call(f'/{_SHEAF}/ReadRefDoc', fixture.AGENT)
     assert code is grpc.StatusCode.PERMISSION_DENIED
     assert auth is None
-    code, auth = _call(f'/{_LITERATURE}/GetMarkdown', fixture.WORKER)
+    code, auth = _call(f'/{_LITERATURE}/Validate', fixture.WORKER)
     assert code is grpc.StatusCode.PERMISSION_DENIED
     assert auth is None
 
@@ -139,7 +139,7 @@ def test_the_worker_s_claim_reaches_the_host_only_rpc_and_not_the_agent_s() -> N
 def test_a_verified_caller_the_contract_does_not_name_is_denied() -> None:
     # web is named on the paper-content reads and nowhere else; a claimed session does not widen that.
     for metadata in (fixture.WEB, (*fixture.WEB, *fixture.claim(_SELF, 'good'))):
-        code, auth = _call(f'/{_LITERATURE}/GetMarkdown', metadata)
+        code, auth = _call(f'/{_LITERATURE}/Validate', metadata)
         assert code is grpc.StatusCode.PERMISSION_DENIED, metadata
         assert auth is None
 
@@ -160,19 +160,19 @@ def test_a_self_acting_caller_whose_named_session_does_not_resolve_is_denied() -
 
 def test_the_agent_with_a_session_that_does_not_resolve_is_denied_not_faulted() -> None:
     # Expired or revoked is routine and the caller's to remedy: the member needs a session, and there is none.
-    code, auth = _call(f'/{_LITERATURE}/GetMarkdown', fixture.AGENT_BAD_SESSION)
+    code, auth = _call(f'/{_LITERATURE}/Validate', fixture.AGENT_BAD_SESSION)
     assert code is grpc.StatusCode.PERMISSION_DENIED
     assert auth is None
 
 
 def test_a_session_resolver_outage_propagates_rather_than_denying() -> None:
-    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', fixture.AGENT_OUTAGE)
+    code, _ = _call(f'/{_LITERATURE}/Validate', fixture.AGENT_OUTAGE)
     assert code is grpc.StatusCode.UNKNOWN  # the raise surfaced; it did not read as "no session"
 
 
 @pytest.mark.parametrize('metadata', [(('authorization', 'Bearer nobody'),), fixture.claim(_AGENT_SESSION, 'good'), ()])
 def test_an_unverifiable_id_token_is_denied_before_any_context_exists(metadata: Metadata) -> None:
-    code, auth = _call(f'/{_LITERATURE}/GetMarkdown', metadata)
+    code, auth = _call(f'/{_LITERATURE}/Validate', metadata)
     assert code is grpc.StatusCode.UNAUTHENTICATED
     assert auth is None
 
@@ -180,7 +180,7 @@ def test_an_unverifiable_id_token_is_denied_before_any_context_exists(metadata: 
 def test_an_account_that_never_calling_as_itself_must_claim() -> None:
     # The sandbox job's account has no self-acting member, so a call from it with no claim is a worker
     # defect — the hatch and the worker's own clients always claim — surfaced as INTERNAL, not a denial.
-    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', fixture.SANDBOX_JOB)
+    code, _ = _call(f'/{_LITERATURE}/Validate', fixture.SANDBOX_JOB)
     assert code is grpc.StatusCode.INTERNAL
 
 
@@ -192,17 +192,17 @@ def test_an_account_that_never_calling_as_itself_must_claim() -> None:
     ],
 )
 def test_a_claim_the_account_has_no_member_for_is_a_fault_not_a_denial(claim: Metadata) -> None:
-    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', (*fixture.SANDBOX_JOB, *claim))
+    code, _ = _call(f'/{_LITERATURE}/Validate', (*fixture.SANDBOX_JOB, *claim))
     assert code is grpc.StatusCode.INTERNAL
 
 
 def test_a_session_claim_with_no_token_is_a_fault() -> None:
-    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', (*fixture.SANDBOX_JOB, *fixture.claim(_AGENT_SESSION, '')))
+    code, _ = _call(f'/{_LITERATURE}/Validate', (*fixture.SANDBOX_JOB, *fixture.claim(_AGENT_SESSION, '')))
     assert code is grpc.StatusCode.INTERNAL
 
 
 def test_a_claim_that_does_not_decode_is_a_fault() -> None:
-    code, _ = _call(f'/{_LITERATURE}/GetMarkdown', (*fixture.SANDBOX_JOB, (claim_mod.CLAIM_METADATA, b'\xff\xff\xff')))
+    code, _ = _call(f'/{_LITERATURE}/Validate', (*fixture.SANDBOX_JOB, (claim_mod.CLAIM_METADATA, b'\xff\xff\xff')))
     assert code is grpc.StatusCode.INTERNAL
 
 
@@ -252,7 +252,7 @@ def test_gated_server_gates_every_path_and_keeps_the_other_interceptors() -> Non
         try:
             async with grpc.aio.insecure_channel(f'127.0.0.1:{port}') as channel:
                 method = channel.unary_unary(
-                    f'/{_LITERATURE}/GetMarkdown', request_serializer=_bytes, response_deserializer=_bytes
+                    f'/{_LITERATURE}/Validate', request_serializer=_bytes, response_deserializer=_bytes
                 )
                 try:
                     await method(b'')
@@ -264,4 +264,4 @@ def test_gated_server_gates_every_path_and_keeps_the_other_interceptors() -> Non
 
     # No credential: the auth interceptor denies; the marker still saw the path, so both are installed.
     assert asyncio.run(run()) is grpc.StatusCode.UNAUTHENTICATED
-    assert seen == [f'/{_LITERATURE}/GetMarkdown']
+    assert seen == [f'/{_LITERATURE}/Validate']

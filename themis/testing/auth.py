@@ -96,6 +96,13 @@ def server_interceptors() -> tuple[grpc.aio.ServerInterceptor, ...]:
     return (interceptor_mod.AuthInterceptor(authorizer()),)
 
 
+def _prepended(metadata: Metadata, client_call_details: grpc.aio.ClientCallDetails) -> grpc.aio.ClientCallDetails:
+    # The stub types Metadata iteration as keys; at runtime it yields (key, value) pairs.
+    existing = tuple(client_call_details.metadata or ())
+    merged = grpc.aio.Metadata(*metadata, *existing)  # pyright: ignore[reportArgumentType]
+    return client_call_details._replace(metadata=merged)  # type: ignore[attr-defined]
+
+
 class InjectMetadata(grpc.aio.UnaryUnaryClientInterceptor):
     """Prepend fixed metadata to every unary call — the credential a gated call would otherwise carry."""
 
@@ -109,8 +116,25 @@ class InjectMetadata(grpc.aio.UnaryUnaryClientInterceptor):
         client_call_details: grpc.aio.ClientCallDetails,
         request: object,
     ) -> object:
-        # The stub types Metadata iteration as keys; at runtime it yields (key, value) pairs.
-        existing = tuple(client_call_details.metadata or ())
-        merged = grpc.aio.Metadata(*self._metadata, *existing)  # pyright: ignore[reportArgumentType]
-        amended = client_call_details._replace(metadata=merged)  # type: ignore[attr-defined]
-        return await continuation(amended, request)
+        return await continuation(_prepended(self._metadata, client_call_details), request)
+
+
+class InjectStreamMetadata(grpc.aio.UnaryStreamClientInterceptor):
+    """``InjectMetadata`` for server-streaming calls.
+
+    A separate class, since a grpc.aio channel files each interceptor under the first call shape it implements.
+    """
+
+    def __init__(self, metadata: Metadata) -> None:
+        self._metadata = metadata
+
+    @override
+    async def intercept_unary_stream[Request, Response](
+        self,
+        continuation: Callable[
+            [grpc.aio.ClientCallDetails, Request], Awaitable[grpc.aio.UnaryStreamCall[Request, Response]]
+        ],
+        client_call_details: grpc.aio.ClientCallDetails,
+        request: Request,
+    ) -> grpc.aio.UnaryStreamCall[Request, Response]:
+        return await continuation(_prepended(self._metadata, client_call_details), request)

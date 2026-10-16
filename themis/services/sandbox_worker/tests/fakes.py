@@ -9,17 +9,25 @@ bwrap guest is not available (the isolation itself is exercised in ``test_sessio
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextlib
+import dataclasses
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 import types
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import Any
 
+import grpc
 import postern
 from postern import stream
 
+from themis.rpc import literature_pb2
 from themis.services.sandbox_worker import git_hatches
 
 # The worker's guest git has the identity and the ext:: allowance from the guest rootfs's /etc/gitconfig; a host
@@ -152,3 +160,70 @@ class HostGitSandbox:
             argv, cwd=self.workspace, env=env, capture_output=True, text=True, timeout=timeout, check=False
         )
         return postern.ProcResult(result.returncode, result.stdout, result.stderr)
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamAttempt:
+    """What one `ReadMarkdown` call answers: these messages, then — if `fail` is set — that status."""
+
+    responses: tuple[literature_pb2.ReadMarkdownResponse, ...] = ()
+    fail: grpc.StatusCode | None = None
+
+
+class ScriptedReadMarkdown:
+    """A real `Literature.ReadMarkdown` upstream answering each call with the next scripted attempt.
+
+    Served through a generic handler, so no other literature rpc needs a stand-in. Records how many calls it saw,
+    and for each, an event set once the call ended without completing — its caller cancelled it or went away.
+    """
+
+    def __init__(self, attempts: Sequence[StreamAttempt]) -> None:
+        self._attempts = list(attempts)
+        self.calls = 0
+        self.abandoned: list[threading.Event] = []
+
+    def __call__(
+        self, request: literature_pb2.ReadMarkdownRequest, context: grpc.ServicerContext
+    ) -> Iterator[literature_pb2.ReadMarkdownResponse]:
+        del request
+        self.calls += 1
+        abandoned = threading.Event()
+        self.abandoned.append(abandoned)
+        attempt = self._attempts.pop(0)
+        try:
+            yield from attempt.responses
+        except GeneratorExit:
+            abandoned.set()  # grpc closes a response generator whose call ended before it was read through
+            raise
+        if attempt.fail is not None:
+            context.abort(attempt.fail, 'scripted failure')
+
+
+@contextlib.contextmanager
+def serving_read_markdown(upstream: ScriptedReadMarkdown) -> Iterator[str]:
+    """Serve `upstream` on a Unix socket, as the hatch is served; yield the socket's path."""
+    # An AF_UNIX path is capped near 104 characters, which pytest's `tmp_path` alone overruns.
+    directory = pathlib.Path(tempfile.mkdtemp(prefix='hatch-', dir='/tmp'))
+    server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=2))
+    server.add_generic_rpc_handlers(
+        (
+            grpc.method_handlers_generic_handler(
+                'themis.rpc.literature.Literature',
+                {
+                    'ReadMarkdown': grpc.unary_stream_rpc_method_handler(
+                        upstream,
+                        request_deserializer=literature_pb2.ReadMarkdownRequest.FromString,
+                        response_serializer=literature_pb2.ReadMarkdownResponse.SerializeToString,
+                    )
+                },
+            ),
+        )
+    )
+    socket = directory / 's'
+    server.add_insecure_port(f'unix:{socket}')
+    server.start()
+    try:
+        yield str(socket)
+    finally:
+        server.stop(None).wait()
+        shutil.rmtree(directory, ignore_errors=True)

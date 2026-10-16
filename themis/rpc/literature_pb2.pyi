@@ -231,39 +231,11 @@ class ValidateResponse(_message.Message):
     reason: str
     def __init__(self, ok: _Optional[bool] = ..., located_in: _Optional[_Iterable[_Union[Representation, str]]] = ..., reason: _Optional[str] = ...) -> None: ...
 
-class GetMarkdownRequest(_message.Message):
-    __slots__ = ("doc_id", "max_chars")
-    DOC_ID_FIELD_NUMBER: _ClassVar[int]
-    MAX_CHARS_FIELD_NUMBER: _ClassVar[int]
-    doc_id: str
-    max_chars: int
-    def __init__(self, doc_id: _Optional[str] = ..., max_chars: _Optional[int] = ...) -> None: ...
-
-class PaperMarkdown(_message.Message):
-    __slots__ = ("doc_id", "markdown", "provenance", "total_chars")
-    DOC_ID_FIELD_NUMBER: _ClassVar[int]
-    MARKDOWN_FIELD_NUMBER: _ClassVar[int]
-    PROVENANCE_FIELD_NUMBER: _ClassVar[int]
-    TOTAL_CHARS_FIELD_NUMBER: _ClassVar[int]
-    doc_id: str
-    markdown: str
-    provenance: TextProvenance
-    total_chars: int
-    def __init__(self, doc_id: _Optional[str] = ..., markdown: _Optional[str] = ..., provenance: _Optional[_Union[TextProvenance, str]] = ..., total_chars: _Optional[int] = ...) -> None: ...
-
 class FullTextUnavailable(_message.Message):
     __slots__ = ("state",)
     STATE_FIELD_NUMBER: _ClassVar[int]
     state: FullTextState
     def __init__(self, state: _Optional[_Union[FullTextState, str]] = ...) -> None: ...
-
-class GetMarkdownResponse(_message.Message):
-    __slots__ = ("content", "unavailable")
-    CONTENT_FIELD_NUMBER: _ClassVar[int]
-    UNAVAILABLE_FIELD_NUMBER: _ClassVar[int]
-    content: PaperMarkdown
-    unavailable: FullTextUnavailable
-    def __init__(self, content: _Optional[_Union[PaperMarkdown, _Mapping]] = ..., unavailable: _Optional[_Union[FullTextUnavailable, _Mapping]] = ...) -> None: ...
 
 class ReadMarkdownRequest(_message.Message):
     __slots__ = ("doc_id",)

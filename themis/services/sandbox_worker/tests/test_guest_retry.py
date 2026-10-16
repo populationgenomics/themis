@@ -16,8 +16,9 @@ from typing import override
 import grpc
 import pytest
 
-from themis.rpc import hello_pb2, hello_pb2_grpc
+from themis.rpc import hello_pb2, hello_pb2_grpc, literature_pb2, literature_pb2_grpc
 from themis.services.sandbox_worker.guest import retry
+from themis.services.sandbox_worker.tests import fakes
 
 
 class _ScriptedHello(hello_pb2_grpc.HelloServicer):
@@ -536,3 +537,94 @@ def test_the_cache_holds_to_a_byte_budget_too(tmp_path: pathlib.Path, monkeypatc
         retry.call(stub.SayHello, hello_pb2.SayHelloRequest(note='b'), cache_dir=tmp_path)
     # A single entry already exceeds the budget, so each write clears what came before it.
     assert len(list(tmp_path.iterdir())) == 1
+
+
+# --- streams ----------------------------------------------------------------------------------------------------
+
+
+type _ReadMarkdown = grpc.UnaryStreamMultiCallable[
+    literature_pb2.ReadMarkdownRequest, literature_pb2.ReadMarkdownResponse
+]
+
+
+def _chunk(data: bytes) -> literature_pb2.ReadMarkdownResponse:
+    return literature_pb2.ReadMarkdownResponse(chunk=data)
+
+
+@contextlib.contextmanager
+def _streaming(attempts: Sequence[fakes.StreamAttempt]) -> Iterator[tuple[fakes.ScriptedReadMarkdown, _ReadMarkdown]]:
+    upstream = fakes.ScriptedReadMarkdown(attempts)
+    with fakes.serving_read_markdown(upstream) as socket, grpc.insecure_channel(f'unix:{socket}') as hatch:
+        yield upstream, literature_pb2_grpc.LiteratureStub(hatch).ReadMarkdown
+
+
+def _read(method: _ReadMarkdown, *, attempts: int = 4) -> list[bytes]:
+    request = literature_pb2.ReadMarkdownRequest(doc_id='doc-1')
+    return [response.chunk for response in retry.stream(method, request, attempts=attempts, backoff=0.0)]
+
+
+def test_a_stream_that_fails_before_its_first_message_is_reissued() -> None:
+    script = [
+        fakes.StreamAttempt(fail=grpc.StatusCode.UNAVAILABLE),
+        fakes.StreamAttempt(responses=(_chunk(b'a'), _chunk(b'b'))),
+    ]
+    with _streaming(script) as (upstream, method):
+        assert _read(method) == [b'a', b'b']
+    assert upstream.calls == 2
+
+
+def test_a_stream_that_fails_after_a_message_is_raised_not_reissued() -> None:
+    # A reissue would be a second answer stitched onto the first; nothing says the two are the same one.
+    script = [
+        fakes.StreamAttempt(responses=(_chunk(b'a'),), fail=grpc.StatusCode.UNAVAILABLE),
+        fakes.StreamAttempt(responses=(_chunk(b'a'), _chunk(b'b'))),
+    ]
+    received: list[bytes] = []
+    with _streaming(script) as (upstream, method), pytest.raises(grpc.RpcError) as raised:  # noqa: PT012
+        request = literature_pb2.ReadMarkdownRequest(doc_id='doc-1')
+        for response in retry.stream(method, request, backoff=0.0):
+            received.append(response.chunk)
+    assert upstream.calls == 1
+    assert received == [b'a']
+    assert raised.value.code() is grpc.StatusCode.UNAVAILABLE
+    assert any('after 1 message' in note for note in raised.value.__notes__)
+
+
+def test_a_stream_s_settled_answer_is_never_reissued() -> None:
+    script = [fakes.StreamAttempt(fail=grpc.StatusCode.NOT_FOUND)]
+    with _streaming(script) as (upstream, method), pytest.raises(grpc.RpcError) as raised:
+        _read(method)
+    assert upstream.calls == 1
+    assert raised.value.code() is grpc.StatusCode.NOT_FOUND
+
+
+def test_a_stream_the_caller_stops_reading_is_cancelled() -> None:
+    # Closing the generator has to end the call, or it runs on holding a hatch serving thread for nothing.
+    # The calls are held here, so dropping the last reference — which grpc also cancels on — cannot stand in for it.
+    many = tuple(_chunk(b'x' * 1024) for _ in range(10_000))
+    issued: list[Iterator[literature_pb2.ReadMarkdownResponse]] = []
+    with _streaming([fakes.StreamAttempt(responses=many)]) as (upstream, method):
+
+        def holding(
+            request: literature_pb2.ReadMarkdownRequest, timeout: float | None = None
+        ) -> Iterator[literature_pb2.ReadMarkdownResponse]:
+            issued.append(method(request, timeout=timeout))
+            return issued[-1]
+
+        responses = retry.stream(holding, literature_pb2.ReadMarkdownRequest(doc_id='doc-1'))
+        next(responses)
+        responses.close()
+        assert upstream.abandoned[0].wait(timeout=10)
+    assert len(issued) == 1
+
+
+def test_a_stream_s_budget_is_checked_before_any_rpc_is_issued() -> None:
+    with _streaming([]) as (upstream, method), pytest.raises(ValueError, match='attempts'):
+        retry.stream(method, literature_pb2.ReadMarkdownRequest(doc_id='doc-1'), attempts=0)
+    assert upstream.calls == 0
+
+
+def test_call_refuses_a_streaming_method_rather_than_answering_with_an_iterator() -> None:
+    with _streaming([]) as (upstream, method), pytest.raises(TypeError, match=r'retry\.stream'):
+        retry.call(method, literature_pb2.ReadMarkdownRequest(doc_id='doc-1'))  # pyright: ignore[reportArgumentType] — the misuse under test
+    assert upstream.calls == 0

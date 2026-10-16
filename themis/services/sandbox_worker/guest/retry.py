@@ -25,6 +25,11 @@ a miss, and a write that fails is a warning.
 
 ``timeout`` is a budget for the whole call — attempts and backoff together — not a per-attempt deadline. Every attempt
 names it, so the channel's own default deadline (``services``) never applies to one.
+
+``stream`` is the same for an rpc that streams its response, with one rule ``call`` has no use for: a stream is reissued
+only while nothing of it has arrived. Once a message has, a failure ends the stream where it stands and is raised —
+resuming would mean stitching a second response onto the first, and nothing says the two are the same answer. Streams
+are never cached.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ import pathlib
 import sys
 import tempfile
 import time
+from collections.abc import Generator, Iterator
 from typing import Protocol, cast
 
 import grpc
@@ -67,6 +73,12 @@ class UnaryMethod[Request: message.Message, Response: message.Message](Protocol)
     """A generated stub's unary-unary method, as ``call`` invokes it: one request, one deadline."""
 
     def __call__(self, request: Request, timeout: float | None = ...) -> Response: ...
+
+
+class StreamMethod[Request: message.Message, Response: message.Message](Protocol):
+    """A generated stub's unary-stream method, as ``stream`` invokes it: one request, one deadline, many responses."""
+
+    def __call__(self, request: Request, timeout: float | None = ...) -> Iterator[Response]: ...
 
 
 def _status(error: grpc.RpcError) -> grpc.StatusCode | None:
@@ -179,6 +191,35 @@ def _name_the_cause(error: grpc.RpcError, earlier: grpc.Call, attempt: int) -> N
     )
 
 
+def _check_budget(attempts: int, backoff: float, timeout: float) -> None:
+    if attempts < 1:
+        raise ValueError(f'attempts must be at least 1, got {attempts}')
+    if backoff < 0:
+        raise ValueError(f'backoff must not be negative, got {backoff}')
+    if timeout <= 0:
+        raise ValueError(f'timeout must be positive, got {timeout}')
+
+
+def _wait_before_retrying(
+    error: grpc.RpcError, *, earlier: grpc.Call | None, attempt: int, attempts: int, backoff: float, deadline: float
+) -> float:
+    """How long to wait before reissuing a call that failed with ``error``, or raise it if it is not to be reissued.
+
+    Raises:
+        grpc.RpcError: ``error``, when its status is settled, the attempts are spent, or the budget would run out
+            during the wait. A ``DEADLINE_EXCEEDED`` on a retry is raised from the failure before it, noted.
+    """
+    if earlier is not None and _status(error) == grpc.StatusCode.DEADLINE_EXCEEDED:
+        _name_the_cause(error, earlier, attempt)
+        raise error from cast('grpc.RpcError', earlier)
+    if attempt >= attempts or _status(error) not in TRANSIENT_CODES:
+        raise error
+    wait = backoff * 2 ** (attempt - 1)
+    if deadline - time.monotonic() <= wait:
+        raise error
+    return wait
+
+
 def call[Request: message.Message, Response: message.Message](
     method: UnaryMethod[Request, Response],
     request: Request,
@@ -209,18 +250,16 @@ def call[Request: message.Message, Response: message.Message](
     Raises:
         ValueError: If ``attempts`` is below 1, ``backoff`` is negative, or ``timeout`` is not
             positive.
-        TypeError: If ``cache_dir`` is set and ``method`` is not a generated stub method, which is
-            the only kind carrying the rpc path the key needs.
+        TypeError: If ``method`` streams its response, which ``stream`` is for; or if ``cache_dir`` is
+            set and ``method`` is not a generated stub method, which is the only kind carrying the rpc
+            path the key needs.
         grpc.RpcError: The last failure, once a settled status is returned (never retried), the
             attempts are spent, or the budget is. A retry that ends ``DEADLINE_EXCEEDED`` is raised
             from the failure before it (``__cause__``), noted on the error.
     """
-    if attempts < 1:
-        raise ValueError(f'attempts must be at least 1, got {attempts}')
-    if backoff < 0:
-        raise ValueError(f'backoff must not be negative, got {backoff}')
-    if timeout <= 0:
-        raise ValueError(f'timeout must be positive, got {timeout}')
+    if isinstance(method, grpc.UnaryStreamMultiCallable):
+        raise TypeError(f'{method!r} streams its response; issue it with retry.stream, not retry.call')
+    _check_budget(attempts, backoff, timeout)
     entry = _entry_path(pathlib.Path(cache_dir), _rpc_path(method), request) if cache_dir is not None else None
     if entry is not None:
         cached = _read(entry)
@@ -235,14 +274,9 @@ def call[Request: message.Message, Response: message.Message](
         try:
             response = method(request, timeout=deadline - time.monotonic())
         except grpc.RpcError as error:
-            if earlier is not None and _status(error) == grpc.StatusCode.DEADLINE_EXCEEDED:
-                _name_the_cause(error, earlier, attempt)
-                raise error from cast('grpc.RpcError', earlier)
-            if attempt >= attempts or _status(error) not in TRANSIENT_CODES:
-                raise
-            wait = backoff * 2 ** (attempt - 1)
-            if deadline - time.monotonic() <= wait:
-                raise
+            wait = _wait_before_retrying(
+                error, earlier=earlier, attempt=attempt, attempts=attempts, backoff=backoff, deadline=deadline
+            )
             earlier = cast('grpc.Call', error)  # a status in TRANSIENT_CODES means `_status` found a Call
             time.sleep(wait)
             continue
@@ -253,3 +287,71 @@ def call[Request: message.Message, Response: message.Message](
                 # The rpc already answered; a full or read-only /workspace must not discard that.
                 _warn(f'response not cached: {error}')
         return response
+
+
+def stream[Request: message.Message, Response: message.Message](
+    method: StreamMethod[Request, Response],
+    request: Request,
+    *,
+    attempts: int = 4,
+    backoff: float = 1.0,
+    timeout: float = DEFAULT_TIMEOUT_S,
+) -> Generator[Response]:
+    """Issue one server-streaming rpc under a deadline, reissuing it on a transient failure before any message.
+
+    Messages are passed on as they arrive. A transient failure before the first one is retried as ``call``
+    retries; a failure after it is raised as it stands, since what arrived is a prefix of the answer and a
+    reissue would be a second answer, not the rest of the first. Closing the generator early cancels the call.
+
+    Args:
+        method: The stub method to call, e.g. ``services.literature().ReadMarkdown``.
+        request: Its request message.
+        attempts: How many times to issue the call in total (1 disables retrying).
+        backoff: Seconds to wait after the first failure; each further wait doubles it.
+        timeout: Seconds the whole stream gets, retries and backoff included: the last message has to
+            arrive inside it.
+
+    Returns:
+        The responses, in order.
+
+    Raises:
+        ValueError: If ``attempts`` is below 1, ``backoff`` is negative, or ``timeout`` is not
+            positive — when called, before any rpc is issued.
+        grpc.RpcError: While iterating: the last failure before the first message, once a settled
+            status is returned, the attempts are spent, or the budget is; or the failure after the
+            first message, noted with how many had arrived.
+    """
+    _check_budget(attempts, backoff, timeout)
+    return _stream(method, request, attempts=attempts, backoff=backoff, timeout=timeout)
+
+
+def _stream[Request: message.Message, Response: message.Message](
+    method: StreamMethod[Request, Response], request: Request, *, attempts: int, backoff: float, timeout: float
+) -> Generator[Response]:
+    deadline = time.monotonic() + timeout
+    earlier: grpc.Call | None = None
+    attempt = 0
+    while True:
+        attempt += 1
+        responses = method(request, timeout=deadline - time.monotonic())
+        received = 0
+        try:
+            for response in responses:
+                received += 1
+                yield response
+            return
+        except grpc.RpcError as error:
+            if received:
+                error.add_note(
+                    f'[themis.agent.retry] the stream failed after {received} message(s) and was not reissued: '
+                    'what arrived is a prefix of the answer, not the whole of it'
+                )
+                raise
+            wait = _wait_before_retrying(
+                error, earlier=earlier, attempt=attempt, attempts=attempts, backoff=backoff, deadline=deadline
+            )
+            earlier = cast('grpc.Call', error)
+            time.sleep(wait)
+        finally:
+            if isinstance(responses, grpc.Call):
+                responses.cancel()  # a no-op on a call that ended; ends one the caller stopped reading

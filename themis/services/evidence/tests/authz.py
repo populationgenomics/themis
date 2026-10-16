@@ -38,6 +38,7 @@ AUTH = auth_context.AuthContext(
 authorizer = auth_fixture.authorizer
 server_interceptors = auth_fixture.server_interceptors
 InjectMetadata = auth_fixture.InjectMetadata
+InjectStreamMetadata = auth_fixture.InjectStreamMetadata
 
 
 def gated(register: in_process_grpc.Register) -> contextlib.AbstractAsyncContextManager[grpc.aio.Channel]:

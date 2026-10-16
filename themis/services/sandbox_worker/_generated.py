@@ -14,7 +14,6 @@ GUEST_METHODS = frozenset(
         '/themis.rpc.gnomad.Gnomad/DescribeVariant',
         '/themis.rpc.hello.Hello/SayHello',
         '/themis.rpc.literature.Literature/FetchPubmedArticles',
-        '/themis.rpc.literature.Literature/GetMarkdown',
         '/themis.rpc.literature.Literature/ListLitVarEntities',
         '/themis.rpc.literature.Literature/MaybeIngestPapers',
         '/themis.rpc.literature.Literature/PollFullTexts',
