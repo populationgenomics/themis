@@ -217,11 +217,12 @@ Two further per-paper facts cross the wire, and neither is stored anywhere:
   `NO_FULL_TEXT` and `FAILED`, plus `UNKNOWN_PAPER` for a `doc_id` the store holds no paper under. It is derived from
   the store's layout on each read, and [`evidence-fulltext.md`](evidence-fulltext.md) owns both the derivation and the
   reason there is no status store behind it.
-- **Text provenance** — how the canonical rendering's text got into the store. A lineage the manifest records as
-  institutionally captured, or an uploaded revision, is `SUPPLIED`; a lineage recorded as free to read is `OPEN_ACCESS`;
-  a licensed, unknown or unplaceable lineage says neither. Open access is a claim about how text was obtained, so
-  nothing defaults to it. `SUPPLIED` text reached the store only through a human's institutional access, which is a
-  thing a run should be able to state about what it relied on — but it is no less citable for that.
+- **Text provenance** — the terms the canonical rendering's text is held under. A lineage recorded as free to read is
+  `OPEN_ACCESS` however it arrived, uploaded included; otherwise one recorded as institutionally captured, or an
+  uploaded revision, is `SUPPLIED`; a licensed, unknown or unplaceable lineage says neither. Open access is a claim
+  about the text's terms, so nothing defaults to it. `SUPPLIED` text reached the store only through a human's
+  institutional access, which is a thing a run should be able to state about what it relied on — but it is no less
+  citable for that.
 
 Text provenance is named for the *text*, not for the fact: the `Provenance` message every other evidence rpc returns
 records where a *fact* came from, which is a different thing that happens to want the same English word.

@@ -548,7 +548,7 @@ def backend_from_seed(store: object, index: object, *, store_source: str, index_
             "pdf_locations": {"<quote>": {"page": 0, "rects": [[x, y, w, h]]}}
         }}
 
-    ``provenance`` defaults to ``OPEN_ACCESS`` — the disposition of all but a deposited paper, and
+    ``provenance`` defaults to ``OPEN_ACCESS`` — the disposition of every free-to-read paper, and
     the one a seed that says nothing means. ``readiness`` states why a paper without a rendering has
     no text; a paper seeding both it and a ``markdown`` is rejected, since the rendering already says
     the text is there, as is one seeding locations in a representation it has no rendering for.

@@ -38,13 +38,14 @@ enum FileRole {
   FILE_ROLE_SUPPLEMENTARY = 2;
 }
 
-// How the canonical rendering's text entered the full-text store. SUPPLIED text reached it only
-// through a human's institutional access, so a run records what it relied on; both are equally
-// citable. UNSPECIFIED is a store that does not say — no rendering, an unresolvable lineage, or a
-// licence disposition that is neither of the two — never a default for a paper whose lineage does
-// say. It rides only on a served rendering, so "no rendering" is the `unavailable` arm, not this
-// value. Named for the text, not the fact: `themis.evidence.models.Provenance`, which every other
-// evidence rpc returns, is a record of where a fact came from and is a different thing entirely.
+// The terms the canonical rendering's text is held under. A free-to-read lineage is OPEN_ACCESS
+// however its text arrived, uploaded included. SUPPLIED text reached the store only through a
+// human's institutional access, so a run records what it relied on; both are equally citable. UNSPECIFIED
+// is a store that does not say — no rendering, an unresolvable lineage, or a licence disposition
+// that is neither of the two — never a default for a paper whose lineage does say. It rides only
+// on a served rendering, so "no rendering" is the `unavailable` arm, not this value. Named for the
+// text, not the fact: `themis.evidence.models.Provenance`, which every other evidence rpc returns,
+// is a record of where a fact came from and is a different thing entirely.
 enum TextProvenance {
   TEXT_PROVENANCE_UNSPECIFIED = 0;
   TEXT_PROVENANCE_OPEN_ACCESS = 1;

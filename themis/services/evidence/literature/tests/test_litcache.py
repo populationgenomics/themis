@@ -579,9 +579,15 @@ def _captured_by_an_institution() -> litcache_pb2.Source:
     return source
 
 
-def _uploaded() -> litcache_pb2.Source:
+def _uploaded_free_to_read() -> litcache_pb2.Source:
     source = _pdf_source()
     source.revisions[0].kind = litcache_pb2.SourceKind.SOURCE_KIND_UPLOAD
+    return source
+
+
+def _uploaded() -> litcache_pb2.Source:
+    source = _uploaded_free_to_read()
+    source.access.CopyFrom(litcache_pb2.Access(unknown=litcache_pb2.UnknownAccess()))
     return source
 
 
@@ -603,19 +609,27 @@ def _access_unknown() -> litcache_pb2.Source:
         (_pdf_source, literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS),
         (_captured_by_an_institution, literature_pb2.TEXT_PROVENANCE_SUPPLIED),
         (_uploaded, literature_pb2.TEXT_PROVENANCE_SUPPLIED),
+        (_uploaded_free_to_read, literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS),
         (_publisher_licensed, literature_pb2.TEXT_PROVENANCE_UNSPECIFIED),
         (_access_unknown, literature_pb2.TEXT_PROVENANCE_UNSPECIFIED),
     ],
-    ids=['free-to-read', 'institution-captured', 'uploaded-revision', 'publisher-licensed', 'access-unknown'],
+    ids=[
+        'free-to-read',
+        'institution-captured',
+        'uploaded-revision',
+        'uploaded-free-to-read',
+        'publisher-licensed',
+        'access-unknown',
+    ],
 )
 def test_provenance_states_only_what_the_lineage_supports(
     gcs_bucket: storage.Bucket,
     source: Callable[[], litcache_pb2.Source],
     provenance: literature_pb2.TextProvenance,
 ) -> None:
-    # A deposit records both supplied signals, so either alone has to carry it. A disposition that is
-    # neither free-to-read nor human-captured gets no answer rather than the permissive one:
-    # OPEN_ACCESS is a claim about how the text was obtained, not a default for an unclear lineage.
+    # Free to read is OPEN_ACCESS even when uploaded; otherwise human capture or an upload, each alone,
+    # is SUPPLIED. A lineage with neither signal gets no answer rather than the permissive one:
+    # OPEN_ACCESS is a claim about the terms the text is held under, not a default for an unclear lineage.
     _seed_paper(gcs_bucket, sources=[source()], rendering=_rendering('pdf', litcache_pb2.Converter.CONVERTER_LLM_OCR))
     assert _provenance_of(gcs_bucket) == provenance
 

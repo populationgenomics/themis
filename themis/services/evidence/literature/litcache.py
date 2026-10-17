@@ -504,25 +504,25 @@ def _parse[M: _message.Message](target: M, data: bytes) -> M:
 
 
 def _lineage_provenance(source: litcache_pb2.Source, revision: litcache_pb2.Revision) -> literature_pb2.TextProvenance:
+    if source.access.WhichOneof('kind') == 'free_to_read':
+        return literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
     if source.access.WhichOneof('kind') == 'institution_captured':
         return literature_pb2.TEXT_PROVENANCE_SUPPLIED
     if revision.kind == litcache_pb2.SourceKind.SOURCE_KIND_UPLOAD:
         return literature_pb2.TEXT_PROVENANCE_SUPPLIED
-    if source.access.WhichOneof('kind') == 'free_to_read':
-        return literature_pb2.TEXT_PROVENANCE_OPEN_ACCESS
     return literature_pb2.TEXT_PROVENANCE_UNSPECIFIED
 
 
 def _provenance(
     manifest: litcache_pb2.Manifest, rendering: litcache_pb2.Record | None
 ) -> literature_pb2.TextProvenance:
-    """How the rendering's text entered the store, from the revision it was produced from.
+    """The terms the rendering's text is held under, from the revision it was produced from.
 
-    A lineage a human captured under institutional access, or a revision uploaded rather than
-    fetched, is SUPPLIED; a free-to-read lineage the OA ladder reached is OPEN_ACCESS. Everything
-    else is UNSPECIFIED: no rendering, a rendering whose revision no lineage carries, and the
-    ``licensed``/``unknown`` dispositions — text that reached the store neither by a human nor
-    demonstrably openly, which neither answer would state honestly.
+    A free-to-read lineage is OPEN_ACCESS however its revision arrived, uploaded or fetched. A
+    lineage a human captured under institutional access, or any other revision uploaded rather than
+    fetched, is SUPPLIED. Everything else is UNSPECIFIED: no rendering, a rendering whose revision
+    no lineage carries, and the ``licensed``/``unknown`` dispositions — text that reached the store
+    neither by a human nor demonstrably openly, which neither answer would state honestly.
 
     The same bytes can sit in more than one lineage, and then the least restrictive terms apply to
     them (litcache-manifest.md): OPEN_ACCESS if any lineage holding them is free to read, else
