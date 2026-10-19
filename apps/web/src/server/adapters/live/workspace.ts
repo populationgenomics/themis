@@ -33,6 +33,7 @@ import {
 import type { WorkspaceRepository } from "../../ports";
 import { tracingInterceptor } from "../../tracing/connect";
 import type { SheafConfig } from "./config";
+import type { BearerDeriver } from "./derive";
 import { idTokenInterceptor } from "./id-token";
 
 // The live workspace repository: the sheaf service over gRPC, called as the web tier. Each call
@@ -45,11 +46,6 @@ export const CLAIM_METADATA = "x-themis-claim-bin";
 
 /** Under gRPC's 4 MiB default per-message limit, with margin, as the sandbox worker chunks. */
 export const PUBLISH_CHUNK_BYTES = 1 << 20;
-
-/** Derives the session bearer an Analysis's session id is MAC-signed to (`derive.ts`). */
-export interface BearerDeriver {
-  deriveBearer(sessionId: string): Promise<string>;
-}
 
 /** The sheaf codes a publish passes to the browser as themselves, by what each means. */
 const PUBLISH_FAILURES: ReadonlyMap<Code, WorkspacePublishFailure> = new Map([

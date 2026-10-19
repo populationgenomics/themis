@@ -52,8 +52,8 @@ The time in a span that none of its children covers is the service's own work, o
 up. The gap between a client span and the server span under it is the network plus Cloud Run's front end. In the web
 tier, Next.js opens the server span for each request, and the BFF's spans sit under it: `pg.<method>` for each database
 read (with a `pg.connect` child for taking a connection from the pool, which is where the time goes when the pool has to
-open one), `kms.macSign` for a session bearer, `gcs.*` for the working document, and a client span for each call to a
-backend service.
+open one), `kms.macSign` the first time an instance derives a session's bearer, `gcs.*` for the working document, and a
+client span for each call to a backend service.
 
 A server span sometimes has a parent that the trace does not contain. Cloud Run puts a span of its own between every two
 hops and records it for at most one request every ten seconds per instance, so on most requests the parent that the

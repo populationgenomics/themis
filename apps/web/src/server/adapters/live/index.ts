@@ -3,7 +3,7 @@ import type { AnalysisPorts, ProjectMembership } from "../../ports";
 import { AnthropicClient } from "./client";
 import { loadAnthropicConfig, loadKmsConfig, loadSheafConfig } from "./config";
 import { DataPlane } from "./data-plane";
-import { KmsSessionTokenDeriver } from "./derive";
+import { KmsSessionTokenDeriver, MemoizedBearerDeriver } from "./derive";
 import { Membership } from "./membership";
 import { Sql } from "./sql";
 import { createWorkspace } from "./workspace";
@@ -28,7 +28,9 @@ function sharedSql(): Sql {
 }
 
 export function createAnalysisPorts(): AnalysisPorts {
-  const deriver = new KmsSessionTokenDeriver(loadKmsConfig());
+  const deriver = new MemoizedBearerDeriver(
+    new KmsSessionTokenDeriver(loadKmsConfig()),
+  );
   return {
     dataPlane: new DataPlane(
       new AnthropicClient(loadAnthropicConfig()),

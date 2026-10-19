@@ -14,7 +14,7 @@ import { UnmanagedSessionError } from "../../errors";
 import { kickoffText } from "../../kickoff";
 import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
 import type { AnthropicClient } from "./client";
-import { hashBearer, type KmsSessionTokenDeriver } from "./derive";
+import { type BearerDeriver, hashBearer } from "./derive";
 import type { Sql } from "./sql";
 
 // The raw `AnalysisDataPlane` over the self-hosted data plane: Anthropic session control, a
@@ -37,7 +37,7 @@ const NO_INTERRUPT =
 export class DataPlane implements AnalysisDataPlane {
   constructor(
     private readonly anthropic: AnthropicClient,
-    private readonly deriver: KmsSessionTokenDeriver,
+    private readonly deriver: BearerDeriver,
     private readonly sql: Sql,
   ) {}
 

@@ -5,7 +5,7 @@ import { type Analysis, AnalysisSchema } from "@/models/workbench";
 import { isUnmanagedSessionError } from "../../errors";
 import type { AnthropicClient } from "./client";
 import { DataPlane } from "./data-plane";
-import type { KmsSessionTokenDeriver } from "./derive";
+import type { BearerDeriver } from "./derive";
 import type { Sql } from "./sql";
 
 // A run driven by another harness has no session here. The poll still has to answer, because the
@@ -41,7 +41,7 @@ function plane(
   } as unknown as AnthropicClient;
   return new DataPlane(
     anthropic,
-    {} as unknown as KmsSessionTokenDeriver,
+    {} as unknown as BearerDeriver,
     {} as unknown as Sql,
   );
 }

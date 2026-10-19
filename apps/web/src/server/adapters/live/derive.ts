@@ -33,10 +33,34 @@ export function crc32c(data: Buffer): number {
   return digest.valueOf() >>> 0;
 }
 
+/** Derives the session bearer an Analysis's session id is MAC-signed to. */
+export interface BearerDeriver {
+  deriveBearer(sessionId: string): Promise<string>;
+}
+
+/** Keeps each session's bearer once this process has derived it. A bearer is a fixed function of
+ *  its session id under the pinned key version, so a kept one never goes stale; the auth service
+ *  still revokes, when it resolves the bearer. Only a derived bearer is kept, never a pending
+ *  derivation, so a stalled or failed one holds up no later call. One entry per session this
+ *  process has named. */
+export class MemoizedBearerDeriver implements BearerDeriver {
+  private readonly bearers = new Map<string, string>();
+
+  constructor(private readonly inner: BearerDeriver) {}
+
+  async deriveBearer(sessionId: string): Promise<string> {
+    const known = this.bearers.get(sessionId);
+    if (known !== undefined) return known;
+    const bearer = await this.inner.deriveBearer(sessionId);
+    this.bearers.set(sessionId, bearer);
+    return bearer;
+  }
+}
+
 /** Derives session bearers by MAC-signing each session id through the pinned
  *  Cloud KMS MAC key version. The client is lazy so constructing the deriver
  *  needs no credentials (only `deriveBearer` reaches KMS). */
-export class KmsSessionTokenDeriver {
+export class KmsSessionTokenDeriver implements BearerDeriver {
   private client?: KeyManagementServiceClient;
 
   constructor(private readonly config: KmsConfig) {}
