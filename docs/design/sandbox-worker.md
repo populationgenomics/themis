@@ -17,6 +17,10 @@ that boundary: how a session's code is isolated, what it can reach, and how its 
   Untrusted model code never shares it: every shell command is marshalled into a
   [bubblewrap](https://github.com/containers/bubblewrap) guest whose exits are a method-allowlisted gRPC hatch and two
   git hatches onto the worker's mirror of its repository.
+- **Every tool that touches the workspace runs as the guest.** The guest runs as a host uid that owns nothing else, so
+  the files it makes are its own. The agent's file tools run inside the guest too, rather than as root in the worker,
+  because a root process working in a tree the guest controls either fails on the guest's files or follows the guest's
+  symlinks.
 - **Egress is contained at the namespace, and fails closed.** The guest runs with an empty network namespace, so there
   is no egress firewall, no DNS sinkhole, no internal load balancer and no proxy in front of Anthropic — a whole network
   subsystem the container-isolation shape needs and this one does not.
@@ -45,16 +49,21 @@ worker's **mirror** — a bare copy of the Analysis repository — through; toge
 the guest sees. In **code mode** the model reaches internal services by writing Python against their generated stubs
 rather than through chains of discrete tool calls.
 
-**What the SDK's loop does, and does not, hand us.** Four of its behaviours shape decisions below:
+**What the SDK's loop does, and does not, hand us.** These behaviours shape decisions below:
 
 - It consumes the session's event stream itself and yields the caller *tool calls*, not events. The turn boundary is
   visible to it and not to us.
 - It releases the work item when the session terminates, or after an idle period elapses following the end-of-turn
   event.
 - It runs each tool call under a per-tool deadline and abandons a call that overruns, so nothing a slow call was still
-  doing completes.
+  doing completes. It runs tool calls one at a time, and it does not cancel a call in flight when the session ends.
 - It downloads the session agent's skills into the working directory each spawn, which fixes that directory as
-  `/workspace` so the guest finds them where the platform's convention says they are.
+  `/workspace` so the guest finds them where the platform's convention says they are. The directories it makes are
+  readable by their owner alone.
+- It ships the agent's file tools: read, write, edit, glob and grep. Each resolves the path it is given against the
+  working directory, following every symlink, and refuses a result outside it. The SDK documents them as safe to run
+  without a sandbox, on the premise that they run as the same user as the agent's shell, so they can reach nothing that
+  shell could not.
 
 **What postern gives us.** [postern](https://github.com/populationgenomics/postern) is the sandbox library: a bubblewrap
 guest with an empty network namespace, no capabilities, a non-root uid, its own user namespace and a seccomp filter that
@@ -79,7 +88,10 @@ without an egress firewall or a load balancer.
   and size-capped by design rather than being the raw rpcs put on the allowlist.
 - **The guest's egress is not filtered, because it has none.** This design expresses no allowlist of hosts or CIDRs and
   has nowhere to put one. Containment is the absence of a network, not a policy over one.
-- **File I/O is not sandboxed** — only arbitrary execution is (§"Only arbitrary execution is sandboxed").
+- **No memory stores.** The SDK downloads a session's memory stores as files the worker owns, readable by their owner
+  alone, and syncs them from the worker between tool calls, so a file tool running as the guest could not read them. A
+  store is attached only when a session is created, and the web app creates every session without one; the worker
+  refuses a session that has one rather than serve it with tools that cannot reach its memory.
 
 ## Design
 
@@ -96,9 +108,9 @@ flowchart TB
         hatch["the hatch<br/>UDS · method allowlist · session-token injection"]
         mirror["bare mirror + pre-receive hook<br/>host-only path · two git hatches"]
         subgraph guest["bubblewrap guest — postern"]
-            iso["empty netns (no egress) · no capabilities · seccomp<br/>non-root · RO rootfs · RW /workspace (a git clone)"]
+            iso["empty netns (no egress) · no capabilities · seccomp<br/>dedicated host uid · RO rootfs · RW /workspace (a git clone)"]
         end
-        worker -->|"shell(command, intent) marshals in"| guest
+        worker -->|"shell(command, intent) and the file tools<br/>run in, one launch per call"| guest
         guest -->|"rpcs out"| hatch
         guest -->|"git clone / fetch / push<br/>(ext:: over the git hatches)"| mirror
     end
@@ -206,13 +218,12 @@ and the status goes unmarked.
 runs inside the guest — the clone at session start, the agent's own commits and pushes, and one push of every branch at
 teardown so a commit the agent made and forgot to push survives. The guest owns the working tree, `.git` included, so a
 `git` the trusted worker ran there would execute whatever `core.hooksPath` or a clean filter pointed at, in the process
-holding the credentials. Two layers enforce that, and only one of them is live: a test over this package asserts that
-its every `git` is the guest's or the mirror's, which holds in any deploy; the structural layer — the guest owning
-`/workspace` under a mapped uid, so a host-side `git` there meets git's ownership check — is built and proven under test
-but off until the SDK's file tools hand each written file down to that uid (§"The ownership guard is built and switched
-off"). The worker makes no commits on the agent's behalf — its one commit seeds an empty repository with the ignore file
-— so what the agent has not committed when the session ends is gone; a commit it made and did not push is carried by the
-teardown push, and one the repository refuses then is preserved under a stranded ref for a later session to merge.
+holding the credentials. Two layers enforce that: a test over this package asserts that its every `git` is the guest's
+or the mirror's, and the guest owns `/workspace` under a dedicated host uid, so a host-side `git` there meets git's
+ownership check (§"The guest runs as a uid that owns nothing"). The worker makes no commits on the agent's behalf — its
+one commit seeds an empty repository with the ignore file — so what the agent has not committed when the session ends is
+gone; a commit it made and did not push is carried by the teardown push, and one the repository refuses then is
+preserved under a stranded ref for a later session to merge.
 
 The one host-side git is the mirror's: a bare repository at a path the guest is never bound to, which the guest's `git`
 reaches over two stream hatches — one splicing to `upload-pack`, one to `receive-pack`, so the socket is the capability
@@ -254,43 +265,122 @@ Two failure policies fall out of what the repository is worth:
   push may publish ([`sheaf-service.md`](sheaf-service.md), Deployment), since the bytes are whatever the guest pushed
   and nothing in a sheaf store is reclaimed.
 
-The skills the SDK re-downloads each spawn sit in writable `/workspace`, reachable by guest code. That is harmless,
-since the guest already runs arbitrary code and they refresh every spawn, and they are ignored by the repository and
-protected by the hook, so no stale copy is ever pushed or restored; a genuinely read-only mount would need postern to
-overlay a read-only bind *inside* the workspace.
+The skills the SDK re-downloads each spawn sit in `/workspace`, owned by the worker. The worker opens them to reading,
+so the guest can read them but not change them. They refresh every spawn, and they are ignored by the repository and
+protected by the hook, so no stale copy is ever pushed or restored.
 
-### The ownership guard is built and switched off
+### The guest runs as a uid that owns nothing
 
-The structural layer works through ownership. postern can map the guest to a dedicated host uid, so every file the guest
-creates is owned by a uid that owns nothing else on the host. Git refuses to operate on a repository owned by another
-user, and root is not exempt (`fatal: detected dubious ownership`). So a host-side `git` in `/workspace` fails, and the
-only override is a `safe.directory` entry that a reviewer would see.
+The worker runs as root in its container, and bubblewrap maps the guest onto whatever host uid bubblewrap itself runs
+as. Left alone, the guest would be host uid 0. It holds no capabilities, but it would still own every root-owned file it
+can reach by ordinary permissions, and the kernel exempts uid 0 from the process-count limit postern sets against fork
+bombs. A guest that escaped its mount namespace would be the same user as the worker, and could read the worker's
+environment through `/proc`, the environment key included.
 
-Everything the guard needs exists: the uid and gid on the sandbox profile, a socket directory the mapped uid can
-traverse, and tests that clone, commit and push from the dropped guest and then watch a host-side `git status` refuse
-the result. The deploy sets neither uid, so the guard is off in production, and the test over the worker package is the
-layer that holds.
+So the deploy names a dedicated host uid and gid, and the worker runs bubblewrap as them. Every file the guest creates
+is owned by a uid that owns nothing else on the host. Running bubblewrap unprivileged means it creates the guest's user
+namespace unprivileged. Where the host kernel does not allow that, the boot self-test fails and the worker refuses to
+serve, rather than run the guest as root.
 
-The obstacle is the same mechanism pointed the other way. Ownership makes a host-side `git` refuse the guest's
-repository, and it equally makes a file the worker wrote refuse the guest. The SDK's `write` and `edit` tools run in the
-trusted worker, so under the mapping they create files the worker owns, with mode 0644, in a `/workspace` that carries
-the sticky bit. The guest can neither rewrite such a file in place nor unlink and recreate it, so a `git checkout` or a
-`git pull --rebase` that has to update one fails. The mode and the sticky bit each block it on their own, so relaxing
-either one alone changes nothing.
+The same ownership is the structural half of keeping the worker's git out of `/workspace`. Git refuses to operate on a
+repository owned by another user, and root is not exempt (`fatal: detected dubious ownership`). So a host-side `git` in
+`/workspace` fails, and the only override is a `safe.directory` entry that a reviewer would see. Tests clone, commit and
+push from the dropped guest and then watch a host-side `git status` refuse the result.
 
-There are three ways out:
+### Every tool that touches the workspace runs in the guest
 
-- **Chown each written path down to the guest.** The file tools stay in the worker. After a successful `write` or
-  `edit`, the worker hands the file's ownership to the guest's uid. The change is contained to the worker, and the test
-  that records the cost as an expected failure then pins the fix. Everything else the SDK writes, such as the skills
-  download, stays read-only to the guest, which is what it should be.
-- **Run the file tools in the guest.** Ownership then holds by construction. But it reverses the premise that only
-  arbitrary execution is sandboxed (§"Only arbitrary execution is sandboxed"), and it needs guest-side implementations
-  of read, write, edit, glob and grep.
-- **Change what postern does with a mapped workspace**: no sticky bit, and group-writable under a shared gid. It touches
-  the dependency, and it weakens the protection the sticky bit gives where no uid is mapped.
+The obvious place for the file tools is where the SDK puts them: in the worker, beside the session loop. The SDK
+documents them as safe without a sandbox, and in the worker they cost nothing per call. That safety rests on the tools
+running as the same user as the agent's shell. Here they would not. The worker is root, and `/workspace` belongs to the
+guest, a different uid that can create any file or symlink in it. Three things break.
 
-The first is the choice. Until it is built, the deploy stays unmapped.
+The first is that a root tool cannot always write the guest's files. postern makes `/workspace` sticky and
+world-writable, so a non-root guest can write it but cannot replace files it does not own. In a directory like that,
+Linux's `protected_regular` setting refuses to open an existing file for writing with create when the file belongs to
+neither the process opening it nor the directory's owner, and root is not exempt. Ubuntu, among others, turns the
+setting on. So after the guest has cloned the repository, every top-level file is the guest's, and an agent's
+`edit README.md` fails with "permission denied". The setting belongs to the host kernel, so the worker cannot count on
+it being off.
+
+The second is the same ownership pointed the other way. A file the worker writes is root's, with mode 0644, in that
+sticky directory. The guest can neither rewrite it in place nor unlink and recreate it, so a `git checkout` or a
+`git pull --rebase` that has to update it fails. The worker would have to hand every path a call created down to the
+guest's uid afterwards.
+
+The third is that the tools follow the guest's symlinks as root. Each tool checks that the resolved path is inside
+`/workspace` and then uses it. A guest process running between the check and the use could swap a directory on that path
+for a symlink, and send root's read or write anywhere in the worker's filesystem, such as its own environment under
+`/proc`. Today nothing can run in that window: the SDK runs tool calls one at a time, and each `shell` call is a
+bubblewrap launch whose PID namespace dies with it. But that is a property of how the worker calls postern, not a
+boundary. Streaming a command's output, or a background job that outlives its call, would open the window.
+
+So the file tools run in the guest, as the guest's uid, which is the setting the SDK's trust model describes. Every file
+the agent makes is then the guest's, with nothing to hand down, and a symlink leads only somewhere the guest could
+already reach: a read-only root filesystem with no credential in it.
+
+```mermaid
+sequenceDiagram
+    participant A as Anthropic (the agent)
+    participant W as worker (root)
+    participant G as guest (its dedicated uid)
+    A->>W: write {file_path: "a/b/note.md", content: "hello"}
+    W->>W: request file r-7f3a holds the tool name and input,<br/>in a directory bound read-only into every launch
+    W->>G: launch the file-tool entry point with r-7f3a
+    G->>G: the SDK's write, as the guest's uid:<br/>creates a/, a/b/ and note.md
+    G-->>W: {"result": "wrote 5 bytes to a/b/note.md"}
+    W->>W: delete r-7f3a
+    W-->>A: wrote 5 bytes to a/b/note.md
+```
+
+The guest runs the SDK's own tools, not ours. The agent has learnt how they behave: what their errors say, that a write
+through a symlink lands on its target, and that reading an image returns the image. Running the same code keeps all of
+that without a copy to keep in step. The cost is the SDK in the guest's root filesystem, with its HTTP client and its
+validation library, and its import, paid on every call. Measured in the guest's base image, the import takes 0.47 s. The
+image ships its standard library without bytecode, and the guest's root filesystem is read-only, so every launch
+recompiles it. Compiled into the image, the import takes 0.26 s. Those figures come from Docker on a laptop, not Cloud
+Run. A call already waits seconds on the model's inference and the session's event round trip, so the cost is accepted.
+
+Each call gets a launch of its own rather than a request to a guest that stays up. Launching costs a few milliseconds;
+the import is what a long-running guest would save. Once every tool runs as the guest, a long-running one would be no
+more exposed to races than a launch per call. What a launch per call buys instead:
+
+- **Each launch reads its configuration afresh.** The binds, environment and limits are set when bubblewrap starts, so
+  the worker can mount something new between one call and the next, such as a file attached to the session after it
+  began, without restarting anything. A guest that stays up keeps the mounts it started with.
+- **A call's deadline ends everything the call started.** The guest's PID namespace dies with the call, so a hung tool
+  or a stray child leaves nothing behind for the next call to meet.
+- **No guest outlives a call.** Teardown has nothing to stop before it pushes.
+
+The request travels as a file because postern hands the guest its code in an environment variable, and Linux caps one
+environment string at 128 KiB. A `write` of a larger file would not fit. The directory holding requests is bound into
+every launch as a bind that must exist, so if it is missing the launch fails instead of the tool failing inside the
+guest.
+
+Nothing the guest controls decides what code runs for a call. The entry point lives in the read-only root filesystem, so
+the guest cannot replace it. The agent can run it from `shell` too, and gains nothing by doing so: it runs as the same
+uid either way.
+
+`shell` marshals **every** command, with no fast path for anything. The command runs through postern's hatch-bound
+Python entry point, which is what exports the hatch's socket address into the environment, so a `python3` the command
+spawns inherits it and can reach the services in code mode. The tool also takes an `intent` — a short model-stated label
+for the action — which the workbench renders and the worker logs beside the exit code, giving a worker-side audit of
+what ran. No tool runs a model-supplied command on the host, because one that did would bypass the sandbox entirely.
+
+The agent's web search runs on Anthropic's side and touches neither the worker nor the sandbox. The agent has no web
+fetch: it would fetch any URL a tool printed, which makes it an exfiltration channel
+([`security.md`](security.md#what-counts-as-an-exfiltration-channel)).
+
+The worker still writes into `/workspace` in one place: the SDK downloads the session's skills there before any tool
+runs. Those files stay the worker's, readable by the guest and not writable by it (§"The workspace is a repository, and
+the agent's git is the only git in it").
+
+With every tool running as the guest, the boundary no longer depends on one guest running at a time. Two guests in the
+same `/workspace` under the same uid can only race each other, as two processes of one user can, and neither gains
+anything the other holds. postern already launches guests from one sandbox concurrently; they share the uid's process
+limit and the container's memory. The SDK runs tool calls one at a time, so nothing launches two today, but streaming a
+command, a background job, or dispatching a turn's tool calls together would not change the boundary. One ordering rule
+would remain: the teardown push waits until every guest has exited, not merely until its handle is closed, because
+postern's asynchronous close returns while the guest is still in its grace period.
 
 ### The session's release lands about a minute after its last turn
 
@@ -301,24 +391,6 @@ and the worker's teardown ran at 07:59:20.
 
 A reader of the repository has to expect that lag for commits the agent made and did not push. What the agent pushed
 itself is in the repository as soon as its push lands.
-
-### Only arbitrary execution is sandboxed
-
-The session's toolset is the SDK's standard file tools — read, write, edit, glob, grep — with `bash` dropped and a
-`shell` tool in its place. The file tools resolve every path against the working directory and reject escapes, so they
-run in the trusted worker; `shell` marshals its command into the guest. The agent's web search runs on Anthropic's side
-and touches neither the worker nor the sandbox. The agent has no web fetch: it would fetch any URL a tool printed, which
-makes it an exfiltration channel ([`security.md`](security.md#what-counts-as-an-exfiltration-channel)).
-
-`shell` marshals **every** command, with no fast path for anything. The command runs through postern's hatch-bound
-Python entry point, which is what exports the hatch's socket address into the environment, so a `python3` the command
-spawns inherits it and can reach the services in code mode. The tool also takes an `intent` — a short model-stated label
-for the action — which the workbench renders and the worker logs beside the exit code, giving a worker-side audit of
-what ran. No tool runs a model-supplied command on the host: one that did would bypass the sandbox entirely.
-
-The trade-off is deliberate and worth stating plainly: the credential-holding process runs the file tools directly. It
-is accepted because the toolset's own trust model holds the file tools safe unsandboxed and only `bash` unsafe, and
-because the tools' path confinement is what that safety rests on.
 
 ### The work item is acked once restore proves
 
@@ -344,9 +416,11 @@ never re-fires — so nothing re-drains it (§Open questions).
 The whole test suite runs without bubblewrap, against a fake at the narrowest seam, the SDK's event stream. The
 repository path is not faked at all: the tests run the real `Sheaf` servicer in-process over a local backend, the mirror
 over the real client, and a real `git` against the hatches' host-side sockets, so everything but the isolation is the
-production path. The properties only a real launch can prove — the boot gate passing, the guest having no network, the
-hatch socket being the one channel bound in, the host uid mapping — are gated on the host having bubblewrap, so they run
-in CI and skip on a developer's laptop rather than silently passing there.
+production path. The file tools' guest-side entry point is an ordinary program, so its tests run it against a temporary
+directory with no sandbox at all. The properties only a real launch can prove — the boot gate passing, the guest having
+no network, the hatch socket being the one channel bound in, the host uid mapping, and a file the guest made staying
+writable through the file tools — are gated on the host having bubblewrap, so they run in CI and skip on a developer's
+laptop rather than silently passing there.
 
 ## Alternatives considered
 
@@ -360,6 +434,26 @@ in CI and skip on a developer's laptop rather than silently passing there.
 - **A shell-less, trimmed guest root filesystem.** Rejected as security theatre here: isolation rests on the empty
   namespace, the dropped capabilities and the non-root uid, all of which hold whatever binaries are present. Trimming
   would only cost the model the tools it is meant to use.
+- **File tools in the worker, handing what each call created down to the guest's uid.** It needs nothing new in the
+  guest and no launch per call, and it fixes the guest's side of the ownership problem: the guest can change what a tool
+  made. It cannot fix the tool's side. `protected_regular` still refuses the worker's write to a file the guest made,
+  and the tools still follow the guest's symlinks as root, safe only while no guest process runs during a call.
+- **A workspace owned by the guest's uid, without the sticky bit.** postern would make a mapped workspace the guest's,
+  mode 0755, instead of sticky and world-writable. That is a small change in one place, and `protected_regular` no
+  longer applies, since the directory is not world-writable. But the tools would still follow the guest's symlinks as
+  root, and the guest could swap a file the worker wrote for a symlink, which is the protection the sticky bit exists to
+  give.
+- **The file tools in a helper process in the worker, dropped to the guest's uid without a sandbox.** It costs no launch
+  per call, and it fixes ownership as the guest does, with no SDK in the guest's root filesystem. But a symlink would
+  resolve against the worker container's filesystem rather than the guest's. Anything world-readable there would be
+  reachable, and the design's safety would rest on auditing that filesystem.
+- **One long-running guest serving the file tools over a channel from the worker.** The import is paid once, and a call
+  costs a round trip on a socket. It is no less safe than a launch per call. But its mounts are fixed when it starts, a
+  hung call has to be detected and the guest restarted, and teardown has a guest to stop first (§"Every tool that
+  touches the workspace runs in the guest").
+- **Our own guest-side file tools instead of the SDK's.** The guest's root filesystem would stay free of the SDK, and a
+  call would start faster without its import. But every behaviour the agent expects, from error text to how a symlink or
+  an image is handled, would become a copy of the SDK's to keep in step by hand.
 
 ## Open questions
 

@@ -1,7 +1,7 @@
 """The host uid mapping: bwrap dropped to a dedicated uid, from a root worker, on a bubblewrap host.
 
 `SandboxProfile.host_uid` is the structural half of the guard that keeps the worker's git out of `/workspace`
-(sandbox-worker.md §"The ownership guard is built and switched off"): every file the guest creates is owned by a uid
+(sandbox-worker.md §"The guest runs as a uid that owns nothing"): every file the guest creates is owned by a uid
 that owns nothing else on the host, so a host-side `git` in the working tree fails git's ownership check. Its cost is
 the other direction — a file the worker writes, as the SDK's file tools do, is not the guest's to change in place —
 and that cost is measured here rather than argued about. Root is needed because bwrap drops only from a root worker;
