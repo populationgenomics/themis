@@ -185,7 +185,8 @@ sheaf = ["google-cloud-storage", "protobuf", "opentelemetry-api"]
 # credential and never loads the GCS backend. clinvar_proto and
 # pubmed_proto: the clinvar and literature contracts embed the upstream record schemas, so importing the
 # generated stubs pulls in the wheels' message modules. protovalidate: the hook's content check decodes widget assets.
-sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", { include-group = "session" }]
+# The trace pipeline carries a span for each session and each tool call it makes to Cloud Trace.
+sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", { include-group = "session" }, { include-group = "tracing" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
 # protobuf backs the shipped stubs, and clinvar_proto and pubmed_proto the upstream record schemas the clinvar

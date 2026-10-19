@@ -104,7 +104,7 @@ def telemetry_api_exporter(
     )
 
 
-def install_from_env(service_name: str) -> None:
+def install_from_env(service_name: str, *, detectors: Iterable[resources.ResourceDetector] | None = None) -> None:
     """Install the process's tracer provider at the ratio `THEMIS_TRACE_SAMPLE_RATIO` names.
 
     At a ratio of 0 nothing is installed and nothing reaches Google Cloud: every span is a no-op. Above 0 the
@@ -113,6 +113,8 @@ def install_from_env(service_name: str) -> None:
 
     Args:
         service_name: The service's name, the one Cloud Trace lists its spans under.
+        detectors: Resource detectors to run; `telemetry_api.google_cloud_detectors()`, the Cloud Run service's,
+            when omitted.
 
     Raises:
         SystemExit: The ratio is unset or malformed.
@@ -128,7 +130,9 @@ def install_from_env(service_name: str) -> None:
     credentials, project = telemetry_api.application_default_credentials()
     provider = tracer_provider(
         resource=workload_resource(
-            project=project, service_name=service_name, detectors=telemetry_api.google_cloud_detectors()
+            project=project,
+            service_name=service_name,
+            detectors=telemetry_api.google_cloud_detectors() if detectors is None else detectors,
         ),
         sample_ratio=ratio,
     )

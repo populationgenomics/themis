@@ -572,6 +572,7 @@ sandbox_job = sandbox.SandboxJob(
     evidence_url=evidence_service.url,
     sheaf_url=sheaf_service.url,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
+    trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[base, services_net, hello_service, evidence_service, sheaf_service]),
 )
 # The job SA invokes the services the worker reaches: the sheaf service its mirror of the Analysis repository

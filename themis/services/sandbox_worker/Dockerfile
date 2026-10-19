@@ -98,6 +98,8 @@ COPY themis/clients/id_token.py ./themis/clients/id_token.py
 # The mark the hatch reads to pass a servicer's own failure details on to the guest.
 COPY themis/common/__init__.py themis/common/authored_status.py themis/common/trailer.py ./themis/common/
 COPY themis/clients/work_queue/__init__.py themis/clients/work_queue/client.py ./themis/clients/work_queue/
+# The trace pipeline the session's spans leave by.
+COPY themis/telemetry/__init__.py themis/telemetry/tracing.py themis/telemetry/telemetry_api.py ./themis/telemetry/
 # The Sheaf service's client, over which the mirror hydrates and the hook publishes; it rides the session client's
 # metadata key and target form.
 COPY themis/clients/auth/__init__.py themis/clients/auth/session.py themis/clients/auth/claim.py ./themis/clients/auth/

@@ -7,8 +7,14 @@ that leaves the process (a database query, a KMS call, a GCS request, an outgoin
 Trace, which assembles the spans of one request into one tree.
 
 Every outgoing call carries the trace, but only a service that records spans adds its part of the tree. The evidence and
-hello services and the sandbox worker record none, so a call from the web tier to evidence shows as the web tier's
-client span with nothing under it.
+hello services record none, so a call from the web tier to evidence shows as the web tier's client span with nothing
+under it.
+
+The sandbox worker is the exception to "one trace per request": no request reaches it, so it starts a trace of its own
+for each session, listed under `themis-sandbox`. The root span covers the session from the restore of its workspace to
+the final push, and each tool call the agent made is a child span named for the tool, `execute_tool read` say, so a slow
+call shows on the session's timeline. The trace stops at the worker: the calls it makes onward start traces of their
+own.
 
 The pipeline itself lives in [`themis/telemetry/tracing.py`](../../themis/telemetry/tracing.py) for the Python services
 and [`apps/web/src/server/tracing/`](../../apps/web/src/server/tracing/) for the web server.

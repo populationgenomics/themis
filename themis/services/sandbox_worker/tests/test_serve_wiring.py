@@ -16,15 +16,18 @@ import signal
 import stat
 from typing import ClassVar, Self, cast
 
+import postern
 import pytest
-from anthropic.lib import environments
 from anthropic.lib.tools import agent_toolset
 from anthropic.types import beta
 from anthropic.types.beta import sessions
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis import sheaf
 from themis.clients.sheaf import store as remote_mod
-from themis.services.sandbox_worker import file_tools, worker
+from themis.services.sandbox_worker import file_tools, tool_tracing, worker
+from themis.services.sandbox_worker import tool as tool_mod
 from themis.sheaf.wire import bare
 
 _REQUIRED_ENV = (
@@ -265,7 +268,10 @@ def test_the_mirror_runs_over_the_sheaf_service_with_a_token_file_of_the_workers
     ],
 )
 def test_serve_acks_and_stops_the_item_on_a_repository_verdict_without_serving(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, restore_error: Exception
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restore_error: Exception,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
 ) -> None:
     # A verdict at restore is terminal: ack (stop reclaim) + stop (end the item) and never serve, else the
     # item would sit unacked and be reclaimed into the same failure on the next drain.
@@ -280,6 +286,11 @@ def test_serve_acks_and_stops_the_item_on_a_repository_verdict_without_serving(
     assert set(log[4:]) == _CLEANUP
     assert acked['ack'] == ['value-for-ANTHROPIC_WORK_ID']
     assert acked['stop'] == ['value-for-ANTHROPIC_WORK_ID']
+    # The session never served, so its trace says it failed rather than ending clean.
+    (session,) = recorded_spans.get_finished_spans()
+    assert session.status.status_code is trace.StatusCode.ERROR
+    assert session.attributes is not None
+    assert session.attributes['error.type'] == worker._RESTORE_REFUSED
 
 
 @pytest.mark.usefixtures('_env')
@@ -366,7 +377,7 @@ def _session_with(*resources: object) -> beta.BetaManagedAgentsSession:
     return beta.BetaManagedAgentsSession.model_construct(id='sesn_1', resources=list(resources))
 
 
-_SHELL = cast('environments.BetaAnyRunnableTool', object())  # appended verbatim as the final tool
+_SHELL = tool_mod.make_shell(cast('postern.Sandbox', object()))  # never called: these tests only build the toolset
 
 
 def _runner(tmp_path: pathlib.Path) -> file_tools.GuestRunner:
@@ -378,10 +389,12 @@ def test_session_tools_run_every_file_tool_in_the_guest_and_append_shell(tmp_pat
     file = sessions.BetaManagedAgentsFileResource.model_construct(type='file', file_id='file_1')
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(file))
     tools = worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
-    guest_tools = tools[:-1]
+    assert all(isinstance(tool, tool_tracing.TracedTool) for tool in tools)
+    served = [cast('tool_tracing.TracedTool', tool).tool for tool in tools]
+    guest_tools = served[:-1]
     assert {tool.name for tool in guest_tools} == {'read', 'write', 'edit', 'glob', 'grep'}
     assert all(isinstance(tool, file_tools.GuestFileTool) for tool in guest_tools)
-    assert tools[-1] is _SHELL
+    assert served[-1] is _SHELL
 
 
 def test_a_toolset_the_guest_does_not_serve_is_refused(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:

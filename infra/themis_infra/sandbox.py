@@ -284,7 +284,8 @@ class SandboxJob(pulumi.ComponentResource):
 
     Attributes:
         service_account_email: The job's runtime SA — ``run.invoker`` on the sheaf service its mirror runs
-            over and on the hatch's forward targets; inert without the session token the worker holds.
+            over and on the hatch's forward targets, inert without the session token the worker holds; and a trace
+            writer, for the spans of each session and its tool calls.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
     """
 
@@ -300,6 +301,7 @@ class SandboxJob(pulumi.ComponentResource):
         evidence_url: pulumi.Input[str],
         sheaf_url: pulumi.Input[str],
         task_timeout_seconds: int,
+        trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:SandboxJob', 'themis', None, opts)
@@ -313,6 +315,9 @@ class SandboxJob(pulumi.ComponentResource):
             opts=child,
         )
         self.service_account_email = service_account.email
+        grants.TraceWriter(
+            'themis-sandbox', member=grants.service_account(service_account.email), project=project, opts=child
+        )
 
         job = gcp.cloudrunv2.Job(
             'themis-sandbox-job',
@@ -351,6 +356,7 @@ class SandboxJob(pulumi.ComponentResource):
                                 _job_env('THEMIS_SHEAF_URL', sheaf_url),
                                 _job_env('THEMIS_SANDBOX_HOST_UID', str(_GUEST_HOST_UID)),
                                 _job_env('THEMIS_SANDBOX_HOST_GID', str(_GUEST_HOST_GID)),
+                                _job_env('THEMIS_TRACE_SAMPLE_RATIO', str(trace_sample_ratio)),
                             ],
                             # Bounds the trusted worker + the co-located guest together (the one-session
                             # blast radius review L3 accepts): a guest memory bomb OOMs only this execution.

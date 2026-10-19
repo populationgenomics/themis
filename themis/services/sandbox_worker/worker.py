@@ -3,8 +3,8 @@
 One trusted process per Job execution. The dispatcher claims a work item and injects its per-execution env
 (``ANTHROPIC_WORK_ID`` / ``_ENVIRONMENT_ID`` / ``_SESSION_ID`` / ``_ENVIRONMENT_KEY``, plus the minted
 ``THEMIS_SESSION_TOKEN``); the deploy supplies the service URLs (``THEMIS_HELLO_URL`` / ``_EVIDENCE_URL`` /
-``_SHEAF_URL``) and, optionally, the uid and gid bwrap runs as (``THEMIS_SANDBOX_HOST_UID`` /
-``_GID``, both or neither). The worker:
+``_SHEAF_URL``), the fraction of sessions traced (``THEMIS_TRACE_SAMPLE_RATIO``) and, optionally, the uid and gid
+bwrap runs as (``THEMIS_SANDBOX_HOST_UID`` / ``_GID``, both or neither). The worker:
 
 1. ``Sandbox.verify()`` — a fail-closed boot gate: refuse to serve unless isolation is actually enforced here
    (empty netns, userns created, non-root guest, seccomp/arch covered). Off-platform (no bubblewrap) this raises,
@@ -50,7 +50,7 @@ from collections.abc import Coroutine, Iterator, Sequence
 import anthropic
 import grpc
 import postern
-from anthropic.lib import environments
+from anthropic.lib import environments, tools
 from anthropic.lib.tools import agent_toolset
 
 from themis import sheaf
@@ -58,12 +58,13 @@ from themis.clients import id_token
 from themis.clients.sheaf import store as remote_mod
 from themis.clients.work_queue import client as work_queue_mod
 from themis.rpc import sandbox_options_pb2
-from themis.services.sandbox_worker import file_tools, git_hatches, guest_git
+from themis.services.sandbox_worker import file_tools, git_hatches, guest_git, tool_tracing
 from themis.services.sandbox_worker import hatch as hatch_mod
 from themis.services.sandbox_worker import sync as sync_mod
 from themis.services.sandbox_worker import tool as tool_mod
 from themis.services.sandbox_worker.guest import file_tool
 from themis.sheaf.wire import bare
+from themis.telemetry import tracing
 
 # The guest rootfs the Dockerfile assembles; postern binds it read-only as the guest's system dirs.
 _GUEST_ROOTFS = '/opt/guest-root'
@@ -89,6 +90,10 @@ _TOKEN_FILE = 'session-token.json'  # noqa: S105 — the file's name, not a toke
 _REPOSITORY = 'workspace'
 # The Sheaf service's verdicts on the session token itself; every other status it answers is a fault.
 _TOKEN_REFUSED = frozenset({'PERMISSION_DENIED', 'UNAUTHENTICATED'})
+# The session span's error type when the repository's verdict ends the session before it is served.
+_RESTORE_REFUSED = 'restore_refused'
+# The name Cloud Trace lists the worker's spans under.
+_SERVICE_NAME = 'themis-sandbox'
 _logger = logging.getLogger(__name__)
 
 
@@ -155,14 +160,15 @@ def _socket_dir(host_identity: tuple[int, int] | None) -> pathlib.Path:
 
 def _tools_for_session(
     ctx: agent_toolset.AgentToolContext,
-    shell: environments.BetaAnyRunnableTool,
+    shell: tools.BetaAsyncFunctionTool,
     runner: file_tools.GuestRunner,
     host_identity: tuple[int, int] | None,
 ) -> Sequence[environments.BetaAnyRunnableTool]:
     """The session's tools: the ``agent_toolset_20260401`` file tools, run by ``runner`` in the guest, and ``shell``.
 
-    ``bash`` is dropped and ``shell``, which marshals into the guest, takes its place. Under a host uid mapping the
-    skills download, which the SDK has made by the time it asks for the tools, is opened to the guest's reading.
+    ``bash`` is dropped and ``shell``, which marshals into the guest, takes its place. Each call to any of them is a
+    span in the session's trace. Under a host uid mapping the skills download, which the SDK has made by the time it
+    asks for the tools, is opened to the guest's reading.
 
     Raises:
         ValueError: If ``ctx`` carries no session, or the session has a memory store attached: the worker serves
@@ -183,7 +189,8 @@ def _tools_for_session(
         raise RuntimeError(f'the SDK toolset is {names}, not the file tools the guest entry point serves')
     if host_identity is not None:
         file_tools.open_to_reading(pathlib.Path(ctx.workdir) / 'skills')
-    return [*(file_tools.GuestFileTool(tool, runner) for tool in sdk_tools), shell]
+    guest_tools = [file_tools.GuestFileTool(tool, runner) for tool in sdk_tools]
+    return [tool_tracing.TracedTool(tool) for tool in (*guest_tools, shell)]
 
 
 async def _fail_item(work_queue: work_queue_mod.WorkQueue, work_id: str) -> None:
@@ -327,27 +334,32 @@ async def _serve() -> None:
                 )
                 workspace_sync = sync_mod.WorkspaceSync(workspace=sandbox.workspace, repository=repository)
                 try:
-                    if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
-                        return
-                    shell = tool_mod.make_shell(sandbox)
-                    runner = file_tools.GuestRunner(file_sandbox, requests, _GUEST_FILE_TOOL, tool_mod.SHELL_TIMEOUT_S)
-                    worker = environments.EnvironmentWorker(
-                        client,
-                        tools=lambda ctx: _tools_for_session(ctx, shell, runner, host_identity),
-                        workdir=sandbox.workspace,
-                        # Off, so no store is downloaded: `_tools_for_session` refuses a session that has one.
-                        memory_sync_interval=None,
-                    )
-                    try:
-                        await worker.handle_item()
-                    except BaseException:
-                        # The session loop failing is no reason to lose what the agent committed: push, then re-raise.
+                    with tool_tracing.session(session_id) as span:
+                        if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
+                            tool_tracing.mark_failed(span, _RESTORE_REFUSED)
+                            return
+                        shell = tool_mod.make_shell(sandbox)
+                        runner = file_tools.GuestRunner(
+                            file_sandbox, requests, _GUEST_FILE_TOOL, tool_mod.SHELL_TIMEOUT_S
+                        )
+                        worker = environments.EnvironmentWorker(
+                            client,
+                            tools=lambda ctx: _tools_for_session(ctx, shell, runner, host_identity),
+                            workdir=sandbox.workspace,
+                            # Off, so no store is downloaded: `_tools_for_session` refuses a session that has one.
+                            memory_sync_interval=None,
+                        )
                         try:
-                            await _to_completion(workspace_sync.teardown(session_id))
-                        except Exception:
-                            _logger.exception('teardown after a failed session loop failed too')
-                        raise
-                    await _to_completion(workspace_sync.teardown(session_id))
+                            await worker.handle_item()
+                        except BaseException:
+                            # The session loop failing is no reason to lose what the agent committed: push, then
+                            # re-raise.
+                            try:
+                                await _to_completion(workspace_sync.teardown(session_id))
+                            except Exception:
+                                _logger.exception('teardown after a failed session loop failed too')
+                            raise
+                        await _to_completion(workspace_sync.teardown(session_id))
                     _logger.info('session %s complete; branches pushed', session_id)
                 finally:
                     hatch.close()
@@ -400,6 +412,8 @@ async def _serve_until_terminated() -> None:
 
 def main() -> None:
     logging.basicConfig(level=os.environ.get('THEMIS_LOG', 'INFO'))
+    # A Job sets none of the markers the GCP detector reads to recognise Cloud Run, so it would probe as GCE instead.
+    tracing.install_from_env(_SERVICE_NAME, detectors=())
     try:
         asyncio.run(_serve_until_terminated())
     except asyncio.CancelledError:
