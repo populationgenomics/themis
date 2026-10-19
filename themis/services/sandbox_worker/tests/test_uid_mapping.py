@@ -2,27 +2,31 @@
 
 `SandboxProfile.host_uid` is the structural half of the guard that keeps the worker's git out of `/workspace`
 (sandbox-worker.md §"The guest runs as a uid that owns nothing"): every file the guest creates is owned by a uid
-that owns nothing else on the host, so a host-side `git` in the working tree fails git's ownership check. Its cost is
-the other direction — a file the worker writes, as the SDK's file tools do, is not the guest's to change in place —
-and that cost is measured here rather than argued about. Root is needed because bwrap drops only from a root worker;
-the `pytest-sandbox` CI job runs these under `sudo`.
+that owns nothing else on the host, so a host-side `git` in the working tree fails git's ownership check. The file
+tools run in the guest as that uid too, so what they make or rewrite stays the guest's, and the tests here hold both
+directions. Root is needed because bwrap drops only from a root worker; the `pytest-sandbox` CI job runs these under
+`sudo`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterator
 
 import postern
 import pytest
+from anthropic.lib import tools
 from postern import stream
 
 from themis import sheaf
-from themis.services.sandbox_worker import git_hatches
+from themis.services.sandbox_worker import file_tools, git_hatches
+from themis.services.sandbox_worker.guest import file_tool
 from themis.sheaf.wire import bare
 
 pytestmark = [pytest.mark.sandbox_root, pytest.mark.usefixtures('bubblewrap_root')]
@@ -112,27 +116,103 @@ def test_a_repository_the_guest_cloned_over_the_hatch_refuses_the_hosts_git(
     assert 'dubious ownership' in status.stderr
 
 
-def test_a_file_the_worker_wrote_is_readable_by_the_guest(workspace: pathlib.Path) -> None:
-    (workspace / 'from_host.txt').write_text('written by the worker')  # as the SDK's write tool does: 0644
+@pytest.fixture
+def runner(workspace: pathlib.Path, root: pathlib.Path) -> Iterator[file_tools.GuestRunner]:
+    """Runs a file tool as the session does under the mapping: the entry point, in a guest launch as `HOST_UID`.
 
-    result = postern.Sandbox(_profile(workspace)).run_python("print(open('from_host.txt').read())")
+    The guest here has the host's userland rather than the guest rootfs, so the entry point runs on this test's own
+    interpreter and virtualenv, bound read-only at their own paths.
+    """
+    requests = root / 'requests'
+    requests.mkdir(mode=0o711)
+    entry_point = pathlib.Path(file_tool.__file__)
+    # uv links a venv's interpreter through a version-alias directory, a symlink beside `sys.base_prefix`.
+    linked = pathlib.Path(sys.prefix, 'bin', os.readlink(sys.executable)).parent.parent
+    interpreter = {sys.prefix, sys.base_prefix, str(linked), str(entry_point.parent)}
+    binds = [(path, path) for path in sorted(interpreter)]
+    profile = postern.SandboxProfile(
+        workspace=workspace,
+        host_uid=HOST_UID,
+        host_gid=HOST_GID,
+        required_ro_binds=[*binds, (str(requests), file_tools.GUEST_REQUESTS)],
+    )
+    sandbox = postern.Sandbox(profile)
+    try:
+        yield file_tools.GuestRunner(sandbox, requests, (sys.executable, '-I', str(entry_point)), 60)
+    finally:
+        sandbox.close()
 
-    assert result.ok, result.stderr
-    assert result.stdout.strip() == 'written by the worker'
+
+def _call(runner: file_tools.GuestRunner, name: str, tool_input: dict[str, str]) -> object:
+    return asyncio.run(runner.call(name, tool_input))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='a file the worker writes is root-owned and 0644, and the sticky workspace stops the guest replacing it; '
-    'this is the cost of the mapping the plan names, and the reason the deploy leaves it off',
+@pytest.mark.parametrize(
+    ('name', 'tool_input'),
+    [
+        ('write', {'file_path': 'guest.txt', 'content': 'from the file tool'}),
+        ('edit', {'file_path': 'guest.txt', 'old_string': 'from the guest', 'new_string': 'from the file tool'}),
+    ],
 )
-def test_a_file_the_worker_wrote_can_be_modified_by_the_guest(workspace: pathlib.Path) -> None:
-    (workspace / 'from_host.txt').write_text('written by the worker')
+def test_a_guest_file_the_file_tools_rewrote_stays_the_guests(
+    workspace: pathlib.Path, runner: file_tools.GuestRunner, name: str, tool_input: dict[str, str]
+) -> None:
+    """The case a root worker failed: `protected_regular` refuses root's write to the guest's file in /workspace."""
+    sandbox = postern.Sandbox(_profile(workspace))
+    created = sandbox.run_python("open('guest.txt', 'w').write('from the guest')")
+    assert created.ok, created.stderr
 
-    appended = postern.Sandbox(_profile(workspace)).run_python("open('from_host.txt', 'a').write(' and the guest')")
+    _call(runner, name, tool_input)
+    changed = sandbox.run_python(
+        "import os\nopen('guest.txt', 'a').write(' and the guest')\nprint(open('guest.txt').read())\n"
+        "os.unlink('guest.txt')"
+    )
 
-    assert appended.ok, appended.stderr
-    assert (workspace / 'from_host.txt').read_text() == 'written by the worker and the guest'
+    assert changed.ok, changed.stderr
+    assert changed.stdout.strip() == 'from the file tool and the guest'
+
+
+def test_what_the_file_tools_make_is_the_guests(workspace: pathlib.Path, runner: file_tools.GuestRunner) -> None:
+    _call(runner, 'write', {'file_path': 'a/b/note.md', 'content': 'from the file tool'})
+
+    for path in ('a', 'a/b', 'a/b/note.md'):
+        made = (workspace / path).stat()
+        assert (made.st_uid, made.st_gid) == (HOST_UID, HOST_GID), path
+    # A checkout replaces a file by unlinking it and creating another.
+    replaced = postern.Sandbox(_profile(workspace)).run_python(
+        "import os\nos.unlink('a/b/note.md')\nopen('a/b/note.md', 'w').write('replaced')"
+    )
+    assert replaced.ok, replaced.stderr
+
+
+def test_a_file_tool_reads_what_the_guest_wrote(workspace: pathlib.Path, runner: file_tools.GuestRunner) -> None:
+    created = postern.Sandbox(_profile(workspace)).run_python("open('guest.txt', 'w').write('from the guest')")
+    assert created.ok, created.stderr
+
+    assert 'from the guest' in str(_call(runner, 'read', {'file_path': 'guest.txt'}))
+
+
+def test_skills_opened_to_reading_are_readable_by_the_guest_and_still_the_workers(
+    workspace: pathlib.Path, runner: file_tools.GuestRunner
+) -> None:
+    skill = workspace / 'skills' / 'one'
+    skill.mkdir(parents=True, mode=0o700)  # as the SDK downloads it: owner-only
+    (workspace / 'skills').chmod(0o700)
+    (skill / 'SKILL.md').write_text('the skill')
+    (skill / 'SKILL.md').chmod(0o600)
+
+    file_tools.open_to_reading(workspace / 'skills')
+    sandbox = postern.Sandbox(_profile(workspace))
+    read = sandbox.run_python("print(open('skills/one/SKILL.md').read())")
+    overwritten = sandbox.run_python("open('skills/one/SKILL.md', 'w').write('changed')")
+
+    assert read.ok, read.stderr
+    assert read.stdout.strip() == 'the skill'
+    assert not overwritten.ok
+    assert 'the skill' in str(_call(runner, 'read', {'file_path': 'skills/one/SKILL.md'}))
+    with pytest.raises(tools.ToolError, match='permission denied'):
+        _call(runner, 'write', {'file_path': 'skills/one/SKILL.md', 'content': 'changed'})
+    assert (skill / 'SKILL.md').read_text() == 'the skill'
 
 
 def test_a_hatch_bound_under_a_directory_the_dedicated_uid_can_traverse_is_reachable(

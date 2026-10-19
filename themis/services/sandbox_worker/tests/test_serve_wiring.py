@@ -24,7 +24,7 @@ from anthropic.types.beta import sessions
 
 from themis import sheaf
 from themis.clients.sheaf import store as remote_mod
-from themis.services.sandbox_worker import worker
+from themis.services.sandbox_worker import file_tools, worker
 from themis.sheaf.wire import bare
 
 _REQUIRED_ENV = (
@@ -348,10 +348,18 @@ def test_host_identity_is_both_or_neither(monkeypatch: pytest.MonkeyPatch) -> No
         worker._host_identity()
 
 
-def test_the_profile_carries_the_host_identity_into_bwraps_credentials() -> None:
-    profile = worker._build_profile((61000, 61001))
+def test_the_profile_carries_the_host_identity_into_bwraps_credentials(tmp_path: pathlib.Path) -> None:
+    profile = worker._build_profile((61000, 61001), tmp_path)
     assert (profile.host_uid, profile.host_gid) == (61000, 61001)
-    assert (worker._build_profile(None).host_uid, worker._build_profile(None).host_gid) == (None, None)
+    unmapped = worker._build_profile(None, tmp_path)
+    assert (unmapped.host_uid, unmapped.host_gid) == (None, None)
+
+
+def test_the_profile_requires_the_file_tools_request_directory(tmp_path: pathlib.Path) -> None:
+    # A required bind, not a -try one: a launch without the directory fails instead of the tool failing in the guest.
+    profile = worker._build_profile(None, tmp_path)
+    assert (str(tmp_path), file_tools.GUEST_REQUESTS) in profile.required_ro_binds
+    assert file_tools.GUEST_REQUESTS not in dict(profile.ro_binds).values()
 
 
 def _session_with(*resources: object) -> beta.BetaManagedAgentsSession:
@@ -361,26 +369,59 @@ def _session_with(*resources: object) -> beta.BetaManagedAgentsSession:
 _SHELL = cast('environments.BetaAnyRunnableTool', object())  # appended verbatim as the final tool
 
 
-def test_session_tools_drop_bash_keep_file_tools_and_append_shell(tmp_path: pathlib.Path) -> None:
-    # Only arbitrary execution (bash) is sandboxed; the workdir-confined file tools run in the trusted worker.
+def _runner(tmp_path: pathlib.Path) -> file_tools.GuestRunner:
+    launcher = cast('file_tools.Launcher', object())  # never launched: these tests only build the toolset
+    return file_tools.GuestRunner(launcher, tmp_path, worker._GUEST_FILE_TOOL, 30)
+
+
+def test_session_tools_run_every_file_tool_in_the_guest_and_append_shell(tmp_path: pathlib.Path) -> None:
     file = sessions.BetaManagedAgentsFileResource.model_construct(type='file', file_id='file_1')
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(file))
-    tools = worker._tools_for_session(ctx, _SHELL)
-    file_names = {tool.name for tool in tools if tool is not _SHELL}
-    assert file_names == {'read', 'write', 'edit', 'glob', 'grep'}
+    tools = worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
+    guest_tools = tools[:-1]
+    assert {tool.name for tool in guest_tools} == {'read', 'write', 'edit', 'glob', 'grep'}
+    assert all(isinstance(tool, file_tools.GuestFileTool) for tool in guest_tools)
     assert tools[-1] is _SHELL
+
+
+def test_a_toolset_the_guest_does_not_serve_is_refused(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk_toolset = agent_toolset.beta_agent_toolset_20260401
+    monkeypatch.setattr(agent_toolset, 'beta_agent_toolset_20260401', lambda ctx: sdk_toolset(ctx)[:-1])
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+    with pytest.raises(RuntimeError, match='not the file tools'):
+        worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
 
 
 def test_a_session_with_a_memory_store_is_refused(tmp_path: pathlib.Path) -> None:
     store = sessions.BetaManagedAgentsMemoryStoreResource.model_construct(type='memory_store', memory_store_id='m_1')
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(store))
     with pytest.raises(ValueError, match='memory store'):
-        worker._tools_for_session(ctx, _SHELL)
+        worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
 
 
 def test_a_context_without_a_session_is_refused(tmp_path: pathlib.Path) -> None:
     with pytest.raises(ValueError, match='no session'):
-        worker._tools_for_session(agent_toolset.AgentToolContext(workdir=tmp_path), _SHELL)
+        worker._tools_for_session(agent_toolset.AgentToolContext(workdir=tmp_path), _SHELL, _runner(tmp_path), None)
+
+
+@pytest.mark.parametrize(('host_identity', 'mode'), [(None, 0o700), ((61000, 61001), 0o755)])
+def test_skills_are_opened_to_reading_only_under_a_mapping(
+    tmp_path: pathlib.Path, host_identity: tuple[int, int] | None, mode: int
+) -> None:
+    (tmp_path / 'skills').mkdir(mode=0o700)  # as the SDK downloads them, before it asks for the tools
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+    worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), host_identity)
+    assert stat.S_IMODE((tmp_path / 'skills').stat().st_mode) == mode
+
+
+@pytest.mark.usefixtures('_env')
+def test_a_host_identity_needs_a_root_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    if os.geteuid() == 0:
+        pytest.skip('the refusal is for a worker that is not root')
+    monkeypatch.setenv(worker._HOST_UID_ENV, '61000')
+    monkeypatch.setenv(worker._HOST_GID_ENV, '61000')
+    with pytest.raises(SystemExit, match='not root'):
+        asyncio.run(worker._serve())
 
 
 @pytest.mark.usefixtures('_env')

@@ -34,6 +34,7 @@ import tomllib
 import pytest
 
 from themis.services.sandbox_worker import _generated, git_hatches, worker
+from themis.services.sandbox_worker.guest import file_tool
 from themis.services.sandbox_worker.tests import fakes
 from tools.schema import guest_contract
 
@@ -408,9 +409,15 @@ def test_the_guest_stage_writes_the_gitconfig_the_profile_binds() -> None:
     expected = {('name', git_hatches.AGENT_IDENTITY.name), ('email', git_hatches.AGENT_IDENTITY.email)}
     assert identities == expected, f'the guest commits as {identities}; the hook admits {git_hatches.AGENT_IDENTITY}'
     assert any('git config --system pull.rebase true' in run for run in configured), 'a pull would merge, not rebase'
-    bound = dict(worker._build_profile(None).ro_binds)
+    bound = dict(worker._build_profile(None, pathlib.Path('/requests')).ro_binds)
     assert bound[worker._GUEST_ROOTFS + worker._GUEST_GITCONFIG] == worker._GUEST_GITCONFIG
     assert worker._GUEST_GITCONFIG == '/etc/gitconfig'  # where `git config --system` writes
+
+
+def test_the_worker_launches_the_file_tool_entry_point_where_the_guest_stage_lands_it() -> None:
+    """Every file-tool call fails, a session away from any other test, if the path the worker runs is not shipped."""
+    *_, entry_point = worker._GUEST_FILE_TOOL
+    assert _guest_rootfs().get(entry_point) == pathlib.Path(file_tool.__file__)
 
 
 def test_the_host_stand_in_configures_git_as_the_guest_stage_does() -> None:

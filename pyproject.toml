@@ -191,9 +191,10 @@ sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==
 # protobuf backs the shipped stubs, and clinvar_proto and pubmed_proto the upstream record schemas the clinvar
 # and literature stubs import — each package `__init__` is eager, so pydantic comes into the rootfs behind
 # them. protovalidate checks a widget asset against its payload's rules, in the asset helper and the
-# working-document linter; markdown-it-py is the linter's markdown parser. Locked rather than a floating pip
-# install so the guest inherits the age gate and stays version-aligned with the worker's own grpcio/protobuf.
-guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", "markdown-it-py"]
+# working-document linter; markdown-it-py is the linter's markdown parser; anthropic is the SDK whose own file
+# tools the file-tool entry point runs. Locked rather than a floating pip install so the guest inherits the age
+# gate and stays version-aligned with the worker's own grpcio, protobuf and anthropic.
+guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", "markdown-it-py", "anthropic"]
 # schema compat gate (tools/schema/buf_compat.py, .github/workflows/schema-compat.yml): protobuf reads the
 # compiled descriptor sets; protovalidate is what themis.widgets decodes a payload's ownership rules with.
 schema_compat = ["protobuf", "protovalidate"]

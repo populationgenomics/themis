@@ -75,8 +75,13 @@ COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_wo
     themis/services/sandbox_worker/guest/retry.py themis/services/sandbox_worker/guest/display.py \
     themis/services/sandbox_worker/guest/fulltext.py themis/services/sandbox_worker/guest/widgets.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/
+# The entry point the worker launches for each file-tool call, run by path (worker.py `_GUEST_FILE_TOOL`).
+COPY themis/services/sandbox_worker/guest/file_tool.py /usr/local/lib/python3.13/site-packages/themis/agent/
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py
+# The base image ships the standard library without bytecode and the rootfs is bound read-only, so every guest
+# launch that ran Python would recompile what it imports; the copied modules above have none either.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 # --- assemble: bubblewrap + the mirror's git + the worker venv + the themis subtrees + the guest rootfs. ---
 FROM base AS runtime

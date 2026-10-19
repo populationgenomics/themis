@@ -16,10 +16,9 @@ One trusted process per Job execution. The dispatcher claims a work item and inj
    (``reclaim_older_than_ms``), so a session running longer than that window is not reclaimed and
    re-dispatched mid-flight. A spawn that dies before restore stays unacked and re-surfaces.
 4. Run ``EnvironmentWorker.handle_item()`` — the SDK loop for the one claimed session. Its tools are the
-   ``agent_toolset_20260401`` file tools (read/write/edit/glob/grep), which the SDK confines to ``workdir``
-   (=/workspace) and so run in the trusted worker, plus ``shell`` — the sandboxed replacement for ``bash``
-   that marshals every command into the guest behind the hello/evidence-forwarding hatch. A session with a memory
-   store attached is refused.
+   ``agent_toolset_20260401`` file tools (read/write/edit/glob/grep), each call run in a guest launch of its own
+   (``file_tools``), plus ``shell`` — the sandboxed replacement for ``bash`` that marshals every command into the
+   guest behind the hello/evidence-forwarding hatch. A session with a memory store attached is refused.
 5. Push every branch the agent committed and left unpushed, and exit (one execution per spawn — scale-to-zero
    preserved).
 
@@ -31,8 +30,8 @@ worker's environment.
 Host uid mapping. With ``THEMIS_SANDBOX_HOST_UID`` set the worker (root in its container) runs bwrap as that uid,
 so every file the guest creates is owned by a uid that owns nothing else on the host, and a host-side ``git`` in
 ``/workspace`` fails git's ownership check. The deploy has to make every bind source reachable by that uid —
-the guest rootfs and ``/workspace`` are world-traversable already, and the hatch sockets are bound under a
-directory the worker hands to that uid here.
+the guest rootfs and ``/workspace`` are world-traversable already, and the hatch sockets and the file tools' requests
+are bound from directories the worker opens to that uid for traversal here.
 """
 
 from __future__ import annotations
@@ -59,10 +58,11 @@ from themis.clients import id_token
 from themis.clients.sheaf import store as remote_mod
 from themis.clients.work_queue import client as work_queue_mod
 from themis.rpc import sandbox_options_pb2
-from themis.services.sandbox_worker import git_hatches, guest_git
+from themis.services.sandbox_worker import file_tools, git_hatches, guest_git
 from themis.services.sandbox_worker import hatch as hatch_mod
 from themis.services.sandbox_worker import sync as sync_mod
 from themis.services.sandbox_worker import tool as tool_mod
+from themis.services.sandbox_worker.guest import file_tool
 from themis.sheaf.wire import bare
 
 # The guest rootfs the Dockerfile assembles; postern binds it read-only as the guest's system dirs.
@@ -71,6 +71,8 @@ _GUEST_ROOTFS = '/opt/guest-root'
 # allowance and the agent's identity — is bound on its own.
 _GUEST_GITCONFIG = '/etc/gitconfig'
 _WORKSPACE_ROOT = '/workspace'
+# The file-tool entry point the guest stage lands, run by path under -I so nothing in /workspace is on its import path.
+_GUEST_FILE_TOOL = ('python3', '-I', '/usr/local/lib/python3.13/site-packages/themis/agent/file_tool.py')
 # Per-command bounds on the worker's own guest git, which runs outside any tool call. The restore's commands run
 # before the ack, so their bound has to keep the restore inside the dispatcher's reclaim window (600 s), or a slow
 # spawn is re-dispatched underneath itself; local mirror to local tree over a socket, a clone is disk-bound. The
@@ -120,13 +122,18 @@ def _host_identity() -> tuple[int, int] | None:
         raise SystemExit(f'{_HOST_UID_ENV} and {_HOST_GID_ENV} must be integers: {exc}') from exc
 
 
-def _build_profile(host_identity: tuple[int, int] | None) -> postern.SandboxProfile:
-    """The profile the worker serves with: the guest rootfs, one writable /workspace, and the host uid mapping."""
+def _build_profile(host_identity: tuple[int, int] | None, requests: pathlib.Path) -> postern.SandboxProfile:
+    """The profile the worker serves with.
+
+    The guest rootfs, one writable /workspace, the file tools' ``requests`` directory, read-only and required so that a
+    launch fails rather than start without it, and the host uid mapping.
+    """
     uid, gid = host_identity if host_identity is not None else (None, None)
     return postern.SandboxProfile(
         rootfs=pathlib.Path(_GUEST_ROOTFS),
         workspace=pathlib.Path(_WORKSPACE_ROOT),
         ro_binds=[(_GUEST_ROOTFS + _GUEST_GITCONFIG, _GUEST_GITCONFIG)],
+        required_ro_binds=[(str(requests), file_tools.GUEST_REQUESTS)],
         host_uid=uid,
         host_gid=gid,
     )
@@ -147,19 +154,21 @@ def _socket_dir(host_identity: tuple[int, int] | None) -> pathlib.Path:
 
 
 def _tools_for_session(
-    ctx: agent_toolset.AgentToolContext, shell: environments.BetaAnyRunnableTool
+    ctx: agent_toolset.AgentToolContext,
+    shell: environments.BetaAnyRunnableTool,
+    runner: file_tools.GuestRunner,
+    host_identity: tuple[int, int] | None,
 ) -> Sequence[environments.BetaAnyRunnableTool]:
-    """The session's tools: the workdir-confined ``agent_toolset_20260401`` file tools plus the sandboxed ``shell``.
+    """The session's tools: the ``agent_toolset_20260401`` file tools, run by ``runner`` in the guest, and ``shell``.
 
-    ``bash`` is dropped — it is the one toolset entry that runs unconfined, so ``shell`` (which marshals into
-    the postern guest) is its isolated replacement. The remaining file tools resolve every path against
-    ``ctx.workdir`` (=/workspace) and reject escapes, so they run in the trusted worker without weakening
-    isolation.
+    ``bash`` is dropped and ``shell``, which marshals into the guest, takes its place. Under a host uid mapping the
+    skills download, which the SDK has made by the time it asks for the tools, is opened to the guest's reading.
 
     Raises:
         ValueError: If ``ctx`` carries no session, or the session has a memory store attached: the worker serves
             none, so the agent would be told of memory it cannot reach. ``handle_item`` force-stops the work item
             when this raises, as it does on any error while it holds the lease.
+        RuntimeError: If the SDK's toolset, ``bash`` aside, is not the file tools the guest entry point serves.
     """
     if ctx.session is None:
         raise ValueError('the tool context carries no session to check for memory stores')
@@ -168,8 +177,13 @@ def _tools_for_session(
         raise ValueError(
             f'session {ctx.session.id} has {len(stores)} memory store(s) attached; this worker serves none'
         )
-    confined = [tool for tool in agent_toolset.beta_agent_toolset_20260401(ctx) if tool.name != 'bash']
-    return [*confined, shell]
+    sdk_tools = [tool for tool in agent_toolset.beta_agent_toolset_20260401(ctx) if tool.name != 'bash']
+    names = sorted(tool.name for tool in sdk_tools)
+    if set(names) != file_tool.FILE_TOOLS:
+        raise RuntimeError(f'the SDK toolset is {names}, not the file tools the guest entry point serves')
+    if host_identity is not None:
+        file_tools.open_to_reading(pathlib.Path(ctx.workdir) / 'skills')
+    return [*(file_tools.GuestFileTool(tool, runner) for tool in sdk_tools), shell]
 
 
 async def _fail_item(work_queue: work_queue_mod.WorkQueue, work_id: str) -> None:
@@ -266,74 +280,85 @@ async def _serve() -> None:
     environment_id = os.environ['ANTHROPIC_ENVIRONMENT_ID']
 
     host_identity = _host_identity()
-    profile = _build_profile(host_identity)
+    if host_identity is not None and os.geteuid() != 0:
+        # postern drops bwrap to the mapped uid only from root.
+        raise SystemExit(f'{_HOST_UID_ENV} is set but the worker is not root')
+    requests = file_tools.request_directory(host_identity)
     try:
-        postern.Sandbox(profile).verify()
-    except (postern.IsolationError, RuntimeError) as exc:
-        raise SystemExit(f'isolation self-test failed, refusing to serve: {exc}') from exc
-    _logger.info('isolation verified; serving session %s (work %s)', session_id, work_id)
+        profile = _build_profile(host_identity, requests)
+        try:
+            postern.Sandbox(profile).verify()
+        except (postern.IsolationError, RuntimeError) as exc:
+            raise SystemExit(f'isolation self-test failed, refusing to serve: {exc}') from exc
+        _logger.info('isolation verified; serving session %s (work %s)', session_id, work_id)
 
-    hello_credentials = id_token.channel_credentials(hello_url)
-    evidence_credentials = id_token.channel_credentials(evidence_url)
-    # The hatch runs a synchronous grpc.server, so its forwarders dial over synchronous channels, as does the
-    # mirror's store.
-    async with anthropic.AsyncAnthropic(
-        auth_token=environment_key,
-        default_headers={'anthropic-beta': environments.MANAGED_AGENTS_BETA},
-    ) as client:
-        work_queue = work_queue_mod.AnthropicWorkQueue(client, environment_id=environment_id)
-        hello_sync = grpc.secure_channel(_grpc_target(hello_url), hello_credentials)
-        evidence_sync = grpc.secure_channel(_grpc_target(evidence_url), evidence_credentials)
-        socket_dir = _socket_dir(host_identity)
-        hatch = hatch_mod.build_hatch(
-            hello_channel=hello_sync,
-            evidence_channel=evidence_sync,
-            session_token=session_token,
-            socket_path=socket_dir / 'hatch.sock',
-        )
-        # The mirror is the one host-side git, at a path the guest never sees.
-        with _mirror(sheaf_url, session_token) as mirror:
-            hatches = git_hatches.GitHatches(mirror, protection=git_hatches.PROTECTION, socket_dir=socket_dir)
-            sandbox = postern.Sandbox(profile, hatch=[hatch, *hatches.hatches])
-            fetch_url, push_url = hatches.guest_urls(profile)
-            repository = guest_git.GuestGit(
-                sandbox,
-                hatches,
-                fetch_url=fetch_url,
-                push_url=push_url,
-                hydrate_timeout=_HYDRATE_TIMEOUT_S,
-                teardown_timeout=_TEARDOWN_TIMEOUT_S,
+        hello_credentials = id_token.channel_credentials(hello_url)
+        evidence_credentials = id_token.channel_credentials(evidence_url)
+        # The hatch runs a synchronous grpc.server, so its forwarders dial over synchronous channels, as does the
+        # mirror's store.
+        async with anthropic.AsyncAnthropic(
+            auth_token=environment_key,
+            default_headers={'anthropic-beta': environments.MANAGED_AGENTS_BETA},
+        ) as client:
+            work_queue = work_queue_mod.AnthropicWorkQueue(client, environment_id=environment_id)
+            hello_sync = grpc.secure_channel(_grpc_target(hello_url), hello_credentials)
+            evidence_sync = grpc.secure_channel(_grpc_target(evidence_url), evidence_credentials)
+            socket_dir = _socket_dir(host_identity)
+            hatch = hatch_mod.build_hatch(
+                hello_channel=hello_sync,
+                evidence_channel=evidence_sync,
+                session_token=session_token,
+                socket_path=socket_dir / 'hatch.sock',
             )
-            workspace_sync = sync_mod.WorkspaceSync(workspace=sandbox.workspace, repository=repository)
-            try:
-                if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
-                    return
-                shell = tool_mod.make_shell(sandbox)
-                worker = environments.EnvironmentWorker(
-                    client,
-                    tools=lambda ctx: _tools_for_session(ctx, shell),
-                    workdir=sandbox.workspace,
-                    # Off, so no store is downloaded: `_tools_for_session` refuses a session that has one.
-                    memory_sync_interval=None,
+            # The mirror is the one host-side git, at a path the guest never sees.
+            with _mirror(sheaf_url, session_token) as mirror:
+                hatches = git_hatches.GitHatches(mirror, protection=git_hatches.PROTECTION, socket_dir=socket_dir)
+                sandbox = postern.Sandbox(profile, hatch=[hatch, *hatches.hatches])
+                # No hatch: a file tool reaches nothing beyond /workspace.
+                file_sandbox = postern.Sandbox(profile)
+                fetch_url, push_url = hatches.guest_urls(profile)
+                repository = guest_git.GuestGit(
+                    sandbox,
+                    hatches,
+                    fetch_url=fetch_url,
+                    push_url=push_url,
+                    hydrate_timeout=_HYDRATE_TIMEOUT_S,
+                    teardown_timeout=_TEARDOWN_TIMEOUT_S,
                 )
+                workspace_sync = sync_mod.WorkspaceSync(workspace=sandbox.workspace, repository=repository)
                 try:
-                    await worker.handle_item()
-                except BaseException:
-                    # The session loop failing is no reason to lose what the agent committed: push, then re-raise.
+                    if not await _restore_or_fail_item(workspace_sync, work_queue, work_id):
+                        return
+                    shell = tool_mod.make_shell(sandbox)
+                    runner = file_tools.GuestRunner(file_sandbox, requests, _GUEST_FILE_TOOL, tool_mod.SHELL_TIMEOUT_S)
+                    worker = environments.EnvironmentWorker(
+                        client,
+                        tools=lambda ctx: _tools_for_session(ctx, shell, runner, host_identity),
+                        workdir=sandbox.workspace,
+                        # Off, so no store is downloaded: `_tools_for_session` refuses a session that has one.
+                        memory_sync_interval=None,
+                    )
                     try:
-                        await _to_completion(workspace_sync.teardown(session_id))
-                    except Exception:
-                        _logger.exception('teardown after a failed session loop failed too')
-                    raise
-                await _to_completion(workspace_sync.teardown(session_id))
-                _logger.info('session %s complete; branches pushed', session_id)
-            finally:
-                hatch.close()
-                hatches.close()
-                hello_sync.close()
-                evidence_sync.close()
-                sandbox.close()
-                shutil.rmtree(socket_dir, ignore_errors=True)
+                        await worker.handle_item()
+                    except BaseException:
+                        # The session loop failing is no reason to lose what the agent committed: push, then re-raise.
+                        try:
+                            await _to_completion(workspace_sync.teardown(session_id))
+                        except Exception:
+                            _logger.exception('teardown after a failed session loop failed too')
+                        raise
+                    await _to_completion(workspace_sync.teardown(session_id))
+                    _logger.info('session %s complete; branches pushed', session_id)
+                finally:
+                    hatch.close()
+                    hatches.close()
+                    hello_sync.close()
+                    evidence_sync.close()
+                    sandbox.close()
+                    file_sandbox.close()
+                    shutil.rmtree(socket_dir, ignore_errors=True)
+    finally:
+        shutil.rmtree(requests, ignore_errors=True)
 
 
 async def _to_completion[T](coroutine: Coroutine[object, object, T]) -> T:

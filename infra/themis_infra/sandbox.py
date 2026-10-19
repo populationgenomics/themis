@@ -255,6 +255,12 @@ class DispatcherService(pulumi.ComponentResource):
         self.register_outputs({'service_account_email': self.service_account_email, 'url': self.url})
 
 
+# The host uid and gid bwrap drops to, so the guest is a uid that owns nothing in the worker image rather than root
+# (sandbox-worker.md §"The guest runs as a uid that owns nothing").
+_GUEST_HOST_UID = 61000
+_GUEST_HOST_GID = 61000
+
+
 def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs:
     return gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(name=name, value=value)
 
@@ -343,6 +349,8 @@ class SandboxJob(pulumi.ComponentResource):
                                 _job_env('THEMIS_HELLO_URL', hello_url),
                                 _job_env('THEMIS_EVIDENCE_URL', evidence_url),
                                 _job_env('THEMIS_SHEAF_URL', sheaf_url),
+                                _job_env('THEMIS_SANDBOX_HOST_UID', str(_GUEST_HOST_UID)),
+                                _job_env('THEMIS_SANDBOX_HOST_GID', str(_GUEST_HOST_GID)),
                             ],
                             # Bounds the trusted worker + the co-located guest together (the one-session
                             # blast radius review L3 accepts): a guest memory bomb OOMs only this execution.
