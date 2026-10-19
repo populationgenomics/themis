@@ -41,15 +41,22 @@ const MESSAGE_HEADER = /^# proto-message: (\S+)$/m;
  *  that example's error. */
 export function listExamples(root: string = EXAMPLES_DIR): WidgetExample[] {
   const examples: WidgetExample[] = [];
-  for (const group of readdirSync(root).sort()) {
-    const dir = path.join(root, group);
-    if (!statSync(dir).isDirectory()) continue;
-    for (const file of readdirSync(dir).sort()) {
+  // `root` is a runtime value, so Turbopack would trace the whole project into the standalone
+  // output; the ignore marks stop that, and next.config.ts traces the examples in explicitly.
+  for (const group of readdirSync(/*turbopackIgnore: true*/ root).sort()) {
+    const dir = path.join(/*turbopackIgnore: true*/ root, group);
+    if (!statSync(/*turbopackIgnore: true*/ dir).isDirectory()) continue;
+    for (const file of readdirSync(/*turbopackIgnore: true*/ dir).sort()) {
       if (!file.endsWith(".txtpb")) continue;
       const name = file.slice(0, -".txtpb".length);
+      const filePath = path.join(/*turbopackIgnore: true*/ dir, file);
       try {
         examples.push(
-          readExample(group, name, readFileSync(path.join(dir, file), "utf8")),
+          readExample(
+            group,
+            name,
+            readFileSync(/*turbopackIgnore: true*/ filePath, "utf8"),
+          ),
         );
       } catch (error) {
         // A reader's defect, or a file that cannot be opened: shown on its card, logged in full.

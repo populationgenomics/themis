@@ -5,6 +5,14 @@ const nextConfig: NextConfig = {
   // Self-contained server bundle (server.js + a traced minimal node_modules) so the
   // Cloud Run image stays small. Built and served on Bun; see ./Dockerfile.
   output: "standalone",
+  // Off: `next dev` would otherwise write an AGENTS.md block for a detected coding agent; the same
+  // instruction lives in .claude/rules/nextjs.md.
+  agentRules: false,
+  // The widget browser reads its examples through a runtime path the tracer cannot follow
+  // (src/server/widget-examples.ts), so the route names them.
+  outputFileTracingIncludes: {
+    "/dev/widgets": ["src/widgets/examples/*/*.txtpb"],
+  },
   experimental: {
     proxyClientMaxBodySize: PROXY_BODY_MAX_BYTES,
   },
