@@ -199,6 +199,14 @@ several interfaces ([`services.md`](services.md)). What the trusted side then do
 reach a third party, which is why an rpc qualifies for exposure only if its own outbound calls are destination-fixed and
 query-only ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security).
 
+A server-streaming rpc forwards the same way, one message at a time as each arrives, under one deadline for the whole
+stream; that is how a paper's text reaches the guest whole however long it is
+([`literature-evidence-layer.md`](literature-evidence-layer.md#the-stores-read-surface)). A stream that fails partway
+ends under the upstream's code, but the messages already passed on stay delivered. So a stream that ends in an error has
+handed the guest bytes that are not the answer, and the guest-side helper that reads one keeps nothing from it unless
+the whole stream arrived and checks out. A guest that abandons a stream cancels the upstream call with it, rather than
+leaving it to hold one of the hatch's serving threads until its deadline.
+
 A failed call crosses the hatch under its own status code, so the guest can tell a settled answer from a fault, but its
 text crosses only where the servicer marked it as its own, with a trailer `themis.common.authored_status` writes.
 Without the mark the guest gets the code's bare name. The rule exists because grpc writes its own text for a failed

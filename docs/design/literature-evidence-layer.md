@@ -25,11 +25,15 @@ without letting either answer be mistaken for the other.
   starting a conversion where that text is still pending. Everything past the door — reads and citations — keys on
   `doc_id` alone, and the citation grammar spells nothing else, so the door is enforced rather than taught.
 - **An abstract is readable and deliberately not quotable.** It rides on what a discovery rpc returns, so a run can
-  judge whether a paper matters without holding the paper — and it is then stated in prose, never quoted, because only
-  the text `GetMarkdown` serves has an anchor a quote can resolve against.
+  judge whether a paper matters without holding the paper — and it is then stated in prose, never quoted, because only a
+  rendering in the store has an anchor a quote can resolve against.
 - **Absence is modelled wherever it could be read as a fault**, and a fault is never reported as absence. "The index has
   no abstract for this record" and "the store has no text for this paper" are answers a run can act on; a crosswalk
   outage or a malformed identifier is not.
+- **The agent reads a paper whole, from a file.** `ReadMarkdown` streams the paper's rendering, however long, and the
+  agent's helper writes it to a file in the sandbox's scratch space. The agent then searches and reads that file with
+  ordinary tools. Nothing is cut to a budget, and the paper's text enters the agent's context only as the agent reads
+  it.
 - **Serving a paper never produces its text.** A paper the store cannot serve is a fact the run reports, and the
   ingestion loop closes it out of band — because producing text on a request path turns a settled answer into a timeout
   ([`evidence-fulltext.md`](evidence-fulltext.md)).
@@ -123,7 +127,7 @@ record of Europe PMC's own can take them as fields. A source that answers in its
 its own record message, and nothing already written against an existing rpc has to be re-read when it does.
 
 Names carry the same concreteness. Every rpc names the source or payload it deals in — `SearchEuropePmc`,
-`FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `GetMarkdown` — rather than a generic verb, and so does
+`FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `ReadMarkdown` — rather than a generic verb, and so does
 every record message that comes back. A generic `Search` returning a generic `Record` is a promise the interface cannot
 keep: the next source would either break it or be folded quietly into it, changing what an existing rpc means for
 callers already written against it.
@@ -140,7 +144,7 @@ flowchart TD
         F --> E2["PubMed records, whole — the record the store embeds in its metadata"]
     end
     subgraph store["the full-text store — keyed on doc_id throughout"]
-        M["GetMarkdown — the canonical rendering's text"] --> C["a quote directive, spelling that doc_id"]
+        M["ReadMarkdown — the canonical rendering, whole, into a file"] --> C["a quote directive, spelling that doc_id"]
     end
     E --> DOOR{"MaybeIngestPapers — which paper is this, and can the store serve its text?"}
     E2 --> DOOR
@@ -232,7 +236,7 @@ records where a *fact* came from, which is a different thing that happens to wan
 | rpc                 | what it does in the system                                                                                                                                                                                   |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `MaybeIngestPapers` | The door: a batch of scheme-qualified external ids in, the paper each names and that paper's readiness out, and a conversion where pending. The mandatory first step for a caller holding a PMID or a DOI.   |
-| `GetMarkdown`       | The agent's read path: the canonical rendering's text and its provenance — or a modelled statement that the paper has no servable text.                                                                      |
+| `ReadMarkdown`      | The agent's read path: the canonical rendering streamed whole, after a header naming it — or a modelled statement that the paper has no servable text.                                                       |
 | `DescribePaper`     | What a paper offers, so the document pane can choose a default representation and list its figures and supplementary files.                                                                                  |
 | `ResolveContent`    | Names the storage object behind a chosen representation or file — a location, never bytes. Serving bytes to a browser is the BFF's job, and the BFF holds the authorisation boundary.                        |
 | `Locate`            | Where a quote sits inside a chosen representation, for the pane to highlight. A quote that is not there is a modelled outcome, not an error.                                                                 |
@@ -244,16 +248,13 @@ Four mechanisms the table rests on:
 - **Readiness and content are separate rpcs.** A batch that answered with each paper's text would blow past the message
   budget, and a caller asking which of fifty papers is worth opening does not want fifty papers back. So readiness is a
   cheap batch and content is a single-paper read.
-- **A read is budgeted, and says so.** `GetMarkdown` cuts a long rendering at a line boundary behind an inline marker
-  and reports the rendering's full character count beside the text, so a whole paper and a clipped one are told apart by
-  comparing that count against the text's own length, and a reader handed a clipped one learns how much lies past the
-  cut. `Validate` and `Locate` still run over the whole rendering, which means quoting only within what was actually
-  read is the reader's discipline, not something the server can enforce for it. The budget is there to protect the
-  reading run's context, and the cut is where that protection is spent. Which is why the budget is the caller's to
-  suggest and the server's to bound, on the same census idiom the searches use: `max_chars` asks, the service ceiling
-  caps what it grants, and the full character count beside the text's own length says whether anything was cut. A run
-  that hits a cut and needs what lay past it asks again for more, up to that ceiling — the way to more is a larger
-  budget, never a cursor, and past the ceiling the remainder stays unreachable.
+- **The agent's read is whole, and goes to a file.** Renderings vary by orders of magnitude: most main texts are tens of
+  kilobytes, a few pass a megabyte, and one paper's rendering is no guide to the next. `ReadMarkdown` serves the whole
+  rendering as a stream, opened by a header that names it: its key in the manifest (the hash of its bytes), its size and
+  its text provenance. Each message after the header carries a run of the bytes, small enough for gRPC's default message
+  limit, so no rendering is too long to serve. The guest's helper writes the stream to a file and keeps it only when the
+  bytes add up to the size and hash to the key, so a file at the path is a whole rendering and never a prefix that reads
+  like one. The agent quotes from that file, and the key says which rendering a quote was taken from.
 - **A batch has a ceiling, and it is the server's.** A readiness or resolution batch is refused past a fixed size,
   because each entry costs the service reads it did not ask for. Nothing blocks server-side to make a batch wait: a
   caller with somewhere to sleep waits there and asks again.
@@ -364,10 +365,10 @@ outbound requests that are destination-fixed and query-only — for that rpc. `D
 
 The read surface is shaped for that agent: the guest (the sandboxed process these calls serve) has no network and no
 storage credentials, so typed calls are its entire reach into the literature. That is also why the agent's read path is
-`GetMarkdown` rather than the store directly, even though `ResolveContent` already names the object:
+`ReadMarkdown` rather than the store directly, even though `ResolveContent` already names the object:
 
-- the service owns canonical-rendering selection, the read budget, and readiness and provenance derivation; a raw object
-  read would re-derive all three inside the guest, where they could drift;
+- the service owns canonical-rendering selection and readiness and provenance derivation; a raw object read would
+  re-derive them inside the guest, where they could drift;
 - a read crosses the hatch (the sandbox's one channel out, a fixed allowlist of typed rpcs) and lands in the session's
   event log, which is what makes it possible to see afterwards which papers a run relied on;
 - the location `ResolveContent` returns is useless in the guest by construction — nothing in the sandbox can follow it.
@@ -385,11 +386,13 @@ come back and nothing about where the request goes; there is no destination for 
 §What counts as an exfiltration channel). And the same typed, logged crossing that records which papers a run read
 records what it asked, so a string the agent composed is legible afterwards rather than an unobserved reach outward.
 
-The agent's working loop, in outline: discover or arrive with a PMID → through the door to a `doc_id` → read the
-markdown → save the served text verbatim in the workspace and quote only from that saved copy → validate every quote
-while authoring. A truncated read cannot anchor text past its cut even where the server-side check would pass it, which
-is exactly why the saved copy, and not the server, is the thing quotes are taken from. A paper the store cannot serve is
-reported, not worked around.
+The agent's working loop, in outline: discover or arrive with a PMID → through the door to a `doc_id` → capture the
+rendering to a file in scratch → search and read the file, and quote only from it → validate every quote while
+authoring. A paper the store cannot serve is reported, not worked around.
+
+A paper's supplementary files are not on this path yet. The store holds them, but the agent can neither list a paper's
+files nor read one: `DescribePaper` lists them for the browser alone, and `ReadMarkdown` serves only the main text. Both
+are follow-up work, once supplementary files have renderings of their own.
 
 ### Citing a paper
 
@@ -428,8 +431,8 @@ rather than merely tidy. A unit outlives the run that extracted it, so its citat
 better converter has produced a new rendering of the same paper and a re-fetch has added a source revision. Because a
 rendering is identified by its own bytes, the one a unit cites cannot change under it: the citation resolves against
 exactly the text it was made against, or against nothing. For an anchor to record which rendering that was
-([`litcache-manifest.md`](litcache-manifest.md) §Quote-reference model), the read has to hand back its hash, and
-`PaperMarkdown` does not carry one yet; the field lands with the knowledge-unit layer that reads it.
+([`litcache-manifest.md`](litcache-manifest.md) §Quote-reference model), the read has to hand back its hash, which is
+what `ReadMarkdown`'s header carries.
 
 ### Supplied papers are ordinary papers
 
@@ -486,6 +489,25 @@ nothing.
   PDFs routinely exceed the message budget, and the markdown rendering is the citable representation in any case. A
   file-serving rpc can be added later if a need appears; declaring selectors that the rpc would refuse trades fail-loud
   honesty for a symmetry nobody reads.
+- **Returning the agent's text in the reply, cut to a budget.** The rpc would return the rendering in one message,
+  clipped at a line boundary to a budget the caller asks for and the server caps. It is the simplest read, and the
+  budget protects the agent's context. But the agent's script writes the text to a file rather than printing it into
+  context, so the budget protects nothing, and the cut makes the tail of the longest papers unreachable. A cursor to
+  page past the cut would cost a call per page for a reader who wants the whole text anyway.
+- **Mounting the store into the sandbox.** The sandbox job would mount the bucket read-only, and a tool the agent calls
+  to open a paper would bind that paper's directory into the guest. The agent would read the store's own files in place:
+  nothing copied into the job's in-memory filesystem, and a large file read lazily, only as far as the agent reads it.
+  It was declined, for four reasons. It gives the job a read grant on the whole store, where the stream needs none. A
+  paper's directory would appear in the guest only from the next command on, because the worker launches a fresh guest
+  for every command and fixes its view of the filesystem at launch; so the tool must change the worker's sandbox
+  definition, and that definition is one more piece of session state. That state would also have to be rebuilt: a
+  session's later turns can run in a new job, which restores the workspace from its repository
+  ([`sandbox-worker.md` § The work item is acked once restore proves](sandbox-worker.md#the-work-item-is-acked-once-restore-proves))
+  but would know nothing of the papers opened before, so every one would have to be bound again. Its one apparent
+  saving, a round trip, is none: the agent spends one tool call either way, on a tool that opens papers or on a script
+  that captures them. And the copy it avoids is small. The largest supplementary files are mostly images: an 847 MB
+  spreadsheet in the store holds about 18,000 characters of text, and a 508 MB Word file about 8,500. Plain-text
+  supplements are the exception, at up to 75 MB of text, and that still fits the job's memory.
 - **A separate home for the variant-literature pair** — its own interface under `evidence-interfaces.md`'s
   one-interface-per-source rule, or folded into the variant interface. Rejected: what it produces is literature, and a
   two-rpc interface would buy a separation no consumer wants.
@@ -502,6 +524,14 @@ nothing.
   ([`litcache-manifest.md`](litcache-manifest.md)) — but nothing on this read surface reports it, so a retracted paper
   reads like any other and a run can cite it as live evidence. How the read surface and the citation directives carry
   the flag needs a contract decision.
+- **A quote taken before a paper's text moved.** `Validate` checks a quote against the rendering the paper's `markdown`
+  ref names when it is called. The agent's file is the rendering that was named when the agent captured it. If a better
+  rendering lands in between, a quote copied faithfully from the file can fail to validate. Letting `Validate` take the
+  rendering key the capture returned would close the gap, and that key is already what a knowledge unit's anchor
+  records.
+- **Quoting a supplementary file.** Once the agent can read a supplementary file's rendering, the citation directives
+  still name a `doc_id` and nothing else, so a quote from that rendering could be neither validated nor highlighted.
+  Naming the file in the directive is a grammar decision for the working document.
 - **A Bookshelf accession at the door.** `MaybeIngestPapers` takes a scheme-qualified DOI, PMID or PMCID. A GeneReviews
   chapter's URL carries its Bookshelf accession (`NBK…`) where a citation carries its PMID, and the store mints the
   accession as an external id like the others

@@ -84,8 +84,8 @@ an rpc imports.
 import "themis/rpc/sandbox_options.proto";
 
 service Literature {
-  // The paper's markdown rendering, for the agent to read.
-  rpc GetMarkdown(GetMarkdownRequest) returns (GetMarkdownResponse) {
+  // Whether a quote locates in the paper, for the agent to check while authoring.
+  rpc Validate(ValidateRequest) returns (ValidateResponse) {
     option (themis.rpc.agent_exposed) = true;
   }
   // The storage object a rendering lives in, for the BFF to serve. Not exposed: nothing in the
