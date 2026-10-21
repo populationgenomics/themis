@@ -2938,15 +2938,14 @@ wheels = [
 
 [[package]]
 name = "pubmed-proto"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
-    { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/28/3b/eb1fe187430514e5cd4850be1751ab95b4fcae575a5548b1dc5bc6752593/pubmed_proto-0.4.0.tar.gz", hash = "sha256:babaa75b84d65be8a19983e48ae4f45694a04c6db559ebb794b254b1e5cf2035", size = 38546, upload-time = "2026-10-21T22:37:37.879Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/5f/ccaaccb54ac8c721d426e04b0eef39639a208aca8e9e3fc454d2a3a339c1/pubmed_proto-0.5.0.tar.gz", hash = "sha256:141dae8af53fb645fe054a21b03ef146759bec528d444bd0f4b084d660242d25", size = 30953, upload-time = "2026-10-21T23:43:04.973Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/9e/5c0b6a95c353b41d4a65b6541c392e9bbb1f6f343484ea8f95475ea3ce2a/pubmed_proto-0.4.0-py3-none-any.whl", hash = "sha256:e07d057e248ced7ec1430feec0c641af2548010a552352592457dd12cdcbae9f", size = 42009, upload-time = "2026-10-21T22:37:36.725Z" },
+    { url = "https://files.pythonhosted.org/packages/76/59/bd35842e5343af2b6ca30da205a26e8f90b0873059a474a328ecad360a26/pubmed_proto-0.5.0-py3-none-any.whl", hash = "sha256:d0d971224efbe1beafc10d0ba301521a2530225c61f7383d74a526f1b1a9896c", size = 33376, upload-time = "2026-10-21T23:43:03.73Z" },
 ]
 
 [[package]]
@@ -4214,7 +4213,7 @@ codegen = [
     { name = "clinvar-proto", specifier = "==0.1.0" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
 ]
 convert-worker = [
     { name = "aiohttp" },
@@ -4230,7 +4229,7 @@ convert-worker = [
     { name = "pillow" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pypdfium2" },
     { name = "requests" },
 ]
@@ -4264,7 +4263,7 @@ dataflow = [
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pypdfium2" },
 ]
 dispatcher = [
@@ -4293,7 +4292,7 @@ evidence = [
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "requests" },
 ]
 guest = [
@@ -4303,7 +4302,7 @@ guest = [
     { name = "markdown-it-py" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
 ]
 hello = [
     { name = "google-auth" },
@@ -4355,7 +4354,7 @@ lint = [
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
     { name = "pypdfium2" },
@@ -4383,7 +4382,7 @@ litcache = [
     { name = "pg8000" },
     { name = "pillow" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pypdfium2" },
 ]
 migrate = [
@@ -4408,7 +4407,7 @@ run-review = [
     { name = "pg8000" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pyyaml" },
     { name = "requests" },
 ]
@@ -4426,7 +4425,7 @@ sandbox-worker = [
     { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "requests" },
 ]
 schema-compat = [
@@ -4509,7 +4508,7 @@ test = [
     { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
     { name = "protobuf" },
     { name = "protovalidate" },
-    { name = "pubmed-proto", specifier = "==0.4.0" },
+    { name = "pubmed-proto", specifier = "==0.5.0" },
     { name = "pulumi" },
     { name = "pulumi-gcp" },
     { name = "pypdfium2" },
