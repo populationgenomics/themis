@@ -88,6 +88,20 @@ def test_title_is_the_one_records(envelope: litcache_pb2.PaperMetadata, expected
     assert paper_metadata.title(envelope) == expected
 
 
+@pytest.mark.parametrize(
+    'record',
+    [
+        _article(r'Stop codon (p.R391\*) in *SERPINC1*'),
+        _book(chapter_title=r'Stop codon (p.R391\*) in *SERPINC1*', book_title='GeneReviews'),
+    ],
+    ids=['article', 'book-chapter'],
+)
+def test_a_pubmed_title_is_plain_text(record: litcache_pb2.PubmedRecord) -> None:
+    # The converter writes italics as `*…*` and escapes a literal `*`, here a stop codon.
+    envelope = litcache_pb2.PaperMetadata(pubmed=record)
+    assert paper_metadata.title(envelope) == 'Stop codon (p.R391*) in SERPINC1'
+
+
 def test_title_of_a_crossref_record_is_its_first_nonempty_title() -> None:
     envelope = litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(title=['', 'Second title']))
     assert paper_metadata.title(envelope) == 'Second title'

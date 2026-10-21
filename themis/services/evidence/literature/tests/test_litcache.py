@@ -161,7 +161,7 @@ def _store(bucket: storage.Bucket) -> litcache_store.Store:
 
 
 def test_describe_prefers_markdown_when_xml_derived(gcs_bucket: storage.Bucket) -> None:
-    _seed_paper(gcs_bucket, sources=[_pdf_source(), _xml_source()], metadata=_metadata('K_ATP channel study'))
+    _seed_paper(gcs_bucket, sources=[_pdf_source(), _xml_source()], metadata=_metadata(r'K\_ATP channel study'))
     info = asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
     assert info.title == 'K_ATP channel study'
     assert info.has_markdown

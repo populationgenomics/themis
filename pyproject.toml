@@ -48,7 +48,7 @@ screenshot = ["google-cloud-storage"]
 # task. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.4.0", "litdown==0.7.0", "pubmed_proto==0.3.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.4.0", "litdown==0.7.0", "pubmed_proto==0.4.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -58,7 +58,7 @@ protoc = ["grpcio-tools"]
 # resolves ahead of the pinned protobuf wheel's own .pyi — so `lint` takes `protoc` alone. clinvar_proto
 # and pubmed_proto are imported: regen copies each record's .proto out of its wheel into the buf module,
 # so the same pin that fixes the runtime stubs fixes the schema they are generated against.
-codegen = ["mypy-protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", { include-group = "protoc" }]
+codegen = ["mypy-protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.4.0", { include-group = "protoc" }]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker).
@@ -121,7 +121,7 @@ sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 # google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.3.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.4.0", "clinvar_proto==0.1.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
@@ -142,7 +142,7 @@ convert_worker = [
     "requests",
     "litfetch==0.4.0",
     "litdown==0.7.0",
-    "pubmed_proto==0.3.0",
+    "pubmed_proto==0.4.0",
     "anthropic",
     "pypdfium2",
     "pillow",
@@ -186,7 +186,7 @@ sheaf = ["google-cloud-storage", "protobuf", "opentelemetry-api"]
 # pubmed_proto: the clinvar and literature contracts embed the upstream record schemas, so importing the
 # generated stubs pulls in the wheels' message modules. protovalidate: the hook's content check decodes widget assets.
 # The trace pipeline carries a span for each session and each tool call it makes to Cloud Trace.
-sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", { include-group = "session" }, { include-group = "tracing" }]
+sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==0.1.0", "pubmed_proto==0.4.0", "protovalidate", { include-group = "session" }, { include-group = "tracing" }]
 # sandbox guest rootfs (themis/services/sandbox_worker/guest, bound as /opt/guest-root): the isolated
 # interpreter world untrusted model code runs in. grpcio is the channel the guest dials the hatch over;
 # protobuf backs the shipped stubs, and clinvar_proto and pubmed_proto the upstream record schemas the clinvar
@@ -195,7 +195,7 @@ sandbox_worker = ["postern[grpc]==0.5.0", "anthropic", "anyio", "clinvar_proto==
 # working-document linter; markdown-it-py is the linter's markdown parser; anthropic is the SDK whose own file
 # tools the file-tool entry point runs. Locked rather than a floating pip install so the guest inherits the age
 # gate and stays version-aligned with the worker's own grpcio, protobuf and anthropic.
-guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.3.0", "protovalidate", "markdown-it-py", "anthropic"]
+guest = ["grpcio", "protobuf", "clinvar_proto==0.1.0", "pubmed_proto==0.4.0", "protovalidate", "markdown-it-py", "anthropic"]
 # schema compat gate (tools/schema/buf_compat.py, .github/workflows/schema-compat.yml): protobuf reads the
 # compiled descriptor sets; protovalidate is what themis.widgets decodes a payload's ownership rules with.
 schema_compat = ["protobuf", "protovalidate"]
@@ -220,7 +220,7 @@ tools_sheaf = ["google-cloud-kms", "google-crc32c", { include-group = "session" 
 # a kickoff against the create request's rules. pubmed_proto: the workbench contract imports the literature contract,
 # which embeds the PubMed record schema, so importing the generated stubs pulls in that wheel's message modules.
 # tools_sheaf clones a run's repository, and brings the Cloud SQL client the reference is read through.
-run_review = ["anthropic", "google-auth", "requests", "pyyaml", "protobuf", "protovalidate", "pubmed_proto==0.3.0", { include-group = "tools_sheaf" }]
+run_review = ["anthropic", "google-auth", "requests", "pyyaml", "protobuf", "protovalidate", "pubmed_proto==0.4.0", { include-group = "tools_sheaf" }]
 # Pulumi program deps (infra/). Also the venv Pulumi runs the program in
 # (infra/Pulumi.yaml -> virtualenv ../.venv): `uv sync --group infra`.
 infra = ["pulumi", "pulumi-gcp", "pyyaml"]

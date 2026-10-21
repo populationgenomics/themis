@@ -19,11 +19,12 @@ import datetime
 import hashlib
 import logging
 import re
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from typing import NamedTuple, override
 
 import anchorite
-from pubmed_proto import pubmed_pb2
+from lxml import etree
+from pubmed_proto import pubmed_pb2, xml_converter
 
 from themis.litcache import crosswalk
 from themis.rpc import literature_pb2
@@ -446,14 +447,18 @@ def _pubmed_article(record: europe_pmc.Record) -> pubmed_pb2.PubmedArticle:
     """The seeded record as a whole ``PubmedArticle``, filling the fields a triage read consumes."""
     article = pubmed_pb2.PubmedArticle()
     article.medline_citation.pmid.value = record.pmid
-    article.medline_citation.article.article_title.value = record.title
+    article.medline_citation.article.article_title.value = _converted(
+        xml_converter.ArticleTitle, 'ArticleTitle', record.title
+    )
     article.medline_citation.article.journal.title = record.journal
     if record.year:
         article.medline_citation.article.journal.journal_issue.pub_date.FromDatetime(
             datetime.datetime(int(record.year), 1, 1, tzinfo=datetime.UTC)
         )
     if record.abstract:
-        article.medline_citation.article.abstract.abstract_text.add(value=record.abstract)
+        article.medline_citation.article.abstract.abstract_text.add(
+            value=_converted(xml_converter.AbstractText, 'AbstractText', record.abstract)
+        )
     for name in record.authors:
         # The seed states one display name per author; it rides whole rather than being split into
         # name parts the seed never stated.
@@ -472,17 +477,30 @@ def _pubmed_book_article(book: SeededBook) -> pubmed_pb2.PubmedBookArticle:
     document.pmid.value = book.pmid
     document.article_id_list.add(id_type=pubmed_pb2.ArticleId.ID_TYPE_BOOKACCESSION, value=book.nbk)
     document.book.publisher.publisher_name = book.publisher
-    document.book.book_title.value = book.book_title
-    document.article_title.value = book.title
+    document.book.book_title.value = _converted(xml_converter.BookTitle, 'BookTitle', book.book_title)
+    document.article_title.value = _converted(xml_converter.ArticleTitle, 'ArticleTitle', book.title)
     if book.authors:
         authors = document.author_list.add(type=pubmed_pb2.AuthorList.TYPE_AUTHORS)
         for name in book.authors:
             authors.author.add(last_name=name)  # one display name per author, whole, as for a record
     if book.abstract:
-        document.abstract.abstract_text.add(value=book.abstract)
+        document.abstract.abstract_text.add(value=_converted(xml_converter.AbstractText, 'AbstractText', book.abstract))
     document.contribution_date.FromDatetime(_midnight_utc(book.contribution_date))
     document.date_revised.FromDatetime(_midnight_utc(book.date_revised))
     return record
+
+
+type _RichText = pubmed_pb2.ArticleTitle | pubmed_pb2.AbstractText | pubmed_pb2.BookTitle
+
+
+def _converted(convert: Callable[[etree._Element], _RichText], tag: str, text: str) -> str:
+    """Seed text as pubmed_proto's converter writes a rich-text field, by running the converter on it.
+
+    A seed states no inline markup, so the element carries the text alone.
+    """
+    element = etree.Element(tag)
+    element.text = text
+    return convert(element).value
 
 
 def _midnight_utc(day: datetime.date) -> datetime.datetime:

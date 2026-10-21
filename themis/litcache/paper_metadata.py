@@ -6,12 +6,13 @@ OpenAlex's in its mirror and, beside it, as JSON text. Its constraints are enfor
 the way to bytes and back: the ones the proto declares as protovalidate options — exactly one
 index's record set, PubMed's in exactly one of its two kinds — and two it does not, that a JSON
 field holds a JSON object and is set only beside its index's mirror. The title a consumer reads is
-derived from the typed record; nothing reads the JSON text yet.
+derived from the typed record (see `title`); nothing reads the JSON text yet.
 """
 
 from __future__ import annotations
 
 from google.protobuf import message
+from pubmed_proto import xml_converter
 
 from themis.litcache import mirror
 from themis.litcache.models import litcache_pb2
@@ -78,9 +79,10 @@ def check(envelope: litcache_pb2.PaperMetadata) -> None:
 
 
 def title(envelope: litcache_pb2.PaperMetadata) -> str:
-    """The title the envelope's record states, or the empty string when it states none.
+    """The title the envelope's record states, as plain text, or the empty string when it states none.
 
     PubMed's book record states its chapter's title, or the book's when the record is a whole book's.
+    PubMed's converter writes inline markup as markdown; it is stripped here.
 
     Raises:
         ValueError: If the envelope violates its constraints (see `check`).
@@ -95,12 +97,13 @@ def _pubmed_title(envelope: litcache_pb2.PaperMetadata) -> str:
     record = envelope.pubmed
     match record.WhichOneof('kind'):
         case 'article':
-            return record.article.medline_citation.article.article_title.value
+            title = record.article.medline_citation.article.article_title.value
         case 'book_article':
             document = record.book_article.book_document
-            return document.article_title.value or document.book.book_title.value
+            title = document.article_title.value or document.book.book_title.value
         case kind:
             raise ValueError(f'PubmedRecord kind {kind!r} has no title reader')
+    return xml_converter.markdown_to_plain_text(title)
 
 
 def _crossref_title(envelope: litcache_pb2.PaperMetadata) -> str:
