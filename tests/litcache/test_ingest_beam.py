@@ -612,14 +612,15 @@ def _precondition_failing_efetch_transport() -> httpx2.MockTransport:
 
 
 def _drifting_openalex_transport() -> httpx2.MockTransport:
-    """A transport where OpenAlex answers each DOI with a work carrying a key its mirror lacks."""
+    """A transport where OpenAlex answers each DOI with a work whose declared key holds a value of another shape."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         if 'openalex' in request.url.host:
             flt = request.url.params.get('filter', '')
             dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
             results = [
-                {'doi': f'https://doi.org/{doi}', 'title': 'Drifted', 'ids': {}, 'is_zpac': True} for doi in dois
+                {'doi': f'https://doi.org/{doi}', 'title': 'Drifted', 'ids': {}, 'publication_year': 'soon'}
+                for doi in dois
             ]
             return httpx2.Response(
                 200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode()
@@ -634,8 +635,8 @@ def _drifting_openalex_transport() -> httpx2.MockTransport:
 def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
     request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
 ) -> None:
-    # A paper whose OpenAlex record carries a key the mirror lacks is dead-lettered as schema drift
-    # naming the key — nothing thinned is written — and the run completes without a crosswalk
+    # A paper whose OpenAlex record holds a value the mirror cannot hold under a declared key is
+    # dead-lettered as schema drift naming the key, and the run completes without a crosswalk
     # connection.
     token = request.node.name
     gcs_bucket.blob('ingest/10.5555%2Fsynthetic.drift.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
@@ -658,7 +659,7 @@ def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
         assert len(records) == 1
         reason = str(records[0]['reason'])
         assert reason.startswith('schema drift: ')
-        assert 'is_zpac' in reason
+        assert 'publication_year' in reason
         assert _manifests(gcs_bucket) == []
 
         rep = ingest_beam.report_run(

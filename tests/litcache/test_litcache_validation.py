@@ -13,7 +13,7 @@ import pytest
 from pubmed_proto import pubmed_pb2
 
 from themis.litcache import paper_metadata
-from themis.litcache.models import crossref_pb2, litcache_pb2
+from themis.litcache.models import crossref_pb2, litcache_pb2, openalex_pb2
 
 
 def _source(
@@ -77,8 +77,10 @@ _ENVELOPES_HOLDING_A_RECORD = [
     litcache_pb2.PaperMetadata(pubmed=_journal_record()),
     litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
     litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
-    litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}'),
-    litcache_pb2.PaperMetadata(openalex_json='{"id": "https://openalex.org/W1"}'),
+    litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json='{"DOI": "10.1/x"}'),
+    litcache_pb2.PaperMetadata(
+        openalex=openalex_pb2.Work(id='https://openalex.org/W1'), openalex_json='{"id": "https://openalex.org/W1"}'
+    ),
 ]
 _ENVELOPES_HOLDING_NO_RECORD = [
     litcache_pb2.PaperMetadata(),
@@ -92,9 +94,21 @@ _ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD = [
     litcache_pb2.PaperMetadata(crossref_json=''),
     litcache_pb2.PaperMetadata(openalex_json=''),
 ]
+# Envelopes the proto's constraints accept and `paper_metadata.check` refuses on a rule of its own:
+# a JSON field set without its index's mirror, or holding text that is not a JSON object.
+_ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES = [
+    (litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}'), 'without its mirror'),
+    (litcache_pb2.PaperMetadata(openalex_json='{"id": "https://openalex.org/W1"}'), 'without its mirror'),
+    (
+        litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json='[]'),
+        'not a JSON object',
+    ),
+]
 
 
-@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_A_RECORD)
+@pytest.mark.parametrize(
+    'envelope', _ENVELOPES_HOLDING_A_RECORD + [envelope for envelope, _ in _ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES]
+)
 def test_an_envelope_holding_a_record_is_valid(envelope: litcache_pb2.PaperMetadata) -> None:
     protovalidate.validate(envelope)  # does not raise
 
@@ -132,7 +146,8 @@ def test_an_empty_json_record_is_invalid(envelope: litcache_pb2.PaperMetadata) -
 )
 def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_pb2.PaperMetadata) -> None:
     # The proto declares the constraints; `paper_metadata.check` enforces them at the boundary in
-    # code. Both must settle every envelope the same way, or the declaration and the enforcement
+    # code, together with two rules of its own (exercised below). Over envelopes those rules leave
+    # alone, both must settle every envelope the same way, or the declaration and the enforcement
     # have drifted.
     try:
         protovalidate.validate(envelope)
@@ -145,11 +160,8 @@ def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_
         paper_metadata.check(envelope)  # does not raise
 
 
-@pytest.mark.parametrize('text', ['[]', '"a string"', '{"DOI": ', 'not json'])
-@pytest.mark.parametrize('field', ['crossref_json', 'openalex_json'])
-def test_a_json_record_that_is_not_an_object_fails_the_code_check(field: str, text: str) -> None:
-    # The proto can state only a minimum length; the code check is what refuses the rest.
-    envelope = litcache_pb2.PaperMetadata()
-    setattr(envelope, field, text)
-    with pytest.raises(ValueError, match='not a JSON object'):
+@pytest.mark.parametrize(('envelope', 'reason'), _ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES)
+def test_the_code_check_refuses_what_its_own_rules_refuse(envelope: litcache_pb2.PaperMetadata, reason: str) -> None:
+    protovalidate.validate(envelope)  # the declared constraints accept it
+    with pytest.raises(ValueError, match=reason):
         paper_metadata.check(envelope)

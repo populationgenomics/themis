@@ -239,7 +239,7 @@ def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_b
     _commit(gcs_bucket, _B, pmid='2', metadata=None)
     outcomes = {
         '1': resolve.RecordPreconditionFailure(reason='no article title'),
-        '2': resolve.SchemaDriftFailure(reason='unknown key "foo"'),
+        '2': resolve.SchemaDriftFailure(reason='publication_year: not an integer'),
     }
 
     report = _run(gcs_bucket, _stub_resolver(outcomes))
@@ -247,7 +247,7 @@ def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_b
     assert report.refreshed == []
     assert {f.doc_id: f.reason for f in report.failures} == {
         _A: 'precondition failed: no article title',
-        _B: 'schema drift: unknown key "foo"',
+        _B: 'schema drift: publication_year: not an integer',
     }
     assert _read(gcs_bucket, writer.metadata_path(_A)) is None
     assert _read(gcs_bucket, writer.metadata_path(_B)) is None

@@ -1,9 +1,11 @@
 """Crossref: a DOI's work record, whole, for a paper PubMed does not index.
 
 When a paper has a DOI but no PMID, the efetch path finds nothing, so its bibliographic record
-comes from Crossref's `works` endpoint and is stored as the envelope's `crossref` field, in
-Crossref's own schema (`crossref.proto`, a mirror of the JSON) and loaded strictly
-(`themis.litcache.mirror`). Two shapes the mirror's header names are wrapped before the parse:
+comes from Crossref's `works` endpoint and is stored twice in the envelope: in the `crossref`
+field, in Crossref's own schema (`crossref.proto`, a mirror of the JSON) with every key the mirror
+does not declare dropped, and in `crossref_json` as JSON text with every key kept
+(`themis.litcache.mirror`). Two shapes the mirror's header names are wrapped before the mirror's
+parse:
 `date-parts`, an array of arrays, becomes one `DateParts` per inner array, less the trailing null
 Crossref states an unknown date with; `relation`, an object whose values are arrays, becomes a
 `RelationList` per key. A null element of any other array, which proto3-JSON cannot hold, is
@@ -35,7 +37,7 @@ class CrossrefResult:
 
     Attributes:
         metadata: The canonical `metadata.pb` bytes (a `PaperMetadata` envelope with the work in
-            its `crossref` field).
+            its `crossref` and `crossref_json` fields).
         external_ids: The cross-ids for the manifest (DOI only — Crossref carries no PMID/PMCID).
         publisher: The Crossref `publisher`, for the manifest `Licensed` access; `None` if absent.
     """
@@ -48,8 +50,8 @@ class CrossrefResult:
 def wrap(document: Mapping[str, object]) -> dict[str, object]:
     """Wrap a `works` message object into the shapes the mirror declares (see the module docstring).
 
-    Anything else passes through untouched, so a shape the mirror does not hold fails the strict
-    parse rather than being coerced here.
+    Anything else passes through untouched, so a shape a declared field does not hold fails the
+    mirror's parse rather than being coerced here.
     """
     wrapped = _wrap_dates(document)
     relation = wrapped.get('relation')
@@ -80,21 +82,21 @@ def _wrap_date_parts(value: object) -> object:
 
 def _without_trailing_nulls(parts: list[object]) -> list[object]:
     # `[[null]]` is Crossref's unknown date; a null between stated parts is not a date, and stays
-    # for the strict parse to charge as drift rather than shifting the parts after it.
+    # for the mirror's parse to charge as drift rather than shifting the parts after it.
     end = len(parts)
     while end and parts[end - 1] is None:
         end -= 1
     return parts[:end]
 
 
-def parse_work(document: Mapping[str, object]) -> crossref_pb2.Work:
-    """Load a `works` message object into the mirror.
+def parse_work(document: Mapping[str, object]) -> mirror.Loaded[crossref_pb2.Work]:
+    """Load a `works` message object into the mirror and serialise it as text.
 
     Raises:
-        mirror.SchemaDriftError: If the record carries a key the mirror lacks, or a value of a shape
-            its field cannot hold.
+        mirror.SchemaDriftError: If a key the mirror declares holds a value of a shape its field
+            cannot hold, or the record holds a number standard JSON text cannot carry.
     """
-    return mirror.parse_strict(wrap(document), crossref_pb2.Work(), index=INDEX)
+    return mirror.load(document, crossref_pb2.Work(), index=INDEX, wrap=wrap)
 
 
 def from_crossref_work(document: Mapping[str, object]) -> CrossrefResult:
@@ -107,14 +109,17 @@ def from_crossref_work(document: Mapping[str, object]) -> CrossrefResult:
         The `CrossrefResult`.
 
     Raises:
-        mirror.SchemaDriftError: If the record does not fit the mirror.
+        mirror.SchemaDriftError: If the mirror or the text cannot hold the record (`parse_work`).
         ValueError: If the work states no DOI — the record Crossref answers a DOI with names it.
     """
-    work = parse_work(document)
+    loaded = parse_work(document)
+    work = loaded.work
     if not work.doi:
         raise ValueError('Crossref work states no DOI')
     return CrossrefResult(
-        metadata=paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(crossref=work)),
+        metadata=paper_metadata.to_canonical_bytes(
+            litcache_pb2.PaperMetadata(crossref=work, crossref_json=loaded.text)
+        ),
         external_ids=litcache_pb2.ExternalIds(doi=work.doi),
         publisher=work.publisher if work.HasField('publisher') else None,
     )

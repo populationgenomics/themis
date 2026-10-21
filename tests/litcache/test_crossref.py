@@ -1,11 +1,11 @@
-"""Crossref: the work record loaded whole into its mirror, for DOI-only papers.
+"""Crossref: the work record loaded into its mirror and kept as text, for DOI-only papers.
 
 The loader runs against committed Crossref responses — the OA paper's and a bioRxiv preprint's
 (Crossref metadata is CC0, so both are redistributable); neither carries a PMID, so they exercise
 the DOI-only path. The fetch path is driven by an httpx2 `MockTransport`. Live Crossref is
 integration-gated: `LITCACHE_CROSSREF_LIVE_DOI` resolves one DOI, and `LITCACHE_CROSSREF_LIVE_SAMPLE`
-runs the round-trip gate over that many random works — records the fixtures never saw, which is
-where the mirror's lag behind the index shows first.
+loads that many random works, each into its mirror without drift and into text that parses back to
+the work served — records the fixtures never saw, where a declared key changing shape shows first.
 """
 
 from __future__ import annotations
@@ -14,15 +14,13 @@ import asyncio
 import json
 import os
 import pathlib
-from collections.abc import Mapping
 
 import httpx2
 import pytest
 
 from themis.common import constants
 from themis.litcache import crossref, mirror, paper_metadata
-from themis.litcache.models import crossref_pb2, litcache_pb2
-from themis.testing import mirror_roundtrip
+from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _CROSSREF_JSON = _FIXTURES / 'oa' / 'crossref.json'
@@ -34,39 +32,16 @@ def _message(path: pathlib.Path) -> dict[str, object]:
     return json.loads(path.read_bytes())['message']
 
 
-def _unwrap(node: object) -> object:
-    """The inverse of `crossref.wrap`, over the proto3-JSON the mirror serialises to."""
-    if isinstance(node, Mapping):
-        unwrapped: dict[str, object] = {}
-        for key, value in node.items():
-            if key == 'date-parts' and isinstance(value, list):
-                unwrapped[key] = [inner.get('parts', []) for inner in value]
-            elif key == 'relation' and isinstance(value, Mapping):
-                unwrapped[key] = {kind: items.get('items', []) for kind, items in value.items()}
-            elif key == 'timestamp' and isinstance(value, str):
-                unwrapped[key] = int(value)  # int64 serialises as a JSON string
-            else:
-                unwrapped[key] = _unwrap(value)
-        return unwrapped
-    if isinstance(node, list):
-        return [_unwrap(item) for item in node]
-    return node
-
-
-def _unwrap_document(document: dict[str, object]) -> dict[str, object]:
-    unwrapped = _unwrap(document)
-    assert isinstance(unwrapped, dict)
-    return unwrapped
-
-
 @pytest.mark.parametrize(
     ('fixture', 'doi', 'kind'),
     [('oa', _DOI, 'journal-article'), ('preprint', _PREPRINT_DOI, 'posted-content')],
 )
 def test_parse_work_loads_the_record_whole(fixture: str, doi: str, kind: str) -> None:
     source = _message(_FIXTURES / fixture / 'crossref.json')
-    work = crossref.parse_work(source)
+    loaded = crossref.parse_work(source)
+    work = loaded.work
 
+    assert mirror.parse_text(loaded.text) == source
     assert work.doi == doi
     assert work.type == kind
     assert work.title[0]
@@ -74,12 +49,6 @@ def test_parse_work_loads_the_record_whole(fixture: str, doi: str, kind: str) ->
     assert len(work.reference) == len(source['reference'])  # pyright: ignore[reportArgumentType]
     assert work.is_referenced_by_count == source['is-referenced-by-count']
     assert work.issued.date_parts[0].parts[0] >= 2017
-
-
-@pytest.mark.parametrize('fixture', ['oa', 'preprint'])
-def test_round_trip_is_lossless(fixture: str) -> None:
-    source = _message(_FIXTURES / fixture / 'crossref.json')
-    mirror_roundtrip.assert_lossless(source, crossref.parse_work(source), _unwrap_document)
 
 
 def test_wrap_drops_the_unknown_date_null_and_wraps_relations() -> None:
@@ -92,7 +61,7 @@ def test_wrap_drops_the_unknown_date_null_and_wraps_relations() -> None:
             'published': {'date-parts': [[2019, 5]]},
             'relation': {'is-preprint-of': [{'id-type': 'doi', 'id': '10.1/final', 'asserted-by': 'subject'}]},
         }
-    )
+    ).work
     assert list(work.issued.date_parts[0].parts) == []
     assert list(work.published.date_parts[0].parts) == [2019, 5]
     assert work.relation['is-preprint-of'].items[0].id == '10.1/final'
@@ -101,7 +70,7 @@ def test_wrap_drops_the_unknown_date_null_and_wraps_relations() -> None:
 def test_a_null_array_element_is_dropped() -> None:
     # Crossref emits `role: [null]` on some dissertation contributors; proto3-JSON holds no null
     # element, and the record carries nothing in it.
-    work = crossref.parse_work({'DOI': _DOI, 'contributor': [{'sequence': 'additional', 'role': [None]}]})
+    work = crossref.parse_work({'DOI': _DOI, 'contributor': [{'sequence': 'additional', 'role': [None]}]}).work
     assert work.contributor[0].sequence == 'additional'
     assert len(work.contributor[0].role) == 0
 
@@ -117,24 +86,28 @@ def test_an_empty_doi_fails_loud() -> None:
         crossref.from_crossref_work({'DOI': '', 'title': ['t']})
 
 
-def test_a_key_the_mirror_lacks_is_schema_drift() -> None:
-    with pytest.raises(mirror.SchemaDriftError) as excinfo:
-        crossref.parse_work({'DOI': _DOI, 'title': ['T'], 'colour': 'blue'})
-    assert excinfo.value.index == 'crossref'
-    assert 'colour' in excinfo.value.detail
-    assert '\n' not in excinfo.value.detail  # the key, not the list of every field the mirror declares
+def test_a_key_the_mirror_lacks_is_kept_in_the_text_and_fails_nothing() -> None:
+    source = {'DOI': _DOI, 'title': ['T'], 'colour': 'blue', 'author': [{'family': 'F', 'colour': 'red'}]}
+    loaded = crossref.parse_work(source)
+    assert list(loaded.work.title) == ['T']
+    assert mirror.parse_text(loaded.text) == source
 
 
 def test_a_value_of_a_shape_the_field_cannot_hold_is_schema_drift() -> None:
-    with pytest.raises(mirror.SchemaDriftError, match='title'):
+    with pytest.raises(mirror.SchemaDriftError) as excinfo:
         crossref.parse_work({'DOI': _DOI, 'title': 'not an array'})
+    assert excinfo.value.index == 'crossref'
+    assert 'title' in excinfo.value.detail
+    assert '\n' not in excinfo.value.detail  # the key, not the list of every field the mirror declares
 
 
-def test_from_crossref_work_envelopes_the_record_and_harvests_the_doi() -> None:
-    result = crossref.from_crossref_work(_message(_CROSSREF_JSON))
+def test_from_crossref_work_envelopes_the_record_in_both_forms_and_harvests_the_doi() -> None:
+    source = _message(_CROSSREF_JSON)
+    result = crossref.from_crossref_work(source)
     envelope = paper_metadata.parse(result.metadata)
 
     assert envelope.HasField('crossref')
+    assert mirror.parse_text(envelope.crossref_json) == source
     assert not envelope.HasField('pubmed')
     assert envelope.crossref.doi == _DOI
     assert 'Whole exome sequencing' in paper_metadata.title(envelope)
@@ -193,9 +166,9 @@ def test_live_crossref() -> None:
 
 @pytest.mark.skipif(
     not os.environ.get('LITCACHE_CROSSREF_LIVE_SAMPLE'),
-    reason='set LITCACHE_CROSSREF_LIVE_SAMPLE to a sample size to run the round-trip gate over live works',
+    reason='set LITCACHE_CROSSREF_LIVE_SAMPLE to a sample size to load that many live works',
 )
-def test_live_crossref_sample_round_trips() -> None:
+def test_live_crossref_sample_loads() -> None:
     size = int(os.environ['LITCACHE_CROSSREF_LIVE_SAMPLE'])
 
     async def run() -> list[dict[str, object]]:
@@ -207,5 +180,4 @@ def test_live_crossref_sample_round_trips() -> None:
             return response.json()['message']['items']
 
     for source in asyncio.run(run()):
-        work: crossref_pb2.Work = crossref.parse_work(source)
-        mirror_roundtrip.assert_lossless(source, work, _unwrap_document)
+        assert mirror.parse_text(crossref.parse_work(source).text) == source

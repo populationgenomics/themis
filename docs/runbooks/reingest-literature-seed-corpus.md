@@ -75,6 +75,11 @@ finished, run no ingestion job built before the new record shape: its skip write
 seed's ids are the manifest's, in the shape it was built with, and the refresh never replaces a record that exists. The
 bucket is versioned with a 30-day noncurrent window, so the deletion is recoverable for that long.
 
+An additive change to the envelope needs no such haste. A record written before the envelope gained a field stays
+readable without it, so the deletion can wait for a convenient hour, and between the deletion and the refresh
+`describe_paper` titles each paper by its DOI or PMID rather than failing. The JSON text stored beside the Crossref and
+OpenAlex mirrors is such a change: a record written before it holds the mirror alone, and the refresh gives it the text.
+
 ```sh
 gcloud storage rm "gs://$FULLTEXT/papers/**/metadata.pb"
 uv run --group litcache python -m tools.litcache.refresh_metadata --project="$PROJECT" --dry-run
@@ -94,8 +99,10 @@ and why, and the reasons are of two kinds. A transport failure ends the run with
 miss (`metadata unresolved`) can be litfetch's batched resolver abandoning a lookup it could not complete in time; both
 are re-run. The rest stay on the list however often it runs and are reviewed, not retried: a manifest with neither pmid
 nor doi (nothing to resolve on), an unreadable manifest, a record that fails the store's precondition
-(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record its mirror does not hold
-(`schema drift:`, repaired by adding the field to the mirror). A miss that persists is a paper no index has a record
+(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record holding a value its mirror
+cannot hold under a key the mirror declares (`schema drift:`, repaired by changing that field of the mirror). A key the
+index adds causes it only if its value is a NaN or an infinite number, which standard JSON text cannot carry; otherwise
+the mirror drops the key, and the JSON text beside it keeps it. A miss that persists is a paper no index has a record
 for.
 
 A **full rebuild** is the same operation over the whole prefix — the path when the conversions themselves must change,

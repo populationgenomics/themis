@@ -1,8 +1,8 @@
 """Resolve a paper's identifier to its `metadata.pb` (a `PaperMetadata` envelope).
 
-The envelope carries the resolving index's record whole, in that index's own schema: PubMed's
-journal or book record as efetch answers a PMID, in the envelope's `pubmed` field, or a Crossref
-or OpenAlex record in its own field for a paper PubMed does not index. Two entry points:
+The envelope carries the resolving index's record: PubMed's journal or book record as efetch
+answers a PMID, in the envelope's `pubmed` field, or for a paper PubMed does not index a Crossref or
+OpenAlex record, in its mirror and as JSON text beside it. Two entry points:
 
 - `resolve_metadata` — the per-paper ladder: a PMID resolves through PubMed efetch
   (`themis.litcache.efetch`), else the DOI falls to Crossref (`themis.litcache.crossref`).
@@ -21,7 +21,7 @@ or OpenAlex record in its own field for a paper PubMed does not index. Two entry
   paper efetch answers with a record that fails the store's precondition is a
   `RecordPreconditionFailure` carrying the reason: the record exists, so no other source is
   tried in its place. An OpenAlex record that does not fit its mirror is a `SchemaDriftFailure`
-  carrying the parser's message, charged to its paper alone.
+  carrying the message naming the key, charged to its paper alone.
 
 efetch harvests the cross-ids from the record's own id lists: DOI↔PMID↔PMCID for a
 journal record, PMID and the Bookshelf accession for a book record.
@@ -109,10 +109,11 @@ class SchemaDriftFailure:
     """A paper whose index record does not fit its mirror (`mirror.SchemaDriftError`).
 
     The record exists, so the paper is not unknown and no other source is tried in its place; the
-    fault is the mirror's lag, repaired by its field, and no `metadata.pb` is written until then.
+    fault is a key the mirror declares holding a value of another shape, repaired by the mirror's
+    field, and no `metadata.pb` is written until then.
 
     Attributes:
-        reason: The parser's message naming the key, as `mirror.SchemaDriftError.detail` states it.
+        reason: The message naming the key, as `mirror.SchemaDriftError.detail` states it.
     """
 
     reason: str
@@ -343,11 +344,11 @@ async def _resolve_doi_batch(
             continue
         work = parsed.works.get(request.doi)
         if work is not None:
-            pmcid = cross_ids[request.doi].pmcid or openalex.bare_pmcid(work)
+            pmcid = cross_ids[request.doi].pmcid or openalex.bare_pmcid(work.work)
             outcomes[request.join_key] = ResolvedPaper(
                 metadata=openalex.to_metadata(work),
-                external_ids=litcache_pb2.ExternalIds(doi=request.doi, pmid=openalex.bare_pmid(work), pmcid=pmcid),
-                publisher=openalex.publisher(work),
+                external_ids=litcache_pb2.ExternalIds(doi=request.doi, pmid=openalex.bare_pmid(work.work), pmcid=pmcid),
+                publisher=openalex.publisher(work.work),
             )
         elif request.doi in parsed.drifted:
             outcomes[request.join_key] = SchemaDriftFailure(reason=parsed.drifted[request.doi])

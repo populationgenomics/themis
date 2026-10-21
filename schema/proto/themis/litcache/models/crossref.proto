@@ -1,15 +1,15 @@
 // A Crossref work record, mirrored from the `works` endpoint's JSON: every field is an upstream key,
-// `json_name` is that key verbatim, and the record is loaded strictly, so a key this file lacks fails
-// the parse rather than being dropped (docs/design/proto.md, "Mirrored upstream schemas"). Drafted
-// from https://api.crossref.org/swagger-docs, which lags and mis-states live records; the live record
-// wins.
+// `json_name` is that key verbatim. A key this file lacks is dropped from the mirror's copy and kept
+// in the record's JSON text stored beside it (docs/design/litcache-manifest.md, "The bibliographic
+// record"). Drafted from https://api.crossref.org/swagger-docs, which lags and mis-states live
+// records; the live record wins.
 //
 // Shapes proto has no equivalent for are wrapped before the parse: `date-parts` is an array of
 // arrays, each inner array becoming a `DateParts`, less the trailing null Crossref states an unknown
 // date with (a null between stated parts fails the parse); `relation` maps each relation type to an
 // array, each becoming a `RelationList`; a null element of any other array is dropped.
 //
-// Fields are ordered by upstream key; a key the upstream adds is appended with the next number.
+// Fields are ordered by upstream key; a field added here is appended with the next number.
 
 syntax = "proto3";
 

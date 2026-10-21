@@ -48,12 +48,12 @@ the docling json *is* the extracted full text.
   needs no live fetch. Redistributable as the article's CC-BY record.
 - `crossref.json` — the Crossref `works` response for DOI
   `10.1186/s13073-017-0482-5` (`api.crossref.org/works/<doi>`). Deterministic input
-  for S11b-2 (the record loaded whole into the Crossref mirror, and the mirror's
-  round-trip gate); the response carries no PMID, so it exercises the DOI-only path.
+  for S11b-2 (the record loaded into the Crossref mirror and kept as JSON text); the
+  response carries no PMID, so it exercises the DOI-only path.
   Crossref metadata is CC0, so redistributable.
 - `openalex.json` — the OpenAlex `works` response for the same DOI
   (`api.openalex.org/works?filter=doi:<doi>`), one result. Deterministic input for the
-  OpenAlex mirror and its round-trip gate; the work states the paper's PMID and PMCID.
+  OpenAlex mirror and the record's JSON text; the work states the paper's PMID and PMCID.
   OpenAlex data is CC0.
 
 ### `nonoa/` — synthetic non-OA paper

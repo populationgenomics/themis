@@ -277,9 +277,9 @@ def test_resolve_batch_non_pubmed_doi_uses_the_openalex_record() -> None:
 
 
 def test_resolve_batch_charges_a_drifted_openalex_record_to_its_paper_alone() -> None:
-    # OpenAlex answers with a work carrying a key the mirror lacks: the paper is a SchemaDriftFailure
-    # naming the key, not a record stored thinned, and the paper beside it resolves.
-    drifted = _oa_work(_DOI_UNKNOWN, pmid=None, title='Drifted') | {'is_zpac': True}
+    # OpenAlex answers with a work whose declared key holds a value of another shape: the paper is a
+    # SchemaDriftFailure naming the key, and the paper beside it resolves.
+    drifted = _oa_work(_DOI_UNKNOWN, pmid=None, title='Drifted') | {'publication_year': 'soon'}
     handler = _doi_handler(idconv_pmc=False, openalex=[_oa_work(_DOI, pmid=None, title='Fine'), drifted])
     resolved = _resolve_batch(
         handler,
@@ -292,18 +292,29 @@ def test_resolve_batch_charges_a_drifted_openalex_record_to_its_paper_alone() ->
     assert paper_metadata.title(_record(_resolved(resolved, 'fine').metadata)) == 'Fine'
     outcome = resolved['drifted']
     assert isinstance(outcome, resolve.SchemaDriftFailure)
-    assert 'is_zpac' in outcome.reason
+    assert 'publication_year' in outcome.reason
 
 
 def test_a_drifted_crossref_record_raises_schema_drift_naming_the_key() -> None:
+    work = json.loads(_CROSSREF_JSON)
+    work['message']['title'] = 'not an array'
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=json.dumps(work).encode())
+
+    with pytest.raises(mirror.SchemaDriftError, match='title'):
+        _resolve(handler, pmid=None, doi=_DOI)
+
+
+def test_a_crossref_key_the_mirror_lacks_is_stored_in_the_text() -> None:
     work = json.loads(_CROSSREF_JSON)
     work['message']['colour'] = 'blue'
 
     def handler(_request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, content=json.dumps(work).encode())
 
-    with pytest.raises(mirror.SchemaDriftError, match='colour'):
-        _resolve(handler, pmid=None, doi=_DOI)
+    envelope = _record(_resolve(handler, pmid=None, doi=_DOI).metadata)
+    assert mirror.parse_text(envelope.crossref_json)['colour'] == 'blue'
 
 
 def test_resolve_batch_batches_pmids_into_one_efetch_call() -> None:

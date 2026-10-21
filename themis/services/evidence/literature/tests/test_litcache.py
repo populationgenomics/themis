@@ -911,7 +911,7 @@ def _store_over(resolver: ingest.MetadataResolver) -> litcache_store.Store:
     'error',
     [
         efetch.RecordPreconditionError('two Bookshelf accessions'),
-        mirror.SchemaDriftError('crossref', 'unknown key "foo"'),
+        mirror.SchemaDriftError('crossref', 'title: not an array'),
         ingest.UnstorableRecordError('not a PaperMetadata envelope'),
     ],
     ids=['precondition', 'schema-drift', 'unstorable-record'],

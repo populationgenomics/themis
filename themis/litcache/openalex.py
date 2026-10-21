@@ -3,17 +3,18 @@
 The batchable DOI resolver for the papers idconv cannot route — idconv is PMC-scoped, so a DOI in
 PubMed-but-not-PMC (subscription journals, the bulk of a DOI-only seed) or not in PubMed at all
 (preprints) never reaches efetch through it. OpenAlex's works endpoint takes up to `_MAX_IDS` DOIs
-in one filter query and returns each work whole. The record is stored as the envelope's `openalex`
-field in OpenAlex's own schema (`openalex.proto`, a mirror of the JSON), loaded strictly
-(`themis.litcache.mirror`); the one shape the mirror's header names, `abstract_inverted_index`, an
-object whose values are arrays, becomes a `Positions` per word before the parse.
+in one filter query and returns each work whole. The record is stored twice in the envelope: in
+the `openalex` field, in OpenAlex's own schema (`openalex.proto`, a mirror of the JSON) with every
+key the mirror does not declare dropped, and in `openalex_json` as JSON text with every key kept
+(`themis.litcache.mirror`). The one shape the mirror's header names, `abstract_inverted_index`, an
+object whose values are arrays, becomes a `Positions` per word before the mirror's parse.
 
 Two surfaces over one fetch, matching the litfetch/litcache seam: the cross-ids a work carries
 (`pmid`, `pmcid`, read bare from their URL forms) are the id-resolution half — the ladder
 (`themis.litcache.resolve`) prefers them, routing a discovered `pmid` back into batched efetch for
 a PubMed-native record — and the record itself is the bibliographic half litcache owns, taken for
 the no-`pmid` residual. A DOI OpenAlex does not know is absent from the result — the caller's
-`unknown`, never invented; a work whose record does not fit the mirror is charged to its DOI alone.
+`unknown`, never invented; a work whose record the mirror cannot hold is charged to its DOI alone.
 """
 
 from __future__ import annotations
@@ -38,15 +39,18 @@ _PMID_PREFIX = 'https://pubmed.ncbi.nlm.nih.gov/'
 _PMCID_PREFIX = 'https://www.ncbi.nlm.nih.gov/pmc/articles/'
 
 
-class ParsedWorks(NamedTuple):
-    """A works response read into the mirror, keyed by bare DOI.
+type LoadedWork = mirror.Loaded[openalex_pb2.Work]
 
-    `works` holds every record that fits the mirror; `drifted` holds, for every record that does
-    not, the parser's message naming the key (`mirror.SchemaDriftError.detail`). No DOI is in
+
+class ParsedWorks(NamedTuple):
+    """A works response read into both stored forms, keyed by bare DOI.
+
+    `works` holds every record the mirror and the text hold; `drifted` holds, for every record one
+    of them cannot, the message naming the key (`mirror.SchemaDriftError.detail`). No DOI is in
     both; a DOI the response does not answer is in neither — the caller's `unknown`.
     """
 
-    works: dict[str, openalex_pb2.Work]
+    works: dict[str, LoadedWork]
     drifted: dict[str, str]
 
 
@@ -59,14 +63,14 @@ def wrap(record: Mapping[str, object]) -> dict[str, object]:
     return wrapped
 
 
-def parse_work(record: Mapping[str, object]) -> openalex_pb2.Work:
-    """Load one work into the mirror.
+def parse_work(record: Mapping[str, object]) -> LoadedWork:
+    """Load one work into the mirror and serialise it as text.
 
     Raises:
-        mirror.SchemaDriftError: If the record carries a key the mirror lacks, or a value of a shape
-            its field cannot hold.
+        mirror.SchemaDriftError: If a key the mirror declares holds a value of a shape its field
+            cannot hold, or the record holds a number standard JSON text cannot carry.
     """
-    return mirror.parse_strict(wrap(record), openalex_pb2.Work(), index=INDEX)
+    return mirror.load(record, openalex_pb2.Work(), index=INDEX, wrap=wrap)
 
 
 def _bare(value: str, prefix: str) -> str:
@@ -121,8 +125,8 @@ def parse_response(payload: bytes) -> ParsedWorks:
     """Read a works-response payload into the mirror, keyed by bare DOI.
 
     A result stating no DOI is skipped: the batch is keyed by DOI, so nothing could claim it. A
-    record that does not fit the mirror is charged to its DOI in `drifted`, and the rest of the
-    response reads regardless.
+    record the mirror or the text cannot hold is charged to its DOI in `drifted`, and the rest of
+    the response reads regardless.
 
     Raises:
         ValueError: If the payload is not a works response (`results` absent, or a result that is
@@ -132,7 +136,7 @@ def parse_response(payload: bytes) -> ParsedWorks:
     document = json.loads(payload)
     if not isinstance(document, Mapping) or not isinstance(document.get('results'), list):
         raise ValueError('expected an OpenAlex works response with a `results` list')
-    works: dict[str, openalex_pb2.Work] = {}
+    works: dict[str, LoadedWork] = {}
     drifted: dict[str, str] = {}
     for record in document['results']:
         if not isinstance(record, Mapping):
@@ -150,7 +154,7 @@ def parse_response(payload: bytes) -> ParsedWorks:
 
 async def resolve(dois: Sequence[str], *, http_client: httpx2.AsyncClient) -> ParsedWorks:
     """Resolve a batch of DOIs to their OpenAlex works, chunked to the OR-filter cap."""
-    works: dict[str, openalex_pb2.Work] = {}
+    works: dict[str, LoadedWork] = {}
     drifted: dict[str, str] = {}
     for start in range(0, len(dois), _MAX_IDS):
         chunk = dois[start : start + _MAX_IDS]
@@ -160,10 +164,10 @@ async def resolve(dois: Sequence[str], *, http_client: httpx2.AsyncClient) -> Pa
     return ParsedWorks(works=works, drifted=drifted)
 
 
-def to_metadata(work: openalex_pb2.Work) -> bytes:
-    """The canonical `metadata.pb` bytes for a paper whose record is OpenAlex's.
+def to_metadata(work: LoadedWork) -> bytes:
+    """The canonical `metadata.pb` bytes for a paper whose record is OpenAlex's, in both forms.
 
     The residual path — a DOI OpenAlex resolved but that carries no `pmid` (a preprint or otherwise
     non-PubMed work), so there is no efetch record to prefer.
     """
-    return paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(openalex=work))
+    return paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(openalex=work.work, openalex_json=work.text))

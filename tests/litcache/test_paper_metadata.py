@@ -29,6 +29,8 @@ def _book(*, chapter_title: str | None, book_title: str) -> litcache_pb2.PubmedR
         litcache_pb2.PaperMetadata(pubmed=_article('T')),
         litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
         litcache_pb2.PaperMetadata(openalex=openalex_pb2.Work(id='W1')),
+        litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json='{"DOI":"10.1/x"}'),
+        litcache_pb2.PaperMetadata(openalex=openalex_pb2.Work(id='W1'), openalex_json='{"id":"W1"}'),
     ],
 )
 def test_bytes_round_trip_for_each_index(envelope: litcache_pb2.PaperMetadata) -> None:
@@ -45,6 +47,27 @@ def test_an_envelope_with_no_record_fails_both_ways() -> None:
 def test_a_pubmed_record_in_neither_kind_fails() -> None:
     with pytest.raises(ValueError, match='neither of its kinds'):
         paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()))
+
+
+@pytest.mark.parametrize('text', ['[]', 'null', '"x"', '{', '{"n": NaN}'])
+def test_a_json_field_that_is_not_a_json_object_fails_both_ways(text: str) -> None:
+    envelope = litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json=text)
+    with pytest.raises(ValueError, match='crossref_json is not a JSON object'):
+        paper_metadata.to_canonical_bytes(envelope)
+    with pytest.raises(ValueError, match='crossref_json is not a JSON object'):
+        paper_metadata.parse(envelope.SerializeToString())
+
+
+@pytest.mark.parametrize(
+    'envelope',
+    [
+        litcache_pb2.PaperMetadata(crossref_json='{"DOI":"10.1/x"}'),
+        litcache_pb2.PaperMetadata(openalex_json='{"id":"W1"}'),
+    ],
+)
+def test_a_json_field_without_its_mirror_fails(envelope: litcache_pb2.PaperMetadata) -> None:
+    with pytest.raises(ValueError, match='without its mirror'):
+        paper_metadata.to_canonical_bytes(envelope)
 
 
 def test_bytes_that_are_not_an_envelope_fail() -> None:

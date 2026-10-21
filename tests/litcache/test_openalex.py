@@ -1,10 +1,11 @@
-"""OpenAlex: the batch DOI resolver, and the work record loaded whole into its mirror.
+"""OpenAlex: the batch DOI resolver, and the work record loaded into its mirror and kept as text.
 
 Synthetic works exercise the id half (bare ids off their URL forms, the batch keyed by DOI);
 committed OpenAlex responses — the OA paper's and a bioRxiv preprint's (OpenAlex data is CC0) —
-exercise the record half and the round-trip gate. Live OpenAlex is integration-gated:
-`LITCACHE_OPENALEX_LIVE_DOI` resolves one DOI, and `LITCACHE_OPENALEX_LIVE_SAMPLE` runs the
-round-trip gate over that many random works — where the mirror's lag behind the index shows first.
+exercise the record half. Live OpenAlex is integration-gated: `LITCACHE_OPENALEX_LIVE_DOI`
+resolves one DOI, and `LITCACHE_OPENALEX_LIVE_SAMPLE` loads that many random works, each into its
+mirror without drift and into text that parses back to the work served — where a declared key
+changing shape shows first.
 """
 
 from __future__ import annotations
@@ -14,15 +15,12 @@ import json
 import os
 import pathlib
 import random
-from collections.abc import Mapping
 
 import httpx2
 import pytest
 
 from themis.common import constants
 from themis.litcache import mirror, openalex, paper_metadata
-from themis.litcache.models import openalex_pb2
-from themis.testing import mirror_roundtrip
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _DOI = '10.1186/s13073-017-0482-5'
@@ -53,15 +51,6 @@ def _fixture_work(fixture: str) -> dict[str, object]:
     return json.loads((_FIXTURES / fixture / 'openalex.json').read_bytes())['results'][0]
 
 
-def _unwrap(document: dict[str, object]) -> dict[str, object]:
-    """The inverse of `openalex.wrap`, over the proto3-JSON the mirror serialises to."""
-    unwrapped = dict(document)
-    index = unwrapped.get('abstract_inverted_index')
-    if isinstance(index, Mapping):
-        unwrapped['abstract_inverted_index'] = {word: entry.get('positions', []) for word, entry in index.items()}
-    return unwrapped
-
-
 def test_parse_response_reads_bare_ids_off_their_url_forms() -> None:
     records = [
         _work(_DOI_A),
@@ -77,12 +66,13 @@ def test_parse_response_reads_bare_ids_off_their_url_forms() -> None:
 
     assert set(parsed.works) == {_DOI_A, _DOI_B}
     assert parsed.drifted == {}
-    assert parsed.works[_DOI_A].doi == f'https://doi.org/{_DOI_A}'
-    assert openalex.bare_pmid(parsed.works[_DOI_A]) == '111'
-    assert openalex.publisher(parsed.works[_DOI_A]) == 'Pub A'
-    assert openalex.bare_pmid(parsed.works[_DOI_B]) is None
-    assert openalex.publisher(parsed.works[_DOI_B]) is None
-    assert parsed.works[_DOI_B].type == 'preprint'
+    work_a, work_b = parsed.works[_DOI_A].work, parsed.works[_DOI_B].work
+    assert work_a.doi == f'https://doi.org/{_DOI_A}'
+    assert openalex.bare_pmid(work_a) == '111'
+    assert openalex.publisher(work_a) == 'Pub A'
+    assert openalex.bare_pmid(work_b) is None
+    assert openalex.publisher(work_b) is None
+    assert work_b.type == 'preprint'
 
 
 def test_parse_skips_records_without_a_doi() -> None:
@@ -95,22 +85,30 @@ def test_parse_rejects_a_non_works_payload() -> None:
         openalex.parse_response(json.dumps({'meta': {'count': 0}}).encode())
 
 
-def test_a_record_that_does_not_fit_the_mirror_is_charged_to_its_doi_alone() -> None:
-    parsed = openalex.parse_response(_response([_work(_DOI_A), _work(_DOI_B, is_zpac=True)]))
+def test_a_record_the_mirror_cannot_hold_is_charged_to_its_doi_alone() -> None:
+    parsed = openalex.parse_response(_response([_work(_DOI_A), _work(_DOI_B, publication_year='soon')]))
 
     assert set(parsed.works) == {_DOI_A}
     assert set(parsed.drifted) == {_DOI_B}
-    assert 'is_zpac' in parsed.drifted[_DOI_B]
+    assert 'publication_year' in parsed.drifted[_DOI_B]
 
 
 def test_parse_work_names_the_index_in_the_drift() -> None:
     with pytest.raises(mirror.SchemaDriftError) as excinfo:
-        openalex.parse_work(_work(_DOI_A, is_zpac=True))
+        openalex.parse_work(_work(_DOI_A, publication_year='soon'))
     assert excinfo.value.index == 'openalex'
 
 
+def test_a_key_the_mirror_lacks_is_kept_in_the_text_and_fails_nothing() -> None:
+    source = _work(_DOI_A, is_zpac=True, primary_location={'source': {'display_name': 'J'}, 'doi': 'x'})
+    parsed = openalex.parse_response(_response([source]))
+
+    assert parsed.drifted == {}
+    assert mirror.parse_text(parsed.works[_DOI_A].text) == source
+
+
 def test_wrap_wraps_the_inverted_index() -> None:
-    work = openalex.parse_work(_work(_DOI_A, abstract_inverted_index={'The': [0, 5], 'gene': [1]}))
+    work = openalex.parse_work(_work(_DOI_A, abstract_inverted_index={'The': [0, 5], 'gene': [1]})).work
     assert list(work.abstract_inverted_index['The'].positions) == [0, 5]
     assert list(work.abstract_inverted_index['gene'].positions) == [1]
 
@@ -137,7 +135,7 @@ def test_resolve_drives_fetch_with_a_doi_filter() -> None:
 
     parsed = asyncio.run(run())
     assert seen['filter'] == f'doi:{_DOI_A}'
-    assert parsed.works[_DOI_A].title == 'Title A'
+    assert parsed.works[_DOI_A].work.title == 'Title A'
 
 
 @pytest.mark.parametrize(
@@ -146,8 +144,10 @@ def test_resolve_drives_fetch_with_a_doi_filter() -> None:
 )
 def test_fixture_work_loads_whole(fixture: str, doi: str, pmid: str | None) -> None:
     source = _fixture_work(fixture)
-    work = openalex.parse_work(source)
+    loaded = openalex.parse_work(source)
+    work = loaded.work
 
+    assert mirror.parse_text(loaded.text) == source
     assert work.doi == f'https://doi.org/{doi}'
     assert openalex.bare_pmid(work) == pmid
     assert work.title
@@ -156,19 +156,15 @@ def test_fixture_work_loads_whole(fixture: str, doi: str, pmid: str | None) -> N
     assert work.open_access.oa_status
 
 
-@pytest.mark.parametrize('fixture', ['oa', 'preprint'])
-def test_round_trip_is_lossless(fixture: str) -> None:
-    source = _fixture_work(fixture)
-    mirror_roundtrip.assert_lossless(source, openalex.parse_work(source), _unwrap)
-
-
-def test_to_metadata_envelopes_the_record() -> None:
-    work = openalex.parse_work(_fixture_work('preprint'))
+def test_to_metadata_envelopes_the_record_in_both_forms() -> None:
+    source = _fixture_work('preprint')
+    work = openalex.parse_work(source)
     envelope = paper_metadata.parse(openalex.to_metadata(work))
 
-    assert envelope.HasField('openalex')
+    assert envelope.openalex == work.work
+    assert mirror.parse_text(envelope.openalex_json) == source
     assert not envelope.HasField('pubmed')
-    assert paper_metadata.title(envelope) == work.title
+    assert paper_metadata.title(envelope) == work.work.title
 
 
 @pytest.mark.skipif(
@@ -189,9 +185,9 @@ def test_live_openalex() -> None:
 
 @pytest.mark.skipif(
     not os.environ.get('LITCACHE_OPENALEX_LIVE_SAMPLE'),
-    reason='set LITCACHE_OPENALEX_LIVE_SAMPLE to a sample size to run the round-trip gate over live works',
+    reason='set LITCACHE_OPENALEX_LIVE_SAMPLE to a sample size to load that many live works',
 )
-def test_live_openalex_sample_round_trips() -> None:
+def test_live_openalex_sample_loads() -> None:
     size = int(os.environ['LITCACHE_OPENALEX_LIVE_SAMPLE'])
 
     async def run() -> list[dict[str, object]]:
@@ -209,5 +205,4 @@ def test_live_openalex_sample_round_trips() -> None:
             return response.json()['results']
 
     for source in asyncio.run(run()):
-        work: openalex_pb2.Work = openalex.parse_work(source)
-        mirror_roundtrip.assert_lossless(source, work, _unwrap)
+        assert mirror.parse_text(openalex.parse_work(source).text) == source
