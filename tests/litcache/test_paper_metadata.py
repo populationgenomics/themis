@@ -29,7 +29,6 @@ def _book(*, chapter_title: str | None, book_title: str) -> litcache_pb2.PubmedR
         litcache_pb2.PaperMetadata(pubmed=_article('T')),
         litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
         litcache_pb2.PaperMetadata(openalex=openalex_pb2.Work(id='W1')),
-        litcache_pb2.PaperMetadata(pubmed=_article('T'), openalex=openalex_pb2.Work(id='W1')),
     ],
 )
 def test_bytes_round_trip_for_each_index(envelope: litcache_pb2.PaperMetadata) -> None:
@@ -53,20 +52,21 @@ def test_bytes_that_are_not_an_envelope_fail() -> None:
         paper_metadata.parse(b'\xff\xff\xff')
 
 
-def test_title_prefers_pubmed_then_crossref_then_openalex() -> None:
-    crossref = crossref_pb2.Work(title=['Crossref title'])
-    openalex = openalex_pb2.Work(title='OpenAlex title')
-    assert paper_metadata.title(litcache_pb2.PaperMetadata(pubmed=_article('PubMed title'), crossref=crossref)) == (
-        'PubMed title'
-    )
-    assert paper_metadata.title(litcache_pb2.PaperMetadata(crossref=crossref, openalex=openalex)) == 'Crossref title'
-    assert paper_metadata.title(litcache_pb2.PaperMetadata(openalex=openalex)) == 'OpenAlex title'
+@pytest.mark.parametrize(
+    ('envelope', 'expected'),
+    [
+        (litcache_pb2.PaperMetadata(pubmed=_article('PubMed title')), 'PubMed title'),
+        (litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(title=['Crossref title'])), 'Crossref title'),
+        (litcache_pb2.PaperMetadata(openalex=openalex_pb2.Work(title='OpenAlex title')), 'OpenAlex title'),
+    ],
+    ids=['pubmed', 'crossref', 'openalex'],
+)
+def test_title_is_the_one_records(envelope: litcache_pb2.PaperMetadata, expected: str) -> None:
+    assert paper_metadata.title(envelope) == expected
 
 
-def test_title_falls_through_a_record_that_states_none() -> None:
-    envelope = litcache_pb2.PaperMetadata(
-        pubmed=_article(''), crossref=crossref_pb2.Work(title=['', 'Second title']), openalex=openalex_pb2.Work()
-    )
+def test_title_of_a_crossref_record_is_its_first_nonempty_title() -> None:
+    envelope = litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(title=['', 'Second title']))
     assert paper_metadata.title(envelope) == 'Second title'
 
 

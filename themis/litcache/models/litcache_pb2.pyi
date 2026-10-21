@@ -264,11 +264,15 @@ class PubmedRecord(_message.Message):
     def __init__(self, article: _Optional[_Union[_pubmed_pb2.PubmedArticle, _Mapping]] = ..., book_article: _Optional[_Union[_pubmed_pb2.PubmedBookArticle, _Mapping]] = ...) -> None: ...
 
 class PaperMetadata(_message.Message):
-    __slots__ = ("pubmed", "crossref", "openalex")
+    __slots__ = ("pubmed", "crossref", "openalex", "crossref_json", "openalex_json")
     PUBMED_FIELD_NUMBER: _ClassVar[int]
     CROSSREF_FIELD_NUMBER: _ClassVar[int]
     OPENALEX_FIELD_NUMBER: _ClassVar[int]
+    CROSSREF_JSON_FIELD_NUMBER: _ClassVar[int]
+    OPENALEX_JSON_FIELD_NUMBER: _ClassVar[int]
     pubmed: PubmedRecord
     crossref: _crossref_pb2.Work
     openalex: _openalex_pb2.Work
-    def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref: _Optional[_Union[_crossref_pb2.Work, _Mapping]] = ..., openalex: _Optional[_Union[_openalex_pb2.Work, _Mapping]] = ...) -> None: ...
+    crossref_json: str
+    openalex_json: str
+    def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref: _Optional[_Union[_crossref_pb2.Work, _Mapping]] = ..., openalex: _Optional[_Union[_openalex_pb2.Work, _Mapping]] = ..., crossref_json: _Optional[str] = ..., openalex_json: _Optional[str] = ...) -> None: ...

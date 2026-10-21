@@ -218,17 +218,28 @@ message PubmedRecord {
   }
 }
 
-// The at-rest type of a paper's `metadata.pb`: one field per index, each holding that index's
-// record whole. protovalidate requires at least one set (docs/design/litcache-manifest.md, "The
-// bibliographic record").
+// The at-rest type of a paper's `metadata.pb`: the record of the index that resolved the paper,
+// whole. A Crossref or OpenAlex record is held in its mirror and as JSON text, which count as one
+// index. Exactly one index is a constraint rather than a oneof (docs/design/litcache-manifest.md,
+// "The bibliographic record").
 message PaperMetadata {
   option (buf.validate.message).cel = {
-    id: "paper_metadata.some_record"
-    message: "at least one index's record must be set"
-    expression: "has(this.pubmed) || has(this.crossref) || has(this.openalex)"
+    id: "paper_metadata.one_index"
+    message: "exactly one index's record must be set"
+    expression:
+      "(has(this.pubmed) ? 1 : 0)"
+      " + ((has(this.crossref) || has(this.crossref_json)) ? 1 : 0)"
+      " + ((has(this.openalex) || has(this.openalex_json)) ? 1 : 0) == 1"
   };
 
   PubmedRecord pubmed = 1;
   themis.litcache.models.crossref.Work crossref = 2;
   themis.litcache.models.openalex.Work openalex = 3;
+  // Crossref's work record as JSON text: the `message` object of its works response, re-serialised
+  // from the parsed response with nothing dropped or renamed. The shortest is `{}`; that the text
+  // parses as a JSON object is checked by `paper_metadata.check`, as no rule here can state it.
+  optional string crossref_json = 4 [(buf.validate.field).string.min_len = 2];
+  // OpenAlex's work record as JSON text: one element of a works response's `results`, re-serialised
+  // from the parsed response with nothing dropped or renamed. Checked as `crossref_json` is.
+  optional string openalex_json = 5 [(buf.validate.field).string.min_len = 2];
 }

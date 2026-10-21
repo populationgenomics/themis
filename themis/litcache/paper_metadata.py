@@ -1,19 +1,28 @@
-"""The `metadata.pb` envelope: its bytes, its constraints, and the summary derived from it.
+"""The `metadata.pb` envelope: its bytes, its constraints, and the title derived from it.
 
-`PaperMetadata` holds each resolving index's record whole (docs/design/litcache-manifest.md, "The
-bibliographic record"). Its constraints — at least one index's record set, PubMed's in exactly
-one of its two kinds — are protovalidate options on the proto, enforced here in code on the way to
-bytes and back. The summary a consumer reads in one shape — the title, today — is derived from
-whichever records are present, PubMed's first.
+`PaperMetadata` holds the record of the index that resolved the paper, whole
+(docs/design/litcache-manifest.md, "The bibliographic record"). Its constraints — exactly one
+index's record set, PubMed's in exactly one of its two kinds — are protovalidate options on the
+proto, enforced here in code on the way to bytes and back, together with one the proto cannot
+state: a JSON record is the text of a JSON object. The title a consumer reads is derived from that
+record.
 """
 
 from __future__ import annotations
+
+import json
 
 from google.protobuf import message
 
 from themis.litcache.models import litcache_pb2
 
-_INDEX_FIELDS = tuple(field.name for field in litcache_pb2.PaperMetadata.DESCRIPTOR.fields)
+# Each index's fields in the envelope; a Crossref or OpenAlex record is held in its mirror and as JSON text.
+INDEX_FIELDS: dict[str, tuple[str, ...]] = {
+    'pubmed': ('pubmed',),
+    'crossref': ('crossref', 'crossref_json'),
+    'openalex': ('openalex', 'openalex_json'),
+}
+_JSON_FIELDS = ('crossref_json', 'openalex_json')
 
 
 def to_canonical_bytes(envelope: litcache_pb2.PaperMetadata) -> bytes:
@@ -42,32 +51,43 @@ def parse(data: bytes) -> litcache_pb2.PaperMetadata:
 
 
 def check(envelope: litcache_pb2.PaperMetadata) -> None:
-    """Raise unless the envelope meets the constraints its proto declares.
+    """Raise unless the envelope meets its constraints.
 
     Raises:
-        ValueError: If no index's record is set, or PubMed's record is set in neither of its kinds.
+        ValueError: If no index's record is set or more than one index's is, PubMed's record is set
+            in neither of its kinds, or a JSON record is set to text that is not a JSON object.
     """
-    if not any(envelope.HasField(name) for name in _INDEX_FIELDS):
+    indexes = [index for index, fields in INDEX_FIELDS.items() if any(envelope.HasField(f) for f in fields)]
+    if not indexes:
         raise ValueError('metadata is a PaperMetadata envelope with no record set')
+    if len(indexes) > 1:
+        raise ValueError(f'metadata holds records of more than one index: {", ".join(indexes)}')
     if envelope.HasField('pubmed') and envelope.pubmed.WhichOneof('kind') is None:
         raise ValueError('metadata carries a PubmedRecord in neither of its kinds')
+    for name in _JSON_FIELDS:
+        if envelope.HasField(name):
+            _check_json_object(name, getattr(envelope, name))
+
+
+def _check_json_object(name: str, text: str) -> None:
+    try:
+        record = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f'metadata field {name} is not a JSON object: {e}') from e
+    if not isinstance(record, dict):
+        raise ValueError(f'metadata field {name} is not a JSON object: it holds a {type(record).__name__}')
 
 
 def title(envelope: litcache_pb2.PaperMetadata) -> str:
-    """The title the envelope's records state, or the empty string when none states one.
+    """The title the envelope's record states, or the empty string when it states none.
 
-    Records are read in order of precedence — PubMed's, then Crossref's, then OpenAlex's — and the
-    first that states a title wins. PubMed's book record states its chapter's title, or the book's
-    when the record is a whole book's.
+    PubMed's book record states its chapter's title, or the book's when the record is a whole book's.
 
     Raises:
         ValueError: If the envelope violates its constraints (see `check`).
     """
     check(envelope)
-    for stated in (_pubmed_title(envelope), _crossref_title(envelope), _openalex_title(envelope)):
-        if stated:
-            return stated
-    return ''
+    return _pubmed_title(envelope) or _crossref_title(envelope) or _openalex_title(envelope)
 
 
 def _pubmed_title(envelope: litcache_pb2.PaperMetadata) -> str:

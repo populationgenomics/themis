@@ -112,11 +112,11 @@ can be a type invented to be common, or an existing source's schema borrowed for
 carries only what the target has a field for, so each source either loses the fields that made it worth querying or
 bends the target's fields to mean something their owner never stated, and it invites code that handles "records" without
 knowing which index answered — the point at which the differences between indexes stop being visible and start being
-bugs. The store applies the same rule at rest: a paper's `metadata.pb` holds each index's record in that index's own
-schema — PubMed's generated from NLM's DTD, Crossref's and OpenAlex's as strict mirrors of the JSON each publishes —
+bugs. The store applies the same rule at rest: a paper's `metadata.pb` holds each index's record as that index states
+it, PubMed's in the proto generated from NLM's DTD and Crossref's and OpenAlex's as JSON text, the value each served,
 never one mapped into another's ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 Sharing is the opposite move, and it is why `FetchPubmedArticles` and the store carry PubMed's record the same way:
-whole, through the schema's own converter, with every field the source states and nothing invented.
+through the schema's own converter, with every field the converter keeps and nothing invented.
 
 The same test is why `SearchEuropePmc` does not answer in `PubmedArticle`, although both rpcs carry a bibliography and
 an abstract. A hit is Europe PMC's JSON, not NLM's XML, so the answer would be a mapping — and the hits Europe PMC holds

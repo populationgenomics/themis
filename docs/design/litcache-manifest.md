@@ -343,70 +343,156 @@ run.
 
 ## The bibliographic record: `metadata.pb`
 
-Beside `manifest.pb`, at the paper's root rather than under a content hash, sits `metadata.pb`: the paper's bibliography
-— title, authors, journal, abstract, the identifiers its index lists. The manifest says what we hold of a paper and
-under what terms; `metadata.pb` says what the paper is. It is regenerated wholesale from its source, never edited in
-place ([`proto.md`](proto.md), bucket 1). This section decides what the record is, and how a reader tells.
+Beside `manifest.pb`, at the paper's root rather than under a content hash, sits `metadata.pb`: the paper's
+bibliography, meaning its title, authors, journal, abstract and the identifiers its index lists. The manifest says what
+we hold of a paper and under what terms; `metadata.pb` says what the paper is. It is regenerated wholesale from the
+indexes, never edited in place ([`proto.md`](proto.md), bucket 1). This section decides what the record holds, what
+makes ingest refuse one, and which fields a consumer reads from it.
 
-**The record is kept whole, in the schema its index publishes.** A paper's metadata is stored as the record its index
-published, in that index's own schema, rather than as a subset of its fields chosen at write time. A subset carries only
-what its author foresaw needing, and what it dropped is gone until someone re-fetches; the whole record costs kilobytes
-and answers questions nobody has asked yet. The same test rules out storing one index's record mapped into another's
-schema: a Crossref work squeezed into `PubmedArticle` keeps only the fields PubMed happens to have a slot for, and a
-reader can no longer tell which index answered ([`literature-evidence-layer.md`](literature-evidence-layer.md), a
-discovery rpc is a query against one named source). So each index has a schema of its own here. PubMed's is NLM's,
-generated from its DTD ([`proto.md`](proto.md), Generated upstream schemas); Crossref's and OpenAlex's are mirrors of
-the JSON each publishes, hand-authored and loaded strictly ([`proto.md`](proto.md), Mirrored upstream schemas). The same
-reasoning makes the literature interface answer a PMID with PubMed's record whole, so a run's triage read and the
-store's copy are the same record kind through the same converter — not the same bytes, since the store's copy is taken
-at ingest and the run's at query time, and indexes revise records.
+**Each index's record is stored as that index states it.** A paper's metadata is stored as the record its index
+published, rather than as a subset of its fields chosen at write time. A subset carries only what its author foresaw
+needing, and what it dropped is gone until someone re-fetches; the whole record costs kilobytes and answers questions
+nobody has asked yet. The same test rules out storing one index's record mapped into another's schema. A Crossref work
+squeezed into `PubmedArticle` keeps only the fields PubMed happens to have a slot for, and a reader can no longer tell
+which index answered ([`literature-evidence-layer.md`](literature-evidence-layer.md), a discovery rpc is a query against
+one named source). How each record is held differs by index, for reasons the paragraphs below give: PubMed's as a typed
+proto generated from NLM's schema, Crossref's and OpenAlex's as JSON text, re-serialised from the value each served.
 
 **One field per index.** `metadata.pb` is a typed envelope, `PaperMetadata`
 ([`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto)): one field per index a paper can be
-resolved from, each holding that index's record whole, and a protovalidate constraint that at least one is set. The
-fields are independent because the indexes are: a paper PubMed indexes may also have an OpenAlex record, and a preprint
-PubMed does not index has a Crossref or OpenAlex record and no PubMed one. Which record a reader prefers when several
-are present — PubMed's title over Crossref's, say — is a policy of the one function that derives the summary, below, not
-a slot in the envelope. The envelope records what each index states and nothing about their precedence, so a new index
-is a new field and changes no reader of the others.
+resolved from, each holding that index's record, and a protovalidate constraint that exactly one index's record is set.
+Crossref's and OpenAlex's records are each held twice for now: as JSON text, and as a typed copy in a hand-written proto
+of the index's keys, called a *mirror*. The mirrors are on their way out
+([The move off the mirrors](#the-move-off-the-mirrors)). Here is the envelope of a preprint that PubMed does not index,
+resolved through OpenAlex (values shortened):
+
+```
+PaperMetadata                                       metadata.pb, binary proto
+├── pubmed          PubmedRecord                    (not set: PubMed does not index it)
+│     └── oneof kind: PubmedArticle | PubmedBookArticle
+├── crossref        crossref.Work  (mirror)         (not set)
+├── openalex        openalex.Work  (mirror)         the keys the mirror declares, typed
+├── crossref_json   string                          (not set)
+└── openalex_json   string                          '{"id":"https://openalex.org/W4401…",
+                                                      "doi":"https://doi.org/10.1101/2024.05…",
+                                                      "title":"…","ids":{…},"study_designs":[…],…}'
+```
+
+**Exactly one index's record, by a constraint.** A paper is resolved by a ladder that stops at the first index that
+answers. Bulk ingest and the refresh ask PubMed, through efetch for a PMID that is given or that litfetch finds for a
+DOI, and then OpenAlex. The evidence service's on-demand ingest asks PubMed and then Crossref. So every envelope holds
+the record of exactly one index, and a protovalidate rule on the envelope requires that, counting a mirror and its JSON
+text as one index. The obvious way to say "exactly one" in a proto is a `oneof`, which also gives readers a generated
+accessor for the arm that is set. The compat gate makes that a choice for good: it never lets a field move into or out
+of a `oneof`, because the move changes how stored bytes decode. A paper may yet need a second index's record, to fill a
+metadata field the first record lacks. An open-access licence is one such field: OpenAlex states one for each location
+of a work, and PubMed's record carries none. With a `oneof`, admitting OpenAlex's record beside PubMed's would be a new
+expand/contract change, with a fresh number for every arm. The constraint is loosened in place instead. The fields stay
+one per index, so a new index is a new field and changes no reader of the others.
+
+**Crossref's and OpenAlex's records are held as JSON text.** The obvious way to store a JSON record in a store of protos
+is a proto per index whose fields are the index's keys, which gives every reader typed fields, generated stubs and
+protovalidate. Neither index publishes a schema that a generator can turn into such a proto. Each publishes an OpenAPI
+description of its API, and each description lags and mis-states the records the API serves; OpenAlex's misses about a
+dozen top-level keys. So the proto has to be written by hand against live records, and a hand-written schema of someone
+else's records has to follow every change they make. If the loader refuses a key the proto lacks, nothing lossy is
+written, but each key the index adds stops ingestion through that index until the proto gains the field. If the loader
+drops such a key instead, every record written in the meantime loses it for good.
+
+OpenAlex adds keys often, so this choice comes up in practice. A strict proto of OpenAlex's work dead-letters every
+paper resolved through OpenAlex as schema drift from the day OpenAlex starts serving a key the proto lacks until the
+proto gains it, whether or not anything reads the key. In September 2026 four top-level keys arrived together
+(`study_designs`, `x_sdgs`, `observed_orcids` and `listed_in`, #672). Three weeks later three more did: a `doi` on every
+location of a work, `volume`, and `sustainable_development_goals_aurora`. Each time every OpenAlex ingest failed, and
+nothing in Themis reads any of these keys. Keeping a schema in lockstep with an index we don't control costs more than
+the typed fields buy, when most of those fields have no reader.
+
+So the envelope holds each of these two records as JSON text: the index's work object, re-serialised from the parsed
+response with nothing dropped or renamed. The text parses back to a value equal to the one the index served; it need not
+match the bytes the index sent. A key the index adds is stored like any other, and a question nobody has asked yet can
+still be answered from the stored record. The field is a `string` holding the text, rather than a
+`google.protobuf.Struct`, because a `Struct` stores every number as a double ([`proto.md`](proto.md), Upstream JSON held
+as text). The cost is that a reader of these records gets no generated type. It reads the JSON through a reader written
+for the fields it uses, described next.
+
+**Ingest fails only on the fields Themis reads.** Each JSON index has a reader for the fields Themis takes from its
+record: the title, the DOI, the PubMed and PMC identifiers an OpenAlex work lists, and the publisher, which the manifest
+records for a licensed source. The readers are the one place these field names and shapes are spelled out. A record
+fails when a field every record of that index states is missing, such as the `title` key an OpenAlex work carries even
+when its value is null, or when a field the reader reads has a shape the reader cannot read. The paper is then
+dead-lettered as schema drift, and the dead letter names the field. A field an index may leave out, such as the PMID of
+a preprint, reads as not stated. Every other key stays in the text and never fails anything.
+
+Take two OpenAlex works. The first carries a key Themis has never seen; it is stored like any other work, with the key
+in its text. The second states its PMID as an object where the reader expects a URL string; it is dead-lettered, naming
+the PMID as the drifted field. Drift of the second kind needs a change to one of the handful of fields Themis reads,
+rather than to any key the index adds. The readers arrive with the metadata fields they fill; until then the mirrors
+stand in for them ([The move off the mirrors](#the-move-off-the-mirrors)).
+
+The readers run only where the metadata fields below are filled: at ingest, at a refresh, and in a rewrite that brings
+the stored fields up to a new rule. Serving never runs them, because a consumer reads the stored metadata fields. The
+envelope check confirms only that each JSON record present is the text of a JSON object. So when an index reshapes a
+field a reader reads, the records stored in the old shape keep serving their metadata fields. They fail when a rewrite
+reads them again, and the rewrite reports each one by paper and field. There are two repairs. The reader can accept both
+shapes, which keeps the stored records readable at the price of a branch in the reader for as long as such records
+exist. Or the index's stored records are deleted and refreshed in the new shape. A reader that starts requiring a field
+the stored records lack faces the same choice.
+
+**Drift is reported where it is met.** A drifted paper stays a dead letter. In a bulk ingest or a refresh, the run lists
+it in its report, which the operator who started the run reads. When the evidence service ingests a paper on demand, the
+drifted record is charged to its id alone: the caller is told the store has no such paper, and only the service's log
+names the field
+([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-ingested-not-written-off)). Nothing
+watches that log, so on-demand drift goes unseen until someone looks. Drift needs an index to reshape one of the few
+fields Themis reads, so it should be rare; whether it still warrants an alert is an open question below.
+
+**PubMed keeps its generated, typed record.** The lockstep argument does not apply to PubMed. NLM publishes a DTD for
+its records, versions it, and changes it about once a year with notice. `pubmed-proto` generates the proto and its XML
+converter from that DTD ([`proto.md`](proto.md), Generated upstream schemas), so a new DTD is a pin bump rather than a
+hand edit, and holding PubMed's record typed costs nothing to maintain. It is also the record kind the literature
+interface returns for a PMID, through the same converter, so a run's triage read and the store's copy have one shape.
+They are not the same bytes, because the store's copy is taken at ingest and the run's at query time, and indexes revise
+records.
+
+The typed record is not quite the whole of what NLM sends. The converter steps over a few elements of an article without
+keeping them, such as its languages and its pagination, so those are absent from the stored record. Themis reads only
+the title and the identifiers from PubMed's record, so the typed form is kept because it is free, not because a reader
+needs its types.
 
 **PubMed's record has two kinds, and its field says which.** Most PMIDs name a journal article, but a PMID can also name
-a book NCBI hosts on its Bookshelf, or a chapter of one — a GeneReviews chapter, the expert-written summary of a gene or
-condition that a variant analysis cites routinely. PubMed's schema gives the two kinds different records,
-`PubmedArticle` and `PubmedBookArticle`, that share no top-level shape: a journal record hangs off a citation with a
-journal, a book record off a document with a book. Protobuf's wire format carries field numbers, not a type, so bytes
-read as the wrong message may decode without error into a record that means nothing, and a store that can hold either
-has to write down which one it holds. The envelope's `pubmed` field is therefore a message of its own, `PubmedRecord`,
-whose `oneof` has an arm per kind and requires exactly one set — the structural move the access disposition on a lineage
-makes too. The exclusivity is PubMed's own rule, a PMID names one record, stated in the type; it is why the two kinds
-are arms of one field where other indexes are fields of their own.
+a book NCBI hosts on its Bookshelf, or a chapter of one. A GeneReviews chapter, the expert-written summary of a gene or
+condition that a variant analysis cites routinely, is the common case. PubMed's schema gives the two kinds different
+records, `PubmedArticle` and `PubmedBookArticle`, that share no top-level shape: a journal record hangs off a citation
+with a journal, a book record off a document with a book. Protobuf's wire format carries field numbers, not a type, so
+bytes read as the wrong message may decode without error into a record that means nothing, and a store that can hold
+either has to write down which one it holds. The envelope's `pubmed` field is therefore a message of its own,
+`PubmedRecord`, whose `oneof` has an arm per kind and requires exactly one set, the structural move the access
+disposition on a lineage makes too. The exclusivity is PubMed's own rule, a PMID names one record, stated in the type;
+it is why the two kinds are arms of one field where other indexes are fields of their own.
 
-**A mirror is loaded strictly, so a lagging mirror fails the paper rather than thinning the record.** Crossref and
-OpenAlex publish JSON, and neither publishes a schema a generator consumes the way `pubmed-proto` consumes NLM's DTD:
-each publishes an OpenAPI description of its HTTP API, and each description lags and mis-states the records the API
-serves — OpenAlex's by a dozen top-level keys, Crossref's by keys and shapes it never lists. Each mirror is therefore
-hand-authored against the live records, and a hand-authored schema can lag the upstream. A lagging schema that dropped
-the keys it lacked would lose data at write time for good, so the loader refuses a record carrying a key the mirror
-lacks: the paper is dead-lettered as schema drift naming the field, and the fix is the field. Nothing lossy is ever
-written; the cost is that ingestion of papers resolved through that index pauses until the mirror catches up, which for
-OpenAlex is as often as it adds fields. Two upstream shapes have no proto equivalent — an array of arrays, an object
-whose values are arrays — and the loader wraps them into messages before the parse; it also drops the null array
-elements proto3-JSON cannot hold, except inside a positional array such as a date's parts, where a null between stated
-parts fails the parse rather than shifting them. A round trip over live records, parse then serialise then compare, is
-what checks that the wrapping and the mirror lose nothing.
+**The metadata fields are stored, and filled from the record.** Consumers want a bibliography in one shape, such as a
+title, a year and an author list, without switching on which index answered. The obvious design computes that shape on
+read, in one function beside the proto. It stores nothing extra, and a change to the rule, such as a chapter with no
+title of its own falling back to its book's, ships as a deploy. The cost is that every read parses the index records and
+runs their readers. Say OpenAlex starts serving a work's PMID as an object rather than a URL string, and the reader is
+changed to read the object. Every OpenAlex record stored before the change still holds the string, so describing any of
+those papers fails with `INTERNAL`. The failure lands at serving time, in front of a curator, for a field that has
+nothing to do with the title they asked for.
 
-**The summary is derived, never stored.** Consumers want a bibliography in one shape — a title, a year, an author list —
-without switching on which index answered. That shape is computed from the envelope by one function beside the proto,
-and is not a field of it. A stored projection goes stale with every change to the rule that derives it: a chapter with
-no title of its own falls back to its book's, say, and the next such rule would leave every stored summary wrong until a
-corpus rewrite, at which point the store's rule for derived artifacts would want a summariser version on it, as a
-rendering carries its converter's. Derived on read, the same change is a deploy. Adjudicating between coexisting records
-lands in the same function.
+So `PaperMetadata` carries Themis's own metadata fields beside the index's record, and the readers fill them where a
+record is written: at ingest and at a refresh. A consumer reads only these fields and never the index's record. A change
+to the rule that fills them then needs a rewrite of the stored fields rather than a deploy. The rewrite reads the JSON
+text already stored, so it needs no network and touches nothing but `metadata.pb`, and the store already rewrites its
+manifests the same way
+([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
+Each metadata field arrives with its reader. The title has one today, `DescribePaper`, so it comes first; an author list
+or a year arrives with the consumer that needs it. Until the metadata fields land, the title is derived on read from the
+mirror or PubMed's record.
 
-**An envelope with no record is corruption.** The at-least-one constraint is enforced where the record crosses a
-boundary: the writer validates the envelope before it writes, and a reader that parses one fails rather than reading it
-as a paper without metadata. A paper no index has a record for is not ingested at all — the resolve ladder dead-letters
-it — so an empty envelope never means "metadata not yet resolved"; it means the bytes are wrong.
+**An envelope with no record is corruption.** The one-index constraint is enforced where the record crosses a boundary:
+the writer validates the envelope before it writes, and a reader that parses one fails rather than reading it as a paper
+without metadata. A paper no index has a record for is not ingested at all, because the resolve ladder dead-letters it.
+So an empty envelope never means "metadata not yet resolved"; it means the bytes are wrong.
 
 **A book record carries an identifier of its own.** Beside the PMID, Bookshelf names a chapter by an accession (`NBK…`),
 and the accession is how the chapter's text is addressed: Europe PMC serves a chapter's BITS XML under its accession at
@@ -418,39 +504,60 @@ external ids (`ExternalIds.bookid`) on the footing every external id there has: 
 crosswalk claimed — that is what keeps the crosswalk rebuildable from the manifests alone — so the accession is minted
 like the others rather than merely recorded.
 
-**An additive change needs only a refresh or a rebuild; a destructive one is an expand/contract change.** The compat
-gate holds `litcache.proto` and the two mirrors to additive evolution ([`proto.md`](proto.md#schema-evolution)). Every
-reader therefore already parses the records written before an additive change. What such a change can still need is the
-stored records brought up to it, because a field the envelope or a mirror gains is empty in every record written before
-it. A change confined to the record is met by a metadata refresh, and a change to the conversions needs a full rebuild.
-Every `metadata.pb` in the store is re-derivable from its source (PubMed's XML, Crossref's or OpenAlex's JSON) through
-the ladder that resolved it at ingest. So a record is brought up to a change by re-deriving it, not by rewriting stored
-bytes or teaching readers a second decoding. Both are operator runs
+**A change to `metadata.pb` reaches the stored records through a refresh or a rebuild.** The compat gate holds
+`litcache.proto` to additive evolution ([`proto.md`](proto.md#schema-evolution)), so every reader already parses the
+records written before an additive change. What such a change can still need is the stored records brought up to it,
+because a field the envelope gains is empty in every record written before it. Every `metadata.pb` in the store is
+re-derivable from its indexes (PubMed's XML, Crossref's or OpenAlex's JSON) through a resolve ladder. A refresh takes
+the bulk ladder, so a paper the on-demand ingest resolved through Crossref comes back with OpenAlex's record, or with
+none if OpenAlex has no record of it. So a record is brought up to a change by re-deriving it, not by rewriting stored
+bytes or teaching readers a second decoding. Two operator runs do that
 ([`reingest-literature-seed-corpus.md`](../runbooks/reingest-literature-seed-corpus.md)), and which one a change needs
 turns on what else has to change:
 
-- A *metadata refresh* re-resolves every paper's bibliographic record through that ladder — efetch for a PMID,
-  litfetch's DOI resolution and then OpenAlex for the rest — and overwrites `metadata.pb`. Manifests, conversions and
-  `doc_id`s stay untouched: the record derives from nothing in the paper's directory and nothing there derives from it
-  ([Path layout](#path-layout)), so it is the one artifact a committed paper can have re-derived. It is the path for a
-  change confined to the record (a field the envelope or a mirror gains, say) and the only route to an own-index record
-  for a paper first resolved through Crossref or OpenAlex: the raw record was never kept, so no rewrite of the stored
-  bytes could produce it.
+- A *metadata refresh* resolves a bibliographic record, through that ladder, for every committed paper that has no
+  `metadata.pb`: efetch for a PMID, and litfetch's DOI resolution and then OpenAlex for the rest. It never touches a
+  record that exists, so bringing the stored records up to a change starts with the operator deleting them
+  ([Refreshing the bibliographic records](../runbooks/reingest-literature-seed-corpus.md#refreshing-the-bibliographic-records)).
+  Manifests, conversions and `doc_id`s stay untouched. The record derives from nothing in the paper's directory, and
+  nothing there derives from it ([Path layout](#path-layout)), so it is the one artifact a committed paper can have
+  re-derived. The refresh is the path for a change confined to the record, such as a field the envelope gains.
 - A *full rebuild* — the crosswalk table truncated, the `papers/` prefix cleared, the seed re-ingested on Dataflow — is
   the path when the conversions themselves must change: ingestion skips a paper whose manifest exists, and nothing
   regenerates a committed paper's sources or renderings in place.
 
 After an additive change, neither run leaves the readers a fallback to carry: the gate held every schema change on main
-to additive, so every record written from main parses under the current schema. A destructive change to a stored record,
-the kind the gate refuses, is different. [`migrations.md`](migrations.md#how-it-runs) lets a destructive change skip the
-expand/contract shape only in an environment that holds no data worth keeping and no users to fail, and a store whose
-corpus is kept is not such an environment. A destructive change here is therefore an expand/contract change, as
-[`proto.md`](proto.md#schema-evolution) sets out for every at-rest contract. The step that rewrites every record before
-the old field is retired is a metadata refresh, a full rebuild, or, for a change to the manifest's shape that leaves the
-conversions alone, a rewrite of the manifests themselves
-([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
+to additive, so every record written from main parses under the current schema. A destructive change to a stored record
+needs more. [`migrations.md`](migrations.md#how-it-runs) lets a destructive change skip the expand/contract shape only
+in an environment that holds no data worth keeping and no users to fail. The litcache store holds data worth keeping, so
+a destructive change to the record is an expand/contract change, as [`proto.md`](proto.md#schema-evolution) sets out for
+every at-rest contract. The new form lands beside the old one, a refresh or a rewrite brings every record to it, and
+only then is the old field retired, with its number and name reserved. A refresh fetches each record again, as its index
+states it at the time of the refresh rather than at ingest. A paper the index no longer resolves comes out of a refresh
+with no `metadata.pb`, and `DescribePaper` then titles it by its DOI or PMID.
+
 Changing what a field means in place is never open. Protobuf bytes carry field numbers and wire types, not names or
 meanings, so a record written before the change would decode without error into the new meaning.
+
+### The move off the mirrors
+
+The mirrors predate the JSON fields, and the store holds a mirror copy of every Crossref and OpenAlex record it has
+written. Retiring them is a destructive change of the kind above, so it goes in three steps:
+
+1. The envelope gains a JSON text field per index beside its mirror field. This is additive, and nothing writes the new
+   fields yet.
+1. The mirror loader stops refusing the keys its mirror does not declare, and ingest and the refresh write each record
+   twice: into its mirror, and as JSON text. Dropping an undeclared key from the mirror loses nothing, because the text
+   keeps it, so a key an index adds no longer stops ingestion. A key the mirror declares, served in a shape the mirror
+   cannot hold, still fails the paper. The envelope check also requires each JSON text to sit beside its index's mirror,
+   since nothing reads the text yet. The operator then deletes every `metadata.pb` and runs the refresh, so that every
+   record carries its text. Between the delete and the refresh a paper has no `metadata.pb` and is titled by its DOI or
+   PMID, and no read fails.
+1. The envelope gains its metadata fields, and the readers arrive to fill them. A rewrite fills the fields of every
+   stored record from its JSON text, and consumers move to the fields. The mirror fields are then retired, with their
+   numbers and names reserved, and the mirror protos deleted; the check that pairs a JSON text with its mirror goes with
+   them. The compat gate refuses the deletion of a file under the models trees
+   ([`proto.md`](proto.md#retiring-an-rpc-or-a-message)), so that last change has to argue why these two files may go.
 
 ## Quote-reference model
 
@@ -537,3 +644,9 @@ message OffsetsCacheEntry {
   to see, such as a licensed paper, could be shown against an equivalent work they can see, such as a preprint linked to
   it by an equivalence edge, by re-aligning the same quote into that work's rendering. The pieces exist. Whether to
   expose it, and how entitlement composes across a set of equivalent works, is open.
+- **Recording the rule that filled the metadata fields.** Whether the envelope records which rule filled its metadata
+  fields, as a rendering records its converter, so that a rewrite can find the records an older rule filled. Recomputing
+  every record from its stored JSON text takes minutes, which argues against it.
+- **An alert for drift met on demand.** A paper `MaybeIngestPapers` cannot ingest because its record drifted is named
+  only in the evidence service's log. A log-based metric with an alert on it would surface it; it would post to the
+  operational alerts channel each environment is still to get ([`prod-bring-up.md`](../plans/prod-bring-up.md)).

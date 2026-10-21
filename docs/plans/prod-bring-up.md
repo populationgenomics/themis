@@ -96,9 +96,8 @@ values.
   the ledger recorded one. The deploy runs the same comparison read-only before it builds images or runs `pulumi up`, so
   a ledger row that disagrees with the committed file of the same version stops the deploy.
 
-One dependency is still open. #681 adds each environment's operational alerts channel (`themis:alertsSlackChannel`),
-with a first alert for schema drift in literature ingest. The Alerting section and prod's Slack app assume it merges
-first.
+One dependency is still open: each environment's operational alerts channel (`themis:alertsSlackChannel`), which the
+Alerting section and prod's Slack app assume exists. No change provides it yet.
 
 ## Design
 
@@ -269,8 +268,8 @@ of holding no admin-capable identity. It needs a design of its own; until it exi
 sessions that never start.
 
 The deploy account already holds the monitoring roles, so the policies are program-managed. Operational alerts post to
-the environment's own alerts channel (`themis:alertsSlackChannel`, from #681), separate from the spend channel, through
-that environment's Slack app.
+the environment's own alerts channel (`themis:alertsSlackChannel`), separate from the spend channel, through that
+environment's Slack app.
 
 ### The first bring-up
 
@@ -377,8 +376,8 @@ running prod and the first CaRDinal data.
    account's service account and rule.
 1. A Slack app of prod's own, `Themis prod`, so that a post shows which environment sent it and dev's token cannot post
    into prod's channels. It is invited to prod's spend channel (`themis:slackChannel`) and prod's operational alerts
-   channel (`themis:alertsSlackChannel`, from #681), and its bot token is prod's `themis:slackBotToken`, which the first
-   `up` already requires.
+   channel (`themis:alertsSlackChannel`), and its bot token is prod's `themis:slackBotToken`, which the first `up`
+   already requires.
 1. The skill-scoping lookup described under Anthropic side.
 1. Keep the literature seed: agree that dev's seed dump is not deleted until prod's corpus exists.
 

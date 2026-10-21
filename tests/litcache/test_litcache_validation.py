@@ -77,11 +77,20 @@ _ENVELOPES_HOLDING_A_RECORD = [
     litcache_pb2.PaperMetadata(pubmed=_journal_record()),
     litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
     litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
-    litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
+    litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}'),
+    litcache_pb2.PaperMetadata(openalex_json='{"id": "https://openalex.org/W1"}'),
 ]
 _ENVELOPES_HOLDING_NO_RECORD = [
     litcache_pb2.PaperMetadata(),
     litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()),
+]
+_ENVELOPES_HOLDING_TWO_INDEXES = [
+    litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
+    litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}', openalex_json='{"id": "https://openalex.org/W1"}'),
+]
+_ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD = [
+    litcache_pb2.PaperMetadata(crossref_json=''),
+    litcache_pb2.PaperMetadata(openalex_json=''),
 ]
 
 
@@ -96,7 +105,31 @@ def test_an_envelope_holding_no_record_is_invalid(envelope: litcache_pb2.PaperMe
         protovalidate.validate(envelope)
 
 
-@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_A_RECORD + _ENVELOPES_HOLDING_NO_RECORD)
+@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_TWO_INDEXES)
+def test_an_envelope_holding_two_indexes_records_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
+    with pytest.raises(protovalidate.ValidationError):
+        protovalidate.validate(envelope)
+
+
+def test_every_envelope_field_belongs_to_one_index() -> None:
+    # The code check counts indexes through this map, so a field missing from it would escape the count.
+    mapped = [field for fields in paper_metadata.INDEX_FIELDS.values() for field in fields]
+    assert sorted(mapped) == sorted(f.name for f in litcache_pb2.PaperMetadata.DESCRIPTOR.fields)
+
+
+@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD)
+def test_an_empty_json_record_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
+    with pytest.raises(protovalidate.ValidationError):
+        protovalidate.validate(envelope)
+
+
+@pytest.mark.parametrize(
+    'envelope',
+    _ENVELOPES_HOLDING_A_RECORD
+    + _ENVELOPES_HOLDING_NO_RECORD
+    + _ENVELOPES_HOLDING_TWO_INDEXES
+    + _ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD,
+)
 def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_pb2.PaperMetadata) -> None:
     # The proto declares the constraints; `paper_metadata.check` enforces them at the boundary in
     # code. Both must settle every envelope the same way, or the declaration and the enforcement
@@ -104,7 +137,19 @@ def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_
     try:
         protovalidate.validate(envelope)
     except protovalidate.ValidationError:
-        with pytest.raises(ValueError, match=r'no record set|neither of its kinds'):
+        with pytest.raises(
+            ValueError, match=r'no record set|more than one index|neither of its kinds|not a JSON object'
+        ):
             paper_metadata.check(envelope)
     else:
         paper_metadata.check(envelope)  # does not raise
+
+
+@pytest.mark.parametrize('text', ['[]', '"a string"', '{"DOI": ', 'not json'])
+@pytest.mark.parametrize('field', ['crossref_json', 'openalex_json'])
+def test_a_json_record_that_is_not_an_object_fails_the_code_check(field: str, text: str) -> None:
+    # The proto can state only a minimum length; the code check is what refuses the rest.
+    envelope = litcache_pb2.PaperMetadata()
+    setattr(envelope, field, text)
+    with pytest.raises(ValueError, match='not a JSON object'):
+        paper_metadata.check(envelope)
