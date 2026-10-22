@@ -376,7 +376,7 @@ The signed URL allows exactly one write, of a bounded size. It is signed with a 
 PUT to the same object is refused, and with a content-length range, so an oversized body is refused before it lands.
 
 Minting upload URLs adds no grant. The evidence service's identity can already write to the bucket
-([`evidence-fulltext.md`](evidence-fulltext.md), "An id the corpus does not hold is ingested, not written off"), and
+([`evidence-fulltext.md`](evidence-fulltext.md), "An id the corpus does not hold is brought into the store"), and
 signing a URL for a prefix it writes to is the same power it already holds.
 
 ### An upload is bound to the person and the Analysis that began it

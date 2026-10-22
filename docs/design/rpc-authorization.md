@@ -309,7 +309,7 @@ licensed representation to the licences that reach it.
 ### Adoption: the literature interface, then the sheaf service
 
 Literature adopts the primitive first because it is the interface with a caller that holds no session and the interface
-with a **spend** to attribute: `MaybeIngestPapers` may start a **conversion**, the rendering of a paper's PDF to
+with a **spend** to authorize: `MaybeIngestPapers` may start a **conversion**, the rendering of a paper's PDF to
 markdown by a model, which costs model budget. The other evidence interfaces are covered by the interceptor from the
 same deploy, as described above, and keep their in-body session checks until those are deleted.
 
@@ -330,8 +330,8 @@ Literature's rpcs split three ways:
 - The **paper-content reads** the browser renders admit `CALLER_WEB` and, for a maintainer acting on the corpus by hand,
   `CALLER_CLU`. These are the rpcs the proto leaves unexposed.
 - The **producer**, `MaybeIngestPapers`, is `agent_exposed` and admits `CALLER_CLU`. It is the one rpc whose
-  implementation does more with the context than hand it to the port: its spend is charged to what the call was made
-  for, and it is the acquisition path a person's entitlement will travel on.
+  implementation does more with the context than hand it to the port: admitting the call is what lets its tasks name a
+  target that spends, and it is the acquisition path a person's entitlement will travel on.
 
 ```proto
 rpc MaybeIngestPapers(MaybeIngestPapersRequest) returns (MaybeIngestPapersResponse) {
@@ -351,11 +351,16 @@ and the dispatcher can everywhere — the property of session minting stated und
 Whether it may reach a given environment's service at all stays IAM's question, decided by `run.invoker`, not the
 contract's.
 
-The producer's admission replaces a narrower gate that resolved a session only on the enqueue step and discarded the
-binding, so a batch with nothing to enqueue was answered without any token and no spend was attributable
-([`evidence-fulltext.md`](evidence-fulltext.md)). Now the whole rpc authorizes up front, a caller admitted by nothing is
-refused before any work, and the binding reaches the enqueue. That makes attribution *possible*; where the record is
-written is an open question below.
+The producer's admission replaces a narrower gate. That gate resolved a session only at the enqueue step and then
+discarded the binding, so a batch with nothing to enqueue was answered without any token, and no spend could be
+attributed ([`evidence-fulltext.md`](evidence-fulltext.md)). Now the whole rpc authorizes up front. A caller that
+nothing admits is refused before any work, and only an admitted call enqueues anything.
+
+The task it enqueues carries no authority of its own. It names the paper and the main-text target, and naming a target
+is what lets the worker spend on it
+([`evidence-fulltext.md`](evidence-fulltext.md#naming-a-target-is-the-decision-to-spend)). The spend itself is recorded
+only as the usage of the Anthropic workspace the worker calls the model from, and is not attributed to an Analysis or a
+Project ([`evidence-fulltext.md`](evidence-fulltext.md#the-workspace-spend-limit-caps-spend)).
 
 ## Alternatives considered
 
@@ -412,9 +417,6 @@ written is an open question below.
   affiliation obtained each licensed representation, and the view has to be a predicate the index query incorporates
   rather than a filter over results, since filtering afterwards breaks pagination and leaks in the counts what it
   removed.
-- **Where a conversion's spend is recorded.** The binding reaches the enqueue, but the conversion runs later in a worker
-  off a task named by the paper, so attributing the spend means the binding rides the task and lands somewhere the cost
-  pipeline can read. Which store, and keyed by session or by Analysis, is unsettled.
 - **Deleting the in-body session checks on the other evidence interfaces.** Their rpcs are all `agent_exposed`, so the
   interceptor gates them from the first deploy and the check each method opens with is redundant. Removing it is
   mechanical and changes no behaviour.

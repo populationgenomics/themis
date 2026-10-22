@@ -1,12 +1,12 @@
 # Design: the literature evidence layer
 
-**Related:** [`evidence-fulltext.md`](evidence-fulltext.md) (how a paper's text is produced, and how readiness is
-derived from the store), [`litcache-manifest.md`](litcache-manifest.md) (the per-paper record: source lineages,
-content-addressed renderings, recorded licence), [`document-pane.md`](document-pane.md) (the workbench surface that
-reveals a paper and highlights a quote), [`evidence-interfaces.md`](evidence-interfaces.md) (the sibling fact interfaces
-in the same deployment, and the error taxonomy they share), [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (how an
-rpc becomes agent-callable), [`services.md`](services.md) (the service pattern this follows). Terms in
-[`../../GLOSSARY.md`](../../GLOSSARY.md).
+**Related:** [`evidence-fulltext.md`](evidence-fulltext.md) (the steps that bring a paper up to date, including its
+text, and how readiness is derived from the store), [`litcache-manifest.md`](litcache-manifest.md) (the per-paper
+record: source lineages, content-addressed renderings, recorded licence), [`document-pane.md`](document-pane.md) (the
+workbench surface that reveals a paper and highlights a quote), [`evidence-interfaces.md`](evidence-interfaces.md) (the
+sibling fact interfaces in the same deployment, and the error taxonomy they share),
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (how an rpc becomes agent-callable), [`services.md`](services.md)
+(the service pattern this follows). Terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview
 
@@ -86,9 +86,9 @@ citation against a rendering resolves to the exact bytes it was made against for
   [`evidence-fulltext.md`](evidence-fulltext.md)'s: the cheap production route takes seconds and the expensive one takes
   minutes, so a request that waited for either would be a timeout dressed as an answer.
 - **No entitlement, for now.** The store is shared and nothing is gated per reader. The agent's reads carry the session
-  for the data cutoff, and `MaybeIngestPapers` for attributing the conversion it enqueues, which spends model budget
-  ([`evidence-fulltext.md`](evidence-fulltext.md)); the browser's paper reads carry none
-  ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Gating a read by the reader's
+  for the data cutoff. `MaybeIngestPapers` carries it because the conversion the call enqueues may spend model budget,
+  and only an admitted call may cause that ([`evidence-fulltext.md`](evidence-fulltext.md)). The browser's paper reads
+  carry none ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Gating a read by the reader's
   institutional access is a requirement this interface will have to grow, and it will need a decision about what a
   reader who may not open a paper sees instead.
 - **No external identifiers on the rpcs that serve a paper.** Resolution is its own step, so a request either names a

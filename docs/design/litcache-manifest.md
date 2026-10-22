@@ -1,9 +1,10 @@
 # Design: the litcache manifest
 
 **Related:** [`proto.md`](proto.md) (how at-rest records are serialised, and how their schemas may change),
-[`evidence-fulltext.md`](evidence-fulltext.md) (how a paper's text is produced, and how readiness is read off the
-store), [`literature-evidence-layer.md`](literature-evidence-layer.md) (the interface that serves the store to the agent
-and the browser), [`../plans/literature-cache.md`](../plans/literature-cache.md) (the build plan).
+[`evidence-fulltext.md`](evidence-fulltext.md) (the steps that bring a paper up to date, including its text, and how
+readiness is read off the store), [`literature-evidence-layer.md`](literature-evidence-layer.md) (the interface that
+serves the store to the agent and the browser), [`../plans/literature-cache.md`](../plans/literature-cache.md) (the
+build plan).
 
 ## Overview
 
