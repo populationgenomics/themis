@@ -455,15 +455,14 @@ wheels = [
 
 [[package]]
 name = "clinvar-proto"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
-    { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/2d/d748a9b375d53a9b07dccba1274700f63dd1b79d1354ca95ea0f73b68ed3/clinvar_proto-0.1.0.tar.gz", hash = "sha256:b1780881f1bd3a06a33966f957236ac8945485de7a90f2d1a82b33adca096bf1", size = 106392, upload-time = "2026-08-21T03:30:42.736Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/40/dcccda2e59b3d3a37186a13799c1367d41efe65efe2dfc90423c641dafb2/clinvar_proto-0.2.0.tar.gz", hash = "sha256:44a687c079ec6f90ede5b82342f1e30d1e822a1d527c64d89358c99b8fbf1bf1", size = 80819, upload-time = "2026-10-22T00:16:16.083Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/f0/23c0f7220a0d7ab4f0229ad37386188924d6de0bbace80b7e4b17751de2d/clinvar_proto-0.1.0-py3-none-any.whl", hash = "sha256:c5e83761729b7e255d42a19ac709e331e04f549cda1769f683728d5b27ac9fe9", size = 110072, upload-time = "2026-08-21T03:30:41.17Z" },
+    { url = "https://files.pythonhosted.org/packages/33/89/2f2590fd7ddaf27950cd22d202feebaa01c7f57e5898d097afe45bc77525/clinvar_proto-0.2.0-py3-none-any.whl", hash = "sha256:c2040256e7baaac9fadd4a8450c06bc0bb9196fc54070216c7e06ed26879e447", size = 83611, upload-time = "2026-10-22T00:16:14.533Z" },
 ]
 
 [[package]]
@@ -4210,7 +4209,7 @@ cloudsql = [
     { name = "pg8000" },
 ]
 codegen = [
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "grpcio-tools" },
     { name = "mypy-protobuf" },
     { name = "pubmed-proto", specifier = "==0.5.0" },
@@ -4276,7 +4275,7 @@ dispatcher = [
 ]
 evidence = [
     { name = "anchorite", specifier = "==0.5.1" },
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "cloud-sql-python-connector" },
     { name = "defusedxml" },
     { name = "google-auth" },
@@ -4297,7 +4296,7 @@ evidence = [
 ]
 guest = [
     { name = "anthropic" },
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "grpcio" },
     { name = "markdown-it-py" },
     { name = "protobuf" },
@@ -4324,7 +4323,7 @@ lint = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "cloud-sql-python-connector" },
     { name = "defusedxml" },
     { name = "docling-core" },
@@ -4414,7 +4413,7 @@ run-review = [
 sandbox-worker = [
     { name = "anthropic" },
     { name = "anyio" },
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "google-auth" },
     { name = "grpcio" },
     { name = "opentelemetry-api" },
@@ -4480,7 +4479,7 @@ test = [
     { name = "anthropic" },
     { name = "anyio" },
     { name = "apache-beam", extras = ["gcp"] },
-    { name = "clinvar-proto", specifier = "==0.1.0" },
+    { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "cloud-sql-python-connector" },
     { name = "defusedxml" },
     { name = "docling-core" },
