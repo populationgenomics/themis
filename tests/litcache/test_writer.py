@@ -906,3 +906,34 @@ def test_add_source_of_held_bytes_on_other_terms_adds_nothing(gcs_bucket: gcs.Bu
 def test_add_source_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
     with pytest.raises(api_exceptions.NotFound):
         writer.add_source(gcs_bucket, _DOC_ID, _source())
+
+
+def _supplement(data: bytes = b'col\n1\n', name: str = 'table_s1.csv') -> writer.FileInput:
+    return writer.FileInput(
+        role=litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY,
+        name=name,
+        source_url='https://pmc.example/s1.csv',
+        data=data,
+        captured_at=_CAPTURED_AT,
+    )
+
+
+def test_add_files_lists_each_file_once(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+
+    first = writer.add_files(gcs_bucket, _DOC_ID, [_supplement(), _supplement(b'x', 'figure.png')])
+    again = writer.add_files(gcs_bucket, _DOC_ID, [_supplement()])
+
+    assert (first.added, again.added) == (2, 0)
+    assert again.generation == first.generation == _generation(gcs_bucket)
+    files = _committed(gcs_bucket).files
+    assert sorted(f.name for f in files) == ['figure.png', 'table_s1.csv']
+    entry = next(f for f in files if f.name == 'table_s1.csv')
+    assert _read(gcs_bucket, posixpath.join(writer.paper_dir(_DOC_ID), entry.path)) == b'col\n1\n'
+
+
+def test_add_files_refuses_a_file_it_cannot_place(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+
+    with pytest.raises(writer.ManifestRefusedError, match='extension'):
+        writer.add_files(gcs_bucket, _DOC_ID, [_supplement(name='table_s1')])

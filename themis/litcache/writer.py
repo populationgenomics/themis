@@ -289,6 +289,19 @@ class AddSourceResult:
 
 
 @dataclasses.dataclass(frozen=True)
+class AddFilesResult:
+    """The outcome of `add_files`.
+
+    Attributes:
+        added: How many file entries this call added; files the manifest already listed are not listed again.
+        generation: The manifest's generation once this call returned (`Commit.generation`).
+    """
+
+    added: int
+    generation: int
+
+
+@dataclasses.dataclass(frozen=True)
 class WriteResult:
     """The outcome of `write_paper`.
 
@@ -550,6 +563,45 @@ def commit(bucket: gcs.Bucket, doc_id: str, change: Callable[[litcache_pb2.Manif
             continue  # a concurrent writer bumped the generation; re-read and retry
         return Commit(prior=prior, manifest=manifest, generation=_generation(manifest_blob), changed=True)
     raise ConcurrentWriteError(f'manifest RMW for {doc_id} did not converge in {_MANIFEST_RMW_ATTEMPTS} attempts')
+
+
+def add_files(bucket: gcs.Bucket, doc_id: str, files: Sequence[FileInput]) -> AddFilesResult:
+    """Add associated files to an existing paper by `commit`.
+
+    Writes each fetched file's bytes, content-addressed, then lists every file the manifest does not already list
+    under the same role, name and hash. Idempotent: a re-delivered fetch lists nothing twice.
+
+    Args:
+        bucket: The cache bucket holding the paper.
+        doc_id: The paper whose manifest gains the files.
+        files: The files, fetched or known only by location.
+
+    Returns:
+        An `AddFilesResult`: how many entries were added, and the generation.
+
+    Raises:
+        google.api_core.exceptions.NotFound: If the paper's manifest is absent.
+        ManifestRefusedError: If a file cannot be placed (an unknown role, a name without an extension, bytes
+            with no capture time) or the manifest would break its constraints (permanent — do not retry).
+        ConcurrentWriteError: If the RMW lost its generation race the whole retry budget (contention — retryable).
+    """
+    entries = _write_files(bucket, paper_dir(doc_id), files)
+    added: list[int] = []
+
+    def merge(manifest: litcache_pb2.Manifest) -> bool:
+        listed = {(f.role, f.name, f.hash) for f in manifest.files}
+        new: list[litcache_pb2.AssociatedFile] = []
+        for entry in entries:
+            key = (entry.role, entry.name, entry.hash)
+            if key not in listed:
+                listed.add(key)
+                new.append(entry)
+        manifest.files.extend(new)
+        added.append(len(new))
+        return bool(new)
+
+    result = commit(bucket, doc_id, merge)
+    return AddFilesResult(added=added[-1], generation=result.generation)
 
 
 def add_source(bucket: gcs.Bucket, doc_id: str, source: SourceInput) -> AddSourceResult:

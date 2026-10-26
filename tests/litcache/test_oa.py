@@ -139,8 +139,9 @@ class _SuppSource:
 
     name = 'fixture'
 
-    def __init__(self, files: list[tuple[artifacts.File, bytes]]) -> None:
+    def __init__(self, files: list[tuple[artifacts.File, bytes]], *, unserved: tuple[artifacts.File, ...] = ()) -> None:
         self._files = files
+        self._unserved = unserved  # listed, but never served
 
     async def list_files(
         self,
@@ -150,7 +151,7 @@ class _SuppSource:
         http: litfetch.Http,
     ) -> tuple[artifacts.File, ...]:
         del article_ids, credentials, http  # litfetch's FileSource signature; this double ignores them
-        return tuple(f for f, _ in self._files)
+        return (*(f for f, _ in self._files), *self._unserved)
 
     async def fetch_file(
         self,
@@ -178,7 +179,7 @@ def test_fetch_supplementary_lists_and_downloads() -> None:
     data = _file(artifacts.FileKind.SUPPLEMENTARY, 'data.csv', 'text/csv')
     source = _SuppSource([(body, b'<xml/>'), (fig, b'PNG'), (data, b'a,b\n1,2\n')])
 
-    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=True))
 
     # Only the SUPPLEMENTARY files (not the body) come back, with bytes + provenance.
     assert [(s.filename, s.media_type, s.content) for s in out] == [
@@ -189,7 +190,7 @@ def test_fetch_supplementary_lists_and_downloads() -> None:
 
 
 def test_fetch_supplementary_empty_when_no_sources() -> None:
-    assert asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[])) == []
+    assert asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[], skip_unfetchable=True)) == []
 
 
 def test_fetch_supplementary_derives_filename_and_media_type_from_uri() -> None:
@@ -204,7 +205,7 @@ def test_fetch_supplementary_derives_filename_and_media_type_from_uri() -> None:
     )
     source = _SuppSource([(supp, b'PK\x03\x04')])
 
-    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=True))
 
     assert [(s.filename, s.media_type) for s in out] == [
         ('jamaneurol-e232363-s002.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -224,7 +225,7 @@ def test_fetch_supplementary_falls_back_to_octet_stream_for_unmapped_extension()
     )
     source = _SuppSource([(supp, b'library(x)')])
 
-    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+    out = asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=True))
 
     assert [(s.filename, s.media_type) for s in out] == [('ANA-99-1277-s002.R', 'application/octet-stream')]
 
@@ -239,8 +240,8 @@ def test_fetch_supplementary_raises_when_uri_has_no_extension() -> None:
         filename=None,
     )
     source = _SuppSource([(supp, b'data')])
-    with pytest.raises(ValueError, match='no storable extension'):
-        asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source]))
+    with pytest.raises(oa.OaSourceError, match='no storable extension'):
+        asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=True))
 
 
 def test_article_ids_maps_fetchable_schemes() -> None:
@@ -542,3 +543,40 @@ def test_fetch_oa_pdf_looks_up_only_a_well_formed_doi(doi: str) -> None:
 
 def test_fetch_oa_pdf_needs_a_doi() -> None:
     assert asyncio.run(oa.fetch_oa_pdf(ids.ArticleIds(pmid='1'))) is None
+
+
+def _versioned(version: int, filename: str) -> artifacts.File:
+    return artifacts.File(
+        kind=artifacts.FileKind.SUPPLEMENTARY,
+        source='fixture',
+        media_type=None,
+        uri=f'https://pmc-oa-opendata.s3.amazonaws.com/PMC9.{version}/{filename}',
+        filename=filename,
+    )
+
+
+async def _unused_resolver(article_ids: ids.ArticleIds, _http: litfetch.Http) -> ids.ArticleIds:
+    raise AssertionError(f'{article_ids} carries a pmcid, so nothing is resolved')
+
+
+def test_a_revised_packages_files_are_taken_from_its_latest_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _SuppSource(
+        [(_versioned(2, 's1.csv'), b'second'), (_versioned(1, 's1.csv'), b'first'), (_versioned(1, 's2.csv'), b'only')]
+    )
+    monkeypatch.setattr(litfetch, 'PmcOaFetcher', lambda: source)
+
+    out = asyncio.run(oa.fetch_supplementary_resolving(ids.ArticleIds(pmcid='PMC9'), resolver=_unused_resolver))
+
+    assert sorted((s.filename, s.content) for s in out) == [('s1.csv', b'second'), ('s2.csv', b'only')]
+
+
+def test_a_listed_file_that_cannot_be_downloaded_fails_a_strict_fetch() -> None:
+    listed = _file(artifacts.FileKind.SUPPLEMENTARY, 's1.csv', 'text/csv')
+
+    source = _SuppSource([], unserved=(listed,))
+
+    with pytest.raises(oa.UpstreamUnavailableError, match='could not be downloaded'):
+        asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=False))
+    assert (
+        asyncio.run(oa.fetch_supplementary(ids.ArticleIds(pmcid='PMC9'), sources=[source], skip_unfetchable=True)) == []
+    )

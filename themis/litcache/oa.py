@@ -94,6 +94,8 @@ _PDF_MAX_BYTES = 100 * 1024 * 1024
 
 # The PDF header may follow up to 1 KB of leading bytes; an HTML landing page answered with 200 has none.
 _PDF_MAGIC = b'%PDF-'
+# The version directory in a PMC open-access package key: `PMC1234567.2/`.
+_PMC_VERSION = re.compile(r'PMC[0-9]+\.([0-9]+)/')
 _PDF_HEADER_WINDOW = 1024
 
 
@@ -196,7 +198,8 @@ def _access(meta: artifacts.SourceMetadata) -> litcache_pb2.Access:
 class OaSourceError(Exception):
     """A served OA body is a real anomaly, not a silently-degraded paper.
 
-    Raised for the two documented cases — an unknown source kind, or no access terms — so callers can
+    Raised for the documented cases — an unknown source kind, no access terms, or a supplementary file
+    with no extension to store it under — so callers can
     tell this permanent-for-this-paper failure apart from a `ValueError` litfetch's own dependencies
     may raise incidentally on a transient upstream blip (a truncated JSON body decodes as a
     `json.JSONDecodeError`, itself a `ValueError`). The producer treats this as permanent; a bare
@@ -305,6 +308,7 @@ async def fetch_supplementary(
     *,
     sources: Sequence[litfetch.FileSource] | None = None,
     session: litfetch.Session | None = None,
+    skip_unfetchable: bool,
 ) -> list[SupplementaryFile]:
     """Fetch every supplementary artifact litfetch lists for the paper.
 
@@ -319,10 +323,16 @@ async def fetch_supplementary(
             source). Pass `[]` to stay offline.
         session: Optional shared litfetch session (its own HTTP client + pacing);
             `None` opens an ephemeral session per call.
+        skip_unfetchable: Whether a listed file litfetch could not download is left out. litfetch
+            reports a failed download as no file, so leaving it out records the set as complete.
 
     Returns:
         The fetched supplementary files, in listed order (empty when none are
         listed or served).
+
+    Raises:
+        OaSourceError: A listed file has no extension to store it under.
+        UpstreamUnavailableError: A listed file could not be downloaded, and `skip_unfetchable` is false.
     """
     list_files = session.list_files if session is not None else litfetch.list_files
     fetch_file = session.fetch_file if session is not None else litfetch.fetch_file
@@ -331,6 +341,8 @@ async def fetch_supplementary(
     for file in files:
         blob = await fetch_file(file, sources=sources)
         if blob is None:
+            if not skip_unfetchable:
+                raise UpstreamUnavailableError(f'listed supplementary file {file.uri} could not be downloaded')
             continue
         # The writer keys the blob path off the filename extension, so a filename with no
         # extension can't be placed — the one genuinely unstorable case. The filename is
@@ -340,12 +352,53 @@ async def fetch_supplementary(
         uri_path = urllib.parse.urlparse(file.uri).path if file.uri else ''
         filename = file.filename or posixpath.basename(uri_path)
         if not filename or not posixpath.splitext(filename)[1]:
-            raise ValueError(f'supplementary file has no storable extension: {file.uri}')
+            raise OaSourceError(f'supplementary file has no storable extension: {file.uri}')
         media_type = file.media_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         fetched.append(
             SupplementaryFile(content=blob.content, filename=filename, media_type=media_type, origin_url=file.uri)
         )
     return fetched
+
+
+async def fetch_supplementary_resolving(
+    article_ids: ids.ArticleIds, *, resolver: resolvers.Resolver
+) -> list[SupplementaryFile]:
+    """The paper's supplementary files from its PubMed Central open-access package, one per name.
+
+    The package is listed by `pmcid`, which a paper keyed by DOI or PMID does not carry; `resolver` maps one
+    to it first, inside the same session. Every listed file must download, so a set returned is complete. The
+    package holds each version of a revised article, so a name listed under several versions is taken from
+    the latest.
+
+    Args:
+        article_ids: The paper's ids.
+        resolver: Fills a missing `pmcid`.
+
+    Returns:
+        The files, one per name; empty when the package lists none, or none could be found to list.
+
+    Raises:
+        OaSourceError: A listed file has no extension to store it under.
+        UpstreamUnavailableError: A listed file could not be downloaded.
+    """
+    async with litfetch.Session() as session:
+        if article_ids.pmcid is None:
+            article_ids = await resolver(article_ids, session)
+        files = await fetch_supplementary(
+            article_ids, sources=(litfetch.PmcOaFetcher(),), session=session, skip_unfetchable=False
+        )
+    latest: dict[str, tuple[int, SupplementaryFile]] = {}
+    for file in files:
+        version = _pmc_version(file.origin_url)
+        if file.filename not in latest or version >= latest[file.filename][0]:
+            latest[file.filename] = (version, file)
+    return [file for _, file in latest.values()]
+
+
+def _pmc_version(uri: str | None) -> int:
+    """The article version a PMC package key names (`…/PMC123.2/…`); 0 for one that names none."""
+    match = _PMC_VERSION.search(uri or '')
+    return int(match.group(1)) if match else 0
 
 
 async def fetch_oa_source(

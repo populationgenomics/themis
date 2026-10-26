@@ -297,7 +297,9 @@ async def _fetch_oa(
         oa_source = await oa.fetch_oa_source(article_ids, resolver=None, fetchers=fetchers, session=session)
         supplementary: list[oa.SupplementaryFile] = []
         if oa_source is not None:
-            supplementary = await oa.fetch_supplementary(article_ids, sources=file_sources, session=session)
+            supplementary = await oa.fetch_supplementary(
+                article_ids, sources=file_sources, session=session, skip_unfetchable=True
+            )
     return oa_source, supplementary
 
 

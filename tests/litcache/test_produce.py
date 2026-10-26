@@ -172,6 +172,21 @@ async def _ocr_boom(_pdf_bytes: bytes) -> ocr.OcrRendering:
     raise AssertionError('convert_pdf must not be called')
 
 
+def _supplements_returning(files: list[oa.SupplementaryFile]) -> produce.SupplementFetcher:
+    async def fetch_supplementary(_article_ids: ids.ArticleIds, **_kwargs: object) -> list[oa.SupplementaryFile]:
+        return files
+
+    return fetch_supplementary
+
+
+async def _no_supplements(_article_ids: ids.ArticleIds, **_kwargs: object) -> list[oa.SupplementaryFile]:
+    return []
+
+
+async def _supplements_boom(*_args: object, **_kwargs: object) -> list[oa.SupplementaryFile]:
+    raise AssertionError('fetch_supplementary must not be called')
+
+
 def _produce(
     bucket: gcs.Bucket,
     doc_id: str,
@@ -180,6 +195,7 @@ def _produce(
     attempt: joblog.Attempt = _ATTEMPT,
     fetch: produce.Fetcher = _boom,
     fetch_pdf: produce.PdfFetcher = _pdf_boom,
+    fetch_supplementary: produce.SupplementFetcher = _no_supplements,
     convert_pdf: ocr.PdfConverter = _ocr_boom,
     now: Callable[[], datetime.datetime] = lambda: _CAPTURED_AT,
 ) -> Coroutine[object, object, outcome.Readiness]:
@@ -191,6 +207,7 @@ def _produce(
         attempt=attempt,
         fetch=fetch,
         fetch_pdf=fetch_pdf,
+        fetch_supplementary=fetch_supplementary,
         convert_pdf=convert_pdf,
         now=now,
     )
@@ -1061,3 +1078,91 @@ def test_a_transcription_the_model_answered_and_that_then_failed_is_logged_spent
 
     (failed,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.event == work_pb2.JOB_EVENT_FAILED]
     assert failed.model_answered
+
+
+_FIGURE = oa.SupplementaryFile(
+    content=b'col\n1\n', filename='table_s1.csv', media_type='text/csv', origin_url='https://pmc.example/s1.csv'
+)
+
+
+def test_a_paper_whose_xml_lands_gets_its_supplementary_files(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    readiness = asyncio.run(
+        _produce(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(_oa_source()),
+            fetch_supplementary=_supplements_returning([_FIGURE]),
+        )
+    )
+
+    assert readiness is outcome.Readiness.READY
+    (entry,) = _load_manifest(gcs_bucket).files
+    assert (entry.name, entry.hash) == ('table_s1.csv', hashlib.sha256(_FIGURE.content).hexdigest())
+    assert entry.source_url == 'https://pmc.example/s1.csv'
+    assert not [e for e in _log(gcs_bucket) if e[0] == produce.SUPPLEMENTS_STEP]
+
+
+def test_a_paper_with_no_xml_has_no_supplements_to_fetch(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), renderings=[_docling_rendering()])
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), fetch_supplementary=_supplements_boom))
+
+    assert not _load_manifest(gcs_bucket).files
+
+
+def test_supplements_none_are_listed_for_settle_on_the_xml_they_were_looked_for_with(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(_oa_source())))
+
+    (settled,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.SUPPLEMENTS_STEP]
+    assert settled.outcome == work_pb2.SETTLED_OUTCOME_NOTHING
+    assert list(settled.inputs) == [hashlib.sha256(_JATS).hexdigest()]
+    # A redelivery does not list them again.
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, attempt=_OTHER, fetch_supplementary=_supplements_boom))
+
+
+def test_a_supplement_that_cannot_be_stored_settles_the_step_and_leaves_the_text(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def unstorable(_article_ids: ids.ArticleIds, **_kwargs: object) -> list[oa.SupplementaryFile]:
+        raise oa.OaSourceError('supplementary file has no storable extension: https://pmc.example/s1')
+
+    readiness = asyncio.run(
+        _produce(gcs_bucket, _DOC_ID, fetch=_returning(_oa_source()), fetch_supplementary=unstorable)
+    )
+
+    assert readiness is outcome.Readiness.READY
+    (settled,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.SUPPLEMENTS_STEP]
+    assert settled.outcome == work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE
+
+
+def test_a_request_for_supplements_reaches_the_xml_they_are_listed_by() -> None:
+    assert produce.reach((produce.SUPPLEMENTS_STEP,), _manifest(pdf=True)) == {'xml', 'supplements'}
+
+
+def test_a_supplement_that_cannot_be_downloaded_is_tried_again_then_settled(gcs_bucket: gcs.Bucket) -> None:
+    # A dead link and a passing fault look alike, so the step is left undone for a later request, and settles once
+    # the bound is reached rather than failing every request for the paper.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def unreachable(_article_ids: ids.ArticleIds, **_kwargs: object) -> list[oa.SupplementaryFile]:
+        raise oa.UpstreamUnavailableError('listed supplementary file could not be downloaded')
+
+    supplements: list[tuple[int, int]] = []
+    for n in range(produce.SUPPLEMENT_ATTEMPTS_LIMIT):
+        attempt = joblog.Attempt(id=f'00000000-0000-4000-8000-00000000003{n}', queue='q', task='t', retry_count=n)
+        readiness = asyncio.run(
+            _produce(
+                gcs_bucket, _DOC_ID, attempt=attempt, fetch=_returning(_oa_source()), fetch_supplementary=unreachable
+            )
+        )
+        assert readiness is outcome.Readiness.READY
+        supplements = [(event, kind) for step, event, kind in _log(gcs_bucket) if step == produce.SUPPLEMENTS_STEP]
+
+    assert supplements == [
+        (work_pb2.JOB_EVENT_FAILED, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
+        (work_pb2.JOB_EVENT_FAILED, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
+        (work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE),
+    ]

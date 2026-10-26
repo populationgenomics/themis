@@ -10,6 +10,17 @@ whether it spends. Three produce the main text:
 - **transcription**, spends: transcribe the paper's PDF with the injected converter and commit the rendering
   (`writer.add_rendering`). It reads the xml and locate steps' output, so it runs after them.
 
+and one fetches the paper's other files:
+
+- **supplements**, free: fetch the supplementary files listed for the paper and commit them (`writer.add_files`).
+  Today the only list is the PubMed Central open-access package, which exists for a paper the XML step served, so
+  the step has an input only once the paper holds open-access XML, and runs after the XML step. litfetch reports a
+  listing it could not make as an empty one, so a transient fault there settles the step as having nothing to
+  fetch on that XML, as an empty answer from the ladder settles the XML step. A listed file that cannot be
+  downloaded leaves the step undone for a later request, the sweep's included, and after
+  `SUPPLEMENT_ATTEMPTS_LIMIT` such attempts on the same XML the step settles as failed: litfetch reports a dead link
+  and a passing fault alike.
+
 `run` works out which steps a request reaches from its targets, then runs, in declared order, every reached step with
 work and then every free one, rereading the manifest after each, until none has work. A step with work is one whose
 output is missing and whose job log (`joblog`) shows it neither settled on its current inputs nor running. A step that
@@ -53,9 +64,13 @@ _LOG = logging.getLogger(__name__)
 XML_STEP = 'xml'
 LOCATE_STEP = 'locate'
 TRANSCRIPTION_STEP = 'transcription'
+SUPPLEMENTS_STEP = 'supplements'
+# Attempts on one XML revision that may fail to download a listed supplementary file before the step settles.
+SUPPLEMENT_ATTEMPTS_LIMIT = 3
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
 PdfFetcher = Callable[..., Awaitable[oa.OaPdf | None]]
+SupplementFetcher = Callable[..., Awaitable[list[oa.SupplementaryFile]]]
 
 
 class PaperNotInCorpusError(Exception):
@@ -90,6 +105,7 @@ class _Run:
     resolver: resolvers.Resolver | None
     fetch: Fetcher
     fetch_pdf: PdfFetcher
+    fetch_supplementary: SupplementFetcher
     convert_pdf: ocr.PdfConverter
     now: Callable[[], datetime.datetime]
     deadline: datetime.timedelta
@@ -375,6 +391,59 @@ async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs:
         raise
 
 
+# --- supplements
+
+
+def _xml_source(manifest: litcache_pb2.Manifest) -> litcache_pb2.Source | None:
+    candidates = [
+        s for s in manifest.sources if s.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_XML and s.revisions
+    ]
+    return max(candidates, key=lambda s: _current_revision(s).captured_at.ToDatetime(), default=None)
+
+
+def _supplements_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
+    source = _xml_source(manifest)
+    return None if source is None else (_current_revision(source).hash,)
+
+
+def _supplements_produced(manifest: litcache_pb2.Manifest) -> bool:
+    supplementary = litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY
+    return any(f.role == supplementary and f.hash for f in manifest.files)
+
+
+async def _run_supplements(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    article_ids = oa.article_ids(_external_ids(manifest.external_ids))
+    if article_ids is None:
+        raise _nothing('no id a file list is kept under')
+    try:
+        fetched = await run.fetch_supplementary(
+            article_ids, resolver=run.resolver if run.resolver is not None else oa.default_resolver()
+        )
+    except oa.OaSourceError as e:
+        raise _permanent(str(e)) from e
+    except oa.UpstreamUnavailableError as e:
+        log = joblog.read(run.bucket, run.doc_id)
+        attempts = joblog.failed_attempts(log, step=SUPPLEMENTS_STEP, inputs=inputs) + 1
+        if attempts >= SUPPLEMENT_ATTEMPTS_LIMIT:
+            raise _permanent(f'{attempts} attempts could not download every listed file; the last: {e}') from e
+        run.fail(SUPPLEMENTS_STEP, inputs, e, model_answered=False)
+        return  # undone: a later request tries again
+    if not fetched:
+        raise _nothing('no supplementary file is listed')
+    captured = run.now()
+    files = [
+        writer.FileInput(
+            role=litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY,
+            name=f.filename,
+            source_url=f.origin_url,
+            data=f.content,
+            captured_at=captured,
+        )
+        for f in fetched
+    ]
+    _commit(lambda: writer.add_files(run.bucket, run.doc_id, files))
+
+
 # Declared so that every step comes after the steps whose output it reads.
 STEPS: tuple[_Step, ...] = (
     _Step(XML_STEP, spends=False, needs=(), inputs=lambda _m: (), produced=_xml_produced, run=_run_xml),
@@ -393,6 +462,14 @@ STEPS: tuple[_Step, ...] = (
         inputs=_transcription_inputs,
         produced=_transcription_produced,
         run=_run_transcription,
+    ),
+    _Step(
+        SUPPLEMENTS_STEP,
+        spends=False,
+        needs=(XML_STEP,),
+        inputs=_supplements_inputs,
+        produced=_supplements_produced,
+        run=_run_supplements,
     ),
 )
 _STEPS_BY_NAME = {step.name: step for step in STEPS}
@@ -570,6 +647,7 @@ async def run(
     resolver: resolvers.Resolver | None = None,
     fetch: Fetcher = oa.fetch_oa_source,
     fetch_pdf: PdfFetcher = oa.fetch_oa_pdf,
+    fetch_supplementary: SupplementFetcher = oa.fetch_supplementary_resolving,
     now: Callable[[], datetime.datetime] = _utcnow,
     deadline: datetime.timedelta = work.DISPATCH_DEADLINE,
 ) -> outcome.Readiness:
@@ -588,6 +666,8 @@ async def run(
             `oa.default_resolver` (doi/pmid → pmcid).
         fetch: The OA body fetcher. Injected so tests run offline.
         fetch_pdf: The open-access PDF locator. Injected so tests run offline.
+        fetch_supplementary: The supplementary-file fetcher, given the paper's ids and `resolver`. Injected so
+            tests run offline.
         now: The clock for log entries, captured/created times and the marker.
         deadline: The dispatch deadline, past which a begun attempt has been killed.
 
@@ -608,7 +688,9 @@ async def run(
         writer.ConcurrentWriteError: A manifest write lost its generation race the whole retry budget (retryable).
         joblog.LogContentionError: A log append did the same (retryable).
     """
-    work_run = _Run(bucket, doc_id, attempt, resolver, fetch, fetch_pdf, convert_pdf, now, deadline)
+    work_run = _Run(
+        bucket, doc_id, attempt, resolver, fetch, fetch_pdf, fetch_supplementary, convert_pdf, now, deadline
+    )
     manifest = _read_manifest(bucket, doc_id)
     reach(targets, manifest)  # an unknown target fails before any work
     # Every write checks the whole manifest, so one already breaking its constraints refuses every write:

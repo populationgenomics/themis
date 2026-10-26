@@ -177,6 +177,18 @@ def assess(
     return Verdict.WORK
 
 
+def failed_attempts(log: work_pb2.JobLog, *, step: str, inputs: Collection[str]) -> int:
+    """How many attempts closed `step` on exactly the set `inputs` with a failed entry, paid for or not."""
+    wanted = set(inputs)
+    return len(
+        {
+            e.attempt
+            for e in log.entries
+            if e.step == step and set(e.inputs) == wanted and e.event == work_pb2.JOB_EVENT_FAILED
+        }
+    )
+
+
 def settlement(log: work_pb2.JobLog, *, step: str, inputs: Collection[str]) -> work_pb2.JobLogEntry | None:
     """The entry settling `step` on exactly the set `inputs`, if one does; a permanent failure before any other."""
     wanted = set(inputs)
