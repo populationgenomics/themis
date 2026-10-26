@@ -130,13 +130,15 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "ht
 # pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
 # renders into a Pillow image). google-auth mints the Google identity token the Anthropic SDK
 # exchanges for a federation token, and requests is its transport. The telemetry group carries each
-# transcription's token counts to Cloud Monitoring. Deliberately not the `litcache` group: docling-core
+# transcription's token counts to Cloud Monitoring. google-cloud-tasks is the sweep's (litcache.sweep), whose
+# job runs this image and puts its requests on the bulk queue. Deliberately not the `litcache` group: docling-core
 # and the cloudsql connector belong to paths this worker never takes, and carry pandas and numpy behind
 # them.
 convert_worker = [
     "aiohttp",
     "google-auth",
     "google-cloud-storage",
+    "google-cloud-tasks",
     "protobuf",
     "protovalidate",
     "requests",

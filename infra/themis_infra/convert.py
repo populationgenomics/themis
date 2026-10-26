@@ -18,6 +18,8 @@ program's, since neither a queue nor the invoker knows its caller.
   transcription's token counts to Cloud Monitoring through the Telemetry API).
 - `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
   and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
+- `WorkSweep` — the hourly sweep: a Cloud Run job on the worker's image that reads every paper and
+  asks, on the bulk queue, for each one on which a step has work (`themis.litcache.sweep`).
 """
 
 from __future__ import annotations
@@ -42,6 +44,10 @@ _MAX_BACKOFF = '600s'
 # each task (`themis.litcache.work.DISPATCH_DEADLINE`). Equal, so neither side abandons a request the
 # other is still running, and the job log reads a begun attempt older than this as dead.
 _REQUEST_TIMEOUT = '1800s'
+# The sweep runs hourly: a lost or refused request waits at most this long to be asked again.
+_SWEEP_SCHEDULE = '0 * * * *'
+# One pass reads every manifest and job log; generous against a corpus in the tens of thousands.
+_SWEEP_TIMEOUT = '3000s'
 
 
 def _queue(
@@ -294,3 +300,136 @@ class ConversionInvoker(pulumi.ComponentResource):
                 'service_account_id': self.service_account_id,
             }
         )
+
+
+class WorkSweep(pulumi.ComponentResource):
+    """The sweep's Cloud Run job, its runtime identity and grants, and the schedule that runs it.
+
+    The job runs the worker's image, so it applies the worker's own step tests. Its identity reads the
+    store, puts tasks on the bulk queue, and acts as the conversion invoker the tasks name; a scheduler
+    identity of its own may only start the job.
+    """
+
+    def __init__(
+        self,
+        *,
+        project: str,
+        region: str,
+        image: pulumi.Input[str],
+        fulltext_bucket: pulumi.Input[str],
+        bulk_queue: gcp.cloudtasks.Queue,
+        worker_url: pulumi.Input[str],
+        invoker_service_account_id: pulumi.Input[str],
+        invoker_service_account_email: pulumi.Input[str],
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        super().__init__('themis:infra:WorkSweep', 'themis', None, opts)
+        child = pulumi.ResourceOptions(parent=self)
+
+        service_account = gcp.serviceaccount.Account(
+            'themis-work-sweep-runtime',
+            project=project,
+            account_id='themis-work-sweep',
+            display_name='Themis full-text sweep runtime',
+            opts=child,
+        )
+        member = grants.service_account(service_account.email)
+        grants.BucketObjectReader(
+            'themis-work-sweep', member=member, bucket=fulltext_bucket, target='fulltext', opts=child
+        )
+        grants.TaskEnqueuer(
+            'themis-work-sweep',
+            member=member,
+            queue=bulk_queue.name,
+            project=project,
+            location=region,
+            target='bulk-work',
+            opts=child,
+        )
+        grants.AccountUser(
+            'themis-work-sweep',
+            member=member,
+            account=invoker_service_account_id,
+            target='convert-invoker',
+            opts=child,
+        )
+
+        bulk_queue_path = pulumi.Output.concat('projects/', project, '/locations/', region, '/queues/', bulk_queue.name)
+        job = gcp.cloudrunv2.Job(
+            'themis-work-sweep',
+            project=project,
+            location=region,
+            name='themis-work-sweep',
+            deletion_protection=False,
+            template=gcp.cloudrunv2.JobTemplateArgs(
+                template=gcp.cloudrunv2.JobTemplateTemplateArgs(
+                    service_account=service_account.email,
+                    timeout=_SWEEP_TIMEOUT,
+                    # The next pass is an hour away, and asks for the same papers.
+                    max_retries=0,
+                    containers=[
+                        gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
+                            name='sweep',
+                            image=image,
+                            commands=['python', '-m', 'themis.litcache.sweep'],
+                            envs=[
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name='THEMIS_FULLTEXT_BUCKET', value=fulltext_bucket
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name='THEMIS_WORK_BULK_QUEUE', value=bulk_queue_path
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name='THEMIS_WORK_WORKER_URL', value=worker_url
+                                ),
+                                gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(
+                                    name='THEMIS_WORK_INVOKER_SA_EMAIL', value=invoker_service_account_email
+                                ),
+                            ],
+                            resources=gcp.cloudrunv2.JobTemplateTemplateContainerResourcesArgs(
+                                limits={'cpu': '1', 'memory': '1Gi'}
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+            opts=child,
+        )
+
+        scheduler_account = gcp.serviceaccount.Account(
+            'themis-work-sweep-scheduler',
+            project=project,
+            account_id='themis-work-sweep-scheduler',
+            display_name='Themis full-text sweep scheduler',
+            opts=child,
+        )
+        grants.JobRunner(
+            'themis-work-sweep-scheduler',
+            member=grants.service_account(scheduler_account.email),
+            job=job.name,
+            project=project,
+            location=region,
+            target='work-sweep',
+            opts=child,
+        )
+        gcp.cloudscheduler.Job(
+            'themis-work-sweep-hourly',
+            project=project,
+            region=region,
+            name='themis-work-sweep-hourly',
+            schedule=_SWEEP_SCHEDULE,
+            time_zone='Etc/UTC',
+            http_target=gcp.cloudscheduler.JobHttpTargetArgs(
+                uri=pulumi.Output.format(
+                    'https://run.googleapis.com/v2/projects/{0}/locations/{1}/jobs/{2}:run', project, region, job.name
+                ),
+                http_method='POST',
+                oauth_token=gcp.cloudscheduler.JobHttpTargetOauthTokenArgs(
+                    service_account_email=scheduler_account.email,
+                    scope='https://www.googleapis.com/auth/cloud-platform',
+                ),
+            ),
+            opts=child,
+        )
+        self.job_name = job.name
+        self.register_outputs({'job_name': job.name})

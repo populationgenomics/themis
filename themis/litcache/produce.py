@@ -436,14 +436,60 @@ def reach(targets: Collection[str], manifest: litcache_pb2.Manifest) -> frozense
     return frozenset(reached)
 
 
-def _has_work(run: _Run, step: _Step, manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> bool:
+def _step_has_work(
+    step: _Step,
+    manifest: litcache_pb2.Manifest,
+    log: work_pb2.JobLog,
+    *,
+    attempt: joblog.Attempt,
+    now: datetime.datetime,
+    deadline: datetime.timedelta,
+) -> bool:
     inputs = step.inputs(manifest)
     if inputs is None or step.produced(manifest):
         return False
-    verdict = joblog.assess(
-        log, step=step.name, inputs=inputs, attempt=run.attempt, now=run.now(), deadline=run.deadline
-    )
+    verdict = joblog.assess(log, step=step.name, inputs=inputs, attempt=attempt, now=now, deadline=deadline)
     return verdict in (joblog.Verdict.WORK, joblog.Verdict.SPENT, joblog.Verdict.BEGUN)
+
+
+def _has_work(run: _Run, step: _Step, manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> bool:
+    return _step_has_work(step, manifest, log, attempt=run.attempt, now=run.now(), deadline=run.deadline)
+
+
+# An attempt that is no delivery: assessing as it, a begun entry is never its own nor an earlier delivery's.
+_OBSERVER = joblog.Attempt(id='00000000-0000-0000-0000-000000000000', queue='', task='', retry_count=0)
+
+
+@dataclasses.dataclass(frozen=True)
+class Outstanding:
+    """What a paper still needs, as a request arriving now would find it.
+
+    Attributes:
+        free: A free step has work.
+        main_text: The main text is not met, and a step towards it has work: one of its routes, or locating
+            the PDF its transcription reads.
+    """
+
+    free: bool
+    main_text: bool
+
+
+def outstanding(
+    manifest: litcache_pb2.Manifest, log: work_pb2.JobLog, *, now: datetime.datetime, deadline: datetime.timedelta
+) -> Outstanding:
+    """What `manifest`'s paper still needs, by the same step tests `run` chooses its steps with.
+
+    A step running in a live attempt has no work here: that attempt's own task picks it up if it dies.
+    """
+
+    def has_work(step: _Step) -> bool:
+        return _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline)
+
+    towards_main_text = (_STEPS_BY_NAME[name] for name in (XML_STEP, LOCATE_STEP, TRANSCRIPTION_STEP))
+    return Outstanding(
+        free=any(has_work(step) for step in STEPS if not step.spends),
+        main_text=not _main_text_met(manifest) and any(has_work(step) for step in towards_main_text),
+    )
 
 
 def _read_manifest(bucket: gcs.Bucket, doc_id: str) -> litcache_pb2.Manifest:
@@ -490,6 +536,11 @@ def _route_settlement(manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> 
             return None
         settled.append(entry)
     return settled
+
+
+def awaits_marker(manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> bool:
+    """Whether the paper is not READY and every route to its main text has settled, so its marker is due."""
+    return not _main_text_met(manifest) and _route_settlement(manifest, log) is not None
 
 
 def _settle_readiness(run: _Run) -> outcome.Readiness:

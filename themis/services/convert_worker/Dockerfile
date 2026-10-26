@@ -38,6 +38,8 @@ COPY themis/services/convert_worker ./themis/services/convert_worker
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # deployed revision crash-loops, since nothing else imports the image's own tree.
 RUN python -c 'import themis.services.convert_worker.__main__'
+# The sweep's job runs this image too.
+RUN python -c 'import themis.litcache.sweep'
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime.
 RUN useradd --system --uid 10001 app
 USER app

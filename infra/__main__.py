@@ -547,6 +547,19 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar, ingest_net]),
 )
+# The hourly sweep asks for every paper on which a step has work, so a lost request is asked again. It runs the
+# worker's image, so it applies the worker's own step tests.
+work_sweep = convert.WorkSweep(
+    project=project,
+    region=region,
+    image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
+    fulltext_bucket=fulltext.name,
+    bulk_queue=work_queues.bulk,
+    worker_url=convert_worker.url,
+    invoker_service_account_id=convert_invoker.service_account_id,
+    invoker_service_account_email=convert_invoker.service_account_email,
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, work_queues, convert_worker, convert_invoker]),
+)
 # Bulk ingestion asks the worker for each paper it commits, on the bulk queue.
 ingest_member = grants.service_account(ingestion.service_account_email)
 grants.TaskEnqueuer(
@@ -754,6 +767,7 @@ pulumi.export('dispatcher_url', dispatcher_service.url)
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_bulk_queue', work_queues.bulk.name)
+pulumi.export('work_sweep_job_name', work_sweep.job_name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
 pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)
