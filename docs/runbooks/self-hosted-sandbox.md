@@ -51,9 +51,10 @@ backend admits Anthropic's published outbound range and denies every other sourc
 `infra/themis_infra/sandbox.py`). The deny is a catch-all rule above the policy's default rule, because Cloud Armor
 refuses preview on the default rule, and it has a switch, `enforce_source_range` in `infra/__main__.py`. Off, the
 catch-all runs in Cloud Armor preview: the load-balancer log records each request it would deny, and the default rule
-lets every request through to the dispatcher. The program starts with it off, because the range has to be confirmed
-against live deliveries first: the dispatcher's own Cloud Run request logs record every delivery's `remoteIp` as
-`0.0.0.0`. Those logs do record the user agent, `Claude-Platform`, which the queries below select deliveries by.
+lets every request through to the dispatcher. The switch is on: dev's load-balancer log confirmed that every delivery
+comes from the range, which the dispatcher's own Cloud Run request logs could not show, since they record every
+delivery's `remoteIp` as `0.0.0.0`. Those logs do record the user agent, `Claude-Platform`, which the queries below
+select deliveries by.
 
 The switch is one value for every stack, since the range belongs to Anthropic rather than to an environment. The
 cut-over below confirms it once, on dev. An environment brought up after the switch is on starts enforced, and its

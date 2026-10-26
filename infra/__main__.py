@@ -491,9 +491,8 @@ dispatcher_service = sandbox.DispatcherService(
     session_token_key_id=session_token_key.id,
     sandbox_job_name=sandbox_job.job_name,
     reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
-    # Preview until the load-balancer log shows every delivery from Anthropic's range
-    # (docs/runbooks/self-hosted-sandbox.md, "Webhook source allowlist").
-    enforce_source_range=False,
+    # Confirmed against dev's load-balancer log (docs/runbooks/self-hosted-sandbox.md, "Webhook source allowlist").
+    enforce_source_range=True,
     opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
 )
 grants.SandboxSpawner(
