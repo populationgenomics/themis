@@ -3,8 +3,8 @@
 The door into the corpus for a caller holding a DOI or a PMID and nothing else — the on-demand half of
 `docs/design/evidence-fulltext.md`. `pipeline.py` is the other ingestion core (a seed object already in
 the bucket, wrapped for Dataflow by `ingest_beam.py`); this one starts from an identifier, so the paper
-it commits has no sources and no renderings, and `produce.produce_full_text` fills it in from the ids
-alone.
+it commits has no sources and no renderings, and the worker's steps (`produce.run`) fill it in from the
+ids alone.
 
 Three steps, in one order: resolve the id upstream, `crosswalk.mint` the paper's ids, then
 `writer.write_paper` commits the manifest. Only an id the resolution answers for is minted, and the two

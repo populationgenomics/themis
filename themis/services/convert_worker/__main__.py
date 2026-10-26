@@ -1,14 +1,14 @@
 """Convert-worker entrypoint: an HTTP endpoint that runs a pushed full-text conversion.
 
 A Cloud Task delivers `POST /convert` with a `WorkRequest`; the handler calls the litcache producer to
-resolve that paper's full text off the read service's request path (architecture B,
+bring that paper up to date, step by step, off the read service's request path (architecture B,
 `docs/design/evidence-fulltext.md`). The bucket comes from `THEMIS_FULLTEXT_BUCKET` (the same litcache
 bucket the read service serves). The PDF branch transcribes on Claude (`litcache.anthropic_ocr`),
 authenticated as the worker's runtime service account by workload identity federation — no stored key
 (`docs/runbooks/claude-api-wif.md`). The bucket name and the four federation identifiers are read at
 startup and fail loud there, so a misconfigured revision never serves rather than spending a paper's
-retry budget per task; a converter failure settles the paper only when it is an `ocr.OcrError`, so an
-auth failure at call time surfaces as an `anthropic` error, is retried, and leaves the paper PENDING.
+retry budget per task; a transcription settles only on an `ocr.OcrError`, so an auth failure at call
+time surfaces as an `anthropic` error, is retried, and leaves the paper PENDING.
 Each transcription's token usage goes to the request-token counter, exported periodically off the
 request path (`themis/telemetry`), so a failed export is logged and never fails a conversion. `PORT` is
 the Cloud Run convention; `/healthz` reports liveness.
@@ -58,9 +58,13 @@ async def _healthz(_request: web.Request) -> web.Response:
 
 
 async def _convert(request: web.Request) -> web.Response:
-    produce = functools.partial(produce_mod.produce_full_text, convert_pdf=request.app[_CONVERT_PDF])
+    produce = functools.partial(produce_mod.run, convert_pdf=request.app[_CONVERT_PDF])
     status = await handler_mod.process_conversion(
-        request.app[_BUCKET], await request.read(), content_type=request.content_type, produce=produce
+        request.app[_BUCKET],
+        await request.read(),
+        content_type=request.content_type,
+        headers=request.headers,
+        produce=produce,
     )
     return web.Response(status=status)
 

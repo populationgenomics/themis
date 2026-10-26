@@ -12,9 +12,10 @@ separate status store (`docs/design/evidence-fulltext.md`):
 - neither ⇒ **PENDING** — production has not been attempted, or has not settled.
 
 Both terminal states are marker-only. The manifest records what a paper *has*, not what has been tried
-on it, and `produce.produce_full_text` is the one place that knows: it walks the ladder and writes
-NO_FULL_TEXT when no rung served — including when the manifest gives it no rung to attempt at all. The
-reader waits for that marker rather than re-deriving the ladder's entry conditions.
+on it, and the worker (`produce.run`) is the one place that knows: it writes the marker once every route
+to the main text has settled in the paper's job log with no text — including when the manifest gives a
+route nothing to attempt at all. The reader waits for that marker rather than re-deriving the routes'
+entry conditions.
 
 GATED (a rendering exists but its source is access-gated under an enforced licence) is a property of
 `Source.access`, not this sidecar; it folds in when licence enforcement is wired.

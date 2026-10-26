@@ -116,7 +116,7 @@ def test_an_id_that_resolves_upstream_is_minted_and_its_manifest_committed(
     assert manifest.external_ids.pmid == _PMID.value
     assert manifest.claim_key == _PMID.key
     # The whole point of an id-only manifest: no bytes were fetched, and the ladder still has its
-    # input — `produce_full_text` builds the OA bundle from `external_ids` alone.
+    # input — the worker's XML step builds the OA bundle from `external_ids` alone.
     assert not manifest.sources
     assert not manifest.records
     assert not manifest.refs

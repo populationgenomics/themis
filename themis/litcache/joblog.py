@@ -177,6 +177,15 @@ def assess(
     return Verdict.WORK
 
 
+def settlement(log: work_pb2.JobLog, *, step: str, inputs: Collection[str]) -> work_pb2.JobLogEntry | None:
+    """The entry settling `step` on exactly the set `inputs`, if one does; a permanent failure before any other."""
+    wanted = set(inputs)
+    settled = [
+        e for e in log.entries if e.step == step and set(e.inputs) == wanted and e.event == work_pb2.JOB_EVENT_SETTLED
+    ]
+    return min(settled, key=lambda e: e.outcome != work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE, default=None)
+
+
 def _dead(begun: work_pb2.JobLogEntry, attempt: Attempt, now: datetime.datetime, deadline: datetime.timedelta) -> bool:
     return now - begun.at.ToDatetime(tzinfo=datetime.UTC) > deadline or attempt.follows_delivery_of(begun)
 

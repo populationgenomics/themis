@@ -18,6 +18,7 @@ import datetime
 import functools
 import json
 import uuid
+from collections.abc import Collection
 from typing import override
 
 import aiohttp.test_utils
@@ -31,7 +32,7 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, ocr, work, writer
+from themis.litcache import anthropic_ocr, joblog, ocr, work, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2, work_pb2
@@ -42,6 +43,12 @@ from themis.testing import in_memory_metrics
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
+# The delivery Cloud Tasks names on every request it makes.
+_DELIVERY = {
+    'X-CloudTasks-QueueName': 'themis-work-interactive',
+    'X-CloudTasks-TaskName': '9f3a--main_text',
+    'X-CloudTasks-TaskRetryCount': '2',
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -96,35 +103,104 @@ def _lazy_bucket() -> storage.Bucket:
     return client.bucket('unused')
 
 
-def _producer(result: outcome_mod.Readiness, seen: list[str] | None = None) -> handler_mod.Producer:
-    async def produce(_bucket: storage.Bucket, doc_id: str) -> outcome_mod.Readiness:
+@dataclasses.dataclass(frozen=True)
+class _Call:
+    doc_id: str
+    targets: tuple[str, ...]
+    attempt: joblog.Attempt
+
+
+def _producer(result: outcome_mod.Readiness, seen: list[_Call] | None = None) -> handler_mod.Producer:
+    async def produce(
+        _bucket: storage.Bucket, doc_id: str, /, *, targets: Collection[str], attempt: joblog.Attempt
+    ) -> outcome_mod.Readiness:
         if seen is not None:
-            seen.append(doc_id)
+            seen.append(_Call(doc_id, tuple(targets), attempt))
         return result
 
     return produce
 
 
 def _raising() -> handler_mod.Producer:
-    async def produce(_bucket: storage.Bucket, _doc_id: str) -> outcome_mod.Readiness:
+    async def produce(_bucket: storage.Bucket, _doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
         raise RuntimeError('transient fetch failure')
 
     return produce
 
 
-def _run(body: bytes, produce: handler_mod.Producer, *, content_type: str = 'application/json') -> int:
-    return asyncio.run(handler_mod.process_conversion(_lazy_bucket(), body, content_type=content_type, produce=produce))
+def _run(
+    body: bytes,
+    produce: handler_mod.Producer,
+    *,
+    content_type: str = 'application/json',
+    headers: dict[str, str] | None = None,
+) -> int:
+    return asyncio.run(
+        handler_mod.process_conversion(
+            _lazy_bucket(),
+            body,
+            content_type=content_type,
+            headers=_DELIVERY if headers is None else headers,
+            produce=produce,
+        )
+    )
 
 
 def _request(doc_id: str = _DOC_ID, targets: tuple[str, ...] = (work.MAIN_TEXT_TARGET,)) -> bytes:
     return work_pb2.WorkRequest(doc_id=doc_id, targets=targets).SerializeToString()
 
 
-def test_a_main_text_request_reaches_the_producer() -> None:
-    seen: list[str] = []
-    status = _run(_request(), _producer(outcome_mod.Readiness.READY, seen), content_type=work.WORK_REQUEST_MEDIA_TYPE)
+@pytest.mark.parametrize(
+    'targets', [(), (work.MAIN_TEXT_TARGET,), ('transcription',), (work.MAIN_TEXT_TARGET, 'locate')]
+)
+def test_a_request_reaches_the_producer_with_its_targets_and_delivery(targets: tuple[str, ...]) -> None:
+    seen: list[_Call] = []
+    status = _run(
+        _request(targets=targets),
+        _producer(outcome_mod.Readiness.READY, seen),
+        content_type=work.WORK_REQUEST_MEDIA_TYPE,
+    )
     assert status == 200
-    assert seen == [_DOC_ID]
+    (call,) = seen
+    assert (call.doc_id, call.targets) == (_DOC_ID, targets)
+    assert (call.attempt.queue, call.attempt.task, call.attempt.retry_count) == (
+        'themis-work-interactive',
+        '9f3a--main_text',
+        2,
+    )
+    uuid.UUID(call.attempt.id)
+
+
+def test_each_request_is_an_attempt_of_its_own() -> None:
+    seen: list[_Call] = []
+    for _ in range(2):
+        _run(_request(), _producer(outcome_mod.Readiness.READY, seen), content_type=work.WORK_REQUEST_MEDIA_TYPE)
+    assert seen[0].attempt.id != seen[1].attempt.id
+
+
+@pytest.mark.parametrize('missing', ['X-CloudTasks-QueueName', 'X-CloudTasks-TaskName', 'X-CloudTasks-TaskRetryCount'])
+def test_a_request_cloud_tasks_did_not_deliver_is_bad_request(missing: str) -> None:
+    seen: list[_Call] = []
+    headers = {k: v for k, v in _DELIVERY.items() if k != missing}
+    status = _run(
+        _request(),
+        _producer(outcome_mod.Readiness.READY, seen),
+        content_type=work.WORK_REQUEST_MEDIA_TYPE,
+        headers=headers,
+    )
+    assert status == 400
+    assert not seen
+
+
+@pytest.mark.parametrize('retry_count', ['-1', '\u00b2', '4294967296'])
+def test_a_retry_count_that_is_not_a_count_is_bad_request(retry_count: str) -> None:
+    status = _run(
+        _request(),
+        _producer(outcome_mod.Readiness.READY),
+        content_type=work.WORK_REQUEST_MEDIA_TYPE,
+        headers={**_DELIVERY, 'X-CloudTasks-TaskRetryCount': retry_count},
+    )
+    assert status == 400
 
 
 @pytest.mark.parametrize(
@@ -132,15 +208,12 @@ def test_a_main_text_request_reaches_the_producer() -> None:
     [
         pytest.param(b'\xff\xff\xff', id='not a WorkRequest'),
         pytest.param(_request(doc_id='9f3a'), id='doc_id not a uuid'),
-        pytest.param(_request(targets=()), id='no target'),
-        pytest.param(_request(targets=('extract_variants',)), id='a target the worker does not run'),
-        pytest.param(_request(targets=('extract_variants', work.MAIN_TEXT_TARGET)), id='main text and more'),
+        pytest.param(_request(targets=('extract_variants',)), id='a target no step answers to'),
+        pytest.param(_request(targets=('extract_variants', work.MAIN_TEXT_TARGET)), id='main text and an unknown'),
     ],
 )
 def test_a_request_the_worker_cannot_answer_is_bad_request(body: bytes) -> None:
-    # Until the worker runs steps, it produces the main text and nothing else. Answering any other
-    # request with that would be work nobody asked for, spending included.
-    seen: list[str] = []
+    seen: list[_Call] = []
     status = _run(body, _producer(outcome_mod.Readiness.READY, seen), content_type=work.WORK_REQUEST_MEDIA_TYPE)
     assert status == 400
     assert not seen
@@ -151,11 +224,11 @@ def test_a_body_of_another_media_type_is_bad_request() -> None:
     assert status == 400
 
 
-def test_ready_conversion_is_2xx() -> None:
-    seen: list[str] = []
+def test_a_legacy_body_asks_for_the_main_text() -> None:
+    seen: list[_Call] = []
     status = _run(json.dumps({'doc_id': _DOC_ID}).encode(), _producer(outcome_mod.Readiness.READY, seen))
     assert status == 200
-    assert seen == [_DOC_ID]  # the parsed doc_id reaches the producer
+    assert [(c.doc_id, c.targets) for c in seen] == [(_DOC_ID, (work.MAIN_TEXT_TARGET,))]
 
 
 def test_no_full_text_terminal_is_also_2xx() -> None:
@@ -198,7 +271,7 @@ def test_producer_failure_propagates_for_cloud_tasks_to_retry() -> None:
 
 
 def test_a_paper_not_in_the_corpus_is_settled_at_2xx() -> None:
-    async def produce(_bucket: storage.Bucket, doc_id: str) -> outcome_mod.Readiness:
+    async def produce(_bucket: storage.Bucket, doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
         raise produce_mod.PaperNotInCorpusError(doc_id)
 
     assert _run(json.dumps({'doc_id': _DOC_ID}).encode(), produce) == 200
@@ -208,7 +281,7 @@ def test_a_missing_object_other_than_the_manifest_is_retried_not_dropped() -> No
     # The seed blob a manifest names, absent from the bucket: a live paper, not an unknown one. It
     # must reach the transport as a 500 — settling it at 200 deletes the task and strands the paper
     # PENDING with no marker.
-    async def produce(_bucket: storage.Bucket, _doc_id: str) -> outcome_mod.Readiness:
+    async def produce(_bucket: storage.Bucket, _doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
         raise api_exceptions.NotFound('sources/pdf/<hash>.pdf')
 
     with pytest.raises(api_exceptions.NotFound):
@@ -258,12 +331,15 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
     async def convert(_pdf_bytes: bytes) -> ocr.OcrRendering:
         return ocr.OcrRendering(markdown='# OCR full text\n', model='claude-sonnet-5', converter_version='1.1')
 
+    async def no_pdf_located(_article_ids: object) -> None:
+        return None
+
     produce = functools.partial(
-        produce_mod.produce_full_text, fetch=fetch, convert_pdf=convert, now=lambda: _CAPTURED_AT
+        produce_mod.run, fetch=fetch, fetch_pdf=no_pdf_located, convert_pdf=convert, now=lambda: _CAPTURED_AT
     )
     status = asyncio.run(
         handler_mod.process_conversion(
-            gcs_bucket, _request(), content_type=work.WORK_REQUEST_MEDIA_TYPE, produce=produce
+            gcs_bucket, _request(), content_type=work.WORK_REQUEST_MEDIA_TYPE, headers=_DELIVERY, produce=produce
         )
     )
     assert status == 200
@@ -287,14 +363,14 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     async def drive() -> tuple[int, int, int, int]:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
             healthz = await client.get('/healthz')
-            headers = {'Content-Type': f'{work.WORK_REQUEST_MEDIA_TYPE}; charset=utf-8'}
+            headers = {**_DELIVERY, 'Content-Type': f'{work.WORK_REQUEST_MEDIA_TYPE}; charset=utf-8'}
             malformed = await client.post('/convert', data=b'\xff\xff\xff', headers=headers)
             unknown = await client.post('/convert', data=_request(), headers=headers)
             # A task enqueued before the body was a WorkRequest, as Cloud Tasks delivers it.
             legacy = await client.post(
                 '/convert',
                 data=json.dumps({'doc_id': _DOC_ID}).encode(),
-                headers={'Content-Type': 'application/json; charset=UTF-8'},
+                headers={**_DELIVERY, 'Content-Type': 'application/json; charset=UTF-8'},
             )
             return healthz.status, malformed.status, unknown.status, legacy.status
 
@@ -315,7 +391,11 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
 
     async def convert(request: aiohttp.web.Request) -> aiohttp.web.Response:
         status = await handler_mod.process_conversion(
-            request.app[main_mod._BUCKET], await request.read(), content_type=request.content_type, produce=_raising()
+            request.app[main_mod._BUCKET],
+            await request.read(),
+            content_type=request.content_type,
+            headers=request.headers,
+            produce=_raising(),
         )
         return aiohttp.web.Response(status=status)
 
@@ -324,7 +404,7 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
     async def drive() -> int:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
             response = await client.post(
-                '/convert', data=_request(), headers={'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
+                '/convert', data=_request(), headers={**_DELIVERY, 'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
             )
             return response.status
 
@@ -435,7 +515,7 @@ def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch
 
 def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: pytest.MonkeyPatch) -> None:
     # The binding is only worth anything if it reaches the producer: /convert has to pass the app's
-    # converter as produce_full_text's `convert_pdf`, not fall back to a default.
+    # converter as produce.run's `convert_pdf`, not fall back to a default.
     _set_federation_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
     _stub_meter_provider(monkeypatch)
@@ -446,12 +526,12 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
         seen.append(convert_pdf)
         raise produce_mod.PaperNotInCorpusError(_doc_id)
 
-    monkeypatch.setattr(produce_mod, 'produce_full_text', produce)
+    monkeypatch.setattr(produce_mod, 'run', produce)
 
     async def drive() -> int:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
             response = await client.post(
-                '/convert', data=_request(), headers={'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
+                '/convert', data=_request(), headers={**_DELIVERY, 'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
             )
             return response.status
 
@@ -462,10 +542,8 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
 def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_bucket: storage.Bucket) -> None:
     # A revoked or misconfigured federation rule fails the token exchange, which is not an OcrError:
     # it propagates, the worker returns 5xx, Cloud Tasks retries, and the paper stays PENDING. The
-    # producer settles a paper terminally for OcrError alone, and a marker would short-circuit
-    # produce_full_text before it re-walks the OA ladder — litfetch reports a transient fetch failure
-    # and an absent body identically, so a paper whose XML was always available would be written off
-    # on the strength of our own misconfiguration.
+    # transcription settles for OcrError alone; settling on our own misconfiguration would write the
+    # paper off.
     _write_pdf_paper(gcs_bucket)
 
     async def no_oa(_article_ids: object, **_kwargs: object) -> None:
@@ -477,8 +555,14 @@ def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_b
     assert not issubclass(anthropic_credentials.WorkloadIdentityError, ocr.OcrError)
     with pytest.raises(anthropic_credentials.WorkloadIdentityError):
         asyncio.run(
-            produce_mod.produce_full_text(
-                gcs_bucket, _DOC_ID, fetch=no_oa, convert_pdf=refused, now=lambda: _CAPTURED_AT
+            produce_mod.run(
+                gcs_bucket,
+                _DOC_ID,
+                targets=(work.MAIN_TEXT_TARGET,),
+                attempt=joblog.Attempt(id=str(uuid.uuid4()), queue='q', task='t', retry_count=0),
+                fetch=no_oa,
+                convert_pdf=refused,
+                now=lambda: _CAPTURED_AT,
             )
         )
 

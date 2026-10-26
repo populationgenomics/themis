@@ -1,4 +1,4 @@
-"""Tests for the on-demand full-text producer (`themis.litcache.produce`).
+"""Tests for the full-text worker's loop (`themis.litcache.produce`): its steps, their reach, and the marker.
 
 Backed by a fake-gcs-server bucket (Docker-gated via the shared `gcs_bucket` fixture). The litfetch
 fetch and the Anthropic PDF converter are injected so the path runs offline; litdown runs for real on
@@ -12,6 +12,7 @@ import asyncio
 import datetime
 import hashlib
 import pathlib
+from collections.abc import Callable, Coroutine
 
 import litdown
 import pytest
@@ -20,8 +21,8 @@ from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import ids
 
-from themis.litcache import oa, ocr, outcome, produce, writer
-from themis.litcache.models import litcache_pb2
+from themis.litcache import joblog, oa, ocr, outcome, produce, work, writer
+from themis.litcache.models import litcache_pb2, work_pb2
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
@@ -35,6 +36,14 @@ _PDF_HASH = hashlib.sha256(_PDF_BYTES).hexdigest()
 _JATS = (
     b'<article><front><article-meta><title-group><article-title>T</article-title></title-group>'
     b'</article-meta></front><body><sec><title>Intro</title><p>Full text body.</p></sec></body></article>'
+)
+
+
+_ATTEMPT = joblog.Attempt(
+    id='00000000-0000-4000-8000-000000000001', queue='themis-work-interactive', task='9f3a--main_text', retry_count=0
+)
+_OTHER = joblog.Attempt(
+    id='00000000-0000-4000-8000-000000000002', queue='themis-work-bulk', task='9f3a--gen-1', retry_count=0
 )
 
 
@@ -163,6 +172,35 @@ async def _ocr_boom(_pdf_bytes: bytes) -> ocr.OcrRendering:
     raise AssertionError('convert_pdf must not be called')
 
 
+def _produce(
+    bucket: gcs.Bucket,
+    doc_id: str,
+    *,
+    targets: tuple[str, ...] = (work.MAIN_TEXT_TARGET,),
+    attempt: joblog.Attempt = _ATTEMPT,
+    fetch: produce.Fetcher = _boom,
+    fetch_pdf: produce.PdfFetcher = _pdf_boom,
+    convert_pdf: ocr.PdfConverter = _ocr_boom,
+    now: Callable[[], datetime.datetime] = lambda: _CAPTURED_AT,
+) -> Coroutine[object, object, outcome.Readiness]:
+    """`produce.run` for this attempt, asking for the main text, with every collaborator refusing to be called."""
+    return produce.run(
+        bucket,
+        doc_id,
+        targets=targets,
+        attempt=attempt,
+        fetch=fetch,
+        fetch_pdf=fetch_pdf,
+        convert_pdf=convert_pdf,
+        now=now,
+    )
+
+
+def _log(bucket: gcs.Bucket) -> list[tuple[str, int, int]]:
+    """The paper's log as (step, event, outcome) triples."""
+    return [(e.step, e.event, e.outcome) for e in joblog.read(bucket, _DOC_ID).entries]
+
+
 def _load_manifest(bucket: gcs.Bucket) -> litcache_pb2.Manifest:
     return litcache_pb2.Manifest.FromString(bucket.blob(writer.manifest_path(_DOC_ID)).download_as_bytes())
 
@@ -206,7 +244,7 @@ def test_produce_fetches_and_commits_oa_full_text(gcs_bucket: gcs.Bucket) -> Non
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='29089047'))
     captured: dict[str, ids.ArticleIds] = {}
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(_oa_source(), captured),
@@ -233,7 +271,7 @@ def test_produce_hands_the_fetcher_a_manifests_bookshelf_accession(gcs_bucket: g
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(pmid='30000010', bookid='NBK900001'))
     captured: dict[str, ids.ArticleIds] = {}
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(_oa_source(), captured),
@@ -245,19 +283,20 @@ def test_produce_hands_the_fetcher_a_manifests_bookshelf_accession(gcs_bucket: g
     assert captured['ids'] == ids.ArticleIds(pmid='30000010', bookid='NBK900001')
 
 
-def test_produce_is_a_noop_when_a_rendering_exists(gcs_bucket: gcs.Bucket) -> None:
+def test_a_paper_with_text_runs_its_free_steps_and_transcribes_nothing(gcs_bucket: gcs.Bucket) -> None:
+    # The Docling text meets the main text, so the transcription is not reached; the XML step is free, and runs.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), renderings=[_docling_rendering()])
-    readiness = asyncio.run(produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom))
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None)))
     assert readiness is outcome.Readiness.READY
-    # No fetch, no new lineage: the seed pdf is still the only source.
     assert {s.handle for s in _load_manifest(gcs_bucket).sources} == {'pdf'}
+    assert _log(gcs_bucket) == [('xml', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING)]
 
 
 def test_produce_ocrs_the_pdf_when_the_ladder_serves_no_xml(gcs_bucket: gcs.Bucket) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
     captured: dict[str, bytes] = {}
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -281,9 +320,7 @@ def test_produce_ocrs_the_pdf_when_no_fetchable_id(gcs_bucket: gcs.Bucket) -> No
     # No fetchable id ⇒ the OA path never fetches, but a PDF source is still OCR'd.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds())
     readiness = asyncio.run(
-        produce.produce_full_text(
-            gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT
-        )
+        _produce(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT)
     )
     assert readiness is outcome.Readiness.READY
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
@@ -296,7 +333,7 @@ def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
     monkeypatch.setattr(litdown, 'convert', lambda _content: '   \n')
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(_oa_source()),
@@ -312,9 +349,7 @@ def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(
 def test_produce_records_no_full_text_when_no_xml_and_no_pdf(gcs_bucket: gcs.Bucket) -> None:
     # Nothing fetchable and no pdf to OCR — the terminal marker, and neither path is called.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(), sources=[])
-    readiness = asyncio.run(
-        produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
-    )
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT))
     assert readiness is outcome.Readiness.NO_FULL_TEXT
     marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
     assert marker is not None
@@ -327,7 +362,7 @@ def test_produce_commits_a_located_pdf_and_its_ocr_when_the_paper_holds_no_pdf(g
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
     captured: dict[str, bytes] = {}
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -364,7 +399,7 @@ def test_produce_prefers_the_held_pdf_to_locating_one(gcs_bucket: gcs.Bucket) ->
     # A paper that holds a PDF transcribes that one; nothing is located.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -379,7 +414,7 @@ def test_produce_prefers_the_held_pdf_to_locating_one(gcs_bucket: gcs.Bucket) ->
 def test_produce_records_no_full_text_when_no_pdf_is_located(gcs_bucket: gcs.Bucket) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -393,14 +428,14 @@ def test_produce_records_no_full_text_when_no_pdf_is_located(gcs_bucket: gcs.Buc
 
 
 def test_produce_records_failed_when_the_located_pdf_will_not_transcribe(gcs_bucket: gcs.Bucket) -> None:
-    # A permanent OCR failure on a located PDF settles FAILED, and the PDF is not committed without text.
+    # Locating commits the PDF; its transcription is a step of its own, which settles FAILED.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
 
     async def refuse(_pdf_bytes: bytes) -> ocr.OcrRendering:
         raise ocr.OcrError('refused')
 
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -410,7 +445,7 @@ def test_produce_records_failed_when_the_located_pdf_will_not_transcribe(gcs_buc
         )
     )
     assert readiness is outcome.Readiness.FAILED
-    assert not _load_manifest(gcs_bucket).sources
+    assert [s.handle for s in _load_manifest(gcs_bucket).sources] == ['pdf']
 
 
 def test_produce_records_failed_on_an_oversized_located_pdf(gcs_bucket: gcs.Bucket) -> None:
@@ -420,7 +455,7 @@ def test_produce_records_failed_on_an_oversized_located_pdf(gcs_bucket: gcs.Buck
         raise oa.OaSourceError('serves more than 104857600 bytes')
 
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -441,7 +476,7 @@ def test_produce_propagates_a_transient_locate_failure_for_retry(gcs_bucket: gcs
 
     with pytest.raises(oa.UpstreamUnavailableError):
         asyncio.run(
-            produce.produce_full_text(
+            _produce(
                 gcs_bucket,
                 _DOC_ID,
                 fetch=_returning(None),
@@ -457,7 +492,7 @@ def test_produce_records_no_full_text_on_an_empty_ocr(gcs_bucket: gcs.Bucket) ->
     # A blank transcription is not committed as a rendering; the paper is terminal NO_FULL_TEXT.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(None),
@@ -487,7 +522,7 @@ def test_produce_ocrs_the_latest_pdf_revision_by_captured_at(gcs_bucket: gcs.Buc
     )
     captured: dict[str, bytes] = {}
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_boom,
@@ -510,9 +545,7 @@ def test_produce_records_failed_on_a_permanent_ocr_error(gcs_bucket: gcs.Bucket)
         raise ocr.OcrError('model refused to transcribe the PDF')
 
     readiness = asyncio.run(
-        produce.produce_full_text(
-            gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=convert, now=lambda: _CAPTURED_AT
-        )
+        _produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=convert, now=lambda: _CAPTURED_AT)
     )
     assert readiness is outcome.Readiness.FAILED
     marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
@@ -533,9 +566,7 @@ def test_produce_propagates_a_transient_convert_error_for_retry(gcs_bucket: gcs.
 
     with pytest.raises(RuntimeError, match='transient'):
         asyncio.run(
-            produce.produce_full_text(
-                gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=convert, now=lambda: _CAPTURED_AT
-            )
+            _produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=convert, now=lambda: _CAPTURED_AT)
         )
     assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None  # no terminal marker on a retryable error
 
@@ -549,9 +580,7 @@ def test_produce_falls_through_to_pdf_on_a_permanent_oa_error(gcs_bucket: gcs.Bu
         raise oa.OaSourceError('litfetch read no access terms from an XML body it served')
 
     readiness = asyncio.run(
-        produce.produce_full_text(
-            gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT
-        )
+        _produce(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT)
     )
     assert readiness is outcome.Readiness.READY
     rendering = _served(_load_manifest(gcs_bucket))
@@ -566,7 +595,7 @@ def test_produce_records_failed_on_a_permanent_oa_error_without_a_pdf(gcs_bucket
         raise oa.OaSourceError('served body of an unknown source kind')
 
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=fetch,
@@ -593,7 +622,7 @@ def test_produce_records_failed_on_an_unparseable_oa_body(
 
     monkeypatch.setattr(litdown, 'convert', _unparseable)
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket,
             _DOC_ID,
             fetch=_returning(_oa_source()),
@@ -614,9 +643,7 @@ def test_produce_propagates_a_transient_fetch_error_for_retry(gcs_bucket: gcs.Bu
         raise RuntimeError('europe pmc unreachable')
 
     with pytest.raises(RuntimeError, match='unreachable'):
-        asyncio.run(
-            produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
-        )
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT))
     assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
 
 
@@ -630,23 +657,37 @@ def test_produce_propagates_a_bare_valueerror_from_fetch_for_retry(gcs_bucket: g
         raise ValueError('Expecting value: line 1 column 1 (char 0)')  # shape of a JSONDecodeError
 
     with pytest.raises(ValueError, match='Expecting value'):
-        asyncio.run(
-            produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
-        )
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=fetch, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT))
     assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
 
 
-def test_produce_short_circuits_on_a_terminal_marker(gcs_bucket: gcs.Bucket) -> None:
-    # Cloud Tasks delivers at-least-once; a redelivery for a paper already settled terminal must return
-    # that state without re-running the ladder — neither fetch nor OCR is invoked (both would raise).
+def test_a_redelivery_runs_no_settled_step_again(gcs_bucket: gcs.Bucket) -> None:
+    # Cloud Tasks delivers at-least-once; the log, not the marker, is what keeps a redelivery from re-running the
+    # ladder or paying for the transcription again.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def refuse(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise ocr.OcrError('refused')
+
+    first = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=refuse))
+    again = asyncio.run(_produce(gcs_bucket, _DOC_ID, attempt=_OTHER))
+
+    assert first is again is outcome.Readiness.FAILED
+
+
+def test_a_marker_does_not_stop_a_step_with_work(gcs_bucket: gcs.Bucket) -> None:
+    # A marker is what readers see; a PDF no route has tried still has work under it.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
     outcome.write_outcome(
-        gcs_bucket, _DOC_ID, outcome.FetchOutcome(kind=outcome.OutcomeKind.FAILED, at=_CAPTURED_AT, error='refused')
+        gcs_bucket, _DOC_ID, outcome.FetchOutcome(kind=outcome.OutcomeKind.NO_FULL_TEXT, at=_CAPTURED_AT)
     )
+
     readiness = asyncio.run(
-        produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
+        _produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n'))
     )
-    assert readiness is outcome.Readiness.FAILED
+
+    assert readiness is outcome.Readiness.READY
+    assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
 
 
 def test_pdf_source_picks_the_lineage_with_the_newest_revision() -> None:
@@ -675,7 +716,7 @@ def test_pdf_source_picks_the_lineage_with_the_newest_revision() -> None:
 
 def test_produce_raises_when_the_paper_is_not_in_the_corpus(gcs_bucket: gcs.Bucket) -> None:
     with pytest.raises(produce.PaperNotInCorpusError):
-        asyncio.run(produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom))
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom))
 
 
 def test_produce_raises_not_found_when_the_manifest_names_an_absent_seed(gcs_bucket: gcs.Bucket) -> None:
@@ -688,9 +729,7 @@ def test_produce_raises_not_found_when_the_manifest_names_an_absent_seed(gcs_buc
         )
     ).delete()
     with pytest.raises(api_exceptions.NotFound):
-        asyncio.run(
-            produce.produce_full_text(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
-        )
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT))
 
 
 def test_produce_settles_failed_when_the_manifest_refuses_the_write(
@@ -704,7 +743,7 @@ def test_produce_settles_failed_when_the_manifest_refuses_the_write(
 
     monkeypatch.setattr(writer, 'add_rendering', refuse)
     readiness = asyncio.run(
-        produce.produce_full_text(
+        _produce(
             gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT
         )
     )
@@ -724,9 +763,7 @@ def test_produce_settles_a_stored_manifest_that_breaks_its_constraints_before_an
     gcs_bucket.blob(writer.manifest_path(_DOC_ID)).upload_from_string(manifest.SerializeToString())
 
     readiness = asyncio.run(
-        produce.produce_full_text(
-            gcs_bucket, _DOC_ID, fetch=_boom, fetch_pdf=_pdf_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT
-        )
+        _produce(gcs_bucket, _DOC_ID, fetch=_boom, fetch_pdf=_pdf_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT)
     )
 
     assert readiness is outcome.Readiness.FAILED
@@ -748,7 +785,7 @@ def test_produce_lets_a_transient_write_fault_propagate_for_retry(
     monkeypatch.setattr(writer, 'add_rendering', garbled)
     with pytest.raises(ValueError, match='Expecting value'):
         asyncio.run(
-            produce.produce_full_text(
+            _produce(
                 gcs_bucket,
                 _DOC_ID,
                 fetch=_returning(None),
@@ -757,3 +794,225 @@ def test_produce_lets_a_transient_write_fault_propagate_for_retry(
             )
         )
     assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+
+
+def test_a_request_naming_no_target_runs_the_free_steps_and_spends_nothing(gcs_bucket: gcs.Bucket) -> None:
+    # A PDF waits for a request that reaches its transcription; until one does, its route has not settled.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, targets=(), fetch=_returning(None)))
+
+    assert readiness is outcome.Readiness.PENDING
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+    assert _log(gcs_bucket) == [('xml', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING)]
+
+
+def test_a_request_naming_the_transcription_upgrades_a_seed_papers_text(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), renderings=[_docling_rendering()])
+
+    readiness = asyncio.run(
+        _produce(
+            gcs_bucket,
+            _DOC_ID,
+            targets=(produce.TRANSCRIPTION_STEP,),
+            fetch=_returning(None),
+            convert_pdf=_ocr_returning('# OCR\n'),
+        )
+    )
+
+    assert readiness is outcome.Readiness.READY
+    assert _served(_load_manifest(gcs_bucket)).rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+
+
+def test_a_paper_whose_text_came_from_xml_still_gets_its_pdf(gcs_bucket: gcs.Bucket) -> None:
+    # Locating is free and reads nothing the XML step writes, so it runs off the main text's path.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
+
+    readiness = asyncio.run(
+        _produce(gcs_bucket, _DOC_ID, fetch=_returning(_oa_source()), fetch_pdf=_pdf_returning(_located_pdf()))
+    )
+
+    assert readiness is outcome.Readiness.READY
+    manifest = _load_manifest(gcs_bucket)
+    assert sorted(s.handle for s in manifest.sources) == ['pdf', 'xml']
+    assert _served(manifest).rendering.converter == litcache_pb2.Converter.CONVERTER_LITDOWN
+
+
+def test_a_transcription_running_elsewhere_is_left_to_it(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    begun = _OTHER.entry(
+        at=_CAPTURED_AT, step=produce.TRANSCRIPTION_STEP, inputs=(_PDF_HASH,), event=work_pb2.JOB_EVENT_BEGUN
+    )
+    joblog.append(gcs_bucket, _DOC_ID, [begun])
+
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None)))
+
+    assert readiness is outcome.Readiness.PENDING
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+
+
+def test_a_transcription_spent_three_times_settles_failed_without_a_fourth(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    spent = [
+        joblog.Attempt(id=f'00000000-0000-4000-8000-00000000001{n}', queue='q', task=f't{n}', retry_count=0).entry(
+            at=_CAPTURED_AT,
+            step=produce.TRANSCRIPTION_STEP,
+            inputs=(_PDF_HASH,),
+            event=work_pb2.JOB_EVENT_FAILED,
+            model_answered=True,
+        )
+        for n in range(3)
+    ]
+    joblog.append(gcs_bucket, _DOC_ID, spent)
+
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None)))
+
+    assert readiness is outcome.Readiness.FAILED
+    marker = outcome.read_outcome(gcs_bucket, _DOC_ID)
+    assert marker is not None
+    assert 'committed nothing' in marker.error
+
+
+def test_a_transcription_interrupted_before_the_model_answered_is_logged_unspent(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def overloaded(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise RuntimeError('overloaded')
+
+    with pytest.raises(RuntimeError, match='overloaded'):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=overloaded))
+
+    (failed,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.event == work_pb2.JOB_EVENT_FAILED]
+    assert not failed.model_answered
+
+
+def test_a_transcription_paid_for_and_not_committed_is_logged_spent(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    def contended(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
+        raise writer.ConcurrentWriteError('did not converge')
+
+    monkeypatch.setattr(writer, 'add_rendering', contended)
+    with pytest.raises(writer.ConcurrentWriteError):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n')))
+
+    (failed,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.event == work_pb2.JOB_EVENT_FAILED]
+    assert failed.model_answered
+
+
+def test_an_unknown_target_is_refused_before_any_work(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    with pytest.raises(produce.UnknownTargetError):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, targets=('extract_variants',)))
+    assert not joblog.read(gcs_bucket, _DOC_ID).entries
+
+
+def _manifest(*, pdf: bool = False, converters: tuple[litcache_pb2.Converter, ...] = ()) -> litcache_pb2.Manifest:
+    manifest = litcache_pb2.Manifest()
+    if pdf:
+        manifest.sources.add(
+            handle='pdf',
+            media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF,
+            revisions=[litcache_pb2.Revision(hash=_PDF_HASH)],
+        )
+    for n, converter in enumerate(converters):
+        key = f'{n:064x}'
+        manifest.records[key].rendering.converter = converter
+        manifest.records[key].deps.append(_PDF_HASH)
+        manifest.refs['markdown'] = key
+    return manifest
+
+
+@pytest.mark.parametrize(
+    ('targets', 'manifest', 'reached'),
+    [
+        pytest.param((), _manifest(pdf=True), set(), id='no target reaches nothing'),
+        pytest.param(
+            (work.MAIN_TEXT_TARGET,), _manifest(pdf=True), {'xml', 'transcription'}, id='main text reaches its routes'
+        ),
+        pytest.param(
+            (work.MAIN_TEXT_TARGET,), _manifest(), {'xml', 'locate', 'transcription'}, id='and the PDF it reads'
+        ),
+        pytest.param(
+            (work.MAIN_TEXT_TARGET,),
+            _manifest(pdf=True, converters=(litcache_pb2.Converter.CONVERTER_DOCLING,)),
+            set(),
+            id='met main text reaches nothing',
+        ),
+        pytest.param(
+            (produce.TRANSCRIPTION_STEP,),
+            _manifest(pdf=True, converters=(litcache_pb2.Converter.CONVERTER_DOCLING,)),
+            {'xml', 'transcription'},
+            id='a named transcription is reached past met text',
+        ),
+        pytest.param(
+            (produce.TRANSCRIPTION_STEP,),
+            _manifest(pdf=True, converters=(litcache_pb2.Converter.CONVERTER_LITDOWN,)),
+            set(),
+            id='text from XML leaves the transcription no work',
+        ),
+    ],
+)
+def test_what_a_request_reaches(targets: tuple[str, ...], manifest: litcache_pb2.Manifest, reached: set[str]) -> None:
+    assert produce.reach(targets, manifest) == reached
+
+
+def test_a_paper_with_text_and_a_broken_manifest_stays_ready(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), renderings=[_docling_rendering()])
+    manifest = _load_manifest(gcs_bucket)
+    manifest.sources.add(handle='orphan')
+    gcs_bucket.blob(writer.manifest_path(_DOC_ID)).upload_from_string(manifest.SerializeToString())
+
+    assert asyncio.run(_produce(gcs_bucket, _DOC_ID)) is outcome.Readiness.READY
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+
+
+def test_a_transcription_another_attempt_gives_up_on_mid_request_is_left_to_its_task(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The other attempt is running when this one tries to begin, and closes before this one rereads the log.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    joblog.append(
+        gcs_bucket,
+        _DOC_ID,
+        [
+            _OTHER.entry(
+                at=_CAPTURED_AT, step=produce.TRANSCRIPTION_STEP, inputs=(_PDF_HASH,), event=work_pb2.JOB_EVENT_BEGUN
+            )
+        ],
+    )
+    real_begin = joblog.begin
+
+    def begin_then_the_other_gives_up(*args: object, **kwargs: object) -> joblog.Verdict:
+        verdict = real_begin(*args, **kwargs)  # type: ignore[arg-type]
+        failed = _OTHER.entry(
+            at=_CAPTURED_AT, step=produce.TRANSCRIPTION_STEP, inputs=(_PDF_HASH,), event=work_pb2.JOB_EVENT_FAILED
+        )
+        joblog.append(gcs_bucket, _DOC_ID, [failed])
+        return verdict
+
+    monkeypatch.setattr(joblog, 'begin', begin_then_the_other_gives_up)
+
+    assert asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None))) is outcome.Readiness.PENDING
+
+
+def test_a_failure_the_log_cannot_record_still_surfaces(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    real_append = joblog.append
+
+    def append_all_but_failures(bucket: gcs.Bucket, doc_id: str, entries: list[work_pb2.JobLogEntry]) -> None:
+        if any(e.event == work_pb2.JOB_EVENT_FAILED for e in entries):
+            raise joblog.LogContentionError('lost every race')
+        real_append(bucket, doc_id, entries)
+
+    async def overloaded(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise RuntimeError('overloaded')
+
+    monkeypatch.setattr(joblog, 'append', append_all_but_failures)
+    with pytest.raises(RuntimeError, match='overloaded'):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=overloaded))

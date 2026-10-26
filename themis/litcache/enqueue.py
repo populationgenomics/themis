@@ -35,11 +35,6 @@ from themis.litcache.models import work_pb2
 
 _logger = logging.getLogger(__name__)
 
-# The per-task dispatch deadline, matched to the convert worker's Cloud Run request timeout
-# (`infra/themis_infra/convert.py`). A shorter deadline abandons a conversion the worker is still
-# running and dispatches a second attempt alongside it.
-_DISPATCH_DEADLINE_SECONDS = 1800
-
 _CONVERT_PATH = '/convert'
 
 # A sweep pass is named for the minute it started, e.g. `20261021T1500`.
@@ -117,7 +112,7 @@ def work_task(
     base_url = target.worker_url.rstrip('/')  # a trailing slash would make the path `//convert`
     return tasks_v2.Task(
         name=f'{target.queue_path}/tasks/{task_id(request, generation=generation, sweep_pass=sweep_pass)}',
-        dispatch_deadline=duration_pb2.Duration(seconds=_DISPATCH_DEADLINE_SECONDS),
+        dispatch_deadline=duration_pb2.Duration(seconds=int(work.DISPATCH_DEADLINE.total_seconds())),
         http_request=tasks_v2.HttpRequest(
             url=f'{base_url}{_CONVERT_PATH}',
             http_method=tasks_v2.HttpMethod.POST,
