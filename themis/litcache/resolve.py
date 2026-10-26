@@ -92,9 +92,11 @@ class ResolvedPaper:
         external_ids: The cross-ids harvested for the manifest. The efetch rung
             harvests doi/pmid/pmcid from a journal record and pmid/bookid (and any
             DOI) from a book record; the Crossref rung carries the DOI only; the
-            OpenAlex rung carries the DOI and the pmcid the work states.
+            OpenAlex rung carries the DOI and the pmcid the work states, none when it states the DOI only on a
+            location (`openalex.Answer.by_location`).
         publisher: The Crossref or OpenAlex publisher (for `Licensed` access); `None`
-            on the efetch rung (a PubMed record states none).
+            on the efetch rung (a PubMed record states none), and on the OpenAlex rung when
+            the work states the DOI only on a location (`openalex.Answer.by_location`).
     """
 
     metadata: bytes
@@ -212,7 +214,7 @@ async def _look_up(
         found[scheme] = (
             await openalex.find(scheme, values, http_client=http_client, api_key=openalex_api_key)
             if values
-            else openalex.Found(scheme=scheme, works={}, ambiguous={}, drifted={})
+            else openalex.Found(scheme=scheme, answers={}, ambiguous={}, drifted={})
         )
     return found
 
@@ -230,7 +232,7 @@ async def _look_up_beside(
         ValueError: As `_look_up`.
         upstream_record.SchemaDriftError: As `_look_up`.
     """
-    found = {scheme: openalex.Found(scheme=scheme, works={}, ambiguous={}, drifted={}) for scheme in openalex.Scheme}
+    found = {scheme: openalex.Found(scheme=scheme, answers={}, ambiguous={}, drifted={}) for scheme in openalex.Scheme}
     asked: set[tuple[openalex.Scheme, str]] = set()
     pending = [identifiers for identifiers in map(_openalex_identifiers, papers) if identifiers]
     while pending:
@@ -248,7 +250,8 @@ def _work_beside(settled: _Settled, found: Mapping[openalex.Scheme, openalex.Fou
     """OpenAlex's one work of the paper, from its first identifier OpenAlex answers, or `None` when it holds none.
 
     The work the ladder already found is taken as it is. A work found by the DOI of a paper PubMed resolved that states
-    another PMID is another paper's, so none.
+    another PMID is another paper's, so none. A work stating the DOI only on a location states no PMID for the paper
+    (`openalex.stated_pmid`), so it is taken for its record and authors, nothing else.
 
     Raises:
         openalex.AmbiguousWorkError: If OpenAlex holds more than one work for that identifier.
@@ -257,13 +260,13 @@ def _work_beside(settled: _Settled, found: Mapping[openalex.Scheme, openalex.Fou
     if settled.openalex_work is not None:
         return settled.openalex_work
     for scheme, value in _openalex_identifiers(settled):
-        work = found[scheme].work(value)
-        if work is None:
+        answer = found[scheme].answer(value)
+        if answer is None:
             continue
         pmid = settled.external_ids.pmid if settled.sourced.source.HasField('pubmed') else None
-        if scheme is openalex.Scheme.DOI and pmid and openalex.stated_pmid(work) not in (None, pmid):
+        if scheme is openalex.Scheme.DOI and pmid and openalex.stated_pmid(answer) not in (None, pmid):
             return None
-        return work
+        return answer.work
     return None
 
 
@@ -584,7 +587,8 @@ def _doi_outcome(
 
     A PMID OpenAlex's work states settles the paper through PubMed only when PubMed's record of it states no DOI or
     `doi` (case-folded); a record stating another DOI is another paper's, so the paper is OpenAlex-resolved, claiming no
-    PMID. Settled through PubMed, the paper carries that work to store beside, not looked up again.
+    PMID. A work stating `doi` only on a location states no PMID for it, so it never routes the paper to PubMed.
+    Settled through PubMed, the paper carries that work to store beside, not looked up again.
     """
     if isinstance(in_openalex, SchemaDriftFailure | AmbiguousWorkFailure):
         return in_openalex
@@ -593,21 +597,21 @@ def _doi_outcome(
     if in_openalex is None:
         return None
     if in_openalex.pmid is None:
-        return _openalex_resolved(doi, in_openalex.work, pmcid=litfetched.pmcid)
+        return _openalex_resolved(doi, in_openalex.answer, pmcid=litfetched.pmcid)
     outcome = _efetch_outcome(efetched, in_openalex.pmid)
     if not isinstance(outcome, _Settled):
         return outcome
     stated = outcome.external_ids.doi
     if stated and openalex.key(openalex.Scheme.DOI, stated) != openalex.key(openalex.Scheme.DOI, doi):
-        return _openalex_resolved(doi, in_openalex.work, pmcid=litfetched.pmcid)
-    return dataclasses.replace(outcome, openalex_work=in_openalex.work)
+        return _openalex_resolved(doi, in_openalex.answer, pmcid=litfetched.pmcid)
+    return dataclasses.replace(outcome, openalex_work=in_openalex.answer.work)
 
 
 @dataclasses.dataclass(frozen=True)
 class _InOpenAlex:
-    """A DOI's one OpenAlex work, and the PMID it states (`None`: not in PubMed)."""
+    """A DOI's one OpenAlex work, and the PMID it states for the DOI's paper (`openalex.stated_pmid`)."""
 
-    work: openalex.Work
+    answer: openalex.Answer
     pmid: str | None
 
 
@@ -618,7 +622,7 @@ def _stated_pmid(answer: _InOpenAlex | SchemaDriftFailure | AmbiguousWorkFailure
 async def _in_openalex(
     dois: Sequence[str], *, http_client: httpx2.AsyncClient, openalex_api_key: openalex.ApiKey
 ) -> dict[str, _InOpenAlex | SchemaDriftFailure | AmbiguousWorkFailure]:
-    """OpenAlex's answer for each of `dois` it holds a work for, the work read only for the PMID it states.
+    """OpenAlex's answer for each of `dois` it holds a work for, the work read only for the PMID it states for it.
 
     Raises:
         httpx2.HTTPError: As `_look_up`.
@@ -633,9 +637,9 @@ async def _in_openalex(
     answers: dict[str, _InOpenAlex | SchemaDriftFailure | AmbiguousWorkFailure] = {}
     for doi in dois:
         try:
-            work = found.work(doi)
-            if work is not None:
-                answers[doi] = _InOpenAlex(work=work, pmid=openalex.stated_pmid(work))
+            answer = found.answer(doi)
+            if answer is not None:
+                answers[doi] = _InOpenAlex(answer=answer, pmid=openalex.stated_pmid(answer))
         except openalex.AmbiguousWorkError as e:
             answers[doi] = AmbiguousWorkFailure(reason=str(e))
         except upstream_record.SchemaDriftError as e:
@@ -643,17 +647,19 @@ async def _in_openalex(
     return answers
 
 
-def _openalex_resolved(doi: str, work: openalex.Work, *, pmcid: str | None) -> _Settled | SchemaDriftFailure:
+def _openalex_resolved(doi: str, answer: openalex.Answer, *, pmcid: str | None) -> _Settled | SchemaDriftFailure:
     """A paper OpenAlex resolved: its work the only record, with the cross-ids and publisher read off it.
 
     Args:
         doi: The paper's DOI.
-        work: OpenAlex's one work of it, stating no PMID.
+        answer: OpenAlex's one work of it, which states no PMID for it (`openalex.stated_pmid`) or one whose PubMed
+            record states another DOI. A work stating the DOI only on a location gives the paper its record and
+            authors, nothing else: no PMCID and no publisher (`openalex.read_answer`).
         pmcid: The PMCID litfetch found for the DOI, preferred to the work's; `None` when it found none.
     """
     try:
-        fields = openalex.read_work(work.record)
-        sourced = openalex.sourced(work)
+        fields = openalex.read_answer(answer)
+        sourced = openalex.sourced(answer.work)
     except upstream_record.SchemaDriftError as e:
         return SchemaDriftFailure(reason=e.detail)
     return _Settled(

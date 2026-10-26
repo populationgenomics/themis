@@ -991,3 +991,50 @@ def test_a_paper_openalex_resolved_holds_its_record_alone() -> None:
     assert source.HasField('openalex_json')
     assert not source.HasField('pubmed')
     assert not source.HasField('crossref_json')
+
+
+_MERGED_PREPRINT_DOI = '10.1101/2017.01.01.000001'
+
+
+def _merged_into_the_oa_paper(preprint: str) -> dict[str, object]:
+    """The OA paper's work as OpenAlex merges a preprint into it: the preprint's DOI on a location alone."""
+    work = _work_beside()
+    ids = work['ids']
+    assert isinstance(ids, dict)
+    return work | {
+        'ids': ids | {'pmcid': 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5664429'},
+        'locations': [{'doi': f'https://doi.org/{_DOI}'}, {'doi': f'https://doi.org/{preprint}'}],
+    }
+
+
+@pytest.mark.parametrize(
+    'efetch_xml',
+    [
+        pytest.param(_EFETCH_XML, id='pubmed-states-the-published-doi'),
+        pytest.param(_EFETCH_XML.replace(_PUBMED_DOI_ELEMENT, b''), id='pubmed-states-no-doi'),
+    ],
+)
+def test_a_preprint_merged_into_its_published_version_is_openalex_resolved_taking_only_its_record(
+    efetch_xml: bytes,
+) -> None:
+    work = _merged_into_the_oa_paper(_MERGED_PREPRINT_DOI)
+    paper = _resolved(_litfetch_abandons([work], efetch_xml=efetch_xml, doi=_MERGED_PREPRINT_DOI), 'k')
+
+    source = _record(paper.metadata).source
+    assert not source.HasField('pubmed')  # the published version's PMID did not route it to PubMed
+    assert upstream_record.parse_text(source.openalex_json) == work
+    assert paper.external_ids == litcache_pb2.ExternalIds(doi=_MERGED_PREPRINT_DOI)
+    assert paper.publisher is None  # the published version's would license the preprint under its journal
+
+
+@pytest.mark.parametrize(('path', 'resolving'), _PATHS)
+def test_a_work_stating_the_doi_only_on_a_location_is_stored_beside_for_its_authors(
+    path: _Path, resolving: str
+) -> None:
+    published = _work_beside(pmid='11111111', doi='10.1/published-version')
+    work = published | {'locations': [{'doi': f'https://doi.org/{_DOI}'}]}
+    paper = _record(path([work]).metadata)
+
+    assert paper.source.HasField(resolving)
+    assert upstream_record.parse_text(paper.source.openalex_json) == work
+    assert list(paper.metadata.authors) == list(openalex.sourced(openalex.parse_work(work)).metadata.authors)

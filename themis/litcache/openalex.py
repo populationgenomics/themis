@@ -10,14 +10,17 @@ stored as JSON text, every key kept (`themis.litcache.upstream_record`). Whole i
 list cuts at 100: a work served with 100 is fetched again on its own. A DOI holding `,` or `|` cannot be a filter value,
 since the filter grammar splits on both, so it is looked up alone at `/works/doi:{doi}`, which serves its work whole.
 
-Each identifier asked has one of four answers (`Found.work`): one work; none, the caller's "not in OpenAlex", never
+Each identifier asked has one of four answers (`Found.answer`): one work; none, the caller's "not in OpenAlex", never
 invented; more than one, an `AmbiguousWorkError` naming the works, since taking either could give the paper another
 work's record; or a work this reader cannot read or store, a `SchemaDriftError` charged to that identifier alone. A
 failure to reach OpenAlex, past a few retries, propagates from `find` as httpx2 raises it, and so does a work that
 cannot be charged to one identifier, since no answer in its batch can then be trusted. `find` reads of a work only the
-identifier it was looked up by. A work found by DOI is also read for the PMID it states (`stated_pmid`), which tells
-whether it is the work of a paper PubMed resolved or routes a DOI to PubMed. `read_work` reads the cross-ids (`pmid`,
-`pmcid`, bare from their URL forms) and publisher ingest takes from the work of a paper OpenAlex resolved.
+identifier it was looked up by: for a DOI, its own and its locations' (`read_results`). A work that states a DOI only
+on a location, the published version a preprint was merged into, answers that DOI with its record and authors,
+nothing else (`Answer.by_location`). A work found by DOI is also read for the PMID it states (`stated_pmid`),
+which tells whether it is the work of a paper PubMed resolved or routes a DOI to PubMed. `read_answer` reads the
+cross-ids (`pmid`, `pmcid`, bare from their URL forms) and publisher ingest takes from the work of a paper OpenAlex
+resolved.
 
 Every request carries the caller's API key (`ApiKey`) as the `api_key` query parameter. The key never reaches a log or
 an error message: a failure escapes `fetch_page` with the key's value replaced in its message, request and response, and
@@ -165,6 +168,21 @@ class AmbiguousWorkError(Exception):
         self.work_ids = tuple(work_ids)
 
 
+class Answer(NamedTuple):
+    """The one work OpenAlex holds for an identifier asked, and whether that work is the paper's own.
+
+    Attributes:
+        work: The work, whole.
+        by_location: Whether the work states the asked DOI only as one of its locations' DOIs, not as its own `doi`:
+            the work of a preprint OpenAlex merged into its published version is the published version's. It gives
+            the paper its record and authors, nothing else: its identifiers and publisher are the other version's, so
+            `stated_pmid` and `read_answer` read none off it.
+    """
+
+    work: Work
+    by_location: bool
+
+
 class Found(NamedTuple):
     """The works OpenAlex holds for a batch of identifiers of one scheme, keyed by `key`.
 
@@ -172,18 +190,19 @@ class Found(NamedTuple):
 
     Attributes:
         scheme: The scheme the identifiers were looked up by.
-        works: Each identifier OpenAlex holds exactly one work for, with that work.
+        answers: Each identifier OpenAlex holds exactly one work for, with that work.
         ambiguous: Each identifier OpenAlex holds more than one work for, with their OpenAlex ids.
-        drifted: Each identifier whose one work could not be read or stored, with the message naming the field
+        drifted: Each identifier whose one work could not be read or stored, or that a work whose locations could not
+            be read may state (`read_results`), with the message naming the field
             (`upstream_record.SchemaDriftError.detail`).
     """
 
     scheme: Scheme
-    works: dict[str, Work]
+    answers: dict[str, Answer]
     ambiguous: dict[str, list[str]]
     drifted: dict[str, str]
 
-    def work(self, identifier: str) -> Work | None:
+    def answer(self, identifier: str) -> Answer | None:
         """The one work OpenAlex holds for `identifier`, or `None` when it holds none.
 
         Raises:
@@ -195,18 +214,18 @@ class Found(NamedTuple):
             raise AmbiguousWorkError(f'{self.scheme}:{identifier}', self.ambiguous[k])
         if k in self.drifted:
             raise upstream_record.SchemaDriftError(INDEX, self.drifted[k])
-        return self.works.get(k)
+        return self.answers.get(k)
 
     def holds_none(self, identifier: str) -> bool:
         """Whether OpenAlex holds no work for `identifier`: neither one, nor more, nor one that drifted."""
         k = key(self.scheme, identifier)
-        return k not in self.works and k not in self.ambiguous and k not in self.drifted
+        return k not in self.answers and k not in self.ambiguous and k not in self.drifted
 
     def update(self, other: Found) -> None:
         """Add the answers of `other`, a lookup by the same scheme."""
         if other.scheme is not self.scheme:
             raise ValueError(f'cannot merge a {other.scheme} lookup into a {self.scheme} one')
-        self.works.update(other.works)
+        self.answers.update(other.answers)
         self.ambiguous.update(other.ambiguous)
         self.drifted.update(other.drifted)
 
@@ -220,8 +239,8 @@ def read_work(work: Mapping[str, object]) -> WorkFields:
     """Read the identifiers and publisher of a paper OpenAlex resolved off its work; every other key is ignored.
 
     A work held beside another index's record is not read here: of it, only the identifier it was looked up by
-    (`find`), the PMID it states when it was found by DOI (`stated_pmid`), and its authors (`metadata_fields.read`)
-    are read.
+    (`find`; by DOI, its own and its locations'), the PMID it states when it was found by DOI (`stated_pmid`), and its
+    authors (`metadata_fields.read`) are read.
 
     Raises:
         upstream_record.SchemaDriftError: If a field read has a shape this reader cannot read, or a
@@ -239,6 +258,20 @@ def read_work(work: Mapping[str, object]) -> WorkFields:
         pmcid=f'PMC{pmcid.group(1)}' if pmcid is not None else None,
         publisher=publisher or None,
     )
+
+
+def read_answer(answer: Answer) -> WorkFields:
+    """Read the identifiers and publisher a paper OpenAlex resolved takes from the work answering it (`read_work`).
+
+    A work answering the paper's DOI only through a location (`Answer.by_location`) gives it its record and authors,
+    nothing else: its identifiers and publisher are another version's, so none is read and each is `None`.
+
+    Raises:
+        upstream_record.SchemaDriftError: As `read_work`, for a work answering by its own identifier.
+    """
+    if answer.by_location:
+        return WorkFields(pmid=None, pmcid=None, publisher=None)
+    return read_work(answer.work.record)
 
 
 def parse_work(record: Mapping[str, object]) -> Work:
@@ -448,44 +481,111 @@ def parse_page(payload: bytes) -> Page:
 def read_results(scheme: Scheme, identifiers: Sequence[str], results: Sequence[Mapping[str, object]]) -> Found:
     """Sort the works a filter on `identifiers` matched by the identifier each states.
 
+    A work answers every asked identifier it states. A DOI filter matches a work by the DOI of any of its locations as
+    well as its own, so a preprint OpenAlex has merged into its published version is answered by that work, as an
+    `Answer.by_location`. A work stating an identifier as its own answers it ahead of the works stating it only on a
+    location; two works stating it alike, both as their own or both only on a location, make it ambiguous.
+
+    A work whose locations cannot be read still answers its own DOI, which no location can outrank. Its locations may
+    state any other DOI asked that no work states as its own, so each of those is charged the drift rather than read as
+    answered by another work alone, or as held by none.
+
     Raises:
         ValueError: If a work states none of `identifiers` (OpenAlex matched it by a value this reader does not key it
             by), so no identifier's answer can be trusted.
-        upstream_record.SchemaDriftError: If a work's identifier cannot be read, so it cannot be charged to one.
+        upstream_record.SchemaDriftError: If a work's own identifier cannot be read, or its locations cannot be read
+            while its own DOI is not asked and every DOI asked is some work's own, so it cannot be charged to one.
     """
     asked = {key(scheme, identifier) for identifier in identifiers}
-    matched: dict[str, list[Mapping[str, object]]] = {}
+    own: dict[str, list[_Stated]] = {}
+    located: dict[str, list[_Stated]] = {}
+    unread: list[tuple[str | None, str]] = []
     for work in results:
-        stated = _stated_key(scheme, work)
-        if stated not in asked:
-            raise ValueError(f'an OpenAlex work matched by {scheme} states {stated!r}, none of the identifiers asked')
-        matched.setdefault(stated, []).append(work)
-    found = Found(scheme=scheme, works={}, ambiguous={}, drifted={})
-    for k, works in matched.items():
+        stated = _stated(scheme, work)
+        if stated.own is not None and stated.own in asked:
+            own.setdefault(stated.own, []).append(stated)
+        if stated.drift is not None:
+            unread.append((stated.own, stated.drift))
+            continue
+        answered_by_location = stated.located & asked
+        if not answered_by_location and stated.own not in asked:
+            raise ValueError(
+                f'an OpenAlex work matched by {scheme} states {stated.own!r} and on its locations '
+                f'{sorted(stated.located)!r}, none of the identifiers asked'
+            )
+        for k in answered_by_location:
+            located.setdefault(k, []).append(stated)
+    uncertain = asked - own.keys() if unread else set()
+    found = Found(scheme=scheme, answers={}, ambiguous={}, drifted={})
+    for stated_own, drift in unread:
+        if stated_own not in asked and not uncertain:
+            raise upstream_record.SchemaDriftError(INDEX, drift)
+        found.drifted.update(dict.fromkeys(uncertain, drift))
+    for k in (own.keys() | located.keys()) - uncertain:
+        by_location = k not in own
+        candidates = located[k] if by_location else own[k]
         try:
-            if len(works) > 1:
-                found.ambiguous[k] = [upstream_record.JsonObject.root(INDEX, w).required_str('id') for w in works]
+            if len(candidates) > 1:
+                found.ambiguous[k] = [
+                    upstream_record.JsonObject.root(INDEX, c.work).required_str('id') for c in candidates
+                ]
             else:
-                found.works[k] = parse_work(works[0])
+                found.answers[k] = Answer(work=parse_work(candidates[0].work), by_location=by_location)
         except upstream_record.SchemaDriftError as e:
             found.drifted[k] = e.detail
     return found
 
 
-def stated_pmid(work: Work) -> str | None:
-    """The PMID `work` states, bare, or `None` when it states none (not in PubMed).
+def stated_pmid(answer: Answer) -> str | None:
+    """The PMID the work answering a paper states for it, bare, or `None` when it states none (not in PubMed).
+
+    A work answering the paper's DOI only through a location (`Answer.by_location`) states none for it: its PMID is
+    another version's, and is not read.
 
     Raises:
         upstream_record.SchemaDriftError: If a stated `ids.pmid` is not a PubMed article URL.
     """
-    return _stated_key(Scheme.PMID, work.record)
+    return None if answer.by_location else _stated_pmid(answer.work.record)
 
 
-def _stated_key(scheme: Scheme, work: Mapping[str, object]) -> str | None:
+class _Stated(NamedTuple):
+    """The identifiers one work a filter matched states, keyed by `key`.
+
+    Attributes:
+        work: The work as the filter served it.
+        own: Its own identifier, `None` when it states none.
+        located: The DOIs only its locations state; empty for a PMID, or when `drift` is set.
+        drift: Why its locations could not be read (`upstream_record.SchemaDriftError.detail`), `None` when they were.
+    """
+
+    work: Mapping[str, object]
+    own: str | None
+    located: frozenset[str]
+    drift: str | None
+
+
+def _stated(scheme: Scheme, work: Mapping[str, object]) -> _Stated:
+    """The identifiers `work` states: for a DOI, its own and each of its locations'.
+
+    Raises:
+        upstream_record.SchemaDriftError: If its own identifier cannot be read.
+    """
+    if scheme is Scheme.PMID:
+        return _Stated(work=work, own=_stated_pmid(work), located=frozenset(), drift=None)
     root = upstream_record.JsonObject.root(INDEX, work)
-    if scheme is Scheme.DOI:
-        doi = root.optional_str_or_null('doi')
-        return key(scheme, _bare(doi, _DOI_PREFIX)) if doi else None
+    own_doi = root.optional_str_or_null('doi')
+    own = key(scheme, _bare(own_doi, _DOI_PREFIX)) if own_doi else None
+    try:
+        locations = root.optional_object_list_or_null('locations') or []
+        dois = [location.optional_str_or_null('doi') for location in locations]
+    except upstream_record.SchemaDriftError as e:
+        return _Stated(work=work, own=own, located=frozenset(), drift=e.detail)
+    located = frozenset(key(scheme, _bare(doi, _DOI_PREFIX)) for doi in dois if doi) - {own}
+    return _Stated(work=work, own=own, located=located, drift=None)
+
+
+def _stated_pmid(work: Mapping[str, object]) -> str | None:
+    root = upstream_record.JsonObject.root(INDEX, work)
     ids = root.optional_object_or_null('ids')
     pmid = ids.optional_str_matching('pmid', _PMID_URL, 'a PubMed article URL') if ids is not None else None
     return pmid.group(1) if pmid is not None else None
@@ -501,8 +601,9 @@ async def find(
     holding `,` or `|`) is looked up alone at `/works/doi:{doi}`, whose 404 means OpenAlex holds no work for it. The
     pages of one filter must serve `meta.count` distinct works. A work served on two pages (OpenAlex's order shifted
     between them) leaves another unserved, so the lookup fails rather than miss it. A failure that cannot be charged to
-    one identifier fails the whole lookup too: a work stating none of the identifiers asked, or one whose `id` or
-    identifier cannot be read.
+    one identifier fails the whole lookup too: a work stating none of the identifiers asked, one whose `id` or own
+    identifier cannot be read, or one whose locations cannot be read when no identifier asked can be charged
+    (`read_results`).
 
     Args:
         scheme: The filter the identifiers are values of.
@@ -518,9 +619,10 @@ async def find(
             identifier alone makes a URL longer than OpenAlex accepts (`fetch_page`), a PMID holds a character the
             filter grammar splits on (`fetch_page`), or OpenAlex answers a work's id, or a DOI looked up alone, with
             something other than a work stating it.
-        upstream_record.SchemaDriftError: If a work's `id`, or the identifier it is looked up by, cannot be read.
+        upstream_record.SchemaDriftError: If a work's `id` or own identifier cannot be read, or its locations cannot
+            be read and no identifier asked can be charged with that (`read_results`).
     """
-    found = Found(scheme=scheme, works={}, ambiguous={}, drifted={})
+    found = Found(scheme=scheme, answers={}, ambiguous={}, drifted={})
     batched: list[str] = []
     for identifier in identifiers:
         if scheme is Scheme.DOI and not _filterable(identifier):
@@ -565,8 +667,9 @@ async def _found_alone(doi: str, *, http_client: httpx2.AsyncClient, api_key: Ap
 
     Raises:
         httpx2.HTTPError: As `fetch_page`, but for a 404.
-        ValueError: If OpenAlex answers with something other than a work stating `doi` (`read_results`).
-        upstream_record.SchemaDriftError: If the work's DOI cannot be read.
+        ValueError: If OpenAlex answers with something other than a work stating `doi`, as its own DOI or a
+            location's (`read_results`).
+        upstream_record.SchemaDriftError: If the work's own DOI cannot be read.
     """
     # Every `/` encoded, so the DOI stays one path segment: httpx2 resolves a `.` or `..` segment before sending.
     url = f'{_WORKS_URL}/doi:{urllib.parse.quote(doi, safe="")}'

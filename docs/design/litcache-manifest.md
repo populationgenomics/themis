@@ -428,10 +428,13 @@ The lookup does not always find one work. When OpenAlex cannot be reached or ans
 fails, as it does when the resolving index cannot be reached, and the writer's caller retries it; no paper is stored
 without the OpenAlex record it should carry. When OpenAlex holds no work for the paper's PMID or DOI, the paper is
 stored with its resolving index's record alone. When OpenAlex holds more than one work for the identifier, the paper is
-dead-lettered, naming the works, because taking either could give the paper another work's authors. A response that
-cannot be an answer to the lookup, such as a work stating none of the identifiers asked for, fails the whole lookup, and
-with it a bulk run, as a malformed efetch response does. A list of works names at most a work's first 100 authors, where
-a consortium paper can have over a thousand, so a work listed with 100 is fetched again on its own and stored whole.
+dead-lettered, naming the works, because taking either could give the paper another work's authors. A DOI lookup also
+matches a work by the DOI of one of its locations, which is how a preprint OpenAlex merged into its published version
+comes back; such a work gives the paper its record and authors, nothing else, since its PMID, PMCID and publisher are
+the published version's. A response that cannot be an answer to the lookup, such as a work stating none of the
+identifiers asked for, fails the whole lookup, and with it a bulk run, as a malformed efetch response does. A list of
+works names at most a work's first 100 authors, where a consortium paper can have over a thousand, so a work listed with
+100 is fetched again on its own and stored whole.
 
 Every writer sends Themis's OpenAlex API key, which gives Themis a daily budget of its own. Without a key, OpenAlex
 shares one small daily budget among every caller behind an IP address, about a thousand requests in October 2026. The

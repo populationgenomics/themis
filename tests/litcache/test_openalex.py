@@ -98,12 +98,12 @@ def test_find_reads_bare_ids_off_their_url_forms() -> None:
         ),
     ]
     found = _find(openalex.Scheme.DOI, [_DOI_A, _DOI_B], _holding(*works))
-    work_a, work_b = found.work(_DOI_A), found.work(_DOI_B)
+    work_a, work_b = found.answer(_DOI_A), found.answer(_DOI_B)
 
     assert work_a is not None
-    assert openalex.read_work(work_a.record) == openalex.WorkFields(pmid='111', pmcid='PMC222', publisher='Pub A')
+    assert openalex.read_answer(work_a) == openalex.WorkFields(pmid='111', pmcid='PMC222', publisher='Pub A')
     assert work_b is not None
-    assert openalex.read_work(work_b.record) == openalex.WorkFields(pmid=None, pmcid=None, publisher=None)
+    assert openalex.read_answer(work_b) == openalex.WorkFields(pmid=None, pmcid=None, publisher=None)
 
 
 @pytest.mark.parametrize(
@@ -127,10 +127,10 @@ def test_find_answers_an_identifier_with_its_one_work_and_another_with_none(
     source = fake_openalex.work(work_id='W1', **stating)
     found = _find(scheme, [held, unheld], _holding(source))
 
-    work = found.work(held)
-    assert work is not None
-    assert upstream_record.parse_text(work.text) == source
-    assert found.work(unheld) is None
+    answer = found.answer(held)
+    assert answer is not None
+    assert upstream_record.parse_text(answer.work.text) == source
+    assert found.answer(unheld) is None
 
 
 @pytest.mark.parametrize(('scheme', 'held', 'unheld', 'stating'), _BY_SCHEME)
@@ -142,9 +142,9 @@ def test_find_names_every_work_an_identifier_has_more_than_one_of(
     found = _find(scheme, [held, unheld], _holding(*works, fake_openalex.work(work_id='W3', **other)))
 
     with pytest.raises(openalex.AmbiguousWorkError, match=r'W1.*W2') as excinfo:
-        found.work(held)
+        found.answer(held)
     assert excinfo.value.work_ids == ('https://openalex.org/W1', 'https://openalex.org/W2')
-    assert found.work(unheld) is not None  # charged to its identifier alone
+    assert found.answer(unheld) is not None  # charged to its identifier alone
 
 
 @pytest.mark.parametrize(('scheme', 'held', 'unheld', 'stating'), _BY_SCHEME)
@@ -156,13 +156,13 @@ def test_a_work_that_cannot_be_stored_is_charged_to_its_identifier_alone(
     found = _find(scheme, [held, unheld], _holding(drifted, fake_openalex.work(work_id='W2', **other)))
 
     with pytest.raises(upstream_record.SchemaDriftError, match='fwci'):
-        found.work(held)
-    assert found.work(unheld) is not None
+        found.answer(held)
+    assert found.answer(unheld) is not None
 
 
 def test_find_matches_a_doi_whatever_its_case() -> None:
     found = _find(openalex.Scheme.DOI, ['10.1/ABC'], _holding(fake_openalex.work(work_id='W1', doi='10.1/abc')))
-    assert found.work('10.1/AbC') is not None
+    assert found.answer('10.1/AbC') is not None
 
 
 _COMMA_DOI = '10.1/a,b'
@@ -180,11 +180,13 @@ def test_find_looks_up_a_doi_the_filter_would_split_on_its_own(held: str, unheld
         return fake_openalex.answer([alone, batched], request)
 
     found = _find(openalex.Scheme.DOI, [_DOI_A, held.upper(), unheld, _DOI_B], handler)
-    work = found.work(held)
-    assert work is not None
-    assert upstream_record.parse_text(work.text) == alone  # every authorship: a lookup alone serves the work whole
+    answer = found.answer(held)
+    assert answer is not None
+    assert (
+        upstream_record.parse_text(answer.work.text) == alone
+    )  # every authorship: a lookup alone serves the work whole
     assert found.holds_none(unheld)
-    assert found.work(_DOI_A) is not None
+    assert found.answer(_DOI_A) is not None
     assert found.holds_none(_DOI_B)
     filters = [request.url.params['filter'] for request in sent if request.url.path == '/works']
     assert filters, 'the ordinary DOIs were batched'  # rules out a vacuous pass
@@ -201,7 +203,7 @@ def test_a_doi_looked_up_alone_stays_one_segment_under_works_doi() -> None:
         return fake_openalex.answer([fake_openalex.work(work_id='W1', doi=doi)], request)
 
     found = _find(openalex.Scheme.DOI, [doi], handler)
-    assert found.work(doi) is not None
+    assert found.answer(doi) is not None
     [request] = sent
     assert request.url.raw_path.partition(b'?')[0] == b'/works/doi:10.1%2Fa%2Cb%2F..%2F..%2F..%2Fauthors%2FA1'
 
@@ -245,7 +247,7 @@ def test_find_reads_every_page_of_a_long_answer() -> None:
     found = _find(openalex.Scheme.PMID, ['111'], _holding(*works))
 
     with pytest.raises(openalex.AmbiguousWorkError) as excinfo:
-        found.work('111')
+        found.answer('111')
     assert len(excinfo.value.work_ids) == len(works)
 
 
@@ -259,7 +261,7 @@ def test_find_chunks_a_batch_over_the_cap() -> None:
 
     found = _find(openalex.Scheme.PMID, pmids, handler)
     assert sorted(asked) == [50, 100]
-    assert all(found.work(pmid) is not None for pmid in pmids)
+    assert all(found.answer(pmid) is not None for pmid in pmids)
 
 
 def test_fetch_page_rejects_a_batch_over_the_cap() -> None:
@@ -286,9 +288,9 @@ def test_find_returns_every_authorship_of_a_work_a_list_cuts_short(count: int) -
         sent.append(request)
         return fake_openalex.answer([source], request)
 
-    work = _find(openalex.Scheme.PMID, ['111'], handler).work('111')
-    assert work is not None
-    assert upstream_record.parse_text(work.text) == source
+    answer = _find(openalex.Scheme.PMID, ['111'], handler).answer('111')
+    assert answer is not None
+    assert upstream_record.parse_text(answer.work.text) == source
     assert len(sent) == 1 + (count >= fake_openalex.LISTED_AUTHORSHIPS)  # the list, and a re-fetch only when cut
     assert [request.url.params.get('api_key') for request in sent] == [fake_openalex.API_KEY.value] * len(sent)
 
@@ -333,7 +335,7 @@ def test_find_chunks_long_dois_to_urls_openalex_accepts() -> None:
 
     found = _find(openalex.Scheme.DOI, dois, handler)
     assert len(sent) > 1, 'one request would carry a URL OpenAlex refuses'  # rules out a vacuous pass
-    assert all(found.work(doi) is not None for doi in dois)
+    assert all(found.answer(doi) is not None for doi in dois)
 
 
 def test_fetch_page_refuses_a_url_openalex_would_refuse() -> None:
@@ -398,7 +400,7 @@ def test_find_retries_a_transient_failure_then_reads_the_answer(monkeypatch: pyt
     held = _holding(fake_openalex.work(work_id='W1', pmid='111'))
 
     found = _find(openalex.Scheme.PMID, ['111'], lambda request: next(answers, None) or held(request))
-    assert found.work('111') is not None
+    assert found.answer('111') is not None
 
 
 def test_find_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -547,10 +549,10 @@ def test_parse_work_reads_no_field_and_refuses_a_number_json_text_cannot_carry()
 
 def test_a_key_no_reader_reads_is_kept_in_the_text_and_fails_nothing() -> None:
     source = _work(_DOI_A, is_zpac=True, primary_location={'source': {'display_name': 'J'}, 'doi': 'x'})
-    work = _find(openalex.Scheme.DOI, [_DOI_A], _holding(source)).work(_DOI_A)
+    answer = _find(openalex.Scheme.DOI, [_DOI_A], _holding(source)).answer(_DOI_A)
 
-    assert work is not None
-    assert upstream_record.parse_text(work.text) == source
+    assert answer is not None
+    assert upstream_record.parse_text(answer.work.text) == source
 
 
 @pytest.mark.parametrize(
@@ -615,7 +617,7 @@ def test_live_openalex(live_api_key: openalex.ApiKey) -> None:
         async with httpx2.AsyncClient(timeout=30.0) as client:
             return await openalex.find(openalex.Scheme.DOI, [doi], http_client=client, api_key=live_api_key)
 
-    assert asyncio.run(run()).work(doi) is not None
+    assert asyncio.run(run()).answer(doi) is not None
 
 
 @pytest.mark.skipif(
@@ -841,3 +843,112 @@ def _bare_orcid(stated: object) -> str:
         total = (total + int(digit)) * 2
     check = (12 - total % 11) % 11
     return orcid if orcid[-1] == '0123456789X'[check] else ''
+
+
+def _merged(published: str, preprint: str) -> dict[str, object]:
+    """A work OpenAlex merged from a preprint into its published version: the preprint's DOI is on a location alone."""
+    return _work(
+        published,
+        locations=[{'doi': f'https://doi.org/{published}'}, {'doi': f'https://doi.org/{preprint}'}],
+    )
+
+
+_PUBLISHED = '10.1002/ajmg.b.70032'
+_PREPRINT = '10.64898/2026.03.03.26347377'
+
+
+def test_a_doi_lookup_answers_a_preprint_merged_into_its_published_version_by_location() -> None:
+    found = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [_merged(_PUBLISHED, _PREPRINT)])
+    answer = found.answer(_PREPRINT)
+    assert answer is not None
+    assert answer.by_location
+
+
+def test_a_doi_lookup_answers_both_dois_of_a_merged_work_asked_together() -> None:
+    found = openalex.read_results(
+        openalex.Scheme.DOI, [_PUBLISHED.upper(), _PREPRINT], [_merged(_PUBLISHED, _PREPRINT)]
+    )
+    published, preprint = found.answer(_PUBLISHED), found.answer(_PREPRINT)
+    assert published is not None
+    assert not published.by_location
+    assert preprint is not None
+    assert preprint.by_location
+
+
+def test_a_work_answering_only_by_location_gives_neither_identifiers_nor_publisher() -> None:
+    answer = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [_merged(_PUBLISHED, _PREPRINT)]).answer(_PREPRINT)
+    assert answer is not None
+    assert openalex.read_work(answer.work.record).pmid == '111'  # the published version's, stated on the work
+    assert openalex.stated_pmid(answer) is None
+    assert openalex.read_answer(answer) == openalex.WorkFields(pmid=None, pmcid=None, publisher=None)
+
+
+def test_a_doi_looked_up_alone_is_answered_by_a_work_stating_it_on_a_location() -> None:
+    found = _find(openalex.Scheme.DOI, [_COMMA_DOI], _holding(_merged('10.1/published', _COMMA_DOI)))
+    answer = found.answer(_COMMA_DOI)
+    assert answer is not None
+    assert answer.by_location
+
+
+def test_a_work_stating_a_doi_as_its_own_answers_it_ahead_of_one_stating_it_on_a_location() -> None:
+    own = _work(_PREPRINT)
+    found = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [_merged(_PUBLISHED, _PREPRINT), own])
+    answer = found.answer(_PREPRINT)
+    assert answer is not None
+    assert not answer.by_location
+    assert answer.work.record == own
+
+
+@pytest.mark.parametrize(
+    'works',
+    [
+        pytest.param([_work(_PREPRINT, id='https://openalex.org/W1'), _work(_PREPRINT)], id='both-own'),
+        pytest.param([_merged(_PUBLISHED, _PREPRINT), _merged('10.1/other', _PREPRINT)], id='both-by-location'),
+    ],
+)
+def test_two_works_stating_a_doi_alike_make_it_ambiguous(works: list[dict[str, object]]) -> None:
+    found = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], works)
+    with pytest.raises(openalex.AmbiguousWorkError):
+        found.answer(_PREPRINT)
+
+
+@pytest.mark.parametrize('locations', [None, []], ids=['null', 'empty'])
+def test_a_doi_lookup_reads_a_work_without_locations_by_its_own_doi(locations: list[object] | None) -> None:
+    found = openalex.read_results(openalex.Scheme.DOI, ['10.1/a'], [_work('10.1/a', locations=locations)])
+    assert found.answer('10.1/a') is not None
+
+
+_UNREADABLE_LOCATIONS = [pytest.param([{'doi': 5}], id='a-location-doi'), pytest.param({'doi': 'x'}, id='not-a-list')]
+
+
+@pytest.mark.parametrize('locations', _UNREADABLE_LOCATIONS)
+def test_unreadable_locations_leave_the_own_doi_answered_and_charge_the_dois_they_may_state(locations: object) -> None:
+    unreadable = _work(_PUBLISHED, locations=locations)
+    held, unheld = '10.1/held', '10.1/unheld'
+    works = [unreadable, _merged('10.1/other', held)]
+    found = openalex.read_results(openalex.Scheme.DOI, [_PUBLISHED, held, unheld], works)
+
+    answer = found.answer(_PUBLISHED)
+    assert answer is not None
+    assert not answer.by_location
+    for doi in (held, unheld):  # its locations may hide a second work for one, the only work for the other
+        with pytest.raises(upstream_record.SchemaDriftError, match='locations'):
+            found.answer(doi)
+
+
+def test_unreadable_locations_of_a_work_answering_a_doi_alone_are_charged_to_it() -> None:
+    found = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [_work(_PUBLISHED, locations=[{'doi': 5}])])
+    with pytest.raises(upstream_record.SchemaDriftError, match='locations'):
+        found.answer(_PREPRINT)
+
+
+def test_unreadable_locations_fail_the_lookup_when_no_doi_asked_can_be_charged() -> None:
+    works = [_work(_DOI_A), _work(_PUBLISHED, locations=[{'doi': 5}])]
+    with pytest.raises(upstream_record.SchemaDriftError, match='locations'):
+        openalex.read_results(openalex.Scheme.DOI, [_DOI_A], works)
+
+
+def test_a_doi_lookup_fails_on_a_work_stating_none_of_the_dois_asked() -> None:
+    work = _merged('10.1/published', '10.1/preprint')
+    with pytest.raises(ValueError, match='none of the identifiers asked'):
+        openalex.read_results(openalex.Scheme.DOI, ['10.1/other'], [work])

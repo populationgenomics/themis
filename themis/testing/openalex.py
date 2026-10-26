@@ -58,9 +58,15 @@ def work(*, work_id: str, pmid: str | None = None, doi: str | None = None, **fie
 
 
 def _states(record: Mapping[str, object], scheme: str, value: str) -> bool:
+    """Whether `record` matches a `scheme` filter on `value`: a DOI filter matches its own DOI or any location's."""
     if scheme == 'doi':
-        stated = record.get('doi')
-        return isinstance(stated, str) and stated.removeprefix(_DOI_URL).casefold() == value.casefold()
+        locations = record.get('locations')
+        listed = locations if isinstance(locations, list) else []
+        located = [location.get('doi') for location in listed if isinstance(location, Mapping)]
+        return any(
+            isinstance(stated, str) and stated.removeprefix(_DOI_URL).casefold() == value.casefold()
+            for stated in [record.get('doi'), *located]
+        )
     ids = record.get('ids')
     return isinstance(ids, Mapping) and ids.get('pmid') == f'{_PMID_URL}{value}'
 
