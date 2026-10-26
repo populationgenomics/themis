@@ -62,6 +62,24 @@ class OcrError(Exception):
     """
 
 
+class SpendRefusedError(Exception):
+    """The provider refused the call at a spend limit, before any work: nothing was spent.
+
+    Nothing about the PDF is wrong, and the same call succeeds once the limit leaves room, which for a
+    monthly limit can be weeks away. The worker logs the refusal and leaves the step undone rather
+    than spending the queue's retries on it.
+    """
+
+
+class SpentError(Exception):
+    """The call failed after the model had answered: it was paid for, and yields nothing to commit.
+
+    Unlike `OcrError`, another attempt may succeed — a stream cut off mid-way, say — so the worker
+    retries it; unlike a failure before the model answered, each one counts towards the paper's bound
+    on paid attempts. The provider's own error is the `__cause__`.
+    """
+
+
 @dataclasses.dataclass(frozen=True)
 class OcrRendering:
     """A PDF's LLM-OCR transcription and the model that produced it.

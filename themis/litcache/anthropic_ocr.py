@@ -58,10 +58,14 @@ _MAX_TOKENS = 64000
 # — given one value they would collapse to the elapsed bound alone, and a stream that died at minute
 # five would settle the paper terminally instead of being retried.
 #
-# They classify differently, which is the point: the elapsed bound raises `OcrError` and settles the
-# paper, because 28 minutes is the most the queue's dispatch deadline allows and a retry cannot have
-# longer. A silence stays an `APITimeoutError` and propagates, because a dead connection says nothing
-# about whether the paper is transcribable. `max_retries=0` keeps the client from tripling either.
+# They classify differently, which is the point: the elapsed bound is reached only by a stream the
+# model answered, so it raises `SpentError` and counts towards the paper's bound on paid attempts. It is
+# not terminal: 28 minutes is the longest any attempt can have, but how long a turn takes varies, so a
+# paper past it once may finish on another attempt, and the job log's bound of three caps the cost. A
+# silence propagates to be retried, because a dead connection says nothing about whether the paper is
+# transcribable: before the response arrives the SDK raises it as `APITimeoutError`, uncounted, and
+# once the stream is being read it surfaces as httpx2's own `ReadTimeout`, which after `message_start`
+# is paid for. `max_retries=0` keeps the client from tripling either.
 # Both sit inside the convert worker's 30-minute request ceiling, leaving the GCS source read before
 # and the manifest commit after room to finish.
 _TIMEOUT_SECONDS = 1680.0
@@ -86,6 +90,19 @@ _PAGE_BYTE_BUDGET = int(32 * 1024 * 1024 * 0.95 / _BASE64_RATIO)
 _IMAGE_BYTE_BUDGET = int(claude_images.MAX_IMAGE_BASE64_BYTES / _BASE64_RATIO)
 # Each attempt rasterizes the whole document again, so the step is coarse rather than a search.
 _SHRINK = 0.85
+
+# How the API says a spend limit refused the call (https://platform.claude.com/docs/en/api/rate-limits):
+# a limit set on the workspace or the organization answers 400 with one of these messages; the
+# organization's monthly cap answers 429 with this error code, which a rate limit does not carry.
+_SPEND_LIMIT_MESSAGES = (
+    'You have reached your specified workspace API usage limits',
+    'You have reached your specified API usage limits',
+)
+_SPEND_CAP_ERROR_CODE = 'enforced_spend_limit_reached'
+# The stop-reason label a turn's tokens are counted under when it failed before the model finished it.
+_UNFINISHED = 'unfinished'
+# An exhausted credit balance, or other billing fault.
+_BILLING_ERROR_TYPE = 'billing_error'
 
 
 def _max_edge(page_count: int) -> int:
@@ -191,6 +208,20 @@ def _page_blocks(
     return blocks
 
 
+def _spend_refused(error: anthropic.APIStatusError) -> bool:
+    """Whether the API refused the call at a spend limit or for billing, rather than for the request or a rate."""
+    inner = error.body.get('error') if isinstance(error.body, dict) else None
+    if not isinstance(inner, dict):
+        return False
+    message = inner.get('message')
+    details = inner.get('details')
+    if isinstance(error, anthropic.BadRequestError):
+        return isinstance(message, str) and message.startswith(_SPEND_LIMIT_MESSAGES)
+    if isinstance(error, anthropic.RateLimitError):
+        return isinstance(details, dict) and details.get('error_code') == _SPEND_CAP_ERROR_CODE
+    return error.type == _BILLING_ERROR_TYPE
+
+
 async def convert_pdf(
     pdf_bytes: bytes, *, tokens: ocr.TokenCounter, credentials: CredentialsFactory | None = None
 ) -> ocr.OcrRendering:
@@ -200,7 +231,8 @@ async def convert_pdf(
         pdf_bytes: Raw PDF bytes. Rasterized here, so what bounds a paper is the image-block and
             size limits on one request rather than the document limits (`render`).
         tokens: The counter the turn's token usage is added to, whatever its stop reason: a direct
-            call's spend is observable nowhere but here.
+            call's spend is observable nowhere but here. A turn that fails after the model answered is
+            counted as far as the stream got, under the stop reason `unfinished`.
         credentials: Builds the access-token provider for this call. `None` leaves the SDK to
             resolve credentials from the environment its own way.
 
@@ -210,20 +242,27 @@ async def convert_pdf(
     Raises:
         anthropic.BadRequestError: The request was rejected on a limit `render` does not check —
             a shorter block ceiling on a smaller-context model, say (HTTP 400/413).
-        ocr.OcrError: The generation was truncated at the token ceiling, refused by the model, ran past
-            `_TIMEOUT_SECONDS`, or the pdf will not render into one request (`render`) — none yields a
-            transcription that can be committed as full text, and a retry would not change the outcome.
-            The elapsed bound is terminal because it is the most the queue's dispatch deadline allows:
-            a paper needing longer needs a different runner.
-        anthropic.APITimeoutError: The connection could not be made, or the stream went silent for
-            `_STALL_SECONDS`. Transient, so it propagates to be retried rather than settling the paper.
+        ocr.OcrError: The generation was truncated at the token ceiling or refused by the model, or the
+            pdf will not render into one request (`render`) — none yields a transcription that can be
+            committed as full text, and a retry would not change the outcome.
+        ocr.SpendRefusedError: The API refused the call at a spend limit, or for billing; nothing was spent.
+        ocr.SpentError: The call failed in any way after the stream's `message_start`, the sign the model
+            answered and the call was paid for: it ran past `_TIMEOUT_SECONDS`, the stream broke or went
+            silent, or an error event arrived. The original error is its cause.
+        anthropic.APIError: The call failed before the model answered — the connection could not be made,
+            the API refused the request, or it was silent for `_STALL_SECONDS` before responding.
+            Transient or not, it cost nothing, so it propagates to be retried, as does any other error
+            raised before `message_start`.
         anthropic.lib.credentials.WorkloadIdentityError: `credentials` could not be exchanged for an
             access token. Not an `OcrError`, so it propagates and the paper is retried rather than
             written off over our own credential.
-        ValueError: The final message carries no stop reason, which the API sets on every complete
-            turn.
+        ocr.SpentError: Also when the final message carries no stop reason, which the API sets on every
+            complete turn: the turn was paid for and cannot be judged.
     """
     pages = render(pdf_bytes)
+    answered = False
+    # The turn as far as the stream got, from `message_start` on: what a turn that fails after it was paid for.
+    snapshot: anthropic.types.Message | None = None
     # An explicit provider is total: given one, the client reads no credential env var at all. Given
     # none, it resolves from the environment. The client closes the provider it was given, along with
     # its own connection pool.
@@ -243,13 +282,30 @@ async def convert_pdf(
                 ],
             ) as stream,
         ):
+            async for event in stream:
+                answered = answered or event.type == 'message_start'
+                if answered:
+                    snapshot = stream.current_message_snapshot
             message = await stream.get_final_message()
     except TimeoutError as e:
-        raise ocr.OcrError(f'PDF transcription exceeded {_TIMEOUT_SECONDS:.0f}s') from e
+        if snapshot is None:
+            raise
+        tokens.add(snapshot.usage, model=snapshot.model, stop_reason=_UNFINISHED)
+        raise ocr.SpentError(f'PDF transcription exceeded {_TIMEOUT_SECONDS:.0f}s') from e
+    except Exception as e:
+        # Once the stream is being read the SDK wraps nothing: a silence or a dropped connection arrives as
+        # httpx2's own error, so whatever fails after `message_start` is a paid call that failed.
+        if snapshot is not None:
+            tokens.add(snapshot.usage, model=snapshot.model, stop_reason=_UNFINISHED)
+            raise ocr.SpentError(f'the transcription stream failed after the model answered: {e!r}') from e
+        if isinstance(e, anthropic.APIStatusError) and _spend_refused(e):
+            raise ocr.SpendRefusedError(str(e)) from e
+        raise
 
     usage = message.usage
     if message.stop_reason is None:
-        raise ValueError('precondition failed: the final message carries no stop_reason')
+        tokens.add(usage, model=message.model, stop_reason=_UNFINISHED)
+        raise ocr.SpentError('the final message carries no stop_reason')
     # Recorded before the stop reason is judged: a truncated turn is billed like any other.
     tokens.add(usage, model=message.model, stop_reason=message.stop_reason)
     _LOG.info(

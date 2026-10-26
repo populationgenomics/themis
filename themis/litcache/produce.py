@@ -110,6 +110,13 @@ class _Run:
             ],
         )
 
+    def refuse(self, step: str, inputs: Iterable[str], error: ocr.SpendRefusedError) -> None:
+        """Log this attempt's `step` as refused at the spend limit: closed, unspent, and not settled."""
+        entry = self.attempt.entry(
+            at=self.now(), step=step, inputs=inputs, event=work_pb2.JOB_EVENT_REFUSED, detail=str(error)
+        )
+        joblog.append(self.bucket, self.doc_id, [entry])
+
     def fail(self, step: str, inputs: Iterable[str], error: BaseException, *, model_answered: bool) -> None:
         """Log `error` as closing this attempt's `step`, which the caller is about to re-raise.
 
@@ -336,6 +343,14 @@ async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs:
     except ocr.OcrError as e:
         # A refusal or truncation: the model answered, and would answer the same way again.
         raise _permanent(str(e)) from e
+    except ocr.SpendRefusedError as e:
+        # Undone, not failed: the same call succeeds once the limit leaves room, and the queue's retries run out long
+        # before a monthly limit resets, so the request ends here and the sweep asks again.
+        run.refuse(TRANSCRIPTION_STEP, inputs, e)
+        return
+    except ocr.SpentError as e:
+        run.fail(TRANSCRIPTION_STEP, inputs, e, model_answered=True)
+        raise
     except Exception as e:
         run.fail(TRANSCRIPTION_STEP, inputs, e, model_answered=False)
         raise
@@ -536,7 +551,9 @@ async def run(
             revision blob, say). Operational, so it propagates and stays retryable.
         Exception: A transient failure from the converter's provider, from the OA fetch, or from locating a PDF
             (`oa.UpstreamUnavailableError`) propagates, so the worker returns 5xx and Cloud Tasks retries; a
-            transcription it interrupts is logged failed first.
+            transcription it interrupts is logged failed first, as paid for when the converter says the model had
+            answered (`ocr.SpentError`). A transcription refused at the spend limit is logged and left undone,
+            and does not raise.
         writer.ConcurrentWriteError: A manifest write lost its generation race the whole retry budget (retryable).
         joblog.LogContentionError: A log append did the same (retryable).
     """

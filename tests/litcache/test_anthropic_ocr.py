@@ -21,9 +21,10 @@ import pathlib
 import subprocess
 import sys
 import typing
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import anthropic
+import httpx2
 import pypdfium2
 import pytest
 from anthropic.lib import credentials as anthropic_credentials
@@ -85,33 +86,65 @@ class _Message:
     usage: _Usage = dataclasses.field(default_factory=_Usage)
 
 
+@dataclasses.dataclass(frozen=True)
+class _Event:
+    type: str
+
+
 class _FakeStream:
-    def __init__(self, message: _Message) -> None:
+    """A stream that opens, or fails to; emits `message_start`, or fails first; then fails, or finishes."""
+
+    def __init__(
+        self,
+        message: _Message,
+        *,
+        on_open: BaseException | None = None,
+        before_start: BaseException | None = None,
+        after_start: BaseException | None = None,
+    ) -> None:
         self._message = message
+        self._on_open = on_open
+        self._before_start = before_start
+        self._after_start = after_start
 
     async def __aenter__(self) -> typing.Self:
+        if self._on_open is not None:
+            raise self._on_open
         return self
 
     async def __aexit__(self, *_exc: object) -> bool:
         return False
 
+    async def __aiter__(self) -> AsyncIterator[_Event]:
+        if self._before_start is not None:
+            raise self._before_start
+        yield _Event('message_start')
+        if self._after_start is not None:
+            raise self._after_start
+        yield _Event('message_stop')
+
     async def get_final_message(self) -> _Message:
+        return self._message
+
+    @property
+    def current_message_snapshot(self) -> _Message:
         return self._message
 
 
 class _FakeMessages:
-    def __init__(self, message: _Message, captured: dict[str, object]) -> None:
+    def __init__(self, message: _Message, captured: dict[str, object], failures: dict[str, BaseException]) -> None:
         self._message = message
         self._captured = captured
+        self._failures = failures
 
     def stream(self, **kwargs: object) -> _FakeStream:
         self._captured.update(kwargs)
-        return _FakeStream(self._message)
+        return _FakeStream(self._message, **self._failures)
 
 
 class _FakeClient:
-    def __init__(self, message: _Message, captured: dict[str, object]) -> None:
-        self.messages = _FakeMessages(message, captured)
+    def __init__(self, message: _Message, captured: dict[str, object], failures: dict[str, BaseException]) -> None:
+        self.messages = _FakeMessages(message, captured, failures)
 
     async def __aenter__(self) -> typing.Self:
         return self
@@ -138,29 +171,41 @@ def _install(monkeypatch: pytest.MonkeyPatch, message: _Message) -> dict[str, ob
 
     def client(**kwargs: object) -> _FakeClient:
         captured.update(kwargs)
-        return _FakeClient(message, captured)
+        return _FakeClient(message, captured, {})
 
     monkeypatch.setattr(anthropic, 'AsyncAnthropic', client)
     return captured
 
 
 class _StalledMessages:
-    """A stream that never yields, standing in for a call that outlives its elapsed budget."""
+    """A stream that stops yielding, before or after `message_start`, and outlives its elapsed budget."""
+
+    def __init__(self, *, answered: bool) -> None:
+        self._answered = answered
 
     def stream(self, **_kw: object) -> typing.Self:
         return self
 
+    @property
+    def current_message_snapshot(self) -> _Message:
+        return _Message(stop_reason='', content=[], model='claude-sonnet-5')
+
     async def __aenter__(self) -> typing.Self:
-        await asyncio.sleep(3600)
-        raise AssertionError('unreachable: the elapsed bound should have fired')
+        return self
 
     async def __aexit__(self, *_exc: object) -> bool:
         return False
 
+    async def __aiter__(self) -> AsyncIterator[_Event]:
+        if self._answered:
+            yield _Event('message_start')
+        await asyncio.sleep(3600)
+        raise AssertionError('unreachable: the elapsed bound should have fired')
+
 
 class _StalledClient:
-    def __init__(self) -> None:
-        self.messages = _StalledMessages()
+    def __init__(self, *, answered: bool) -> None:
+        self.messages = _StalledMessages(answered=answered)
 
     async def __aenter__(self) -> typing.Self:
         return self
@@ -176,15 +221,21 @@ def test_a_silence_is_caught_before_the_elapsed_budget_runs_out() -> None:
     assert anthropic_ocr._STALL_SECONDS < anthropic_ocr._TIMEOUT_SECONDS
 
 
-def test_a_call_past_the_elapsed_bound_is_terminal_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    # OcrError, not TimeoutError: the bound is the most the queue's dispatch deadline allows, so the
-    # producer settles the paper FAILED rather than re-billing the model on every retry. httpx2 has no
-    # total-duration timeout, so the client's own value would not have caught a call that keeps
+def test_a_call_the_model_answered_past_the_elapsed_bound_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    # httpx2 has no total-duration timeout, so the client's own value would not have caught a call that keeps
     # streaming — only asyncio.timeout bounds elapsed time.
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient())
-    monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.01)
+    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient(answered=True))
+    monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.5)  # long enough to open the stream under load
 
-    with pytest.raises(ocr.OcrError, match='exceeded'):
+    with pytest.raises(ocr.SpentError, match='exceeded'):
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
+
+
+def test_a_call_past_the_elapsed_bound_before_the_model_answered_was_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient(answered=False))
+    monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.5)  # long enough to open the stream under load
+
+    with pytest.raises(TimeoutError):
         asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
 
 
@@ -472,8 +523,123 @@ def test_a_final_message_without_a_stop_reason_is_a_precondition_failure(monkeyp
     # checks have anything to read, so the turn is refused rather than committed as a success.
     _install(monkeypatch, _Message(stop_reason=None, content=[_Block('text', '#')], model='m'))  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match='stop_reason'):
+    with pytest.raises(ocr.SpentError, match='stop_reason'):
         asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+
+
+_REQUEST = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
+
+
+def _status_error(
+    cls: type[anthropic.APIStatusError], status: int, error: dict[str, object]
+) -> anthropic.APIStatusError:
+    body = {'type': 'error', 'error': error}
+    return cls(str(error.get('message', '')), response=httpx2.Response(status, request=_REQUEST), body=body)
+
+
+def _install_failing(monkeypatch: pytest.MonkeyPatch, **failures: BaseException) -> None:
+    message = _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m')
+    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(message, {}, failures))
+
+
+_WORKSPACE_LIMIT = _status_error(
+    anthropic.BadRequestError,
+    400,
+    {
+        'type': 'invalid_request_error',
+        'message': 'You have reached your specified workspace API usage limits. You will regain access on 2026-11-01.',
+    },
+)
+_ORGANIZATION_LIMIT = _status_error(
+    anthropic.BadRequestError,
+    400,
+    {'type': 'invalid_request_error', 'message': 'You have reached your specified API usage limits.'},
+)
+_SPEND_CAP = _status_error(
+    anthropic.RateLimitError,
+    429,
+    {
+        'type': 'rate_limit_error',
+        'message': 'You have reached your API usage limits.',
+        'details': {'error_code': 'enforced_spend_limit_reached'},
+    },
+)
+_BILLING = _status_error(
+    anthropic.APIStatusError, 402, {'type': 'billing_error', 'message': 'Your credit balance is too low.'}
+)
+_RATE_LIMIT = _status_error(
+    anthropic.RateLimitError, 429, {'type': 'rate_limit_error', 'message': 'Number of request tokens has exceeded.'}
+)
+_TOO_MANY_IMAGES = _status_error(
+    anthropic.BadRequestError, 400, {'type': 'invalid_request_error', 'message': 'too many images'}
+)
+_OVERLOADED = _status_error(anthropic.APIStatusError, 200, {'type': 'overloaded_error', 'message': 'Overloaded'})
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(_WORKSPACE_LIMIT, id='workspace limit'),
+        pytest.param(_ORGANIZATION_LIMIT, id='organization limit'),
+        pytest.param(_SPEND_CAP, id='monthly spend cap'),
+        pytest.param(_BILLING, id='billing'),
+    ],
+)
+def test_a_call_refused_at_a_spend_limit_is_refused_not_failed(
+    error: anthropic.APIStatusError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_failing(monkeypatch, on_open=error)
+
+    with pytest.raises(ocr.SpendRefusedError) as raised:
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(_RATE_LIMIT, id='a rate limit'),
+        pytest.param(_TOO_MANY_IMAGES, id='a request the API refuses'),
+        pytest.param(anthropic.APIConnectionError(request=_REQUEST), id='no connection'),
+    ],
+)
+def test_a_call_failing_before_the_model_answered_propagates_as_itself(
+    error: anthropic.APIError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_failing(monkeypatch, on_open=error)
+
+    with pytest.raises(type(error)) as raised:
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+    assert raised.value is error
+
+
+def test_a_stream_failing_before_message_start_was_not_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_failing(monkeypatch, before_start=_OVERLOADED)
+
+    with pytest.raises(anthropic.APIStatusError) as raised:
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+    assert raised.value is _OVERLOADED
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(_OVERLOADED, id='an error event'),
+        pytest.param(_BILLING, id='a billing error event'),
+        pytest.param(httpx2.RemoteProtocolError('peer closed connection'), id='a dropped connection'),
+        pytest.param(httpx2.ReadTimeout('timed out'), id='a silence'),
+    ],
+)
+def test_a_stream_failing_after_message_start_was_paid_for(error: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_failing(monkeypatch, after_start=error)
+    tokens, reader = _counter()
+
+    with pytest.raises(ocr.SpentError) as raised:
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
+    assert raised.value.__cause__ is error
+    # Paid for, so counted, as far as the stream got.
+    counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
+    assert counted[in_memory_metrics.labels(model='m', type='input', stop_reason='unfinished')] == 4321
 
 
 # --- what the converter depends on ---

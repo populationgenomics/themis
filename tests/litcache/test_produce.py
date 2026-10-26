@@ -1016,3 +1016,48 @@ def test_a_failure_the_log_cannot_record_still_surfaces(
     monkeypatch.setattr(joblog, 'append', append_all_but_failures)
     with pytest.raises(RuntimeError, match='overloaded'):
         asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=overloaded))
+
+
+def test_a_transcription_refused_at_the_spend_limit_is_left_undone(gcs_bucket: gcs.Bucket) -> None:
+    # The limit resets on the 1st, long after the queue's retries run out, so the request ends with the step undone.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise ocr.SpendRefusedError('You have reached your specified workspace API usage limits')
+
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=refused))
+
+    assert readiness is outcome.Readiness.PENDING
+    assert outcome.read_outcome(gcs_bucket, _DOC_ID) is None
+    transcription = [(e, o) for s, e, o in _log(gcs_bucket) if s == produce.TRANSCRIPTION_STEP]
+    assert transcription == [
+        (work_pb2.JOB_EVENT_BEGUN, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
+        (work_pb2.JOB_EVENT_REFUSED, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
+    ]
+
+
+def test_refusals_never_use_up_a_transcriptions_attempts(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise ocr.SpendRefusedError('You have reached your specified workspace API usage limits')
+
+    for n in range(4):
+        attempt = joblog.Attempt(id=f'00000000-0000-4000-8000-00000000002{n}', queue='q', task='t', retry_count=n)
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, attempt=attempt, fetch=_returning(None), convert_pdf=refused))
+
+    readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, attempt=_OTHER, convert_pdf=_ocr_returning('# OCR\n')))
+    assert readiness is outcome.Readiness.READY
+
+
+def test_a_transcription_the_model_answered_and_that_then_failed_is_logged_spent(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    async def cut_off(_pdf_bytes: bytes) -> ocr.OcrRendering:
+        raise ocr.SpentError('the transcription stream failed after the model answered')
+
+    with pytest.raises(ocr.SpentError):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=cut_off))
+
+    (failed,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.event == work_pb2.JOB_EVENT_FAILED]
+    assert failed.model_answered
