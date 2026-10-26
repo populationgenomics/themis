@@ -115,8 +115,11 @@ Consequences:
 - Admins can merge over a failing required check when needed. This covers the anti-tamper self-block: a PR editing
   `internal-review.yml` fails its own `review + LLM screen` (claude-code-action refuses a workflow file that differs
   from the default branch); the admin bypass-merges instead of temporarily un-requiring the check. With the review
-  requirement in the gate rather than an approval count, this is the bypass's only remaining use — a routine maintainer
-  merge never ticks it, so a bypass in the log marks an exceptional merge, not noise.
+  requirement in the gate rather than an approval count, this is one of the bypass's two uses. The other, admitted only
+  until a production environment exists, is a merge past `backward-compatible` for a deletion from an at-rest contract
+  whose every stored artifact is deleted first ([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)
+  has the instance and the condition). A routine maintainer merge never ticks it, so a bypass in the log marks an
+  exceptional merge, not noise.
 - The gate reads the maintainer set live: direct admin collaborators. Org owners inherit the admin role — and with it
   the ruleset bypass — but are not direct, so they do not self-merge through the gate; adding a direct admin
   collaborator grants self-merge. A role change fires no PR event, so an open PR's verdict reflects it only from its

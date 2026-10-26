@@ -24,7 +24,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/litcache/models/litcache.proto.
  */
 export const file_themis_litcache_models_litcache: GenFile = /*@__PURE__*/
-  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCKrAgoVUmVuZGVyaW5nQ29uc3RydWN0aW9uEj0KCWNvbnZlcnRlchgBIAEoDjIqLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuQ29udmVydGVyEhkKEWNvbnZlcnRlcl92ZXJzaW9uGAIgASgJEhIKBW1vZGVsGAMgASgJSACIAQE6mQG6SJUBGpIBCihyZW5kZXJpbmdfY29uc3RydWN0aW9uLm1vZGVsX2lmZl9sbG1fb2NyEjltb2RlbCBtdXN0IGJlIHNldCBpZmYgY29udmVydGVyIGlzIENPTlZFUlRFUl9MTE1fT0NSICg9MykaKyh0aGlzLmNvbnZlcnRlciA9PSAzKSA9PSAodGhpcy5tb2RlbCAhPSAnJylCCAoGX21vZGVsIqoBCgZSZWNvcmQSDAoEZGVwcxgBIAMoCRIuCgpjcmVhdGVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJLCglyZW5kZXJpbmcYCiABKAsyNi50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJlbmRlcmluZ0NvbnN0cnVjdGlvbkgAQhUKDGNvbnN0cnVjdGlvbhIFukgCCAEiwQEKC0V4dGVybmFsSWRzEhAKA2RvaRgBIAEoCUgAiAEBEhEKBHBtaWQYAiABKAlIAYgBARISCgVwbWNpZBgDIAEoCUgCiAEBEhIKBWFyeGl2GAQgASgJSAOIAQESFAoHYmlvcnhpdhgFIAEoCUgEiAEBEhMKBmJvb2tpZBgGIAEoCUgFiAEBQgYKBF9kb2lCBwoFX3BtaWRCCAoGX3BtY2lkQggKBl9hcnhpdkIKCghfYmlvcnhpdkIJCgdfYm9va2lkIjYKC0VxdWl2YWxlbmNlEg0KBWVkZ2VzGAEgAygJEhgKEGNhbm9uaWNhbF9kb2NfaWQYAiABKAkibgoKUmV0cmFjdGlvbhIWCglyZXRyYWN0ZWQYASABKAhIAIgBARITCgZzb3VyY2UYAiABKAlIAYgBARIRCgRkYXRlGAMgASgJSAKIAQFCDAoKX3JldHJhY3RlZEIJCgdfc291cmNlQgcKBV9kYXRlIuQBCg5Bc3NvY2lhdGVkRmlsZRJBCgRyb2xlGAEgASgOMjMudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZVJvbGUSDAoEbmFtZRgCIAEoCRIXCgpzb3VyY2VfdXJsGAMgASgJSACIAQESEQoEcGF0aBgEIAEoCUgBiAEBEgwKBGhhc2gYBSABKAkSLwoLY2FwdHVyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQg0KC19zb3VyY2VfdXJsQgcKBV9wYXRoIoYJCghNYW5pZmVzdBIOCgZkb2NfaWQYASABKAkSQgoMZXh0ZXJuYWxfaWRzGAIgASgLMiwudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5FeHRlcm5hbElkcxIRCgljbGFpbV9rZXkYAyABKAkSQQoLZXF1aXZhbGVuY2UYBCABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkVxdWl2YWxlbmNlEj8KCnJldHJhY3Rpb24YBSABKAsyKy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldHJhY3Rpb24SOAoHc291cmNlcxgGIAMoCzInLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuU291cmNlEj4KBWZpbGVzGAggAygLMi8udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZRJHCgdyZWNvcmRzGAkgAygLMjYudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5NYW5pZmVzdC5SZWNvcmRzRW50cnkSQQoEcmVmcxgKIAMoCzIzLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWFuaWZlc3QuUmVmc0VudHJ5GlcKDFJlY29yZHNFbnRyeRILCgNrZXkYASABKAkSNgoFdmFsdWUYAiABKAsyJy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJlY29yZDoCOAEaKwoJUmVmc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAE68AO6SOwDGnMKFW1hbmlmZXN0LnJlZnNfcmVzb2x2ZRIkZXZlcnkgcmVmIG11c3QgbmFtZSBhIGtleSBvZiByZWNvcmRzGjR0aGlzLnJlZnMuYWxsKG5hbWUsIHRoaXMucmVmc1tuYW1lXSBpbiB0aGlzLnJlY29yZHMpGvQCChVtYW5pZmVzdC5kZXBzX3Jlc29sdmUSc2V2ZXJ5IHJlY29yZCBuZWVkcyBhIGRlcCwgYW5kIGVhY2ggZGVwIG11c3QgYmUgYSBoZWxkIHJldmlzaW9uIGhhc2gsIGEgZmV0Y2hlZCBmaWxlJ3MgaGFzaCwgb3IgYW5vdGhlciByZWNvcmQncyBrZXka5QF0aGlzLnJlY29yZHMuYWxsKGssIHRoaXMucmVjb3Jkc1trXS5kZXBzLnNpemUoKSA+IDAgJiYgdGhpcy5yZWNvcmRzW2tdLmRlcHMuYWxsKGQsIGQgIT0gayAmJiAoZCBpbiB0aGlzLnJlY29yZHMgfHwgdGhpcy5zb3VyY2VzLmV4aXN0cyhzLCBzLnJldmlzaW9ucy5leGlzdHMociwgci5oYXNoID09IGQpKSB8fCB0aGlzLmZpbGVzLmV4aXN0cyhmLCBmLmhhc2ggIT0gJycgJiYgZi5oYXNoID09IGQpKSkpSgQIBxAIUgpyZW5kZXJpbmdzInoKDFB1Ym1lZFJlY29yZBIoCgdhcnRpY2xlGAEgASgLMhUucHVibWVkLlB1Ym1lZEFydGljbGVIABIxCgxib29rX2FydGljbGUYAiABKAsyGS5wdWJtZWQuUHVibWVkQm9va0FydGljbGVIAEINCgRraW5kEgW6SAIIASKUBAoNUGFwZXJNZXRhZGF0YRI9CgZwdWJtZWQYASABKAsyLS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlB1Ym1lZFJlY29yZBI3Cghjcm9zc3JlZhgCIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMuY3Jvc3NyZWYuV29yaxI3CghvcGVuYWxleBgDIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMub3BlbmFsZXguV29yaxIjCg1jcm9zc3JlZl9qc29uGAQgASgJQge6SARyAhACSACIAQESIwoNb3BlbmFsZXhfanNvbhgFIAEoCUIHukgEcgIQAkgBiAEBOuMBukjfARrcAQoYcGFwZXJfbWV0YWRhdGEub25lX2luZGV4EiZleGFjdGx5IG9uZSBpbmRleCdzIHJlY29yZCBtdXN0IGJlIHNldBqXAShoYXModGhpcy5wdWJtZWQpID8gMSA6IDApICsgKChoYXModGhpcy5jcm9zc3JlZikgfHwgaGFzKHRoaXMuY3Jvc3NyZWZfanNvbikpID8gMSA6IDApICsgKChoYXModGhpcy5vcGVuYWxleCkgfHwgaGFzKHRoaXMub3BlbmFsZXhfanNvbikpID8gMSA6IDApID09IDFCEAoOX2Nyb3NzcmVmX2pzb25CEAoOX29wZW5hbGV4X2pzb24qhQIKClNvdXJjZUtpbmQSGwoXU09VUkNFX0tJTkRfVU5TUEVDSUZJRUQQABIZChVTT1VSQ0VfS0lORF9QTUNfT0FfUzMQARIaChZTT1VSQ0VfS0lORF9FVVJPUEVfUE1DEAISGwoXU09VUkNFX0tJTkRfRUxTRVZJRVJfT0EQAxIXChNTT1VSQ0VfS0lORF9CSU9SWElWEAQSFgoSU09VUkNFX0tJTkRfVVBMT0FEEAUSFAoQU09VUkNFX0tJTkRfU0VFRBAGEiQKIFNPVVJDRV9LSU5EX0VVUk9QRV9QTUNfQk9PS1NIRUxGEAcSGQoVU09VUkNFX0tJTkRfVU5QQVlXQUxMEAgqWwoMU291cmNlRm9ybWF0Eh0KGVNPVVJDRV9GT1JNQVRfVU5TUEVDSUZJRUQQABIVChFTT1VSQ0VfRk9STUFUX1hNTBABEhUKEVNPVVJDRV9GT1JNQVRfUERGEAIqZQoMTGljZW5jZUJhc2lzEh0KGUxJQ0VOQ0VfQkFTSVNfVU5TUEVDSUZJRUQQABIaChZMSUNFTkNFX0JBU0lTX0FSVElGQUNUEAESGgoWTElDRU5DRV9CQVNJU19BU1NFUlRFRBACKmsKCUNvbnZlcnRlchIZChVDT05WRVJURVJfVU5TUEVDSUZJRUQQABIVChFDT05WRVJURVJfTElURE9XThABEhUKEUNPTlZFUlRFUl9ET0NMSU5HEAISFQoRQ09OVkVSVEVSX0xMTV9PQ1IQAyqDAQoSQXNzb2NpYXRlZEZpbGVSb2xlEiQKIEFTU09DSUFURURfRklMRV9ST0xFX1VOU1BFQ0lGSUVEEAASHwobQVNTT0NJQVRFRF9GSUxFX1JPTEVfRklHVVJFEAESJgoiQVNTT0NJQVRFRF9GSUxFX1JPTEVfU1VQUExFTUVOVEFSWRACYgZwcm90bzM", [file_buf_validate_validate, file_google_protobuf_timestamp, file_pubmed_proto_pubmed, file_themis_litcache_models_crossref, file_themis_litcache_models_openalex]);
+  fileDesc("CiV0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL2xpdGNhY2hlLnByb3RvEh90aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlIgwKCkZyZWVUb1JlYWQiJgoITGljZW5zZWQSGgoJcHVibGlzaGVyGAEgASgJQge6SARyAhABIhUKE0luc3RpdHV0aW9uQ2FwdHVyZWQiDwoNVW5rbm93bkFjY2VzcyK0AgoGQWNjZXNzEkMKDGZyZWVfdG9fcmVhZBgBIAEoCzIrLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuRnJlZVRvUmVhZEgAEj0KCGxpY2Vuc2VkGAIgASgLMikudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbnNlZEgAElQKFGluc3RpdHV0aW9uX2NhcHR1cmVkGAMgASgLMjQudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5JbnN0aXR1dGlvbkNhcHR1cmVkSAASQQoHdW5rbm93bhgEIAEoCzIuLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuVW5rbm93bkFjY2Vzc0gAQg0KBGtpbmQSBbpIAggBItwBCghSZXZpc2lvbhIMCgRoYXNoGAEgASgJEhcKCm9yaWdpbl91cmwYAiABKAlIAIgBARI5CgRraW5kGAMgASgOMisudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VLaW5kEi8KC2NhcHR1cmVkX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIbCg5oYXNfdGV4dF9sYXllchgFIAEoCEgBiAEBQg0KC19vcmlnaW5fdXJsQhEKD19oYXNfdGV4dF9sYXllciK7AgoGU291cmNlEg4KBmhhbmRsZRgBIAEoCRJBCgptZWRpYV90eXBlGAIgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Tb3VyY2VGb3JtYXQSDwoHbGljZW5jZRgDIAEoCRJECg1saWNlbmNlX2Jhc2lzGAQgASgOMi0udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5MaWNlbmNlQmFzaXMSPwoGYWNjZXNzGAUgASgLMicudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5BY2Nlc3NCBrpIA8gBARJGCglyZXZpc2lvbnMYBiADKAsyKS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldmlzaW9uQgi6SAWSAQIIASLuAgoJUmVuZGVyaW5nEhMKC2Zyb21fc291cmNlGAEgASgJEhUKDWZyb21fcmV2aXNpb24YAiABKAkSPQoJY29udmVydGVyGAMgASgOMioudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Db252ZXJ0ZXISGQoRY29udmVydGVyX3ZlcnNpb24YBCABKAkSEgoFbW9kZWwYBSABKAlIAIgBARIuCgpjcmVhdGVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDqMAbpIiAEahQEKG3JlbmRlcmluZy5tb2RlbF9pZmZfbGxtX29jchI5bW9kZWwgbXVzdCBiZSBzZXQgaWZmIGNvbnZlcnRlciBpcyBDT05WRVJURVJfTExNX09DUiAoPTMpGisodGhpcy5jb252ZXJ0ZXIgPT0gMykgPT0gKHRoaXMubW9kZWwgIT0gJycpQggKBl9tb2RlbCKrAgoVUmVuZGVyaW5nQ29uc3RydWN0aW9uEj0KCWNvbnZlcnRlchgBIAEoDjIqLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuQ29udmVydGVyEhkKEWNvbnZlcnRlcl92ZXJzaW9uGAIgASgJEhIKBW1vZGVsGAMgASgJSACIAQE6mQG6SJUBGpIBCihyZW5kZXJpbmdfY29uc3RydWN0aW9uLm1vZGVsX2lmZl9sbG1fb2NyEjltb2RlbCBtdXN0IGJlIHNldCBpZmYgY29udmVydGVyIGlzIENPTlZFUlRFUl9MTE1fT0NSICg9MykaKyh0aGlzLmNvbnZlcnRlciA9PSAzKSA9PSAodGhpcy5tb2RlbCAhPSAnJylCCAoGX21vZGVsIqoBCgZSZWNvcmQSDAoEZGVwcxgBIAMoCRIuCgpjcmVhdGVkX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJLCglyZW5kZXJpbmcYCiABKAsyNi50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJlbmRlcmluZ0NvbnN0cnVjdGlvbkgAQhUKDGNvbnN0cnVjdGlvbhIFukgCCAEiwQEKC0V4dGVybmFsSWRzEhAKA2RvaRgBIAEoCUgAiAEBEhEKBHBtaWQYAiABKAlIAYgBARISCgVwbWNpZBgDIAEoCUgCiAEBEhIKBWFyeGl2GAQgASgJSAOIAQESFAoHYmlvcnhpdhgFIAEoCUgEiAEBEhMKBmJvb2tpZBgGIAEoCUgFiAEBQgYKBF9kb2lCBwoFX3BtaWRCCAoGX3BtY2lkQggKBl9hcnhpdkIKCghfYmlvcnhpdkIJCgdfYm9va2lkIjYKC0VxdWl2YWxlbmNlEg0KBWVkZ2VzGAEgAygJEhgKEGNhbm9uaWNhbF9kb2NfaWQYAiABKAkibgoKUmV0cmFjdGlvbhIWCglyZXRyYWN0ZWQYASABKAhIAIgBARITCgZzb3VyY2UYAiABKAlIAYgBARIRCgRkYXRlGAMgASgJSAKIAQFCDAoKX3JldHJhY3RlZEIJCgdfc291cmNlQgcKBV9kYXRlIuQBCg5Bc3NvY2lhdGVkRmlsZRJBCgRyb2xlGAEgASgOMjMudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZVJvbGUSDAoEbmFtZRgCIAEoCRIXCgpzb3VyY2VfdXJsGAMgASgJSACIAQESEQoEcGF0aBgEIAEoCUgBiAEBEgwKBGhhc2gYBSABKAkSLwoLY2FwdHVyZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQg0KC19zb3VyY2VfdXJsQgcKBV9wYXRoIoYJCghNYW5pZmVzdBIOCgZkb2NfaWQYASABKAkSQgoMZXh0ZXJuYWxfaWRzGAIgASgLMiwudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5FeHRlcm5hbElkcxIRCgljbGFpbV9rZXkYAyABKAkSQQoLZXF1aXZhbGVuY2UYBCABKAsyLC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLkVxdWl2YWxlbmNlEj8KCnJldHJhY3Rpb24YBSABKAsyKy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJldHJhY3Rpb24SOAoHc291cmNlcxgGIAMoCzInLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuU291cmNlEj4KBWZpbGVzGAggAygLMi8udGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5Bc3NvY2lhdGVkRmlsZRJHCgdyZWNvcmRzGAkgAygLMjYudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5NYW5pZmVzdC5SZWNvcmRzRW50cnkSQQoEcmVmcxgKIAMoCzIzLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWFuaWZlc3QuUmVmc0VudHJ5GlcKDFJlY29yZHNFbnRyeRILCgNrZXkYASABKAkSNgoFdmFsdWUYAiABKAsyJy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlJlY29yZDoCOAEaKwoJUmVmc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAE68AO6SOwDGnMKFW1hbmlmZXN0LnJlZnNfcmVzb2x2ZRIkZXZlcnkgcmVmIG11c3QgbmFtZSBhIGtleSBvZiByZWNvcmRzGjR0aGlzLnJlZnMuYWxsKG5hbWUsIHRoaXMucmVmc1tuYW1lXSBpbiB0aGlzLnJlY29yZHMpGvQCChVtYW5pZmVzdC5kZXBzX3Jlc29sdmUSc2V2ZXJ5IHJlY29yZCBuZWVkcyBhIGRlcCwgYW5kIGVhY2ggZGVwIG11c3QgYmUgYSBoZWxkIHJldmlzaW9uIGhhc2gsIGEgZmV0Y2hlZCBmaWxlJ3MgaGFzaCwgb3IgYW5vdGhlciByZWNvcmQncyBrZXka5QF0aGlzLnJlY29yZHMuYWxsKGssIHRoaXMucmVjb3Jkc1trXS5kZXBzLnNpemUoKSA+IDAgJiYgdGhpcy5yZWNvcmRzW2tdLmRlcHMuYWxsKGQsIGQgIT0gayAmJiAoZCBpbiB0aGlzLnJlY29yZHMgfHwgdGhpcy5zb3VyY2VzLmV4aXN0cyhzLCBzLnJldmlzaW9ucy5leGlzdHMociwgci5oYXNoID09IGQpKSB8fCB0aGlzLmZpbGVzLmV4aXN0cyhmLCBmLmhhc2ggIT0gJycgJiYgZi5oYXNoID09IGQpKSkpSgQIBxAIUgpyZW5kZXJpbmdzInoKDFB1Ym1lZFJlY29yZBIoCgdhcnRpY2xlGAEgASgLMhUucHVibWVkLlB1Ym1lZEFydGljbGVIABIxCgxib29rX2FydGljbGUYAiABKAsyGS5wdWJtZWQuUHVibWVkQm9va0FydGljbGVIAEINCgRraW5kEgW6SAIIASKUBAoNUGFwZXJNZXRhZGF0YRI9CgZwdWJtZWQYASABKAsyLS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLlB1Ym1lZFJlY29yZBI3Cghjcm9zc3JlZhgCIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMuY3Jvc3NyZWYuV29yaxI3CghvcGVuYWxleBgDIAEoCzIlLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMub3BlbmFsZXguV29yaxIjCg1jcm9zc3JlZl9qc29uGAQgASgJQge6SARyAhACSACIAQESIwoNb3BlbmFsZXhfanNvbhgFIAEoCUIHukgEcgIQAkgBiAEBOuMBukjfARrcAQoYcGFwZXJfbWV0YWRhdGEub25lX2luZGV4EiZleGFjdGx5IG9uZSBpbmRleCdzIHJlY29yZCBtdXN0IGJlIHNldBqXAShoYXModGhpcy5wdWJtZWQpID8gMSA6IDApICsgKChoYXModGhpcy5jcm9zc3JlZikgfHwgaGFzKHRoaXMuY3Jvc3NyZWZfanNvbikpID8gMSA6IDApICsgKChoYXModGhpcy5vcGVuYWxleCkgfHwgaGFzKHRoaXMub3BlbmFsZXhfanNvbikpID8gMSA6IDApID09IDFCEAoOX2Nyb3NzcmVmX2pzb25CEAoOX29wZW5hbGV4X2pzb24inwEKD1NvdXJjZWRNZXRhZGF0YRJDCghtZXRhZGF0YRgBIAEoCzIpLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWV0YWRhdGFCBrpIA8gBARJHCgZzb3VyY2UYAiABKAsyLy50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLk1ldGFkYXRhU291cmNlQga6SAPIAQEingMKDk1ldGFkYXRhU291cmNlEj0KBnB1Ym1lZBgBIAEoCzItLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuUHVibWVkUmVjb3JkEiMKDWNyb3NzcmVmX2pzb24YAiABKAlCB7pIBHICEAJIAIgBARIjCg1vcGVuYWxleF9qc29uGAMgASgJQge6SARyAhACSAGIAQE63gG6SNoBGtcBChdtZXRhZGF0YV9zb3VyY2UuaW5kZXhlcxJAYSByZWNvcmQgbXVzdCBiZSBzZXQsIGFuZCBhdCBtb3N0IG9uZSBvZiBQdWJNZWQncyBhbmQgQ3Jvc3NyZWYncxp6KGhhcyh0aGlzLnB1Ym1lZCkgfHwgaGFzKHRoaXMuY3Jvc3NyZWZfanNvbikgfHwgaGFzKHRoaXMub3BlbmFsZXhfanNvbikpICYmICEoaGFzKHRoaXMucHVibWVkKSAmJiBoYXModGhpcy5jcm9zc3JlZl9qc29uKSlCEAoOX2Nyb3NzcmVmX2pzb25CEAoOX29wZW5hbGV4X2pzb24i0AYKCE1ldGFkYXRhEg0KBXRpdGxlGAEgASgJEkEKB2F1dGhvcnMYAiADKAsyMC50aGVtaXMubGl0Y2FjaGUubW9kZWxzLmxpdGNhY2hlLk1ldGFkYXRhLkF1dGhvchIiCgR5ZWFyGAMgASgJQhS6SBFyDzINXihbMC05XXs0fSk/JBIXCg9jb250YWluZXJfdGl0bGUYBCABKAkSEAoIYWJzdHJhY3QYBSABKAkSTAoNbWVzaF9oZWFkaW5ncxgGIAMoCzI1LnRoZW1pcy5saXRjYWNoZS5tb2RlbHMubGl0Y2FjaGUuTWV0YWRhdGEuTWVzaEhlYWRpbmcSJwoRcHVibGljYXRpb25fdHlwZXMYByADKAlCDLpICZIBBiIEcgIQARplCgZBdXRob3ISFQoEbmFtZRgBIAEoCUIHukgEcgIQARJECgVvcmNpZBgCIAEoCUI1ukgycjAyLl4oWzAtOV17NH0tWzAtOV17NH0tWzAtOV17NH0tWzAtOV17M31bMC05WF0pPyQa9QIKC01lc2hIZWFkaW5nErEBCgpkZXNjcmlwdG9yGAEgASgLMjIudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5NZXRhZGF0YS5NZXNoVGVybUJpukhmugFgChxtZXNoX2hlYWRpbmcuZGVzY3JpcHRvcl9raW5kEidhIGhlYWRpbmcncyBkZXNjcmlwdG9yIG11c3QgYmUgYSBEIHRlcm0aF3RoaXMudWkuc3RhcnRzV2l0aCgnRCcpyAEBErEBCgpxdWFsaWZpZXJzGAIgAygLMjIudGhlbWlzLmxpdGNhY2hlLm1vZGVscy5saXRjYWNoZS5NZXRhZGF0YS5NZXNoVGVybUJpukhmkgFjImG6AV4KG21lc2hfaGVhZGluZy5xdWFsaWZpZXJfa2luZBImYSBoZWFkaW5nJ3MgcXVhbGlmaWVycyBtdXN0IGJlIFEgdGVybXMaF3RoaXMudWkuc3RhcnRzV2l0aCgnUScpGk0KCE1lc2hUZXJtEiwKAnVpGAEgASgJQiC6SB1yGzIZXltEUV0oWzAtOV17Nn18WzAtOV17OX0pJBITCgttYWpvcl90b3BpYxgCIAEoCCqFAgoKU291cmNlS2luZBIbChdTT1VSQ0VfS0lORF9VTlNQRUNJRklFRBAAEhkKFVNPVVJDRV9LSU5EX1BNQ19PQV9TMxABEhoKFlNPVVJDRV9LSU5EX0VVUk9QRV9QTUMQAhIbChdTT1VSQ0VfS0lORF9FTFNFVklFUl9PQRADEhcKE1NPVVJDRV9LSU5EX0JJT1JYSVYQBBIWChJTT1VSQ0VfS0lORF9VUExPQUQQBRIUChBTT1VSQ0VfS0lORF9TRUVEEAYSJAogU09VUkNFX0tJTkRfRVVST1BFX1BNQ19CT09LU0hFTEYQBxIZChVTT1VSQ0VfS0lORF9VTlBBWVdBTEwQCCpbCgxTb3VyY2VGb3JtYXQSHQoZU09VUkNFX0ZPUk1BVF9VTlNQRUNJRklFRBAAEhUKEVNPVVJDRV9GT1JNQVRfWE1MEAESFQoRU09VUkNFX0ZPUk1BVF9QREYQAiplCgxMaWNlbmNlQmFzaXMSHQoZTElDRU5DRV9CQVNJU19VTlNQRUNJRklFRBAAEhoKFkxJQ0VOQ0VfQkFTSVNfQVJUSUZBQ1QQARIaChZMSUNFTkNFX0JBU0lTX0FTU0VSVEVEEAIqawoJQ29udmVydGVyEhkKFUNPTlZFUlRFUl9VTlNQRUNJRklFRBAAEhUKEUNPTlZFUlRFUl9MSVRET1dOEAESFQoRQ09OVkVSVEVSX0RPQ0xJTkcQAhIVChFDT05WRVJURVJfTExNX09DUhADKoMBChJBc3NvY2lhdGVkRmlsZVJvbGUSJAogQVNTT0NJQVRFRF9GSUxFX1JPTEVfVU5TUEVDSUZJRUQQABIfChtBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9GSUdVUkUQARImCiJBU1NPQ0lBVEVEX0ZJTEVfUk9MRV9TVVBQTEVNRU5UQVJZEAJiBnByb3RvMw", [file_buf_validate_validate, file_google_protobuf_timestamp, file_pubmed_proto_pubmed, file_themis_litcache_models_crossref, file_themis_litcache_models_openalex]);
 
 /**
  * @generated from message themis.litcache.models.litcache.FreeToRead
@@ -648,6 +648,225 @@ export type PaperMetadata = Message<"themis.litcache.models.litcache.PaperMetada
  */
 export const PaperMetadataSchema: GenMessage<PaperMetadata> = /*@__PURE__*/
   messageDesc(file_themis_litcache_models_litcache, 16);
+
+/**
+ * The at-rest type `metadata.pb` moves to: a paper's metadata, and the record it was filled from
+ * (docs/design/litcache-manifest.md, "The bibliographic record"). A consumer takes `metadata` alone.
+ *
+ * @generated from message themis.litcache.models.litcache.SourcedMetadata
+ */
+export type SourcedMetadata = Message<"themis.litcache.models.litcache.SourcedMetadata"> & {
+  /**
+   * @generated from field: themis.litcache.models.litcache.Metadata metadata = 1;
+   */
+  metadata?: Metadata | undefined;
+
+  /**
+   * @generated from field: themis.litcache.models.litcache.MetadataSource source = 2;
+   */
+  source?: MetadataSource | undefined;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.SourcedMetadata.
+ * Use `create(SourcedMetadataSchema)` to create a new message.
+ */
+export const SourcedMetadataSchema: GenMessage<SourcedMetadata> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 17);
+
+/**
+ * Holds the records the metadata is filled from, each as its index states it, kept whole so the
+ * metadata can be filled from them again: the record of the index that resolved the paper, and
+ * OpenAlex's record of the same work unless OpenAlex resolved it or holds no such work. A constraint
+ * rather than a oneof says which may be set together. Unrelated to the manifest's `Source`, a
+ * captured file, and its `Record`, a derived artifact.
+ *
+ * @generated from message themis.litcache.models.litcache.MetadataSource
+ */
+export type MetadataSource = Message<"themis.litcache.models.litcache.MetadataSource"> & {
+  /**
+   * PubMed's record, typed by the proto generated from NLM's DTD.
+   *
+   * @generated from field: themis.litcache.models.litcache.PubmedRecord pubmed = 1;
+   */
+  pubmed?: PubmedRecord | undefined;
+
+  /**
+   * Crossref's work record as JSON text: the `message` object of its works response, re-serialised
+   * from the parsed response with nothing dropped or renamed. The shortest is `{}`; that the text
+   * parses as a JSON object is checked in code wherever `metadata.pb` is written or parsed, as no
+   * rule here can state it.
+   *
+   * @generated from field: optional string crossref_json = 2;
+   */
+  crossrefJson?: string | undefined;
+
+  /**
+   * OpenAlex's work record as JSON text: one element of a works response's `results`, re-serialised
+   * from the parsed response with nothing dropped or renamed. Checked as `crossref_json` is.
+   *
+   * @generated from field: optional string openalex_json = 3;
+   */
+  openalexJson?: string | undefined;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.MetadataSource.
+ * Use `create(MetadataSourceSchema)` to create a new message.
+ */
+export const MetadataSourceSchema: GenMessage<MetadataSource> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 18);
+
+/**
+ * Themis's metadata for a paper: what a consumer reads, filled from the source record's records as fully
+ * as they allow, the authors from OpenAlex's where it is held (see `Author`). Text is plain; each
+ * identifier is in its scheme's bare form.
+ *
+ * @generated from message themis.litcache.models.litcache.Metadata
+ */
+export type Metadata = Message<"themis.litcache.models.litcache.Metadata"> & {
+  /**
+   * The title, "" when the record states none.
+   *
+   * @generated from field: string title = 1;
+   */
+  title: string;
+
+  /**
+   * The authors, in the record's order.
+   *
+   * @generated from field: repeated themis.litcache.models.litcache.Metadata.Author authors = 2;
+   */
+  authors: Metadata_Author[];
+
+  /**
+   * The publication year, four digits; "" when the record states none.
+   *
+   * @generated from field: string year = 3;
+   */
+  year: string;
+
+  /**
+   * The journal, or the book a chapter belongs to; "" when the record states none.
+   *
+   * @generated from field: string container_title = 4;
+   */
+  containerTitle: string;
+
+  /**
+   * The abstract, its section labels kept as text ("Background: ..."); "" when the record states none.
+   *
+   * @generated from field: string abstract = 5;
+   */
+  abstract: string;
+
+  /**
+   * NLM's MeSH headings for the paper, in the record's order. Empty when the record carries none:
+   * Crossref states no MeSH, PubMed only for a paper NLM has indexed for MEDLINE, and OpenAlex only
+   * for a work with a PMID, so empty says nothing about the paper's subject.
+   *
+   * @generated from field: repeated themis.litcache.models.litcache.Metadata.MeshHeading mesh_headings = 6;
+   */
+  meshHeadings: Metadata_MeshHeading[];
+
+  /**
+   * The paper's types as NLM's Publication Types name them ("Case Reports"), in the record's order;
+   * another index's single type is mapped onto them by a fixed table. Empty when none is stated or maps.
+   *
+   * @generated from field: repeated string publication_types = 7;
+   */
+  publicationTypes: string[];
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.Metadata.
+ * Use `create(MetadataSchema)` to create a new message.
+ */
+export const MetadataSchema: GenMessage<Metadata> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 19);
+
+/**
+ * @generated from message themis.litcache.models.litcache.Metadata.Author
+ */
+export type Metadata_Author = Message<"themis.litcache.models.litcache.Metadata.Author"> & {
+  /**
+   * A display name, "Given Family" or a collective name: OpenAlex's name for the author's profile
+   * where the source holds OpenAlex's record, else the name the other record states.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * The author's ORCID iD in its bare form ("0000-0002-1825-0097"): the one OpenAlex attributes to
+   * the author's profile where the source holds OpenAlex's record, else the one the other record
+   * states; "" when there is none, or one whose check digit fails.
+   *
+   * @generated from field: string orcid = 2;
+   */
+  orcid: string;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.Metadata.Author.
+ * Use `create(Metadata_AuthorSchema)` to create a new message.
+ */
+export const Metadata_AuthorSchema: GenMessage<Metadata_Author> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 19, 0);
+
+/**
+ * @generated from message themis.litcache.models.litcache.Metadata.MeshHeading
+ */
+export type Metadata_MeshHeading = Message<"themis.litcache.models.litcache.Metadata.MeshHeading"> & {
+  /**
+   * @generated from field: themis.litcache.models.litcache.Metadata.MeshTerm descriptor = 1;
+   */
+  descriptor?: Metadata_MeshTerm | undefined;
+
+  /**
+   * The qualifiers (subheadings) the heading narrows its descriptor by, such as genetics (Q000235).
+   *
+   * @generated from field: repeated themis.litcache.models.litcache.Metadata.MeshTerm qualifiers = 2;
+   */
+  qualifiers: Metadata_MeshTerm[];
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.Metadata.MeshHeading.
+ * Use `create(Metadata_MeshHeadingSchema)` to create a new message.
+ */
+export const Metadata_MeshHeadingSchema: GenMessage<Metadata_MeshHeading> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 19, 1);
+
+/**
+ * A MeSH descriptor or qualifier.
+ *
+ * @generated from message themis.litcache.models.litcache.Metadata.MeshTerm
+ */
+export type Metadata_MeshTerm = Message<"themis.litcache.models.litcache.Metadata.MeshTerm"> & {
+  /**
+   * NLM's unique identifier, "D" or "Q" and digits ("D001943"). A reader that shows the term names it
+   * from NLM's MeSH vocabulary.
+   *
+   * @generated from field: string ui = 1;
+   */
+  ui: string;
+
+  /**
+   * Whether the record marks the term a major topic of the paper. Approximate from OpenAlex, which
+   * marks only descriptors.
+   *
+   * @generated from field: bool major_topic = 2;
+   */
+  majorTopic: boolean;
+};
+
+/**
+ * Describes the message themis.litcache.models.litcache.Metadata.MeshTerm.
+ * Use `create(Metadata_MeshTermSchema)` to create a new message.
+ */
+export const Metadata_MeshTermSchema: GenMessage<Metadata_MeshTerm> = /*@__PURE__*/
+  messageDesc(file_themis_litcache_models_litcache, 19, 2);
 
 /**
  * @generated from enum themis.litcache.models.litcache.SourceKind

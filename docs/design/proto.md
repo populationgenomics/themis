@@ -158,6 +158,11 @@ package/directory rules are excepted — see `buf.yaml`):
   (proto3 requires a zero member; it is never a valid domain value — fail loud if it reaches persisted data). Only a
   genuinely-external arbitrary string (e.g. a raw licence URL) is a `string` field. The declared name is not a wire
   concern — enums are integer on the wire, and the single codec maps int↔name on each side.
+- **A field's name reads as what it holds.** A repeated field of countable items is plural (`authors`, `articles`); a
+  mass noun (`evidence`, `provenance`) or a relation name (`located_in`) stays as it reads. A singular name on a
+  repeated field needs a reason of its own. For example, `rcv` copies ClinVar's key, `class_determinative` copies the
+  label the curation worksheet shows a curator, `sensitivity` names the analysis its entries make up together, and
+  `admits_caller` reads as a statement in each `option` line that sets it.
 - **Sum types are a `oneof`** over variant messages, so a cross-field "X iff Y" invariant is structural. Mark the field
   `[(buf.validate.field).required = true]` and the oneof `option (buf.validate.oneof).required = true` so an absent or
   empty variant is rejected. Where nothing runs `protovalidate` over the message — an at-rest document whose only reader
@@ -177,8 +182,13 @@ text projection (proto-JSON, pbtxt) cannot do this. So a read-modify-write can't
 added. Two artifacts are modified in place, both path-addressed by a paper's uuid (blobs are immutable): the litcache
 manifest, and the paper's job log. The log is only appended to, by writing its old bytes followed by the new entries'
 encoding, so its rewrite decodes nothing
-([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). Safe RMW of the manifest
-requires, in order:
+([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). The move off the mirrors
+([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)) adds a third: the metadata fields of a
+litcache `metadata.pb`, which the fill of the metadata fields recomputes from the index's record beside them. The fill
+is bound by the same rules as the manifest. It rewrites the `SourcedMetadata` through the binary message, so a field it
+does not know is kept. It writes the record back with `ifGenerationMatch`, so when a concurrent ingest or refresh
+replaces the record, the fill loses the race and reads the record again rather than overwriting it. Safe RMW of the
+manifest requires, in order:
 
 1. **Preserve unknowns.** RMW goes through the binary proto message, whose unknown-field set survives
    parse→modify→serialize. Never RMW through a lossy typed projection (proto→JSON→proto drops unknowns).
@@ -201,9 +211,12 @@ out reads as not stated. Upstream JSON held as text (below) holds its readers to
 JSON; if we must annotate it, we write a *separate* authored artifact rather than mutating the upstream blob.
 
 The bucket-1-vs-3 axis is **re-derivability**, not "did we author a schema over it": a write-once derivation over a
-retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, never RMW — e.g. `metadata.pb` from the
-re-fetchable index records, PubMed's XML and Crossref's or OpenAlex's JSON); a cached per-request response we keep as
-received and cannot re-derive is bucket 3 (preserve the raw bytes, tolerant subset read).
+retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, never RMW — e.g. the index record in
+`metadata.pb`, re-fetched from PubMed's XML or Crossref's or OpenAlex's JSON); a cached per-request response we keep as
+received and cannot re-derive is bucket 3 (preserve the raw bytes, tolerant subset read). One part of `metadata.pb` is
+rewritten in place once the move off the mirrors lands: Themis's metadata fields, recomputed from the index record
+beside them under Read-modify-write and integrity above
+([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) says when).
 
 ## Generated upstream schemas
 
@@ -275,9 +288,10 @@ missing, or a field it reads has a shape the reader cannot read, the read raises
 dead-lettered as schema drift naming the field. A field the upstream may leave out reads as not stated. Any other key
 stays in the text, unread, and fails nothing. The metadata fields a consumer reads are filled through the same readers,
 so the field names and shapes Themis depends on are spelled out in one place per upstream. An upstream vocabulary, such
-as a work's `type`, stays the string the upstream served; a typed vocabulary is Themis's own, derived where those fields
-are filled. litcache's two records are moving onto this shape from hand-authored mirror protos
-([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) has the steps).
+as a work's `type`, stays the string the upstream served; a value in a vocabulary Themis matches on, such as NLM's
+Publication Type for a work's `type`, is derived where those fields are filled. litcache holds its two such records this
+way, beside the mirror protos it is retiring
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 The text is a `string` rather than `bytes` because JSON is UTF-8 text, and protobuf checks UTF-8 on a `string` field, so
 the declared type says what the field holds and the runtime enforces it. The other ways of holding such a record each
@@ -292,11 +306,12 @@ lost on one fact:
 - A `google.protobuf.Struct`. It keeps every key with no schema to maintain, but it stores every number as a double, so
   an integer above 2^53 changes value, and what a reader gets back is no longer the value served.
 
-`metadata.pb` stays in bucket 1. The envelope is an authored binary proto, written once and re-derived wholesale from
-indexes that can be queried again, which is bucket 1's test (External data, above). The JSON text inside it is held the
-way bucket 3 holds a payload, as served and modelled only for the fields read, and its readers follow the same rule as
-bucket 3's. So the two buckets read upstream JSON alike. What separates them is still whether the artifact can be
-re-derived, which decides whether a change rewrites it or has to preserve it.
+`metadata.pb` stays in bucket 1. It is an authored binary proto whose index record is written once and re-derived
+wholesale from indexes that can be queried again, which is bucket 1's test (External data, above). Once the move off the
+mirrors lands, Themis's own metadata fields beside that record are recomputed from it and never edited by hand. The JSON
+text inside it is held the way bucket 3 holds a payload, as served and modelled only for the fields read, and its
+readers follow the same rule as bucket 3's. So the two buckets read upstream JSON alike. What separates them is still
+whether the artifact can be re-derived, which decides whether a change rewrites it or has to preserve it.
 
 ## Schema evolution
 
@@ -336,8 +351,9 @@ reserved. A store whose records are immutable, as a sheaf repository's pushed re
 step, so its readers accept the old field for good. The litcache manifests take this route, with their writers paused
 rather than their readers accepting either form
 ([`litcache-manifest.md`](litcache-manifest.md#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
-litcache's bibliographic record takes it too, with a metadata refresh or a rewrite of the stored records as the step
-between ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+litcache's bibliographic record is re-derived by a metadata refresh, so a destructive change confined to it may go in
+one step instead, under the condition above that its failing window costs nothing real
+([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) has the instance).
 
 ### Retiring an RPC or a message
 
@@ -367,6 +383,10 @@ bucket 2 on the wire but holds `AnalysisInputs` — the message `analyses.inputs
 Workbench service's request and reply types, which by their nature belong under `themis/workbench/rpc`; while they sit
 alongside a persisted message, retiring a browser rpc leaves them behind rather than deleting them. An unused message
 costs a generated type; a deleted one costs the rows.
+
+Until a production environment holds litcache's store, a message or a file that only its bibliographic record uses may
+be deleted past the gate, once every stored record the deletion would strand has been deleted
+([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) states the condition).
 
 None of this settles the *transition window*, which stays a reviewer's judgement: rolling deploys keep several
 generations live, so an rpc with no surviving caller in this repo may still have one in flight.

@@ -920,13 +920,12 @@ absent. A deployment that has no crosswalk configured answers FAILED_PRECONDITIO
 retries UNAVAILABLE by default and no number of retries configures a crosswalk.
 
 The other direction is the one that bites here. An upstream can hold a record this store cannot keep, such as one whose
-identifiers fail the store's precondition, or one carrying a field that the store's hand-written copy of the upstream's
-record schema, its *mirror*, does not yet declare. That is terminal for the id, not an outage. It is charged to that id
-alone and the rest of the batch lands. If the whole batch failed on it, it would fail the same way on every retry, and
-the ids beside it would never be resolved either. The caller is told the store has no such paper. That is true of the
-store, though not of the literature. Readiness has no state meaning "the index holds this paper and we cannot", and
-adding one would be a contract change. The service logs which case it was, so the gap can be traced from the service's
-own record and not only from the caller's.
+identifiers fail the store's precondition, or one that Themis cannot read or store. That is terminal for the id, not an
+outage. It is charged to that id alone and the rest of the batch lands. If the whole batch failed on it, it would fail
+the same way on every retry, and the ids beside it would never be resolved either. The caller is told the store has no
+such paper. That is true of the store, though not of the literature. Readiness has no state meaning "the index holds
+this paper and we cannot", and adding one would be a contract change. The service logs which case it was, so the gap can
+be traced from the service's own record and not only from the caller's.
 
 ### Write-back is a generation-matched compare-and-swap
 

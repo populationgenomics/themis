@@ -243,3 +243,96 @@ message PaperMetadata {
   // from the parsed response with nothing dropped or renamed. Checked as `crossref_json` is.
   optional string openalex_json = 5 [(buf.validate.field).string.min_len = 2];
 }
+
+// The at-rest type `metadata.pb` moves to: a paper's metadata, and the record it was filled from
+// (docs/design/litcache-manifest.md, "The bibliographic record"). A consumer takes `metadata` alone.
+message SourcedMetadata {
+  Metadata metadata = 1 [(buf.validate.field).required = true];
+  MetadataSource source = 2 [(buf.validate.field).required = true];
+}
+
+// Holds the records the metadata is filled from, each as its index states it, kept whole so the
+// metadata can be filled from them again: the record of the index that resolved the paper, and
+// OpenAlex's record of the same work unless OpenAlex resolved it or holds no such work. A constraint
+// rather than a oneof says which may be set together. Unrelated to the manifest's `Source`, a
+// captured file, and its `Record`, a derived artifact.
+message MetadataSource {
+  option (buf.validate.message).cel = {
+    id: "metadata_source.indexes"
+    message: "a record must be set, and at most one of PubMed's and Crossref's"
+    expression:
+      "(has(this.pubmed) || has(this.crossref_json) || has(this.openalex_json))"
+      " && !(has(this.pubmed) && has(this.crossref_json))"
+  };
+
+  // PubMed's record, typed by the proto generated from NLM's DTD.
+  PubmedRecord pubmed = 1;
+  // Crossref's work record as JSON text: the `message` object of its works response, re-serialised
+  // from the parsed response with nothing dropped or renamed. The shortest is `{}`; that the text
+  // parses as a JSON object is checked in code wherever `metadata.pb` is written or parsed, as no
+  // rule here can state it.
+  optional string crossref_json = 2 [(buf.validate.field).string.min_len = 2];
+  // OpenAlex's work record as JSON text: one element of a works response's `results`, re-serialised
+  // from the parsed response with nothing dropped or renamed. Checked as `crossref_json` is.
+  optional string openalex_json = 3 [(buf.validate.field).string.min_len = 2];
+}
+
+// Themis's metadata for a paper: what a consumer reads, filled from the source record's records as fully
+// as they allow, the authors from OpenAlex's where it is held (see `Author`). Text is plain; each
+// identifier is in its scheme's bare form.
+message Metadata {
+  // The title, "" when the record states none.
+  string title = 1;
+  // The authors, in the record's order.
+  repeated Author authors = 2;
+  // The publication year, four digits; "" when the record states none.
+  string year = 3 [(buf.validate.field).string.pattern = "^([0-9]{4})?$"];
+  // The journal, or the book a chapter belongs to; "" when the record states none.
+  string container_title = 4;
+  // The abstract, its section labels kept as text ("Background: ..."); "" when the record states none.
+  string abstract = 5;
+  // NLM's MeSH headings for the paper, in the record's order. Empty when the record carries none:
+  // Crossref states no MeSH, PubMed only for a paper NLM has indexed for MEDLINE, and OpenAlex only
+  // for a work with a PMID, so empty says nothing about the paper's subject.
+  repeated MeshHeading mesh_headings = 6;
+  // The paper's types as NLM's Publication Types name them ("Case Reports"), in the record's order;
+  // another index's single type is mapped onto them by a fixed table. Empty when none is stated or maps.
+  repeated string publication_types = 7 [(buf.validate.field).repeated.items.string.min_len = 1];
+
+  message Author {
+    // A display name, "Given Family" or a collective name: OpenAlex's name for the author's profile
+    // where the source holds OpenAlex's record, else the name the other record states.
+    string name = 1 [(buf.validate.field).string.min_len = 1];
+    // The author's ORCID iD in its bare form ("0000-0002-1825-0097"): the one OpenAlex attributes to
+    // the author's profile where the source holds OpenAlex's record, else the one the other record
+    // states; "" when there is none, or one whose check digit fails.
+    string orcid = 2 [(buf.validate.field).string.pattern = "^([0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X])?$"];
+  }
+
+  message MeshHeading {
+    MeshTerm descriptor = 1 [
+      (buf.validate.field).required = true,
+      (buf.validate.field).cel = {
+        id: "mesh_heading.descriptor_kind"
+        message: "a heading's descriptor must be a D term"
+        expression: "this.ui.startsWith('D')"
+      }
+    ];
+    // The qualifiers (subheadings) the heading narrows its descriptor by, such as genetics (Q000235).
+    repeated MeshTerm qualifiers = 2 [(buf.validate.field).repeated.items.cel = {
+      id: "mesh_heading.qualifier_kind"
+      message: "a heading's qualifiers must be Q terms"
+      expression: "this.ui.startsWith('Q')"
+    }];
+  }
+
+  // A MeSH descriptor or qualifier.
+  message MeshTerm {
+    // NLM's unique identifier, "D" or "Q" and digits ("D001943"). A reader that shows the term names it
+    // from NLM's MeSH vocabulary.
+    string ui = 1 [(buf.validate.field).string.pattern = "^[DQ]([0-9]{6}|[0-9]{9})$"];
+    // Whether the record marks the term a major topic of the paper. Approximate from OpenAlex, which
+    // marks only descriptors.
+    bool major_topic = 2;
+  }
+}

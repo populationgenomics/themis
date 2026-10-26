@@ -115,8 +115,15 @@ knowing which index answered — the point at which the differences between inde
 bugs. The store applies the same rule at rest: a paper's `metadata.pb` holds each index's record as that index states
 it, PubMed's in the proto generated from NLM's DTD and Crossref's and OpenAlex's as JSON text, the value each served,
 never one mapped into another's ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
-Sharing is the opposite move, and it is why `FetchPubmedArticles` and the store carry PubMed's record the same way:
-through the schema's own converter, with every field the converter keeps and nothing invented.
+The one exception is Themis's own metadata fields, which `metadata.pb` holds beside that record once the move off the
+mirrors lands. They lose nothing, because the records they are filled from stay beside them whole, and they are refilled
+from those records when their rule changes. Each holds plain text, or an identifier or term from one named scheme
+(ORCID's, NLM's MeSH), and is empty where an index cannot state it in that scheme. Two departures are deliberate. A
+paper's authors come from OpenAlex's record of the same work wherever the store holds one, beside the resolving index's
+record. And a fixed table maps Crossref's and OpenAlex's publication types onto NLM's, approximately
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Sharing is the opposite move, and
+it is why `FetchPubmedArticles` and the store carry PubMed's record the same way: through the schema's own converter,
+with every field the converter keeps and nothing invented.
 
 The same test is why `SearchEuropePmc` does not answer in `PubmedArticle`, although both rpcs carry a bibliography and
 an abstract. A hit is Europe PMC's JSON, not NLM's XML, so the answer would be a mapping — and the hits Europe PMC holds

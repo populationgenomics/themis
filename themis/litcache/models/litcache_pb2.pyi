@@ -276,3 +276,60 @@ class PaperMetadata(_message.Message):
     crossref_json: str
     openalex_json: str
     def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref: _Optional[_Union[_crossref_pb2.Work, _Mapping]] = ..., openalex: _Optional[_Union[_openalex_pb2.Work, _Mapping]] = ..., crossref_json: _Optional[str] = ..., openalex_json: _Optional[str] = ...) -> None: ...
+
+class SourcedMetadata(_message.Message):
+    __slots__ = ("metadata", "source")
+    METADATA_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    metadata: Metadata
+    source: MetadataSource
+    def __init__(self, metadata: _Optional[_Union[Metadata, _Mapping]] = ..., source: _Optional[_Union[MetadataSource, _Mapping]] = ...) -> None: ...
+
+class MetadataSource(_message.Message):
+    __slots__ = ("pubmed", "crossref_json", "openalex_json")
+    PUBMED_FIELD_NUMBER: _ClassVar[int]
+    CROSSREF_JSON_FIELD_NUMBER: _ClassVar[int]
+    OPENALEX_JSON_FIELD_NUMBER: _ClassVar[int]
+    pubmed: PubmedRecord
+    crossref_json: str
+    openalex_json: str
+    def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref_json: _Optional[str] = ..., openalex_json: _Optional[str] = ...) -> None: ...
+
+class Metadata(_message.Message):
+    __slots__ = ("title", "authors", "year", "container_title", "abstract", "mesh_headings", "publication_types")
+    class Author(_message.Message):
+        __slots__ = ("name", "orcid")
+        NAME_FIELD_NUMBER: _ClassVar[int]
+        ORCID_FIELD_NUMBER: _ClassVar[int]
+        name: str
+        orcid: str
+        def __init__(self, name: _Optional[str] = ..., orcid: _Optional[str] = ...) -> None: ...
+    class MeshHeading(_message.Message):
+        __slots__ = ("descriptor", "qualifiers")
+        DESCRIPTOR_FIELD_NUMBER: _ClassVar[int]
+        QUALIFIERS_FIELD_NUMBER: _ClassVar[int]
+        descriptor: Metadata.MeshTerm
+        qualifiers: _containers.RepeatedCompositeFieldContainer[Metadata.MeshTerm]
+        def __init__(self, descriptor: _Optional[_Union[Metadata.MeshTerm, _Mapping]] = ..., qualifiers: _Optional[_Iterable[_Union[Metadata.MeshTerm, _Mapping]]] = ...) -> None: ...
+    class MeshTerm(_message.Message):
+        __slots__ = ("ui", "major_topic")
+        UI_FIELD_NUMBER: _ClassVar[int]
+        MAJOR_TOPIC_FIELD_NUMBER: _ClassVar[int]
+        ui: str
+        major_topic: bool
+        def __init__(self, ui: _Optional[str] = ..., major_topic: _Optional[bool] = ...) -> None: ...
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    AUTHORS_FIELD_NUMBER: _ClassVar[int]
+    YEAR_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_TITLE_FIELD_NUMBER: _ClassVar[int]
+    ABSTRACT_FIELD_NUMBER: _ClassVar[int]
+    MESH_HEADINGS_FIELD_NUMBER: _ClassVar[int]
+    PUBLICATION_TYPES_FIELD_NUMBER: _ClassVar[int]
+    title: str
+    authors: _containers.RepeatedCompositeFieldContainer[Metadata.Author]
+    year: str
+    container_title: str
+    abstract: str
+    mesh_headings: _containers.RepeatedCompositeFieldContainer[Metadata.MeshHeading]
+    publication_types: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, title: _Optional[str] = ..., authors: _Optional[_Iterable[_Union[Metadata.Author, _Mapping]]] = ..., year: _Optional[str] = ..., container_title: _Optional[str] = ..., abstract: _Optional[str] = ..., mesh_headings: _Optional[_Iterable[_Union[Metadata.MeshHeading, _Mapping]]] = ..., publication_types: _Optional[_Iterable[str]] = ...) -> None: ...

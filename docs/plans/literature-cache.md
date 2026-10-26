@@ -97,7 +97,7 @@ lineage), the content-addressed `renderings` map, and the supplementary `files` 
 
 `metadata.pb` is litcache's `PaperMetadata` envelope holding each resolving index's record whole — bucket 1 per
 [proto.md](../design/proto.md), write-once over the re-fetchable source; the efetch path is XML → `PubmedArticle` |
-`PubmedBookArticle` → the envelope's `pubmed` field → bytes, and a Crossref or OpenAlex record loads into its mirror.
+`PubmedBookArticle` → the envelope's `pubmed` field → bytes, and a Crossref or OpenAlex record is kept as its JSON text.
 The design is [`litcache-manifest.md`](../design/litcache-manifest.md#the-bibliographic-record-metadatapb).
 
 The `pubmed_proto` wheel is generated **once** by `xsd-former` from the NLM PubMed DTD, then committed and maintained in
@@ -247,7 +247,7 @@ flowchart TD
 **In progress (staged, not yet merged):**
 
 - **Converters** — non-OA Docling → markdown (S8); OA xml → litdown (S9); the pdf text-layer probe (S10).
-- **Metadata resolvers** — efetch → `PubmedArticle` proto → `metadata.pb` (S11b-1); Crossref → its mirror (S11b-2).
+- **Metadata resolvers** — efetch → `PubmedArticle` proto → `metadata.pb` (S11b-1); Crossref → its JSON text (S11b-2).
 - **Storage + writer** — the GCS + in-memory storage backends, and the cache writer (content-addressed layout +
   `manifest.pb`, manifest-write-is-commit, idempotent re-run).
 - **Pipeline** — the Beam/Dataflow ingestion pipeline over `ingest/` and the local driver.
