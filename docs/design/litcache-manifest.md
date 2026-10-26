@@ -443,7 +443,7 @@ the stored records lack faces the same choice.
 it in its report, which the operator who started the run reads. When the evidence service ingests a paper on demand, the
 drifted record is charged to its id alone: the caller is told the store has no such paper, and only the service's log
 names the field
-([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-ingested-not-written-off)). Nothing
+([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-brought-into-the-store)). Nothing
 watches that log, so on-demand drift goes unseen until someone looks. Drift needs an index to reshape one of the few
 fields Themis reads, so it should be rare; whether it still warrants an alert is an open question below.
 

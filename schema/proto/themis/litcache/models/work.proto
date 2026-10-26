@@ -1,0 +1,95 @@
+// The work that brings a paper up to date (docs/design/evidence-fulltext.md): the request a task
+// carries to the worker, and the job log the worker keeps beside the paper's manifest.
+// A durable, authored contract: binary proto, gated additively. The committed
+// themis/litcache/models/work_pb2 stubs are generated from it.
+
+syntax = "proto3";
+
+package themis.litcache.models.work;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// The body of a task on either work queue: bring this paper up to date, as far as these targets.
+// Everything else the worker needs is read from the paper's manifest.
+message WorkRequest {
+  string doc_id = 1 [(buf.validate.field).string.uuid = true];
+  // Step names. None: run every free step and nothing that spends. Naming one is the decision to spend on it.
+  // The bounds keep a task's name, built from these fields, within Cloud Tasks' 500 characters.
+  repeated string targets = 2 [
+    (buf.validate.field).repeated.unique = true,
+    (buf.validate.field).repeated.max_items = 8,
+    (buf.validate.field).repeated.items.string.max_len = 32,
+    (buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_]*$"
+  ];
+  // Set by a funded run only; it names the run's task and so keeps two runs for the same targets apart.
+  // Single hyphens only: a task's name separates its parts with `--`.
+  optional string run_id = 3 [
+    (buf.validate.field).string.max_len = 64,
+    (buf.validate.field).string.pattern = "^[a-z0-9]+(-[a-z0-9]+)*$"
+  ];
+}
+
+enum JobEvent {
+  JOB_EVENT_UNSPECIFIED = 0;
+  JOB_EVENT_BEGUN = 1;  // a spending step is about to call the model
+  JOB_EVENT_SETTLED = 2;  // the step ended without producing its record, and will not run again on these inputs
+  JOB_EVENT_REFUSED = 3;  // the model call was refused at a spend limit
+  JOB_EVENT_FAILED = 4;  // the attempt failed in a way a later attempt could clear
+}
+
+enum SettledOutcome {
+  SETTLED_OUTCOME_UNSPECIFIED = 0;
+  SETTLED_OUTCOME_NOTHING = 1;  // there was nothing to produce, e.g. the open-access ladder served nothing
+  SETTLED_OUTCOME_PERMANENT_FAILURE = 2;  // the step failed permanently, or spent three attempts without committing
+}
+
+// One event of one attempt at one step. Entries are a set: neither their order in the log nor the
+// clocks behind `at` say which came first, and no reader may assume either. A writer validates the
+// entries it appends; a reader does not, so an event added later reaches an older reader as an
+// unknown value, which closes nothing and settles nothing. An outcome added later still settles, as
+// the settled entry carrying it does. So an event added later that closes an attempt is appended in
+// the same write as the existing closing entry an older reader should act on in its place.
+message JobLogEntry {
+  option (buf.validate.message).cel = {
+    id: "job_log_entry.outcome_iff_settled"
+    message: "outcome must be set iff event is JOB_EVENT_SETTLED (=2)"
+    expression: "(this.event == 2) == (this.outcome != 0)"
+  };
+  option (buf.validate.message).cel = {
+    id: "job_log_entry.model_answered_only_on_failed"
+    message: "model_answered may be set only when event is JOB_EVENT_FAILED (=4)"
+    expression: "!this.model_answered || this.event == 4"
+  };
+
+  google.protobuf.Timestamp at = 1 [(buf.validate.field).required = true];
+  // The attempt: one request the worker handled, under an id it minted. Entries with the same
+  // attempt id close a begun entry, and attempts are counted by it.
+  string attempt = 2 [(buf.validate.field).string.uuid = true];
+  // The delivery the attempt served, from X-CloudTasks-QueueName, -TaskName and -TaskRetryCount. A
+  // task's name is unique only within its queue, and is reused once the queue releases it.
+  string queue = 3 [(buf.validate.field).string.min_len = 1];
+  string task = 4 [(buf.validate.field).string.min_len = 1];
+  optional uint32 retry_count = 5 [(buf.validate.field).required = true];
+  string step = 6 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9_]*$"];
+  // The hashes the step read, compared as a set: source revisions, records' keys, or files' hashes.
+  // Entries are about the step on exactly these inputs; a new input starts with none.
+  repeated string inputs = 7 [
+    (buf.validate.field).repeated.unique = true,
+    (buf.validate.field).repeated.items.string.pattern = "^[0-9a-f]{64}$"
+  ];
+  JobEvent event = 8 [(buf.validate.field).enum.not_in = 0];
+  SettledOutcome outcome = 9;
+  // Failed only: the model had answered before the failure, so the attempt was paid for.
+  bool model_answered = 10;
+  string detail = 11;  // for a person reading the log; no reader decides anything from it
+}
+
+// The at-rest type of a paper's job log. Appending is writing the old bytes followed by an encoded
+// JobLog holding the new entries: concatenated encodings of a message parse as one message whose
+// repeated fields are joined, so no entry already written is decoded and encoded again, and fields a
+// newer writer added survive an older writer's appends. That holds only while this message has
+// nothing but repeated fields: a singular field would be overwritten by the last append.
+message JobLog {
+  repeated JobLogEntry entries = 1;
+}

@@ -106,7 +106,7 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/svcv4/models/            # the framework's own output vocabulary (the class ladder)
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
-  themis/litcache/models/         # at-rest domain contracts (the manifest, the bibliographic record)
+  themis/litcache/models/         # at-rest domain contracts (the manifest, the bibliographic record, the job log; and the worker's request)
   themis/curation/models/         # what a curator records on one worksheet
   themis/sheaf/models/            # at-rest: the sheaf ref document
   clinvar_proto/                  # copy of an upstream's published schema (below)
@@ -174,8 +174,11 @@ package/directory rules are excepted — see `buf.yaml`):
 Binary proto at rest exists for one property: **an older reader round-trips a newer writer's fields untouched.** Unknown
 fields (keyed by number + wire-type) are retained in the message's unknown-field set and re-serialized — a name-keyed
 text projection (proto-JSON, pbtxt) cannot do this. So a read-modify-write can't silently drop a field a newer component
-added. The only artifact modified in place is the litcache manifest (path-addressed by uuid; blobs are immutable). Safe
-RMW requires, in order:
+added. Two artifacts are modified in place, both path-addressed by a paper's uuid (blobs are immutable): the litcache
+manifest, and the paper's job log. The log is only appended to, by writing its old bytes followed by the new entries'
+encoding, so its rewrite decodes nothing
+([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). Safe RMW of the manifest
+requires, in order:
 
 1. **Preserve unknowns.** RMW goes through the binary proto message, whose unknown-field set survives
    parse→modify→serialize. Never RMW through a lossy typed projection (proto→JSON→proto drops unknowns).

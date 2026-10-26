@@ -656,20 +656,25 @@ from anything the worker tried.
 The manifest records what a paper has. Deciding whether a step has work also needs what has been tried on it: a step
 that ran and produced nothing, such as an XML fetch the ladder answered with nothing, must not run again on every
 request; and a transcription that is running, or that keeps dying, must not be paid for again. Neither fact is anything
-the paper has, so neither belongs in the manifest. Each paper keeps them in a *job log* beside its manifest: one JSONL
-file, one line per event, each naming the step, the hashes of the inputs it read, the attempt that wrote it, and the
-time. An attempt is named by its task and the queue's attempt number. An attempt that calls the model writes a *begun*
-entry first, and every entry it writes after that *closes* the attempt: *settled*, *refused* at the spend limit, or
-*failed*. A failed entry says whether the model had answered, which is what separates an attempt that spent from one
-that did not.
+the paper has, so neither belongs in the manifest. Each paper keeps them in a *job log* beside its manifest: one object
+holding an entry per event, each naming the step, the hashes of the inputs it read, the attempt that wrote it, and the
+time. An *attempt* is one request the worker handled, under an id it mints. Each entry also records the delivery the
+attempt served: its queue, its task's name, and the queue's retry count, because a task's name is unique only within its
+queue, and is used again once the queue releases it. The delivery alone cannot name the attempt, because the queue can
+execute one delivery twice at once (see below): the two executions share queue, task and retry count, and only the
+minted id lets each tell its own entries from the other's. The example prints deliveries because they say more to a
+reader than ids do. An attempt that calls the model writes a *begun* entry first, and every entry it writes after that
+*closes* the attempt: *settled*, *refused* at the spend limit, or *failed*. A failed entry says whether the model had
+answered, which is what separates an attempt that spent from one that did not. Printed one entry to a line, with each
+attempt shown as its task and retry count:
 
 ```
-{"at": "14:00", "attempt": "7c1e…--main_text#1", "step": "xml", "inputs": [], "event": "settled", "outcome": "nothing served"}
-{"at": "14:00", "attempt": "7c1e…--main_text#1", "step": "transcription", "inputs": ["9f3a…"], "event": "begun"}
-{"at": "14:00", "attempt": "7c1e…--main_text#1", "step": "transcription", "inputs": ["9f3a…"], "event": "refused"}
-{"at": "15:00", "attempt": "7c1e…--sweep-1500#1", "step": "transcription", "inputs": ["9f3a…"], "event": "begun"}
-{"at": "15:09", "attempt": "7c1e…--sweep-1500#1", "step": "transcription", "inputs": ["9f3a…"], "event": "failed", "answered": true}
-{"at": "15:10", "attempt": "7c1e…--sweep-1500#2", "step": "transcription", "inputs": ["9f3a…"], "event": "begun"}
+14:00  7c1e…--main_text#0     xml            []        settled  nothing served
+14:00  7c1e…--main_text#0     transcription  [9f3a…]   begun
+14:00  7c1e…--main_text#0     transcription  [9f3a…]   refused
+15:00  7c1e…--sweep-1500#0    transcription  [9f3a…]   begun
+15:09  7c1e…--sweep-1500#0    transcription  [9f3a…]   failed   model answered
+15:10  7c1e…--sweep-1500#1    transcription  [9f3a…]   begun
 ```
 
 The agent's request found the XML route empty, and its transcription was refused at the spend limit, which cost nothing.
@@ -680,19 +685,20 @@ The log never records that a step produced its record. The manifest is the one r
 is present on its current inputs has no work before its test reads the log at all. So nothing writes the manifest and
 the log as a pair, and a worker that crashes between its commit and anything it logs afterwards loses nothing.
 
-Nor is the log ordered. Its lines are in the order they were appended, which need not be the order of the events, and
+Nor is the log ordered. Its entries are in the order they were appended, which need not be the order of the events, and
 the times on them come from different workers' clocks. So every test is a question about the set of entries for the step
-on its current inputs, and never about which came first:
+on its current inputs, compared as a set of hashes, and never about which came first:
 
 - *Settled*: is there a settled entry? Then the step has no work. A step settles when it ends without producing a
   record, whether because there was nothing to produce or because it failed permanently.
-- *Running*: is there an unclosed begun entry, younger than the dispatch deadline, from another task? Then the step has
-  no work for this request, which leaves it to that attempt and returns success. If that attempt dies, its own task's
-  retry picks the step up. Until 15:40, the attempt begun at 15:10 is running to any other task.
-- *Dead*: an unclosed begun entry older than the deadline was killed at the deadline. One from an earlier attempt of the
-  same task is dead at any age, because the queue delivers a task again once its previous attempt has ended. A worker
-  that runs out of memory a few minutes into a transcription is retried within seconds, and the retry treats its own
-  task's begun entry as dead rather than waiting out the deadline.
+- *Running*: is there an unclosed begun entry, younger than the dispatch deadline, from an attempt that was not an
+  earlier delivery of this request's task? Then the step has no work for this request, which leaves it to that attempt
+  and returns success. If that attempt dies, its own task's retry picks the step up. Until 15:40, the attempt begun at
+  15:10 is running to any other task.
+- *Dead*: an unclosed begun entry older than the deadline was killed at the deadline. One from an earlier delivery of
+  the same task, on the same queue under a lower retry count, is dead at any age, because the queue delivers a task
+  again once its previous attempt has ended. A worker that runs out of memory a few minutes into a transcription is
+  retried within seconds, and the retry treats its own task's begun entry as dead rather than waiting out the deadline.
 - *Spent*: have three attempts on these inputs spent and committed nothing? A dead attempt counts, and so does one
   closed by a failed entry saying the model had answered. A refused attempt does not. After three, the step settles as
   FAILED, and a fourth is never begun. In the log above, the 15:00 attempt counts, and the 15:10 attempt will count once
@@ -702,35 +708,55 @@ on its current inputs, and never about which came first:
 The time on an entry is used only to compare its age with the deadline, where a few seconds of skew between clocks is
 noise against 30 minutes.
 
+A worker validates the entries it appends, not the ones it reads. An event added in a later version therefore reaches an
+older worker as a value it does not know, and the older worker treats that entry as closing nothing and settling
+nothing. Reading it as closing would be wrong for an event that does not end an attempt, such as a heartbeat written
+during a transcription: the older worker would see the attempt as over and begin a second paid one beside it. Ignored,
+the entry leaves the begun entry open, so the older worker reads the attempt as running until the deadline and as dead,
+and spent, after it.
+
+That is the right reading of a heartbeat and the wrong one of a new event that does close an attempt. Say a later
+version adds *cancelled*, for an attempt stopped before the model was called. An older worker would count each cancelled
+attempt as dead and spent, and after three would settle the step as a permanent failure, which every worker, newer ones
+included, then honours. So a new closing event is never written alone. It goes in the same append as the existing
+closing entry an older worker should act on: *cancelled* with a *refused* entry, which closes the attempt and spends
+nothing. One append is one write, so no worker sees one entry without the other. A newer worker reads the new event, and
+an older one the entry it knows.
+
 One case escapes these rules. Cloud Tasks can, rarely, execute a task more than once, with no promise that the first
 execution has ended when the second starts; Google reports more than 99.999% of tasks executed only once
-([Cloud Tasks pitfalls](https://cloud.google.com/tasks/docs/common-pitfalls)). A duplicate under a later attempt number
-reads the live attempt's begun entry as dead, and begins a second transcription. A duplicate under the same attempt id
-finds a begun entry it did not write, which only a live execution of the same attempt could have written, so it treats
+([Cloud Tasks pitfalls](https://cloud.google.com/tasks/docs/common-pitfalls)). A duplicate under a later retry count
+reads the live attempt's begun entry as an earlier delivery's, so as dead, and begins a second transcription. A
+duplicate under the same retry count finds a begun entry from an attempt that was not an earlier delivery, so it treats
 the entry as running. The first case can pay for one transcription twice, which is accepted at that rate.
 
 An attempt that fails before the model has answered spent nothing, and does not count: a spend-limit refusal, or an
 overloaded model API. The queue and the sweep retry those as often as they like. The cost is growth while the spend
-limit holds: each sweep pass adds a begun line and a refusal line for every paper waiting on it. At an hourly sweep, a
-month at the limit adds about 1,500 lines to a waiting paper's log, a few hundred kilobytes, which is accepted.
+limit holds: each sweep pass adds a begun entry and a refusal entry for every paper waiting on it. At an hourly sweep, a
+month at the limit adds about 1,500 entries to a waiting paper's log, a few hundred kilobytes, which is accepted.
 
 Entries are keyed by inputs, so a new input starts with a clean slate. A PDF deposited for a paper whose transcription
 settled on a different PDF has no entries, so the transcription step has work on it.
 
-The log is appended by a generation-matched rewrite, like the manifest's, because a Cloud Storage object cannot be
-appended to in place. It is a separate object, so a log write never races a rendering's commit, and two workers
-appending to one paper's log at once cost a retry, not a lost line.
+The log is binary proto, like the manifest ([`proto.md`](proto.md)). It is appended by a generation-matched rewrite,
+like the manifest's, because a Cloud Storage object cannot be appended to in place. The rewrite does not decode what is
+already there: it writes the old bytes followed by the encoding of a log holding only the new entries, and concatenated
+encodings of a message parse as one message whose lists are joined. So an entry written by a newer worker, with fields
+an older one does not know, survives the older worker's appends unchanged. That holds only while the log message holds
+nothing but its list of entries. A single field beside the list, a header say, would be overwritten by each append, so
+the log takes none. The log is a separate object, so a log write never races a rendering's commit, and two workers
+appending to one paper's log at once cost a retry, not a lost entry.
 
 Most entries record something that has already happened, a step that settled or an attempt that was refused. A retry of
-such an append rereads the log and appends the same line, whatever new entries it finds there: the event happened, and
+such an append rereads the log and appends the same entry, whatever new entries it finds there: the event happened, and
 nothing in the rereading can undo it. The begun entry is the exception, because it is written before anything has been
 spent. Appending it is a check and an append under one compare-and-swap: the worker reads the log, finds no running
 attempt, and appends its begun entry on condition that the log has not changed. If another worker appended in between,
 the write fails, and the worker rereads the log and checks again. If the other worker's entry is a begun entry for the
 same step and inputs, it backs off and leaves the step. So two requests cannot both begin a spending step: whichever
 appends second has read the first's entry. Only the worker and the sweep read the log. Readiness, polling and the
-document pane read the terminal marker, never the log. The log is also a paper's history: what was tried, when, by which
-request, and what it cost. That answers "why is this paper still PENDING?" in one read.
+document pane read the terminal marker, never the log. The log is also a paper's history: what was tried, when, and by
+which request. That answers "why is this paper still PENDING?" in one read.
 
 In effect the begun entry is a lease, without what usually makes a lease expensive. It expires at the dispatch deadline,
 which the queue and the service already enforce, and a holder that dies is recovered by nothing more than its entry
@@ -1086,11 +1112,14 @@ killed.
   every settled outcome into a read-modify-write of the manifest, racing the writes of records for no gain. The log
   records the same fact without touching the manifest.
 
-- **One object per log entry**, rather than one JSONL file. Each entry would be written once and never rewritten, so
-  appending would need no compare-and-swap, and reading the log would be a listing. It lost because the compare-and-swap
-  is what makes beginning a spending step exclusive: with separate objects, two workers could each list the log, find no
-  running attempt, and both begin. A listing and a read per entry also cost more than one read, and a single file is
-  easier for a person to inspect.
+- **One object per log entry**, rather than one object for the log. Each entry would be written once and never
+  rewritten, so appending would need no compare-and-swap, and reading the log would be a listing. It lost because the
+  compare-and-swap is what makes beginning a spending step exclusive: with separate objects, two workers could each list
+  the log, find no running attempt, and both begin. A listing and a read per entry also cost more than one read.
+
+- **The log as JSON lines.** A person could read it with any tool that prints an object. It lost to the rule that an
+  authored artifact at rest is binary proto ([`proto.md`](proto.md)). The entries are a timestamp, an enum and a little
+  text, so a command that prints them costs little, and a proto schema is checked for compatibility like every other.
 
 - **A step marker per settled step**, one object for each step and input. It recorded that a step had settled, but not
   that a step had begun, so it could not stop a second request paying for a transcription still running, nor bound one
