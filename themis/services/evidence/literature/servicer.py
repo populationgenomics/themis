@@ -396,7 +396,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
         The whole call fails rather than answering readiness anyway: an enqueue that did not happen
         leaves the paper PENDING, which is indistinguishable from one whose conversion is under way, so
         a caller told "PENDING" would have no reason to ask again. Repeating the call is the remedy, and
-        the ``doc_id``-keyed task name makes it free for the papers already queued.
+        a task name built from the paper and its target makes it free for the papers already queued.
 
         Args:
             view: The call's view of the corpus, which the conversions are placed through.

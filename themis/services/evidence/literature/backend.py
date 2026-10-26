@@ -113,9 +113,9 @@ class ConversionNotConfiguredError(Exception):
 class ConversionUnavailableError(Exception):
     """The conversion request could not be placed, and repeating it might succeed — UNAVAILABLE.
 
-    UNAVAILABLE because the caller's remedy is to repeat the call, which the ``doc_id``-keyed task
-    name makes free for the papers whose tasks did get created. The adapter decides which failures
-    qualify.
+    UNAVAILABLE because the caller's remedy is to repeat the call, which a task name built from the
+    paper and its target makes free for the papers whose tasks did get created. The adapter decides
+    which failures qualify.
     """
 
 
@@ -220,7 +220,7 @@ class LiteratureView:
     async def request_conversions(self, doc_ids: Sequence[str]) -> None:
         """Ask for a full text for each of these papers this view admits a conversion for.
 
-        Idempotent: the request is keyed on the ``doc_id``, so repeating it for a paper already in
+        Idempotent: the request is named for the paper and the main-text target, so repeating it for a paper already in
         flight adds nothing. Callers pass the PENDING ids only — a paper with no manifest has nothing
         for a producer to read, and a settled one needs nothing.
 

@@ -1,6 +1,6 @@
 """Convert-worker entrypoint: an HTTP endpoint that runs a pushed full-text conversion.
 
-A Cloud Task delivers `POST /convert {"doc_id": ...}`; the handler calls the litcache producer to
+A Cloud Task delivers `POST /convert` with a `WorkRequest`; the handler calls the litcache producer to
 resolve that paper's full text off the read service's request path (architecture B,
 `docs/design/evidence-fulltext.md`). The bucket comes from `THEMIS_FULLTEXT_BUCKET` (the same litcache
 bucket the read service serves). The PDF branch transcribes on Claude (`litcache.anthropic_ocr`),
@@ -59,7 +59,9 @@ async def _healthz(_request: web.Request) -> web.Response:
 
 async def _convert(request: web.Request) -> web.Response:
     produce = functools.partial(produce_mod.produce_full_text, convert_pdf=request.app[_CONVERT_PDF])
-    status = await handler_mod.process_conversion(request.app[_BUCKET], await request.read(), produce=produce)
+    status = await handler_mod.process_conversion(
+        request.app[_BUCKET], await request.read(), content_type=request.content_type, produce=produce
+    )
     return web.Response(status=status)
 
 

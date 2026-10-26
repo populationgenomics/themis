@@ -56,9 +56,10 @@ from themis.litcache import (
     paper_metadata,
     records,
     resolve,
+    work,
     writer,
 )
-from themis.litcache.models import litcache_pb2
+from themis.litcache.models import litcache_pb2, work_pb2
 from themis.rpc import literature_pb2
 from themis.services.evidence.literature import backend as literature_backend
 
@@ -308,7 +309,8 @@ class Store:
         enqueuer = self._enqueuer
         distinct = list(dict.fromkeys(doc_ids))
         outcomes = await asyncio.gather(
-            *(asyncio.to_thread(enqueuer.enqueue, doc_id) for doc_id in distinct), return_exceptions=True
+            *(asyncio.to_thread(enqueuer.enqueue, _main_text_request(doc_id)) for doc_id in distinct),
+            return_exceptions=True,
         )
         _report(distinct, outcomes)
 
@@ -443,6 +445,10 @@ async def _blocks(
             raise literature_backend.MissingRenderingBlobError(
                 f'{doc_id} rendering {rendering_hash} went missing while it was read'
             ) from None
+
+
+def _main_text_request(doc_id: str) -> work_pb2.WorkRequest:
+    return work_pb2.WorkRequest(doc_id=doc_id, targets=[work.MAIN_TEXT_TARGET])
 
 
 def _report(doc_ids: Sequence[str], outcomes: Sequence[bool | BaseException]) -> None:

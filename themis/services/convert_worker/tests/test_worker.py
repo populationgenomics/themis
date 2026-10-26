@@ -31,10 +31,10 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, ocr, writer
+from themis.litcache import anthropic_ocr, ocr, work, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
-from themis.litcache.models import litcache_pb2
+from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import names, request_tokens
@@ -112,8 +112,43 @@ def _raising() -> handler_mod.Producer:
     return produce
 
 
-def _run(body: bytes, produce: handler_mod.Producer) -> int:
-    return asyncio.run(handler_mod.process_conversion(_lazy_bucket(), body, produce=produce))
+def _run(body: bytes, produce: handler_mod.Producer, *, content_type: str = 'application/json') -> int:
+    return asyncio.run(handler_mod.process_conversion(_lazy_bucket(), body, content_type=content_type, produce=produce))
+
+
+def _request(doc_id: str = _DOC_ID, targets: tuple[str, ...] = (work.MAIN_TEXT_TARGET,)) -> bytes:
+    return work_pb2.WorkRequest(doc_id=doc_id, targets=targets).SerializeToString()
+
+
+def test_a_main_text_request_reaches_the_producer() -> None:
+    seen: list[str] = []
+    status = _run(_request(), _producer(outcome_mod.Readiness.READY, seen), content_type=work.WORK_REQUEST_MEDIA_TYPE)
+    assert status == 200
+    assert seen == [_DOC_ID]
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        pytest.param(b'\xff\xff\xff', id='not a WorkRequest'),
+        pytest.param(_request(doc_id='9f3a'), id='doc_id not a uuid'),
+        pytest.param(_request(targets=()), id='no target'),
+        pytest.param(_request(targets=('extract_variants',)), id='a target the worker does not run'),
+        pytest.param(_request(targets=('extract_variants', work.MAIN_TEXT_TARGET)), id='main text and more'),
+    ],
+)
+def test_a_request_the_worker_cannot_answer_is_bad_request(body: bytes) -> None:
+    # Until the worker runs steps, it produces the main text and nothing else. Answering any other
+    # request with that would be work nobody asked for, spending included.
+    seen: list[str] = []
+    status = _run(body, _producer(outcome_mod.Readiness.READY, seen), content_type=work.WORK_REQUEST_MEDIA_TYPE)
+    assert status == 400
+    assert not seen
+
+
+def test_a_body_of_another_media_type_is_bad_request() -> None:
+    status = _run(_request(), _producer(outcome_mod.Readiness.READY), content_type='application/octet-stream')
+    assert status == 400
 
 
 def test_ready_conversion_is_2xx() -> None:
@@ -227,7 +262,9 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
         produce_mod.produce_full_text, fetch=fetch, convert_pdf=convert, now=lambda: _CAPTURED_AT
     )
     status = asyncio.run(
-        handler_mod.process_conversion(gcs_bucket, json.dumps({'doc_id': _DOC_ID}).encode(), produce=produce)
+        handler_mod.process_conversion(
+            gcs_bucket, _request(), content_type=work.WORK_REQUEST_MEDIA_TYPE, produce=produce
+        )
     )
     assert status == 200
     assert outcome_mod.read_readiness(gcs_bucket, _DOC_ID) is outcome_mod.Readiness.READY
@@ -247,20 +284,28 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
 
-    async def drive() -> tuple[int, int, int]:
+    async def drive() -> tuple[int, int, int, int]:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
             healthz = await client.get('/healthz')
-            malformed = await client.post('/convert', data=b'not json')
-            unknown = await client.post('/convert', data=json.dumps({'doc_id': _DOC_ID}).encode())
-            return healthz.status, malformed.status, unknown.status
+            headers = {'Content-Type': f'{work.WORK_REQUEST_MEDIA_TYPE}; charset=utf-8'}
+            malformed = await client.post('/convert', data=b'\xff\xff\xff', headers=headers)
+            unknown = await client.post('/convert', data=_request(), headers=headers)
+            # A task enqueued before the body was a WorkRequest, as Cloud Tasks delivers it.
+            legacy = await client.post(
+                '/convert',
+                data=json.dumps({'doc_id': _DOC_ID}).encode(),
+                headers={'Content-Type': 'application/json; charset=UTF-8'},
+            )
+            return healthz.status, malformed.status, unknown.status, legacy.status
 
-    healthz_status, malformed_status, unknown_status = asyncio.run(drive())
+    healthz_status, malformed_status, unknown_status, legacy_status = asyncio.run(drive())
 
     assert healthz_status == 200
     assert malformed_status == 400
     # The corpus holds no such paper: settled, not retried, so the budget is spent only on failures
     # a later attempt could clear.
     assert unknown_status == 200
+    assert legacy_status == 200
 
 
 def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.Bucket) -> None:
@@ -270,7 +315,7 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
 
     async def convert(request: aiohttp.web.Request) -> aiohttp.web.Response:
         status = await handler_mod.process_conversion(
-            request.app[main_mod._BUCKET], await request.read(), produce=_raising()
+            request.app[main_mod._BUCKET], await request.read(), content_type=request.content_type, produce=_raising()
         )
         return aiohttp.web.Response(status=status)
 
@@ -278,7 +323,9 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
 
     async def drive() -> int:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
-            response = await client.post('/convert', data=json.dumps({'doc_id': _DOC_ID}).encode())
+            response = await client.post(
+                '/convert', data=_request(), headers={'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
+            )
             return response.status
 
     assert asyncio.run(drive()) == 500
@@ -403,7 +450,9 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
 
     async def drive() -> int:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
-            response = await client.post('/convert', data=json.dumps({'doc_id': _DOC_ID}).encode())
+            response = await client.post(
+                '/convert', data=_request(), headers={'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
+            )
             return response.status
 
     assert asyncio.run(drive()) == 200

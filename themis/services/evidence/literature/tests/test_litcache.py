@@ -730,7 +730,7 @@ class _FakeTasksClient:
     def create_task(self, *, parent: str, task: object) -> object:
         del parent
         name = str(getattr(task, 'name', ''))
-        doc_id = name.rpartition('/')[2]
+        doc_id = name.rpartition('/')[2].partition('--')[0]
         time.sleep(self._delays.get(doc_id, 0.0))
         error = self._per_doc.get(doc_id, self._raises)
         if error is not None:
@@ -745,11 +745,12 @@ def _conversion_backend(client: _FakeTasksClient) -> litcache_store.Store:
     return litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP, enqueuer=enqueuer)
 
 
-def test_a_conversion_request_names_a_task_per_distinct_paper() -> None:
+def test_a_conversion_request_names_a_main_text_task_per_distinct_paper() -> None:
+    # The agent's request is the decision to spend on the paper's main text, so it names that target.
     client = _FakeTasksClient()
     asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING, _DOC]))
     assert sorted(client.names) == sorted(
-        f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}' for doc_id in (_DOC, _DOC_PENDING)
+        f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}--main_text' for doc_id in (_DOC, _DOC_PENDING)
     )
 
 
@@ -858,7 +859,7 @@ def test_a_partly_failed_batch_still_places_the_tasks_it_could() -> None:
     client = _FakeTasksClient(per_doc={_DOC: api_exceptions.ServiceUnavailable('down')})
     with pytest.raises(literature_backend.ConversionUnavailableError):
         asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
-    assert client.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{_DOC_PENDING}']
+    assert client.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{_DOC_PENDING}--main_text']
 
 
 def test_a_failure_that_is_not_the_apis_is_still_classified() -> None:
@@ -1131,7 +1132,7 @@ def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
     readiness = {r.external_id: (r.doc_id, r.state) for r in response.readiness}
     doc_id, state = readiness[_FRESH_PMID]
     assert state == literature_pb2.FULL_TEXT_STATE_PENDING
-    assert tasks.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}']
+    assert tasks.names == [f'{_CONVERT_TARGET.queue_path}/tasks/{doc_id}--main_text']
     assert gcs_bucket.blob(writer.manifest_path(doc_id)).exists()
 
 
