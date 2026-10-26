@@ -60,22 +60,32 @@ def test_public_services_take_traffic_only_from_the_load_balancer(program: captu
     assert not exposed, f'public services reachable past the load balancer: {exposed}'
 
 
-def test_public_service_backends_end_in_a_deny_rule(program: capture.Capture) -> None:
-    # Whether the rule takes effect is the enforcement switch, tested on its own below.
+def test_public_service_backends_deny_every_source_they_do_not_allow(program: capture.Capture) -> None:
+    # Whether the deny takes effect is the enforcement switch, tested on its own below.
     for service in _public_services(program):
         backends = _backends_of(program, service)
         assert backends, f'{service}: no load-balancer backend'
         for backend in backends:
             rules = _policy_of(program, backend).state['rules']
-            (default,) = [rule for rule in rules if rule['priority'] == sandbox.DEFAULT_RULE_PRIORITY]
-            assert default['match']['config']['srcIpRanges'] == ['*']
-            assert str(default['action']).startswith('deny'), f'{service}: default rule is {default["action"]}'
+            allows = [rule['priority'] for rule in rules if rule['action'] == 'allow']
+            catch_alls = [
+                rule['priority']
+                for rule in rules
+                if str(rule['action']).startswith('deny') and rule['match']['config']['srcIpRanges'] == ['*']
+            ]
+            assert catch_alls, f'{service}: no deny matching every source'
+            # The default rule is the one allow that may sit below the catch-all, for while it only previews.
+            narrow = [priority for priority in allows if priority != sandbox.DEFAULT_RULE_PRIORITY]
+            assert all(priority < min(catch_alls) for priority in narrow), f'{service}: an allow below the deny'
 
 
 def test_dispatcher_admits_only_anthropic_outbound_range(program: capture.Capture) -> None:
     (backend,) = _backends_of(program, _DISPATCHER)
     rules = _policy_of(program, backend).state['rules']
-    allowed = [rule for rule in rules if rule['action'] == 'allow']
+    # The default rule is left out: while the switch is off it allows, below the previewed catch-all.
+    allowed = [
+        rule for rule in rules if rule['action'] == 'allow' and rule['priority'] != sandbox.DEFAULT_RULE_PRIORITY
+    ]
     assert [rule['match']['config']['srcIpRanges'] for rule in allowed] == [[sandbox.ANTHROPIC_OUTBOUND_RANGE]]
     # A previewed allow rule admits nothing on its own, leaving the outcome to the default rule.
     assert not any(rule['preview'] for rule in allowed)
@@ -100,10 +110,14 @@ def test_only_the_webhook_path_routes_to_the_dispatcher(program: capture.Capture
 
 
 @pytest.mark.parametrize('enforce', [True, False])
-def test_enforcement_switch_previews_only_the_deny_rule(enforce: bool) -> None:
+def test_enforcement_switch_previews_only_the_catch_all_deny(enforce: bool) -> None:
     rules = sandbox.dispatcher_policy_rules(enforce=enforce)
     previewed = [rule.priority for rule in rules if rule.preview]
-    assert previewed == ([] if enforce else [sandbox.DEFAULT_RULE_PRIORITY])
+    assert previewed == ([] if enforce else [sandbox.CATCH_ALL_PRIORITY])
+    # Cloud Armor rejects a policy whose default rule previews.
+    (default,) = [rule for rule in rules if rule.priority == sandbox.DEFAULT_RULE_PRIORITY]
+    assert not default.preview
+    assert str(default.action).startswith('deny') == enforce
 
 
 @pytest.mark.parametrize('path', ['webhooks/anthropic', '/webhooks/*', '/*', '/webhooks/anthropic?x=1'])

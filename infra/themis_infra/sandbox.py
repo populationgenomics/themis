@@ -34,8 +34,11 @@ ANTHROPIC_OUTBOUND_RANGE = '160.79.104.0/21'
 # The dispatcher's webhook route, as `themis.services.dispatcher` serves it.
 DISPATCHER_WEBHOOK_PATH = '/webhooks/anthropic'
 
-# Cloud Armor's default rule: the lowest priority, matching every source.
+# Cloud Armor's default rule: the lowest priority, matching every source. It cannot run in preview.
 DEFAULT_RULE_PRIORITY = 2147483647
+
+# The explicit deny-all above the default rule, so the deny can run in preview while the switch is off.
+CATCH_ALL_PRIORITY = 2000
 
 
 def session_token_signing_key(
@@ -330,9 +333,11 @@ def _dispatcher_backend(
 def dispatcher_policy_rules(*, enforce: bool) -> list[gcp.compute.SecurityPolicyRuleArgs]:
     """The dispatcher's Cloud Armor rules: admit Anthropic's outbound range, deny every other source.
 
+    Cloud Armor refuses preview on the default rule, so the deny is an explicit catch-all above it.
+
     Args:
-        enforce: Whether the deny rule takes effect. Off, it runs in preview: the load-balancer log
-            records each request it would deny, and the request goes through.
+        enforce: Whether the deny takes effect. Off, the catch-all runs in preview, so the load-balancer
+            log records each request it would deny, and the default rule lets the request through.
     """
     return [
         _source_rule(
@@ -344,10 +349,17 @@ def dispatcher_policy_rules(*, enforce: bool) -> list[gcp.compute.SecurityPolicy
         ),
         _source_rule(
             'deny(403)',
+            priority=CATCH_ALL_PRIORITY,
+            ranges=['*'],
+            description='Deny every other source',
+            preview=not enforce,
+        ),
+        _source_rule(
+            'deny(403)' if enforce else 'allow',
             priority=DEFAULT_RULE_PRIORITY,
             ranges=['*'],
-            description='Default deny',
-            preview=not enforce,
+            description='Default rule',
+            preview=False,
         ),
     ]
 

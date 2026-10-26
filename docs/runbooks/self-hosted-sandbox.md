@@ -48,11 +48,12 @@ Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The inf
 
 Anthropic's deliveries reach the dispatcher through the web load balancer, whose Cloud Armor policy on the dispatcher's
 backend admits Anthropic's published outbound range and denies every other source (`DispatcherService` in
-`infra/themis_infra/sandbox.py`). The deny rule has a switch, `enforce_source_range` in `infra/__main__.py`. Off, the
-rule runs in Cloud Armor preview: the load-balancer log records each request it would deny, and every request still
-reaches the dispatcher. The program starts with it off, because the range has to be confirmed against live deliveries
-first: the dispatcher's own Cloud Run request logs record every delivery's `remoteIp` as `0.0.0.0`. Those logs do record
-the user agent, `Claude-Platform`, which the queries below select deliveries by.
+`infra/themis_infra/sandbox.py`). The deny is a catch-all rule above the policy's default rule, because Cloud Armor
+refuses preview on the default rule, and it has a switch, `enforce_source_range` in `infra/__main__.py`. Off, the
+catch-all runs in Cloud Armor preview: the load-balancer log records each request it would deny, and the default rule
+lets every request through to the dispatcher. The program starts with it off, because the range has to be confirmed
+against live deliveries first: the dispatcher's own Cloud Run request logs record every delivery's `remoteIp` as
+`0.0.0.0`. Those logs do record the user agent, `Claude-Platform`, which the queries below select deliveries by.
 
 The switch is one value for every stack, since the range belongs to Anthropic rather than to an environment. The
 cut-over below confirms it once, on dev. An environment brought up after the switch is on starts enforced, and its
@@ -77,8 +78,7 @@ Moving dev's webhook from the dispatcher's run.app URL onto the load balancer:
    ```
 
    The curl's own request should then show up in the second query below, under your address. A 403 instead of the 401
-   means Cloud Armor enforces the deny rule despite the preview flag, so deliveries from outside the range are already
-   refused: run the first query below at once, and set the switch to `True` in the program so it matches what runs.
+   means the catch-all is enforcing, so check that the switch is still off in the deployed program.
 
 1. **Confirm deliveries come from the range.** Create an Analysis so Anthropic sends a delivery. This query lists the
    deliveries that reached the dispatcher's backend. It has to return at least one row, or the checks after it prove
@@ -96,7 +96,7 @@ Moving dev's webhook from the dispatcher's run.app URL onto the load balancer:
 
    ```sh
    gcloud logging read --project cpg-themis-dev --freshness 1d \
-     'resource.type="http_load_balancer" AND resource.labels.backend_service_name:"themis-dispatcher-backend" AND jsonPayload.previewSecurityPolicy.priority=2147483647' \
+     'resource.type="http_load_balancer" AND resource.labels.backend_service_name:"themis-dispatcher-backend" AND jsonPayload.previewSecurityPolicy.priority=2000' \
      --format 'table(timestamp, httpRequest.remoteIp, httpRequest.userAgent, httpRequest.status)'
    ```
 
