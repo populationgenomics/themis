@@ -63,11 +63,17 @@ Moving dev's webhook from the dispatcher's run.app URL onto the load balancer:
 
 1. **Deploy with `enforce_source_range=False`.** From then on the run.app URL refuses requests from the internet, so
    deliveries to the old endpoint URL fail. Anthropic retries them and the work waits in the queue, but it disables an
-   endpoint after ~20 consecutive failures, so repoint straight away.
+   endpoint after ~20 consecutive failures, so replace the endpoint straight away.
 
-1. **Repoint the endpoint.** In the Console, edit the existing webhook endpoint's URL to the `dispatcher_webhook_url`
-   output (`cd infra && pulumi stack output --stack dev dispatcher_webhook_url`). Edit it in place: a new endpoint comes
-   with a new `whsec_…` key, which the dispatcher rejects until it is stored and deployed.
+1. **Replace the endpoint.** The Console cannot change an endpoint's URL, so create a new endpoint at the
+   `dispatcher_webhook_url` output (`cd infra && pulumi stack output --stack dev dispatcher_webhook_url`), subscribed to
+   `session.status_run_started` only, and delete the old one. The new endpoint has its own `whsec_…` key, which the
+   dispatcher rejects until it is stored and deployed. Copy it to the clipboard and store it without it ever reaching
+   the terminal, then deploy:
+
+   ```sh
+   cd infra && pbpaste | pulumi config set --secret --stack dev themis:anthropicWebhookSigningKey
+   ```
 
 1. **Check the route from outside the range.** An unsigned request to the new URL gets the dispatcher's own 401, since
    the deny rule only previews; the same request to the old run.app URL gets Cloud Run's 404 and never reaches the

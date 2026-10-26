@@ -36,7 +36,7 @@ config:
   themis:anthropicEnvironmentKey:
     secure: v1:888fbKK1fq853U3+:c2vnbSDhPB75EIB0hJ4eIUOpJAsIbjiPywMkHOvsjUDRAscAikbaERWvAivUU6uvCjvI5MLxMW+6NDFcW49q/gDD1NhbOhRyehpO8JqOxvLKXBskvlr9Xi/o5vT2HPr3n/zuQDTRoSIZcZWzA7uzEZzD0LzorFdDachKug==
   themis:anthropicWebhookSigningKey:
-    secure: v1:ohgEggt9+zC14UaX:IE+IC5KDR5/WvDO90CdXcX5Q18l9ePIWw3Kr8l66YsfbyOjlOry4cSXvUl37/rPRewHK0PkpzuAaibI38EGWuKza
+    secure: v1:DQ1iZKU/qKhK3UBa:TDjspt29xiwSTpslOuaBDNDeHZhLIZM94NiKBxBDrqoMt2WDBwFYiEmcy9KYn7FlBwiYuGAjmcj9HZIyhMkqOiB8
   themis:anthropicEnvironmentId: env_0151RnzYTzVpqjunmookpAwr
   # The Managed Agents agent the BFF opens sessions against.
   themis:anthropicAgentId: agent_01DcGE4w5BTrxL4Ay9pgu1H7
