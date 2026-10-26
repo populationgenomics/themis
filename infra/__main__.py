@@ -560,6 +560,22 @@ work_sweep = convert.WorkSweep(
     invoker_service_account_email=convert_invoker.service_account_email,
     opts=pulumi.ResourceOptions(depends_on=[base, fulltext, work_queues, convert_worker, convert_invoker]),
 )
+# An operator's deposit of a PDF asks the worker for the paper's main text, as themis-clu.
+clu_member = grants.service_account(automation_user.service_account_email)
+grants.TaskEnqueuer(
+    'themis-clu',
+    member=clu_member,
+    queue=work_queues.bulk.name,
+    project=project,
+    location=region,
+    target='bulk-work',
+)
+grants.AccountUser(
+    'themis-clu',
+    member=clu_member,
+    account=convert_invoker.service_account_id,
+    target='convert-invoker',
+)
 # Bulk ingestion asks the worker for each paper it commits, on the bulk queue.
 ingest_member = grants.service_account(ingestion.service_account_email)
 grants.TaskEnqueuer(

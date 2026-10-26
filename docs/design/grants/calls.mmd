@@ -47,9 +47,11 @@ flowchart TB
     n3 -->|PublicService| n32
     n4 -->|AccountImpersonator| n8
     n5 -->|IapAccessor| n38
+    n8 -->|AccountUser| n9
     n8 -->|IapAccessor| n38
     n8 -->|ServiceInvoker| n33
     n8 -->|ServiceInvoker| n37
+    n8 -->|TaskEnqueuer| n27
     n9 -->|ServiceInvoker| n29
     n13 -->|JobRunner| n31
     n14 -->|JobRunner| n30
