@@ -41,9 +41,16 @@ list is cheap. A seed object missing its counterpart (a `.json` with no `.pdf`, 
 reverse) is logged and excluded, a data-quality signal the diagnostics report surfaces,
 never a per-paper crash.
 
+Every paper the write stage commits is asked for, on the bulk queue, in a request carrying the
+generation it committed (`enqueue`): the worker then runs its free steps, and spends only on the
+targets the operator gave the run (`docs/design/evidence-fulltext.md` § Every trigger asks the same
+question). A request that cannot be created is counted and logged, not retried or dead-lettered: the
+paper is committed, and the sweep asks for it.
+
 Per-stage counts are emitted as Beam metrics under `METRICS_NAMESPACE` (`papers_seen`,
 `doc_id_minted` / `doc_id_adopted`, `paper_written` / `paper_skipped`, `paper_unresolved` /
-`paper_precondition_failed` / `paper_schema_drift` / `paper_failed`).
+`paper_precondition_failed` / `paper_schema_drift` / `paper_failed`, `paper_asked` /
+`paper_already_asked` / `paper_not_asked`).
 
 `report_run` is the post-run step (call after `wait_until_finish`): it builds and logs
 the diagnostics report. Deleting the transient seed prefix is a separate manual operator
@@ -68,20 +75,26 @@ import apache_beam as beam
 import httpx2
 import litfetch
 import pg8000.exceptions
+import protovalidate
 from apache_beam import pvalue
 from apache_beam.metrics import metric
 from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from apache_beam.utils import shared
+from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
+from google.cloud import tasks_v2
 
 from themis.common import constants
-from themis.litcache import crosswalk, identity, pipeline, report, resolve
+from themis.litcache import crosswalk, enqueue, identity, pipeline, produce, report, resolve
+from themis.litcache.models import work_pb2
 
 _LOG = logging.getLogger(__name__)
 
 # Beam-metrics namespace for the per-stage ingestion counters.
 METRICS_NAMESPACE = 'litcache.ingest'
+# A well-formed doc_id, to validate a run's targets and run id before any paper has one.
+_PROBE_DOC_ID = '00000000-0000-4000-8000-000000000000'
 
 # The per-stage counters the DoFns emit, snapshotted into the diagnostics report.
 _COUNTER_NAMES = (
@@ -94,6 +107,9 @@ _COUNTER_NAMES = (
     'paper_precondition_failed',
     'paper_schema_drift',
     'paper_failed',
+    'paper_asked',
+    'paper_already_asked',
+    'paper_not_asked',
 )
 
 # Papers that could not be ingested — unresolved metadata, a record failing the store's
@@ -133,6 +149,7 @@ _RESOLVE_SHARD_KEY = 0
 BucketFactory = Callable[[], gcs.Bucket]
 ConnFactory = Callable[[], crosswalk.Connection]
 FetchersFactory = Callable[[], Sequence[litfetch.Fetcher]]
+EnqueuerFactory = Callable[[], enqueue.Enqueuer]
 FileSourcesFactory = Callable[[], Sequence[litfetch.FileSource]]
 TransportFactory = Callable[[], httpx2.AsyncBaseTransport]
 
@@ -463,6 +480,32 @@ class _MintConnection:
             _LOG.warning('closing the discarded crosswalk connection failed: %r', exc)
 
 
+@dataclasses.dataclass(frozen=True)
+class WorkAsk:
+    """What the run asks the worker for, for each paper it commits.
+
+    Attributes:
+        enqueuer: Builds the enqueuer for the bulk queue, once per worker.
+        targets: The targets the operator gave the run; empty runs only the free steps.
+        run_id: The funded run's id, when the targets spend.
+    """
+
+    enqueuer: EnqueuerFactory
+    targets: tuple[str, ...] = ()
+    run_id: str | None = None
+
+    def request(self, doc_id: str) -> work_pb2.WorkRequest:
+        request = work_pb2.WorkRequest(doc_id=doc_id, targets=self.targets)
+        if self.run_id is not None:
+            request.run_id = self.run_id
+        return request
+
+
+def bulk_enqueuer(target: enqueue.ConversionTarget) -> enqueue.Enqueuer:
+    """An enqueuer on `target` under ambient credentials; partial it over a target for `WorkAsk.enqueuer`."""
+    return enqueue.Enqueuer(tasks_v2.CloudTasksClient(), target)
+
+
 class _WritePaperFn(beam.DoFn):
     """Join a paper's identity with its resolution and run the write half.
 
@@ -484,7 +527,9 @@ class _WritePaperFn(beam.DoFn):
         now: datetime.datetime,
         fetchers_factory: FetchersFactory | None,
         file_sources_factory: FileSourcesFactory | None,
+        ask: WorkAsk | None,
     ) -> None:
+        self._ask = ask
         self._bucket_factory = bucket_factory
         self._conn_factory = conn_factory
         self._shared_conn = shared_conn
@@ -501,9 +546,13 @@ class _WritePaperFn(beam.DoFn):
         self._precondition_failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_precondition_failed')
         self._schema_drift = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_schema_drift')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
+        self._asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_asked')
+        self._already_asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_already_asked')
+        self._not_asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_not_asked')
 
     @override
     def setup(self) -> None:
+        self._enqueuer = self._ask.enqueuer() if self._ask is not None else None
         self._bucket = self._bucket_factory()
         self._fetchers = self._fetchers_factory() if self._fetchers_factory is not None else None
         self._file_sources = self._file_sources_factory() if self._file_sources_factory is not None else None
@@ -515,6 +564,18 @@ class _WritePaperFn(beam.DoFn):
 
     def _mint(self, external_ids: Iterable[str]) -> crosswalk.MintResult:
         return self._mint_conn.mint(external_ids)
+
+    def _ask_for(self, result: pipeline.IngestResult) -> None:
+        """Ask the worker for a paper this call committed; a request that cannot be made is the sweep's to make."""
+        if self._enqueuer is None or self._ask is None:
+            return
+        try:
+            created = self._enqueuer.enqueue(self._ask.request(result.doc_id), generation=result.generation)
+        except api_exceptions.GoogleAPIError as exc:
+            _LOG.warning('could not ask the worker for %s: %r', result.doc_id, exc)
+            self._not_asked.inc()
+            return
+        (self._asked if created else self._already_asked).inc()
 
     def _dead_letter(self, work: _PaperWork, *, reason: str) -> None:
         """Record an identified paper that could not be written, keyed by its seed."""
@@ -580,6 +641,7 @@ class _WritePaperFn(beam.DoFn):
                 continue
             (self._minted if result.minted else self._adopted).inc()
             (self._written if result.written else self._skipped).inc()
+            self._ask_for(result)
             yield result.doc_id
 
 
@@ -592,6 +654,7 @@ def build_pipeline(
     now: datetime.datetime,
     seed_prefix: str = 'ingest/',
     limit: int | None = None,
+    ask: WorkAsk | None,
     fetchers_factory: FetchersFactory | None = None,
     file_sources_factory: FileSourcesFactory | None = None,
     transport_factory: TransportFactory | None = None,
@@ -615,6 +678,8 @@ def build_pipeline(
         seed_prefix: The flat seed prefix to ingest.
         limit: Ingest only the first `limit` paired seed objects (in stem order) for
             a bounded run; `None` ingests every pair. Deterministic across runs.
+        ask: What to ask the worker for, for each paper committed; None for a run into a bucket no
+            worker reads, such as a staged sample's.
         fetchers_factory: Builds the litfetch OA-XML ladder per worker; `None` uses
             litfetch's default (live) ladder.
         file_sources_factory: Builds the litfetch supplementary file sources per
@@ -626,10 +691,17 @@ def build_pipeline(
         The `PCollection` of ingested `doc_id`s.
 
     Raises:
-        ValueError: If `limit` is not positive.
+        ValueError: If `limit` is not positive, or `ask` names a target no step answers to.
+        protovalidate.ValidationError: If `ask` names targets or a run id a `WorkRequest` cannot carry.
     """
     if limit is not None and limit <= 0:
         raise ValueError(f'limit must be positive, got {limit}')
+    if ask is not None:
+        # Refused before any paper is written: the worker would refuse every request naming one.
+        protovalidate.validate(ask.request(_PROBE_DOC_ID))
+        unknown = set(ask.targets) - produce.TARGETS
+        if unknown:
+            raise ValueError(f'no step is named {sorted(unknown)}')
     pairing = pair_seed_keys(
         (blob.name for blob in bucket_factory().list_blobs(prefix=seed_prefix)), prefix=seed_prefix
     )
@@ -668,6 +740,7 @@ def build_pipeline(
                 now=now,
                 fetchers_factory=fetchers_factory,
                 file_sources_factory=file_sources_factory,
+                ask=ask,
             )
         )
     )
@@ -680,6 +753,7 @@ def run_ingestion(
     licence: pipeline.LicenceFacts,
     now: datetime.datetime,
     options: pipeline_options.PipelineOptions,
+    ask: WorkAsk | None,
     seed_prefix: str = 'ingest/',
     limit: int | None = None,
 ) -> IngestionRun:
@@ -698,6 +772,8 @@ def run_ingestion(
         licence: The non-OA-branch licence fallback.
         now: Timezone-aware capture/rendering timestamp.
         options: Beam pipeline options (runner, project, region, …).
+        ask: What to ask the worker for, for each paper committed; None for a run into a bucket no
+            worker reads.
         seed_prefix: The flat seed prefix to ingest.
         limit: Ingest only the first `limit` paired seed objects (for a bounded run,
             e.g. on the DirectRunner); `None` ingests every pair.
@@ -715,6 +791,7 @@ def run_ingestion(
         now=now,
         seed_prefix=seed_prefix,
         limit=limit,
+        ask=ask,
     )
     return IngestionRun.stamped(root.run(), now)
 

@@ -20,56 +20,60 @@ flowchart TB
     n17["themis-gene-disease-refresh"]
     n18["themis-gene-disease-scheduler"]
     n19["themis-hello"]
-    n20["themis-sandbox-job"]
-    n21["themis-sheaf"]
-    n22["themis-web"]
-    n23[("queue themis-convert")]
-    n24[["themis-auth"]]
-    n25[["themis-convert-worker"]]
-    n26[["themis-cost-exporter"]]
-    n27[["themis-cost-report"]]
-    n28[["themis-dispatcher"]]
-    n29[["themis-evidence"]]
-    n30[["themis-gene-disease-refresh"]]
-    n31[["themis-hello"]]
-    n32[["themis-sandbox"]]
-    n33[["themis-sheaf"]]
-    n34[["themis-web"]]
+    n20["themis-ingest"]
+    n21["themis-sandbox-job"]
+    n22["themis-sheaf"]
+    n23["themis-web"]
+    n24[("queue themis-convert")]
+    n25[("queue themis-convert-bulk")]
+    n26[["themis-auth"]]
+    n27[["themis-convert-worker"]]
+    n28[["themis-cost-exporter"]]
+    n29[["themis-cost-report"]]
+    n30[["themis-dispatcher"]]
+    n31[["themis-evidence"]]
+    n32[["themis-gene-disease-refresh"]]
+    n33[["themis-hello"]]
+    n34[["themis-sandbox"]]
+    n35[["themis-sheaf"]]
+    n36[["themis-web"]]
     n0 -->|AccountImpersonator| n9
     n0 -->|AccountUser| n9
-    n1 -->|ServiceInvoker| n34
+    n1 -->|ServiceInvoker| n36
     n2 -->|FederatedImpersonator| n7
-    n3 -->|PublicService| n28
+    n3 -->|PublicService| n30
     n4 -->|AccountImpersonator| n8
-    n5 -->|IapAccessor| n34
-    n8 -->|IapAccessor| n34
-    n8 -->|ServiceInvoker| n29
-    n8 -->|ServiceInvoker| n33
-    n9 -->|ServiceInvoker| n25
-    n13 -->|JobRunner| n27
-    n14 -->|JobRunner| n26
-    n15 -->|SandboxSpawner| n32
+    n5 -->|IapAccessor| n36
+    n8 -->|IapAccessor| n36
+    n8 -->|ServiceInvoker| n31
+    n8 -->|ServiceInvoker| n35
+    n9 -->|ServiceInvoker| n27
+    n13 -->|JobRunner| n29
+    n14 -->|JobRunner| n28
+    n15 -->|SandboxSpawner| n34
     n16 -->|AccountUser| n9
-    n16 -->|ServiceInvoker| n24
-    n16 -->|TaskEnqueuer| n23
-    n18 -->|JobRunner| n30
-    n19 -->|ServiceInvoker| n24
-    n20 -->|ServiceInvoker| n29
-    n20 -->|ServiceInvoker| n31
-    n20 -->|ServiceInvoker| n33
-    n21 -->|SelfSigner| n21
-    n21 -->|ServiceInvoker| n24
+    n16 -->|ServiceInvoker| n26
+    n16 -->|TaskEnqueuer| n24
+    n18 -->|JobRunner| n32
+    n19 -->|ServiceInvoker| n26
+    n20 -->|AccountUser| n9
+    n20 -->|TaskEnqueuer| n25
+    n21 -->|ServiceInvoker| n31
+    n21 -->|ServiceInvoker| n33
+    n21 -->|ServiceInvoker| n35
     n22 -->|SelfSigner| n22
-    n22 -->|ServiceInvoker| n29
-    n22 -->|ServiceInvoker| n33
-    n24 -. runs as .-> n6
-    n25 -. runs as .-> n10
-    n26 -. runs as .-> n11
-    n27 -. runs as .-> n12
-    n28 -. runs as .-> n15
-    n29 -. runs as .-> n16
-    n30 -. runs as .-> n17
-    n31 -. runs as .-> n19
-    n32 -. runs as .-> n20
-    n33 -. runs as .-> n21
-    n34 -. runs as .-> n22
+    n22 -->|ServiceInvoker| n26
+    n23 -->|SelfSigner| n23
+    n23 -->|ServiceInvoker| n31
+    n23 -->|ServiceInvoker| n35
+    n26 -. runs as .-> n6
+    n27 -. runs as .-> n10
+    n28 -. runs as .-> n11
+    n29 -. runs as .-> n12
+    n30 -. runs as .-> n15
+    n31 -. runs as .-> n16
+    n32 -. runs as .-> n17
+    n33 -. runs as .-> n19
+    n34 -. runs as .-> n21
+    n35 -. runs as .-> n22
+    n36 -. runs as .-> n23

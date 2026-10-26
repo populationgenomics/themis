@@ -26,6 +26,7 @@ import httpx2
 import litfetch
 import pg8000.dbapi
 import pg8000.exceptions
+import protovalidate
 import pytest
 import testcontainers.postgres
 from apache_beam.options import pipeline_options
@@ -34,9 +35,10 @@ from apache_beam.testing import test_pipeline
 from apache_beam.utils import shared
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
+from google.cloud import tasks_v2
 
-from themis.litcache import crosswalk, identity, ingest_beam, pipeline
-from themis.litcache.models import litcache_pb2
+from themis.litcache import crosswalk, enqueue, identity, ingest_beam, pipeline
+from themis.litcache.models import litcache_pb2, work_pb2
 
 _FIXTURES = pathlib.Path(__file__).parent.parent / 'fixtures' / 'litcache'
 _NONOA = _FIXTURES / 'nonoa'
@@ -51,6 +53,34 @@ _BUCKETS: dict[str, gcs.Bucket] = {}
 
 def _bucket_for(token: str) -> gcs.Bucket:
     return _BUCKETS[token]
+
+
+# Every task each test's run tried to create, by the test's token: the DoFn's enqueuer is built in the
+# runner, so the test reads what it asked for back through a registry, as it reaches its bucket.
+_TASKS: dict[str, list[tasks_v2.Task]] = {}
+
+
+class _TasksClient:
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    def create_task(self, *, parent: str, task: tasks_v2.Task) -> tasks_v2.Task:  # noqa: ARG002 — the client's signature
+        held = any(t.name == task.name for t in _TASKS[self._token])
+        _TASKS[self._token].append(task)
+        if held:
+            raise api_exceptions.AlreadyExists(task.name)
+        return task
+
+
+_WORK_TARGET = enqueue.ConversionTarget(
+    queue_path='projects/p/locations/l/queues/themis-convert-bulk',
+    worker_url='https://worker.example',
+    invoker_service_account_email='invoker@p.iam.gserviceaccount.com',
+)
+
+
+def _enqueuer_for(token: str) -> enqueue.Enqueuer:
+    return enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', _TasksClient(token)), _WORK_TARGET)
 
 
 def _no_fetchers() -> list[litfetch.Fetcher]:
@@ -163,6 +193,7 @@ def test_build_pipeline_rejects_non_positive_limit() -> None:
             licence=_licence(),
             now=_NOW,
             limit=0,
+            ask=None,
         )
 
 
@@ -242,6 +273,7 @@ def test_write_paper_instances_share_one_connection_per_process(monkeypatch: pyt
             now=_NOW,
             fetchers_factory=None,
             file_sources_factory=None,
+            ask=None,
         )
 
     first, second = _fn(), _fn()
@@ -374,11 +406,16 @@ def _options() -> pipeline_options.PipelineOptions:
 
 
 def _run(
-    token: str, conn_factory: Callable[[], pg8000.dbapi.Connection], *, limit: int | None = None
+    token: str,
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    *,
+    limit: int | None = None,
+    ask: ingest_beam.WorkAsk | None = None,
 ) -> runner.PipelineResult:
     with test_pipeline.TestPipeline(options=_options()) as root:
         ingest_beam.build_pipeline(
             root,
+            ask=ask,
             bucket_factory=functools.partial(_bucket_for, token),
             conn_factory=conn_factory,
             licence=_licence(),
@@ -416,6 +453,61 @@ def test_build_pipeline_ingests_both_papers(
         row = cur.fetchone()
     assert row is not None
     assert row[0] == 2
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
+def test_each_paper_committed_is_asked_for_once_with_its_generation(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    _TASKS[token] = []
+    ask = ingest_beam.WorkAsk(enqueuer=functools.partial(_enqueuer_for, token))
+    try:
+        _run(token, conn_factory, ask=ask)
+        tasks = list(_TASKS[token])
+        # Skips both papers, and asks again at the generations it finds: a retried bundle skips what its
+        # failed attempt committed, which that attempt may not have asked for.
+        _run(token, conn_factory, ask=ask)
+        again = _TASKS[token][len(tasks) :]
+    finally:
+        del _TASKS[token]
+
+    manifests = {m.doc_id: m for m in _manifests(bucket)}
+    requests = [work_pb2.WorkRequest.FromString(t.http_request.body) for t in tasks]
+    assert len(manifests) == 2
+    assert sorted(r.doc_id for r in requests) == sorted(manifests)
+    assert sorted(t.name for t in again) == sorted(t.name for t in tasks)  # the queue drops them as held
+    assert all(not r.targets for r in requests)
+    for task, request in zip(tasks, requests, strict=True):
+        blob = bucket.get_blob(f'papers/{request.doc_id}/manifest.pb')
+        assert blob is not None
+        assert task.name.endswith(f'/tasks/{request.doc_id}--gen-{blob.generation}')
+
+
+@pytest.mark.parametrize(
+    ('targets', 'error'),
+    [(('Main-Text',), protovalidate.ValidationError), (('transcriptoin',), ValueError)],
+)
+def test_a_run_naming_targets_the_worker_cannot_carry_is_refused_before_it_starts(
+    targets: tuple[str, ...], error: type[Exception]
+) -> None:
+    ask = ingest_beam.WorkAsk(enqueuer=functools.partial(_enqueuer_for, 'unused'), targets=targets)
+
+    def _unused_bucket() -> gcs.Bucket:
+        raise AssertionError('bucket_factory must not be called when the targets are invalid')
+
+    def _unused_conn() -> crosswalk.Connection:
+        raise AssertionError('conn_factory must not be called when the targets are invalid')
+
+    with pytest.raises(error):
+        ingest_beam.build_pipeline(
+            beam.Pipeline(),
+            bucket_factory=_unused_bucket,
+            conn_factory=_unused_conn,
+            licence=_licence(),
+            now=_NOW,
+            ask=ask,
+        )
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
@@ -504,6 +596,7 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
         with test_pipeline.TestPipeline(options=_options()) as root:
             ingest_beam.build_pipeline(
                 root,
+                ask=None,
                 bucket_factory=functools.partial(_bucket_for, token),
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
@@ -539,6 +632,7 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
                 now=_LATER,
+                ask=None,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_unresolvable_transport,
             )
@@ -583,6 +677,7 @@ def test_seeds_sharing_a_claim_key_are_dead_lettered_apart(
         with test_pipeline.TestPipeline(options=_options()) as root:
             ingest_beam.build_pipeline(
                 root,
+                ask=None,
                 bucket_factory=functools.partial(_bucket_for, token),
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
@@ -646,6 +741,7 @@ def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
         with test_pipeline.TestPipeline(options=_options()) as root:
             ingest_beam.build_pipeline(
                 root,
+                ask=None,
                 bucket_factory=functools.partial(_bucket_for, token),
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
@@ -686,6 +782,7 @@ def test_build_pipeline_dead_letters_a_record_failing_the_precondition(
         with test_pipeline.TestPipeline(options=_options()) as root:
             ingest_beam.build_pipeline(
                 root,
+                ask=None,
                 bucket_factory=functools.partial(_bucket_for, token),
                 conn_factory=_forbidden_conn,
                 licence=_licence(),

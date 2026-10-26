@@ -59,6 +59,7 @@ import hashlib
 from collections.abc import Callable, Iterable, Sequence
 
 import litfetch
+from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
 from themis.common import storage
@@ -122,12 +123,19 @@ class IngestResult:
             already-committed paper.
         manifest: The committed manifest — assembled when newly written, loaded
             from storage when the paper was already cached.
+        generation: The manifest's generation once this call returned, which this
+            writer's request for the paper carries: the one its write left, or, for a
+            paper already committed that this call skipped, the one it found. A skipped
+            paper is still asked for, since a retried bundle skips the papers its failed
+            attempt committed and may not have asked for; the task name dedupes the
+            request when the paper was asked for at that generation.
     """
 
     doc_id: str
     minted: bool
     written: bool
     manifest: litcache_pb2.Manifest
+    generation: int
 
 
 def extract_identity(seed: SeedObject) -> identity.Identity:
@@ -221,12 +229,15 @@ def ingest_paper(
         # whose manifest already exists, so the skip below returns it.
         _link_equivalence(bucket, mint_result.linked_doc_ids)
 
-    existing = _load_manifest(bucket, doc_id)
-    if existing is not None:
+    committed = _load_committed(bucket, doc_id)
+    if committed is not None:
+        existing, generation = committed
         writer.fill_absent_metadata(
             bucket, doc_id, existing, _manifest_external_ids(ident, resolved), resolved.metadata
         )
-        return IngestResult(doc_id=doc_id, minted=mint_result.minted, written=False, manifest=existing)
+        return IngestResult(
+            doc_id=doc_id, minted=mint_result.minted, written=False, manifest=existing, generation=generation
+        )
 
     _claim_accession(mint, ident, resolved)
     oa_source, supplementary = asyncio.run(_fetch_oa(ident, resolved, fetchers=fetchers, file_sources=file_sources))
@@ -254,7 +265,13 @@ def ingest_paper(
         files=files,
     )
     result = writer.write_paper(bucket, paper)
-    return IngestResult(doc_id=doc_id, minted=mint_result.minted, written=result.written, manifest=result.manifest)
+    return IngestResult(
+        doc_id=doc_id,
+        minted=mint_result.minted,
+        written=result.written,
+        manifest=result.manifest,
+        generation=result.generation,
+    )
 
 
 async def _fetch_oa(
@@ -326,6 +343,18 @@ def _manifest_external_ids(ident: identity.Identity, resolved: resolve.ResolvedP
     if resolved.external_ids.HasField('bookid'):
         external_ids.bookid = resolved.external_ids.bookid
     return external_ids
+
+
+def _load_committed(bucket: gcs.Bucket, doc_id: str) -> tuple[litcache_pb2.Manifest, int] | None:
+    """The committed manifest for `doc_id` and the generation it was read at, or None when the paper is uncached."""
+    blob = bucket.blob(writer.manifest_path(doc_id))
+    try:
+        data = blob.download_as_bytes()
+    except api_exceptions.NotFound:
+        return None
+    if blob.generation is None:
+        raise RuntimeError(f'{blob.name} was read with no generation')
+    return litcache_pb2.Manifest.FromString(data), blob.generation
 
 
 def _load_manifest(bucket: gcs.Bucket, doc_id: str) -> litcache_pb2.Manifest | None:

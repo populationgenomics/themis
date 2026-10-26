@@ -280,6 +280,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             licence=_licence_fallback(),
             now=now,
             options=_options(args.direct_num_workers),
+            ask=None,  # no worker reads the scratch bucket
             seed_prefix=args.seed_prefix,
             limit=args.limit,
         )

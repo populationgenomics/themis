@@ -15,7 +15,10 @@ Two run shapes:
   ingestion of the same paper adopts a `doc_id` with no artifacts behind it.
 - Direct (``--direct``): reads ``ingest/`` from and writes ``papers/`` to the real store
   (``--source-bucket``) with no staging — the production shape. ``--limit`` is optional
-  (omit to ingest the whole corpus).
+  (omit to ingest the whole corpus). A direct run into the store the full-text worker reads
+  asks the worker for every paper it commits, on the bulk queue, naming each ``--target``
+  given (none by default, so nothing spends) and ``--run-id`` for a funded run; it needs
+  ``--worker-url``, the worker's ``run.app`` URL.
 
 Dataflow ``staging``/``temp`` live in the scratch bucket either way. The crosswalk is
 always the real shared one, so every shape exercises the production mint path.
@@ -57,7 +60,7 @@ from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from google.cloud import storage as gcs
 
-from themis.litcache import cloudsql, ingest_beam, pipeline, report
+from themis.litcache import cloudsql, enqueue, ingest_beam, pipeline, report
 from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger('litcache.launch_dataflow')
@@ -89,6 +92,16 @@ class _Target:
     def ingest_sa(self) -> str:
         """The ingestion worker SA (infra/themis_infra/ingest.py)."""
         return f'themis-ingest@{self.project}.iam.gserviceaccount.com'
+
+    @property
+    def bulk_queue_path(self) -> str:
+        """The bulk queue into the full-text worker (infra/themis_infra/convert.py)."""
+        return f'projects/{self.project}/locations/{self.region}/queues/themis-convert-bulk'
+
+    @property
+    def invoker_sa(self) -> str:
+        """The identity a work task's OIDC token names (infra/themis_infra/convert.py)."""
+        return f'themis-convert-invoker@{self.project}.iam.gserviceaccount.com'
 
     @property
     def ingest_db_user(self) -> str:
@@ -212,6 +225,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action='store_true',
         help='read ingest/ from and write papers/ to --source-bucket directly (the real store), no staging',
     )
+    parser.add_argument('--worker-url', default=None, help="the full-text worker's run.app URL, to ask it for work")
+    parser.add_argument(
+        '--target',
+        dest='work_targets',
+        action='append',
+        default=[],
+        help='a target to ask the worker for, for every paper committed; repeatable (default: none, so nothing spends)',
+    )
+    parser.add_argument('--run-id', default=None, help="the funded run's id, when a target spends")
     parser.add_argument(
         '--max-dead-letters',
         type=int,
@@ -232,7 +254,30 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         args.scratch_bucket = args.target.default_scratch_bucket
     if args.source_bucket is None:
         args.source_bucket = args.target.default_source_bucket
+    # The worker reads only the store, so only a run that writes there can ask it for work.
+    args.asks = args.direct and args.source_bucket == args.target.default_source_bucket
+    if args.asks and args.worker_url is None:
+        parser.error('--worker-url is required for a --direct run into the store, which asks the worker for work')
+    if not args.asks and (args.worker_url is not None or args.work_targets or args.run_id is not None):
+        parser.error('--worker-url, --target and --run-id apply only to a --direct run into the store')
+    if args.run_id is not None and not args.work_targets:
+        parser.error('--run-id names a funded run, which names the --target it pays for')
     return args
+
+
+def _ask(args: argparse.Namespace) -> ingest_beam.WorkAsk | None:
+    if not args.asks:
+        return None
+    target = enqueue.ConversionTarget(
+        queue_path=args.target.bulk_queue_path,
+        worker_url=args.worker_url,
+        invoker_service_account_email=args.target.invoker_sa,
+    )
+    return ingest_beam.WorkAsk(
+        enqueuer=functools.partial(ingest_beam.bulk_enqueuer, target),
+        targets=tuple(args.work_targets),
+        run_id=args.run_id,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -273,6 +318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         licence=_licence_fallback(),
         now=now,
         options=options,
+        ask=_ask(args),
         seed_prefix=args.seed_prefix,
         limit=args.limit,
     )
@@ -284,6 +330,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     rep = ingest_beam.report_run(run, bucket_factory, seed_prefix=args.seed_prefix)
     print(report.render_report(rep))
     print(f'\nOutput written to gs://{run_bucket}/papers/; crosswalk minted into {args.target.sql_connection_name}.')
+    not_asked = rep.counters.get('paper_not_asked', 0)
+    if not_asked:
+        # Each is a committed paper the worker was not asked for: a missing grant or a wrong queue fails them all.
+        print(f'\n{not_asked} paper(s) committed but not asked for; see the job log for why', file=sys.stderr)
+        return 1
     if rep.dead_lettered > args.max_dead_letters:
         # Per-paper isolation keeps the job in DONE however many papers failed, so the
         # dead-letter count is the only thing separating a clean pass from a total one.

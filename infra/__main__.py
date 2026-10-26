@@ -547,6 +547,22 @@ ingestion = ingest.IngestionRuntime(
     secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
     opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar, ingest_net]),
 )
+# Bulk ingestion asks the worker for each paper it commits, on the bulk queue.
+ingest_member = grants.service_account(ingestion.service_account_email)
+grants.TaskEnqueuer(
+    'themis-ingest',
+    member=ingest_member,
+    queue=work_queues.bulk.name,
+    project=project,
+    location=region,
+    target='bulk-work',
+)
+grants.AccountUser(
+    'themis-ingest',
+    member=ingest_member,
+    account=convert_invoker.service_account_id,
+    target='convert-invoker',
+)
 # Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
 # (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
 # internal load balancer — the guest has zero network, and the trusted worker reaches the internal services

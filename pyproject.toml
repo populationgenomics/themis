@@ -123,7 +123,7 @@ sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
 evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.5.0", "clinvar_proto==0.2.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
-# calls litcache.produce.produce_full_text off the read request path. aiohttp is the HTTP server (as in
+# runs a paper's steps (litcache.produce.run) off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
 # XML, anthropic transcribes a PDF, the storage/protobuf pair reads and commits the manifest, and
 # protovalidate checks each manifest against its own constraints before the commit.
