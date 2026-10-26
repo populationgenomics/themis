@@ -94,6 +94,14 @@ unversioned with soft delete at the GCS default: every object is re-derivable fr
 losing one is a re-run. Autoclass tiers to Nearline rather than Archive, because a cold read is on a service cold start
 or a fresh pipeline machine, where Archive retrieval fees would land on the critical path.
 
+The litcache **scratch** bucket, `gs://cpg-themis-<env>-litcache-scratch`, is the seed ingestion's working space:
+Dataflow's staging and temp files for every run, and a staged rehearsal's copied seed and output
+([`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md)). Nothing in it is kept
+past a run's review, so a lifecycle rule deletes every object seven days after it is written. It is private,
+unversioned, and keeps the GCS-default soft delete. `themis-ingest` holds `objectUser` on it, granted in
+`themis_infra/ingest.py`, because the Dataflow workers read the staged job files and write, list and delete temp files
+themselves.
+
 A bucket per storage *policy*, not per dataset: the properties above — public access, versioning, retention, storage
 class — are bucket-level and can't be prefix-scoped, so datasets share a bucket exactly when they want the same answers
 to all of them, and the parquet/audit consumers the design anticipates want different ones. The full-text store's

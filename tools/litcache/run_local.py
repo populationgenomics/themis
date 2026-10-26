@@ -20,7 +20,8 @@ Metadata resolution and the OA ladder use their live defaults; resolution is bat
 so the request rate is bounded by call count, not worker count. A paper that cannot be
 resolved or written is dead-lettered under ``diagnostics/dead_letters/`` and the run
 carries on; more than ``--max-dead-letters`` of them exits non-zero. Teardown is manual:
-delete the scratch bucket, or call ``themis.litcache.report.teardown_seed``.
+delete what the run wrote under the scratch bucket (the bucket itself is Pulumi's), or call
+``themis.litcache.report.teardown_seed``.
 
 Example (throwaway Postgres needs the ``test`` group for testcontainers)::
 
@@ -295,7 +296,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(report.render_report(rep))
     print(f'\nOutput written to gs://{args.scratch_bucket}/papers/ — seed left intact under {args.seed_prefix}.')
-    print('Teardown is manual: delete the scratch bucket, or call themis.litcache.report.teardown_seed.')
+    print(
+        'Teardown is manual: delete what the run wrote under the scratch bucket, '
+        'or call themis.litcache.report.teardown_seed.'
+    )
     if rep.dead_lettered > args.max_dead_letters:
         # Per-paper isolation keeps the pipeline DONE however many papers failed, so the
         # dead-letter count is the only thing separating a clean pass from a total one.

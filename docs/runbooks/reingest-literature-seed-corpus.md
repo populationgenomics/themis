@@ -173,30 +173,21 @@ ADC), Docker able to build `linux/amd64`.
 
 ### The worker service account (provisioned in Pulumi)
 
-`themis-ingest` and its standing grants are declared in [`ingest.py`](../../infra/themis_infra/ingest.py) and
-[`ingest_network.py`](../../infra/themis_infra/ingest_network.py): `dataflow.worker`, `networkUser` on the
-`themis-ingest` subnet (also for the Dataflow service agent), `storage.objectUser` on the full-text bucket, the Cloud
-SQL connect roles and IAM DB login; the table rights (`SELECT, INSERT` on `litcache.crosswalk`) are migration
+`themis-ingest`, its standing grants and the scratch bucket are declared in
+[`ingest.py`](../../infra/themis_infra/ingest.py) and [`ingest_network.py`](../../infra/themis_infra/ingest_network.py):
+`dataflow.worker`, `networkUser` on the `themis-ingest` subnet (also for the Dataflow service agent),
+`storage.objectUser` on the full-text and scratch buckets, `artifactregistry.reader` on the `themis` image repository,
+the Cloud SQL connect roles and IAM DB login; the table rights (`SELECT, INSERT` on `litcache.crosswalk`) are migration
 [`0007`](../../themis/migrate/migrations/0007_litcache_crosswalk_grant.sql), applied at deploy. Nothing to do here
-unless a deploy has not run since those landed.
+unless a deploy has not run since those landed. The scratch bucket expires every object after seven days.
 
-### Granted out of band
+### Your own grants
 
-Nothing below is in Pulumi. The launcher docstring calls these "granted out of band for a bounded run"; check each
-before the first run in an environment (someone with project IAM rights applies them):
+You launch the job under your own credentials. Project owner carries all of these; anyone else needs them applied by
+someone with project IAM rights before the first run:
 
 ```sh
-# The scratch bucket itself — staging/temp for every run shape, the sample's store for a staged one.
-gcloud storage buckets create "gs://$SCRATCH" --project="$PROJECT" --location="$REGION" \
-  --uniform-bucket-level-access --public-access-prevention
-
-# Worker SA: pull the image, read/write the scratch bucket.
-gcloud artifacts repositories add-iam-policy-binding themis --project="$PROJECT" --location="$REGION" \
-  --member="serviceAccount:$INGEST_SA" --role=roles/artifactregistry.reader
-gcloud storage buckets add-iam-policy-binding "gs://$SCRATCH" \
-  --member="serviceAccount:$INGEST_SA" --role=roles/storage.objectUser
-
-# You: submit jobs, run them as the worker SA, push the image, stage and read the buckets.
+# Submit jobs, run them as the worker SA, push the image, stage and read the buckets.
 gcloud projects add-iam-policy-binding "$PROJECT" --member="user:$ME" --role=roles/dataflow.developer
 gcloud iam service-accounts add-iam-policy-binding "$INGEST_SA" --project="$PROJECT" \
   --member="user:$ME" --role=roles/iam.serviceAccountUser
@@ -355,18 +346,18 @@ The launcher's own exits:
 
 Permission failures, and which grant each points at:
 
-| Symptom                                                                                | Missing                                                            |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `403` while staging (`copy_blob`) or listing `ingest/`                                 | You: read on `$FULLTEXT`, write on `$SCRATCH`                      |
-| `dataflow.jobs.create` denied at submit                                                | You: `roles/dataflow.developer`                                    |
-| `Current user cannot act as service account themis-ingest@…`                           | You: `iam.serviceAccountUser` on `$INGEST_SA`                      |
-| Workers never start; job log names the image or `artifactregistry`                     | `$INGEST_SA`: `artifactregistry.reader` on `themis`                |
-| Workers never start; job log names the subnetwork or `compute.subnetworks.use`         | Pulumi (`ingest.py` `networkUser`) — has the stack deployed?       |
-| Workers fail on `dataflow/tmp` or `dataflow/staging`                                   | `$INGEST_SA`: `objectUser` on `$SCRATCH`                           |
-| `permission denied for schema litcache` / `relation litcache.crosswalk` in worker logs | Migration `0007` not applied — run a deploy                        |
-| Cloud SQL connect refused for `themis-ingest@…iam`                                     | Pulumi (`ingest.py` connect roles + IAM DB user)                   |
-| Report step `403` writing `diagnostics/dead_letters/<run>.jsonl` on a direct run       | You: write on `$FULLTEXT`                                          |
-| SDK harness version mismatch at worker start                                           | Dockerfile's `beam_python3.13_sdk` tag vs the locked `apache-beam` |
+| Symptom                                                                                | Missing                                                                  |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `403` while staging (`copy_blob`) or listing `ingest/`                                 | You: read on `$FULLTEXT`, write on `$SCRATCH`                            |
+| `dataflow.jobs.create` denied at submit                                                | You: `roles/dataflow.developer`                                          |
+| `Current user cannot act as service account themis-ingest@…`                           | You: `iam.serviceAccountUser` on `$INGEST_SA`                            |
+| Workers never start; job log names the image or `artifactregistry`                     | Pulumi (`ingest.py` `artifactregistry.reader`): has the stack deployed?  |
+| Workers never start; job log names the subnetwork or `compute.subnetworks.use`         | Pulumi (`ingest.py` `networkUser`): has the stack deployed?              |
+| Workers fail on `dataflow/tmp` or `dataflow/staging`                                   | Pulumi (`ingest.py` `objectUser` on `$SCRATCH`): has the stack deployed? |
+| `permission denied for schema litcache` / `relation litcache.crosswalk` in worker logs | Migration `0007` not applied — run a deploy                              |
+| Cloud SQL connect refused for `themis-ingest@…iam`                                     | Pulumi (`ingest.py` connect roles + IAM DB user)                         |
+| Report step `403` writing `diagnostics/dead_letters/<run>.jsonl` on a direct run       | You: write on `$FULLTEXT`                                                |
+| SDK harness version mismatch at worker start                                           | Dockerfile's `beam_python3.13_sdk` tag vs the locked `apache-beam`       |
 
 A job that fails in `ResolveMetadata` (NCBI unreachable past the retry budget, or the single resolve worker running out
 of memory) has written nothing to `papers/` — the identity stage's results are discarded with the job, and a re-run

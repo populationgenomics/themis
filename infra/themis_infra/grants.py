@@ -818,6 +818,51 @@ class SubnetUser(_Capability):
         self.register_outputs({})
 
 
+class RepositoryReader(_Capability):
+    """May pull every image in one Artifact Registry repository, and list its packages, tags and versions.
+
+    The whole repository, not an image: Artifact Registry IAM stops at the repository, so a holder granted
+    to pull one image can pull every application image stored beside it. It pushes and deletes nothing.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        repository: pulumi.Input[str],
+        location: pulumi.Input[str],
+        project: str,
+        target: str,
+        prior: Prior | None = None,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        """Grant `member` read on the repository.
+
+        Args:
+            holder: A slug for the holder, for resource names.
+            member: The holder's IAM member string.
+            repository: The repository's id (`themis`).
+            location: The repository's region.
+            project: The GCP project.
+            target: A slug for the repository, for resource names.
+            prior: Where the binding lived before it joined this capability, if it did.
+            opts: Resource options (dependency wiring).
+        """
+        name = f'{holder}-pulls-{target}'
+        super().__init__(name, opts)
+        gcp.artifactregistry.RepositoryIamMember(
+            name,
+            project=project,
+            location=location,
+            repository=repository,
+            role='roles/artifactregistry.reader',
+            member=member,
+            opts=self._binding(prior),
+        )
+        self.register_outputs({})
+
+
 class IapAccessor(_Capability):
     """May pass IAP to reach one IAP-enabled Cloud Run service — in a browser, or with a signed JWT.
 

@@ -29,15 +29,18 @@ bucket defaults — is derived from them, so naming one project cannot leave par
 pointed at another.
 
 Auth is ambient ADC (``gcloud``) for staging + job submission; the submitting identity
-needs ``serviceAccountUser`` on ``themis-ingest`` and write on the scratch bucket.
-``themis-ingest`` needs read on the worker image's Artifact Registry repo, and object
-read/write on the scratch bucket on every run shape — Dataflow ``staging``/``temp`` live
-there and the workers, not the submitter, read and write them; the staged shape also reads
-``ingest/`` and writes ``papers/`` there. On the ``--direct`` shape it needs the same on
-``--source-bucket``. (All granted out of band for a bounded run; baked into
-``IngestionRuntime`` for production.) The workers read the OpenAlex API key themselves
-(`openalex_key`), as ``themis-ingest``, which ``IngestionRuntime`` grants `secretAccessor`
-on it; the key never travels in the submitted job.
+needs ``serviceAccountUser`` on ``themis-ingest`` and write on the scratch bucket, which a
+maintainer's own account holds as project owner. ``themis-ingest`` needs read on the worker
+image's Artifact Registry repo, and object read/write on the scratch bucket on every run
+shape, because Dataflow ``staging``/``temp`` live there: the submitter writes staging, and
+the workers read it and write, list and delete temp; the staged shape also reads
+``ingest/`` and writes ``papers/`` there.
+On the ``--direct`` shape it needs the same on ``--source-bucket``. ``IngestionRuntime``
+declares the scratch bucket and grants ``themis-ingest`` all of these for the default
+buckets; a non-default ``--source-bucket`` or ``--scratch-bucket`` needs its own grant. The
+workers read the OpenAlex API key themselves (`openalex_key`), as ``themis-ingest``, which
+``IngestionRuntime`` grants `secretAccessor` on it; the key never travels in the submitted
+job.
 
 Example::
 

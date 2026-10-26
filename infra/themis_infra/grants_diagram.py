@@ -89,7 +89,7 @@ VIEWS = (
     ),
     View(
         'Platform',
-        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser'}),
+        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser', 'RepositoryReader'}),
         direction='LR',
     ),
 )
@@ -185,6 +185,8 @@ def _target(binding: capture.Binding, project: str) -> _Node:
             return _Node(_RESOURCE, _FIXED_TARGET_LABEL[capability])
         case 'SubnetUser':
             return _Node(_RESOURCE, f'subnet {target}')
+        case 'RepositoryReader':
+            return _Node(_RESOURCE, f'image repository {target}')
     raise ValueError(f'{binding.capability}: no target rendering for this capability ({binding.urn})')
 
 

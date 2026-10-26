@@ -48,6 +48,7 @@ _TARGET_INPUT = {
     'gcp:compute/subnetworkIAMMember:SubnetworkIAMMember': 'subnetwork',
     'gcp:iap/webCloudRunServiceIamMember:WebCloudRunServiceIamMember': 'cloudRunServiceName',
     'gcp:projects/iAMMember:IAMMember': 'project',
+    'gcp:artifactregistry/repositoryIamMember:RepositoryIamMember': 'repository',
 }
 _SERVICE_ACCOUNT_TYPE = 'gcp:serviceaccount/account:Account'
 _SERVICE_IDENTITY_TYPE = 'gcp:projects/serviceIdentity:ServiceIdentity'

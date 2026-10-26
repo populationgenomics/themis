@@ -1,4 +1,4 @@
-"""The litcache ingestion runtime: a Dataflow worker identity + its grants.
+"""The litcache ingestion runtime: a Dataflow worker identity, its scratch bucket, and its grants.
 
 The seed-ingestion pipeline (`litcache/ingest_beam.py`) runs on Dataflow. Like
 the orchestrator backend, its runtime **service account** is forward-provisioned
@@ -7,9 +7,13 @@ pipeline (in the litcache stack) can be launched against them. Kept a separate
 identity from the backend and web by least privilege: only ingestion writes the
 full-text store and reads the ingestion API keys.
 
-Grants that wait on resources not yet in the program: a Dataflow staging/temp
-bucket, and the launcher's `iam.serviceAccountUser` on this SA (the job launcher).
-They attach when those land.
+The scratch bucket holds Dataflow's staging and temp files for every run, and a
+staged sample's copied seed and output (`tools/litcache/launch_dataflow.py`).
+Nothing in it is kept past a run's review, so objects expire after a week.
+
+A maintainer launches each job under their own credentials, as project owner,
+which carries `iam.serviceAccountUser` on this SA. No account the program
+declares launches it, so the program grants that role to nobody.
 """
 
 from __future__ import annotations
@@ -21,9 +25,11 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants, sql
 
+_SCRATCH_EXPIRY_DAYS = 7
+
 
 class IngestionRuntime(pulumi.ComponentResource):
-    """The litcache Dataflow ingestion worker's identity and data-plane grants.
+    """The litcache Dataflow ingestion worker's identity, scratch bucket, and grants.
 
     Attributes:
         service_account_email: The worker SA's email.
@@ -37,20 +43,26 @@ class IngestionRuntime(pulumi.ComponentResource):
         *,
         project: str,
         project_number: str,
+        region: str,
         subnetwork: gcp.compute.Subnetwork,
+        image_registry: gcp.artifactregistry.Repository,
         sql_instance: gcp.sql.DatabaseInstance,
         fulltext_bucket: pulumi.Input[str],
         secret_accessors: Mapping[str, pulumi.Input[str]],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
-        """Provision the ingestion worker SA and its grants.
+        """Provision the ingestion worker SA, its scratch bucket, and its grants.
 
         Args:
-            project: The GCP project to create the SA and project-level grant in.
+            project: The GCP project to create the SA, the bucket and the
+                project-level grant in.
             project_number: The project's numeric id, used to name the Dataflow
                 service agent that needs `networkUser` on the workers' subnet.
+            region: The scratch bucket's location.
             subnetwork: The ingestion workers' subnet; `networkUser` is granted
                 on it to both principals that place workers there.
+            image_registry: The repository the worker image is pulled from; the
+                SA gets read on it.
             sql_instance: The Cloud SQL instance holding the crosswalk; the SA is
                 attached as an IAM DB user on it (the mint login).
             fulltext_bucket: The full-text store bucket name; the SA gets
@@ -109,6 +121,40 @@ class IngestionRuntime(pulumi.ComponentResource):
             role='roles/storage.objectUser',
             target='fulltext',
             prior=grants.Prior(f'{ingest_name}-fulltext', parent=self),
+            opts=child,
+        )
+        scratch_name = f'{project}-litcache-scratch'
+        scratch = gcp.storage.Bucket(
+            'themis-litcache-scratch',
+            project=project,
+            name=scratch_name,
+            location=region,
+            uniform_bucket_level_access=True,
+            public_access_prevention='enforced',
+            lifecycle_rules=[
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type='Delete'),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(age=_SCRATCH_EXPIRY_DAYS),
+                )
+            ],
+            opts=child,
+        )
+        # The launcher writes staging under its own ADC; the workers read it, and write, list and delete temp.
+        grants.BucketObjectReadWriter(
+            ingest_name,
+            member=member,
+            bucket=scratch.name,
+            role='roles/storage.objectUser',
+            target='litcache-scratch',
+            opts=child,
+        )
+        grants.RepositoryReader(
+            ingest_name,
+            member=member,
+            repository=image_registry.repository_id,
+            location=image_registry.location,
+            project=project,
+            target='images',
             opts=child,
         )
         for label, secret_id in secret_accessors.items():
