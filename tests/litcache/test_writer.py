@@ -200,9 +200,10 @@ def _committed(bucket: gcs.Bucket) -> litcache_pb2.Manifest:
     return litcache_pb2.Manifest.FromString(_read(bucket, writer.manifest_path(_DOC_ID)))
 
 
-def _generation(bucket: gcs.Bucket) -> int | None:
+def _generation(bucket: gcs.Bucket) -> int:
     blob = bucket.get_blob(writer.manifest_path(_DOC_ID))
     assert blob is not None
+    assert blob.generation is not None
     return blob.generation
 
 
@@ -552,7 +553,7 @@ def _load_manifest(bucket: gcs.Bucket, doc_id: str = _DOC_ID) -> litcache_pb2.Ma
 def test_add_rendering_appends_to_an_existing_manifest(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
     result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
-    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
+    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True, generation=_generation(gcs_bucket))
     manifest = _load_manifest(gcs_bucket)
     # The original rendering survives; the new one is added, keyed by its markdown hash.
     assert set(manifest.records) == {_MARKDOWN_HASH, _MD2_HASH}
@@ -563,7 +564,7 @@ def test_add_rendering_is_idempotent_on_a_repeated_hash(gcs_bucket: gcs.Bucket) 
     writer.write_paper(gcs_bucket, _paper())
     # Re-adding the rendering the paper already carries (same markdown) is a no-op.
     result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
-    assert result == writer.AddRenderingResult(hash=_MARKDOWN_HASH, added=False)
+    assert result == writer.AddRenderingResult(hash=_MARKDOWN_HASH, added=False, generation=_generation(gcs_bucket))
     assert set(_load_manifest(gcs_bucket).records) == {_MARKDOWN_HASH}
 
 
@@ -581,7 +582,7 @@ def test_add_rendering_of_a_revision_no_lineage_holds_fails_loud(gcs_bucket: gcs
 def test_add_source_and_rendering_adds_a_new_lineage_and_rendering(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
     result = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), _xml_rendering(markdown=_MD2))
-    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True)
+    assert result == writer.AddRenderingResult(hash=_MD2_HASH, added=True, generation=_generation(gcs_bucket))
     manifest = _load_manifest(gcs_bucket)
     # The seed pdf lineage survives; the fetched xml lineage is added alongside it.
     assert {s.handle for s in manifest.sources} == {'pdf', 'xml'}
@@ -598,7 +599,7 @@ def test_add_source_and_rendering_is_idempotent_on_re_add(gcs_bucket: gcs.Bucket
     first = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
     second = writer.add_source_and_rendering(gcs_bucket, _DOC_ID, _xml_source(), rendering)
     assert first.added is True
-    assert second == writer.AddRenderingResult(hash=_MD2_HASH, added=False)
+    assert second == writer.AddRenderingResult(hash=_MD2_HASH, added=False, generation=first.generation)
     manifest = _load_manifest(gcs_bucket)
     xml = next(s for s in manifest.sources if s.handle == 'xml')
     # A re-delivery duplicates neither the source revision nor the rendering.
@@ -619,7 +620,7 @@ def test_add_source_and_rendering_appends_a_revision_to_an_existing_lineage(gcs_
         _xml_source(data=xml2),
         _xml_rendering(from_revision=xml2_hash, markdown=md3),
     )
-    assert result == writer.AddRenderingResult(hash=md3_hash, added=True)
+    assert result == writer.AddRenderingResult(hash=md3_hash, added=True, generation=_generation(gcs_bucket))
     manifest = _load_manifest(gcs_bucket)
     xmls = [s for s in manifest.sources if s.handle == 'xml']
     # A second capture of the same lineage appends a revision — it does not fork a new source.
@@ -786,3 +787,122 @@ def test_a_rendering_produced_again_takes_the_latest_runs_record(gcs_bucket: gcs
     assert not result.added  # the key was already held
     record = _load_manifest(gcs_bucket).records[_MARKDOWN_HASH]
     assert record.created_at.ToDatetime(datetime.UTC) == later
+
+
+def test_each_commit_reports_the_generation_it_leaves_the_manifest_at(gcs_bucket: gcs.Bucket) -> None:
+    created = writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    assert created.generation == _generation(gcs_bucket)
+
+    rendered = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+    assert rendered.generation == _generation(gcs_bucket)
+    assert rendered.generation != created.generation
+
+    joined = writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    assert joined == writer.WriteResult(manifest=_committed(gcs_bucket), written=False, generation=rendered.generation)
+
+
+def test_a_commit_whose_response_was_lost_reports_the_generation_it_wrote(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The write lands but its response is lost, so the client's retry meets its own generation and answers 412; the
+    # re-read finds the change already made.
+    writer.write_paper(gcs_bucket, _paper(renderings=[]))
+    real_upload = gcs.Blob.upload_from_string
+    lost: list[int] = []
+
+    def upload_losing_the_response(self: gcs.Blob, data: bytes, *, if_generation_match: int | None = None) -> None:
+        if not self.name or not self.name.endswith('manifest.pb') or lost:
+            real_upload(self, data, if_generation_match=if_generation_match)
+            return
+        # Through another handle: a real 412 leaves this one holding the generation it read.
+        real_upload(gcs_bucket.blob(self.name), data, if_generation_match=if_generation_match)
+        lost.append(1)
+        raise api_exceptions.PreconditionFailed('the retry of a write that landed')
+
+    monkeypatch.setattr(gcs.Blob, 'upload_from_string', upload_losing_the_response)
+    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+
+    assert result.generation == _generation(gcs_bucket)
+    assert _MD2_HASH in _load_manifest(gcs_bucket).records
+
+
+def test_a_change_that_alters_nothing_writes_nothing(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    before = _generation(gcs_bucket)
+
+    result = writer.commit(gcs_bucket, _DOC_ID, lambda _manifest: False)
+
+    assert result.changed is False
+    assert result.generation == before == _generation(gcs_bucket)
+    assert result.manifest == result.prior == _committed(gcs_bucket)
+
+
+def test_a_change_the_manifest_refuses_leaves_it_as_it_was(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    before = _committed(gcs_bucket)
+
+    def break_a_ref(manifest: litcache_pb2.Manifest) -> bool:
+        manifest.refs[records.MARKDOWN_REF] = '0' * 64
+        return True
+
+    with pytest.raises(writer.ManifestRefusedError):
+        writer.commit(gcs_bucket, _DOC_ID, break_a_ref)
+    assert _committed(gcs_bucket) == before
+
+
+def test_a_commit_refuses_a_manifest_naming_another_doc_id(gcs_bucket: gcs.Bucket) -> None:
+    other = litcache_pb2.Manifest(doc_id='9f3a0000-0000-4000-8000-000000000002')
+    gcs_bucket.blob(writer.manifest_path(_DOC_ID)).upload_from_string(other.SerializeToString())
+
+    with pytest.raises(writer.ManifestRefusedError, match='names doc_id'):
+        writer.commit(gcs_bucket, _DOC_ID, lambda _manifest: True)
+
+
+def test_add_source_adds_a_lineage_with_no_rendering(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
+
+    result = writer.add_source(gcs_bucket, _DOC_ID, _source())
+
+    assert result == writer.AddSourceResult(
+        handle='pdf', hash=_PDF_HASH, added=True, generation=_generation(gcs_bucket)
+    )
+    manifest = _committed(gcs_bucket)
+    assert [(s.handle, [r.hash for r in s.revisions]) for s in manifest.sources] == [('pdf', [_PDF_HASH])]
+    assert not manifest.records
+    assert _read(gcs_bucket, posixpath.join(writer.paper_dir(_DOC_ID), _pdf_path())) == _PDF_BYTES
+
+
+def test_add_source_of_bytes_the_lineage_holds_adds_nothing(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    before = _generation(gcs_bucket)
+
+    result = writer.add_source(gcs_bucket, _DOC_ID, _source())
+
+    assert result == writer.AddSourceResult(handle='pdf', hash=_PDF_HASH, added=False, generation=before)
+
+
+def test_add_source_on_other_terms_names_the_lineage_it_joined(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    other_bytes = b'%PDF-1.7 a deposited copy'
+    other_terms = dataclasses.replace(_source(data=other_bytes), licence='all rights reserved')
+
+    result = writer.add_source(gcs_bucket, _DOC_ID, other_terms)
+
+    assert (result.handle, result.hash, result.added) == ('pdf-2', hashlib.sha256(other_bytes).hexdigest(), True)
+    assert [s.handle for s in _committed(gcs_bucket).sources] == ['pdf', 'pdf-2']
+
+
+def test_add_source_of_held_bytes_on_other_terms_adds_nothing(gcs_bucket: gcs.Bucket) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+    before = _generation(gcs_bucket)
+    held_on_other_terms = dataclasses.replace(_source(), licence='all rights reserved')
+
+    result = writer.add_source(gcs_bucket, _DOC_ID, held_on_other_terms)
+
+    assert result == writer.AddSourceResult(handle='pdf', hash=_PDF_HASH, added=False, generation=before)
+    assert [s.handle for s in _committed(gcs_bucket).sources] == ['pdf']
+
+
+def test_add_source_to_a_missing_paper_raises_not_found(gcs_bucket: gcs.Bucket) -> None:
+    with pytest.raises(api_exceptions.NotFound):
+        writer.add_source(gcs_bucket, _DOC_ID, _source())
