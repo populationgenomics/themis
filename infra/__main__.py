@@ -238,14 +238,15 @@ resources = storage.resources_bucket(
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-# The on-demand conversion lane (architecture B): all fetch/convert work off the read service's
-# request path. The queue path, the worker URL and the invoker's email are inputs to the evidence
+# The full-text work lane (architecture B): all fetch/convert work off the read service's request
+# path. The interactive queue's path, the worker URL and the invoker's email are inputs to the evidence
 # service's env, so the lane is declared above it.
-convert_queue = convert.conversion_queue(
+work_queues = convert.WorkQueues(
     project=project,
     region=region,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+convert_queue = work_queues.interactive
 convert_queue_path = pulumi.Output.concat('projects/', project, '/locations/', region, '/queues/', convert_queue.name)
 convert_worker = convert.ConvertWorker(
     project=project,
@@ -736,6 +737,7 @@ pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
 pulumi.export('dispatcher_url', dispatcher_service.url)
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)
+pulumi.export('convert_bulk_queue', work_queues.bulk.name)
 pulumi.export('convert_worker_url', convert_worker.url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
 pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)

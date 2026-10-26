@@ -1,18 +1,18 @@
-"""The on-demand full-text conversion lane: the Cloud Tasks queue and the pushed convert worker.
+"""The full-text work lane: two Cloud Tasks queues and the one worker both deliver to.
 
 Architecture B (`docs/design/evidence-fulltext.md`): all fetch/convert work lives in a separate worker,
 so the evidence read image stays lean. A Cloud Task pushes `POST /convert` with a `WorkRequest` to the worker,
 which runs the litcache producer (OA XML → markdown, else PDF LLM-OCR) off any request path.
 
-The evidence service is the producer: `MaybeIngestPapers` creates one task per paper that comes back
-PENDING, named for the paper and the main-text target, whether the paper was already in the corpus or
-brought in by that same call. Its two grants on this lane are the program's, since neither the queue nor
-the invoker knows its caller. The bulk ingestion pipeline puts nothing here — it commits the manifest
-after its renderings, so a paper it ingested is READY the moment it exists.
+The evidence service puts its requests on the interactive queue: `MaybeIngestPapers` creates one task
+per paper that comes back PENDING, named for the paper and the main-text target, whether the paper was
+already in the corpus or brought in by that same call. Every other writer, and the sweep, uses the bulk
+queue, so an agent's request never waits behind a bulk run's backlog. The grants to enqueue are the
+program's, since neither a queue nor the invoker knows its caller.
 
-- `conversion_queue` — the Cloud Tasks queue. Its concurrency cap is the load-bearing knob (each
-  dispatch is a model-cost-bearing conversion); bounded retries stop a permanently-failing paper
-  rather than re-OCR it forever.
+- `WorkQueues` — the interactive and bulk Cloud Tasks queues. Their concurrency caps are capacity
+  limits: they protect the worker's memory and pace its calls out, and do not bound spend; bounded
+  retries stop a request that keeps failing.
 - `ConvertWorker` — the worker Cloud Run service (IAM-gated, require-auth) and its runtime SA
   (object read/write on the litcache bucket; the Claude API by workload identity federation; each
   transcription's token counts to Cloud Monitoring through the Telemetry API).
@@ -27,38 +27,32 @@ import pulumi_gcp as gcp
 
 from themis_infra import grants
 
-# The maximum concurrent conversions the queue dispatches. The knob that matters: each dispatch runs a
-# conversion that may call a model API, so this caps in-flight model cost, not just load. Tune
-# against observed conversion volume and spend.
-_MAX_CONCURRENT_DISPATCHES = 5
-# Bounded retries: a raise → 500 → retry re-runs the (model-cost-bearing) conversion, so a
-# permanently-unconvertible paper stops after this many attempts rather than re-OCRing forever. Cloud
-# Tasks has no dead-letter destination — an exhausted task is simply deleted, leaving the paper PENDING
-# with no marker and no record, which only a scan over corpus state re-finds. 1 attempt + 4 retries at a
-# doubling 30s spreads a transient failure (model-API overload, a fetch blip) over ~7.5 minutes; the
-# ceiling binds only if the attempt count is raised.
+# How many requests each queue dispatches at once. The worker scales to their sum, so a full bulk queue
+# never takes an instance an interactive request needs. Tune against observed volume.
+_INTERACTIVE_CONCURRENT_DISPATCHES = 5
+_BULK_CONCURRENT_DISPATCHES = 5
+# Bounded retries. Cloud Tasks has no dead-letter destination — an exhausted task is simply deleted,
+# leaving the paper as it was for the sweep to find. 1 attempt + 4 retries at a doubling 30s spreads a
+# transient failure (model-API overload, a fetch blip) over ~7.5 minutes; the ceiling binds only if the
+# attempt count is raised. The job log, not this count, bounds what one PDF's transcription costs.
 _MAX_ATTEMPTS = 5
 _MIN_BACKOFF = '30s'
 _MAX_BACKOFF = '600s'
-# The per-conversion request timeout — Cloud Tasks' 30-minute dispatch-deadline maximum (the enqueuer
-# sets a matching per-task deadline), so a conversion up to 30 min is never abandoned and retried
-# concurrently. A PDF beyond this ceiling is the design's open question (it would need a Job).
+# The request timeout: Cloud Tasks' 30-minute dispatch-deadline maximum, which the enqueuer sets on
+# each task (`themis.litcache.work.DISPATCH_DEADLINE`). Equal, so neither side abandons a request the
+# other is still running, and the job log reads a begun attempt older than this as dead.
 _REQUEST_TIMEOUT = '1800s'
 
 
-def conversion_queue(
-    *,
-    project: str,
-    region: str,
-    opts: pulumi.ResourceOptions | None = None,
+def _queue(
+    name: str, *, project: str, region: str, concurrent_dispatches: int, opts: pulumi.ResourceOptions | None
 ) -> gcp.cloudtasks.Queue:
-    """Create the conversion Cloud Tasks queue, returned so the producer's enqueuer grant can name it."""
     return gcp.cloudtasks.Queue(
-        'themis-convert',
+        name,
         project=project,
         location=region,
-        name='themis-convert',
-        rate_limits=gcp.cloudtasks.QueueRateLimitsArgs(max_concurrent_dispatches=_MAX_CONCURRENT_DISPATCHES),
+        name=name,
+        rate_limits=gcp.cloudtasks.QueueRateLimitsArgs(max_concurrent_dispatches=concurrent_dispatches),
         retry_config=gcp.cloudtasks.QueueRetryConfigArgs(
             max_attempts=_MAX_ATTEMPTS,
             min_backoff=_MIN_BACKOFF,
@@ -66,6 +60,35 @@ def conversion_queue(
         ),
         opts=opts,
     )
+
+
+class WorkQueues(pulumi.ComponentResource):
+    """The interactive and bulk queues into the worker, returned so each enqueuer's grant can name its queue.
+
+    Attributes:
+        interactive: The queue `MaybeIngestPapers` puts an agent's requests on. It keeps the lane's first
+            queue name, `themis-convert`, because a deleted queue's name cannot be reused for a week.
+        bulk: The queue every other writer and the sweep put their requests on.
+    """
+
+    def __init__(self, *, project: str, region: str, opts: pulumi.ResourceOptions | None = None) -> None:
+        super().__init__('themis:infra:WorkQueues', 'themis', None, opts)
+        # Aliased to its root-level URN, so it is updated in place rather than replaced.
+        self.interactive = _queue(
+            'themis-convert',
+            project=project,
+            region=region,
+            concurrent_dispatches=_INTERACTIVE_CONCURRENT_DISPATCHES,
+            opts=pulumi.ResourceOptions(parent=self, aliases=[pulumi.Alias(parent=pulumi.ROOT_STACK_RESOURCE)]),
+        )
+        self.bulk = _queue(
+            'themis-convert-bulk',
+            project=project,
+            region=region,
+            concurrent_dispatches=_BULK_CONCURRENT_DISPATCHES,
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+        self.register_outputs({})
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -141,15 +164,17 @@ class ConvertWorker(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_ALL',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                # One conversion per instance, so the queue never needs more instances than it dispatches at once.
+                # One request per instance, so the queues together never need more instances than they dispatch at
+                # once.
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
-                    min_instance_count=0, max_instance_count=_MAX_CONCURRENT_DISPATCHES
+                    min_instance_count=0,
+                    max_instance_count=_INTERACTIVE_CONCURRENT_DISPATCHES + _BULK_CONCURRENT_DISPATCHES,
                 ),
                 # The conversion is the request (I/O-bound on the model API); Cloud Run keeps CPU
                 # allocated for its duration, up to this timeout.
                 timeout=_REQUEST_TIMEOUT,
                 # One conversion per instance: each holds a PDF in memory and one long model stream;
-                # fleet-wide parallelism is the queue's max_concurrent_dispatches, not per-instance fan-in.
+                # fleet-wide parallelism is the queues' max_concurrent_dispatches, not per-instance fan-in.
                 # Load-bearing beyond memory — the handler awaits blocking GCS and litdown work directly
                 # on the event loop, so a value above 1 interleaves requests only at await points.
                 max_instance_request_concurrency=1,
