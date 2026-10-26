@@ -203,9 +203,7 @@ class SheafService(pulumi.ComponentResource):
                         # container (TLS terminated at the ingress), and the startup probe checks the
                         # grpc.health.v1 service the server registers.
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            grpc=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeGrpcArgs(port=8080),
-                        ),
+                        startup_probe=cloud_run.grpc_startup_probe(8080),
                     )
                 ],
             ),

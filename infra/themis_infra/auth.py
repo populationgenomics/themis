@@ -14,7 +14,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants, sql
+from themis_infra import cloud_run, grants, sql
 
 # Each instance pools up to 4 Cloud SQL connections, so 3 hold at most 12 of db-f1-micro's 25.
 _MAX_INSTANCES = 3
@@ -114,9 +114,7 @@ class AuthService(pulumi.ComponentResource):
                         # to the container (TLS terminated at the ingress), and the startup probe
                         # checks the grpc.health.v1 service the server registers.
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            grpc=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeGrpcArgs(port=8080),
-                        ),
+                        startup_probe=cloud_run.grpc_startup_probe(8080),
                     )
                 ],
             ),

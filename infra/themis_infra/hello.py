@@ -11,6 +11,8 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
+from themis_infra import cloud_run
+
 # The code-mode demo service; one instance serves every sandbox that calls it.
 _MAX_INSTANCES = 1
 
@@ -83,9 +85,7 @@ class HelloService(pulumi.ComponentResource):
                             gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name='THEMIS_AUTH_URL', value=auth_url),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            grpc=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeGrpcArgs(port=8080),
-                        ),
+                        startup_probe=cloud_run.grpc_startup_probe(8080),
                     )
                 ],
             ),

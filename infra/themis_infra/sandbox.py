@@ -22,7 +22,7 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants
+from themis_infra import cloud_run, grants
 
 # One instance drains every webhook; the rest is headroom, since Anthropic disables an endpoint after
 # ~20 consecutive failed deliveries.
@@ -261,9 +261,7 @@ class DispatcherService(pulumi.ComponentResource):
                             _secret_env('ANTHROPIC_WEBHOOK_SIGNING_KEY', webhook_signing_key_secret_id),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            http_get=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeHttpGetArgs(path='/healthz'),
-                        ),
+                        startup_probe=cloud_run.http_startup_probe('/healthz'),
                     )
                 ],
             ),

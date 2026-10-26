@@ -249,14 +249,10 @@ class EvidenceService(pulumi.ComponentResource):
                             _env('THEMIS_CSPEC_BACKEND', 'live'),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
-                        # 120 s, against the defaults' 30 s: the port binds only after every interface
-                        # has built its backend, and the reference downloads sit behind a Direct VPC
-                        # egress path a cold instance takes a minute or more to establish.
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            grpc=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeGrpcArgs(port=8080),
-                            failure_threshold=12,
-                            period_seconds=10,
-                        ),
+                        # 120 s: the port binds only after every interface has built its backend, and
+                        # the reference downloads sit behind a Direct VPC egress path a cold instance
+                        # takes a minute or more to establish.
+                        startup_probe=cloud_run.grpc_startup_probe(8080, budget_seconds=120),
                     )
                 ],
             ),

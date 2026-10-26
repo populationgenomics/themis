@@ -27,7 +27,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants
+from themis_infra import cloud_run, grants
 
 # How many requests each queue dispatches at once. The worker scales to their sum, so a full bulk queue
 # never takes an instance an interactive request needs. Tune against observed volume.
@@ -203,9 +203,7 @@ class ConvertWorker(pulumi.ComponentResource):
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
                             limits={'cpu': '2', 'memory': '4Gi'}
                         ),
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            http_get=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeHttpGetArgs(path='/healthz'),
-                        ),
+                        startup_probe=cloud_run.http_startup_probe('/healthz'),
                     )
                 ],
             ),

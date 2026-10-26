@@ -26,7 +26,7 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants, sql
+from themis_infra import cloud_run, grants, sql
 
 # Each instance pools up to 5 Cloud SQL connections, so 2 hold at most 10 of db-f1-micro's 25 (auth holds 12).
 _MAX_INSTANCES = 2
@@ -289,11 +289,7 @@ class WebService(pulumi.ComponentResource):
                         ],
                         # Probes reach the container directly, not through the LB, so they carry no
                         # IAP assertion; the app's proxy allowlists this path.
-                        startup_probe=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeArgs(
-                            http_get=gcp.cloudrunv2.ServiceTemplateContainerStartupProbeHttpGetArgs(
-                                path='/api/healthz',
-                            ),
-                        ),
+                        startup_probe=cloud_run.http_startup_probe('/api/healthz'),
                     )
                 ],
             ),
