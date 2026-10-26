@@ -2,8 +2,10 @@
 
 Provisions the public web surface for one environment — a Cloud Run service with
 IAP enabled on it, and the external Application Load Balancer that fronts it
-(serverless NEG, Google-managed TLS certificate, HTTP→HTTPS redirect). Identical
-across environments; all per-environment values arrive as constructor arguments.
+(serverless NEG, Google-managed TLS certificate, HTTP→HTTPS redirect). The load
+balancer also carries the `Route`s other components hand it, each an exact path
+sent to that component's own backend service. Identical across environments; all
+per-environment values arrive as constructor arguments.
 
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
@@ -12,6 +14,9 @@ resolves, the managed certificate stays PROVISIONING.
 """
 
 from __future__ import annotations
+
+import dataclasses
+from collections.abc import Sequence
 
 import pulumi
 import pulumi_gcp as gcp
@@ -28,6 +33,26 @@ _SERVICE_NAME = 'themis-web'
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
+
+
+@dataclasses.dataclass(frozen=True)
+class Route:
+    """One path on the web hostname that the load balancer sends to another backend service.
+
+    The backend service brings its own access control: a routed request bypasses the web service,
+    and with it IAP, which is enabled on the web Cloud Run service rather than on the load balancer.
+
+    Attributes:
+        path: The exact request path, without a wildcard; every other path stays on the web service.
+        backend_service: The id of the global backend service the path is sent to.
+    """
+
+    path: str
+    backend_service: pulumi.Input[str]
+
+    def __post_init__(self) -> None:
+        if not self.path.startswith('/') or any(char in self.path for char in '*?#'):
+            raise ValueError(f'route path {self.path!r} must be an exact path starting with /')
 
 
 class WebService(pulumi.ComponentResource):
@@ -74,6 +99,7 @@ class WebService(pulumi.ComponentResource):
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
         trace_sample_ratio: float,
+        routes: Sequence[Route],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:WebService', 'themis', None, opts)
@@ -231,6 +257,7 @@ class WebService(pulumi.ComponentResource):
             project=project,
             region=region,
             domain=domain,
+            routes=routes,
             child=child,
         )
         self.url = pulumi.Output.format('https://{0}', domain)
@@ -252,6 +279,7 @@ class WebService(pulumi.ComponentResource):
         project: str,
         region: str,
         domain: str,
+        routes: Sequence[Route],
         child: pulumi.ResourceOptions,
     ) -> pulumi.Output[str]:
         """Build the external HTTPS load balancer chain.
@@ -298,7 +326,28 @@ class WebService(pulumi.ComponentResource):
             managed=gcp.compute.ManagedSslCertificateManagedArgs(domains=[domain]),
             opts=child,
         )
-        url_map = gcp.compute.URLMap(f'{name}-urlmap', project=project, default_service=backend.id, opts=child)
+        paths = [route.path for route in routes]
+        if len(set(paths)) != len(paths):
+            raise ValueError(f'duplicate route paths: {sorted(paths)}')
+        url_map = gcp.compute.URLMap(
+            f'{name}-urlmap',
+            project=project,
+            default_service=backend.id,
+            # The load balancer serves one hostname, so the host rule matches any Host header; it exists
+            # only because a path matcher is reached through one.
+            host_rules=[gcp.compute.URLMapHostRuleArgs(hosts=['*'], path_matcher='routes')],
+            path_matchers=[
+                gcp.compute.URLMapPathMatcherArgs(
+                    name='routes',
+                    default_service=backend.id,
+                    path_rules=[
+                        gcp.compute.URLMapPathMatcherPathRuleArgs(paths=[route.path], service=route.backend_service)
+                        for route in routes
+                    ],
+                )
+            ],
+            opts=child,
+        )
         https_proxy = gcp.compute.TargetHttpsProxy(
             f'{name}-https-proxy',
             project=project,

@@ -4,7 +4,8 @@ The self-hosted execution sandbox after the postern swap. It provisions:
 
 - the use-only KMS MAC key that signs per-session tokens (§7) and the environment-key and
   webhook-signing-key secrets,
-- the dispatcher service (public HMAC webhook → jobs.run) and the sandbox Cloud Run Job.
+- the dispatcher service (HMAC-verified webhook → jobs.run), the load-balancer backend that admits only
+  Anthropic's outbound range to it, and the sandbox Cloud Run Job.
 
 The Job is a single trusted container: the EnvironmentWorker worker that runs each `run_python`
 inside a postern bubblewrap sandbox (empty netns) whose only exit is a method-allowlisted hatch.
@@ -16,6 +17,8 @@ granted where the consuming identities are wired (the program entrypoint).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pulumi
 import pulumi_gcp as gcp
 
@@ -24,6 +27,15 @@ from themis_infra import grants
 # One instance drains every webhook; the rest is headroom, since Anthropic disables an endpoint after
 # ~20 consecutive failed deliveries.
 _DISPATCHER_MAX_INSTANCES = 3
+
+# Anthropic's published outbound IPv4 range (https://platform.claude.com/docs/en/api/ip-addresses).
+ANTHROPIC_OUTBOUND_RANGE = '160.79.104.0/21'
+
+# The dispatcher's webhook route, as `themis.services.dispatcher` serves it.
+DISPATCHER_WEBHOOK_PATH = '/webhooks/anthropic'
+
+# Cloud Armor's default rule: the lowest priority, matching every source.
+DEFAULT_RULE_PRIORITY = 2147483647
 
 
 def session_token_signing_key(
@@ -149,12 +161,22 @@ def _secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.Servi
 
 
 class DispatcherService(pulumi.ComponentResource):
-    """The dispatcher Cloud Run service (public HMAC webhook) and its narrowly-scoped SA.
+    """The dispatcher Cloud Run service, its narrowly-scoped SA, and its load-balancer backend.
+
+    The service accepts traffic only from Cloud Load Balancing, and its backend service carries a Cloud
+    Armor policy that admits `ANTHROPIC_OUTBOUND_RANGE` and denies every other source, so a request from
+    outside Anthropic's range never reaches the container. The range is shared by every Anthropic
+    customer, so the HMAC signature the dispatcher verifies stays the authentication. The program
+    routes `DISPATCHER_WEBHOOK_PATH` on the web load balancer to `backend_service`.
+
+    With `enforce_source_range` off, the deny rule runs in Cloud Armor preview mode: the load balancer
+    log records each request it would deny, and every request reaches the service.
 
     Attributes:
         service_account_email: The runtime SA — env-key/webhook-key secret accessor, MAC signer, and
             (bound in the sandbox job) the job runner.
-        url: The public service URL Anthropic's webhook posts to.
+        backend_service: The load-balancer backend service fronting the dispatcher, with the Cloud
+            Armor policy attached.
     """
 
     def __init__(
@@ -169,6 +191,7 @@ class DispatcherService(pulumi.ComponentResource):
         session_token_key_id: pulumi.Input[str],
         sandbox_job_name: pulumi.Input[str],
         reclaim_older_than_ms: int,
+        enforce_source_range: bool,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:DispatcherService', 'themis', None, opts)
@@ -213,7 +236,9 @@ class DispatcherService(pulumi.ComponentResource):
             name='themis-dispatcher',
             location=region,
             deletion_protection=False,
-            ingress='INGRESS_TRAFFIC_ALL',  # public: Anthropic cannot present a GCP token; HMAC is the auth (§5)
+            # The run.app URL bypasses Cloud Armor, so only the load balancer (and same-project VPC traffic) may
+            # reach the service.
+            ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
@@ -241,9 +266,8 @@ class DispatcherService(pulumi.ComponentResource):
             ),
             opts=child,
         )
-        self.url = service.uri
-        # Anthropic posts the webhook without a GCP token; the HMAC signature is the authentication and
-        # the proxy allowlist keeps the sandbox off /work/stats (§11).
+        # Anthropic posts the webhook without a GCP token, so the IAM gate stays open; ingress and Cloud Armor
+        # are the network gate, the HMAC signature the authentication.
         grants.PublicService(
             service=service.name,
             project=project,
@@ -252,7 +276,95 @@ class DispatcherService(pulumi.ComponentResource):
             prior=grants.Prior('themis-dispatcher-public', parent=self),
             opts=child,
         )
-        self.register_outputs({'service_account_email': self.service_account_email, 'url': self.url})
+        self.backend_service = _dispatcher_backend(
+            project=project, region=region, service=service, enforce=enforce_source_range, child=child
+        )
+        self.register_outputs(
+            {'service_account_email': self.service_account_email, 'backend_service': self.backend_service}
+        )
+
+
+def _dispatcher_backend(
+    *,
+    project: str,
+    region: str,
+    service: gcp.cloudrunv2.Service,
+    enforce: bool,
+    child: pulumi.ResourceOptions,
+) -> pulumi.Output[str]:
+    """Build the dispatcher's serverless NEG and its Cloud Armor-guarded backend service.
+
+    Returns:
+        The backend service's id, for the web load balancer's URL map.
+    """
+    policy = gcp.compute.SecurityPolicy(
+        'themis-dispatcher-policy',
+        project=project,
+        description="Admits only Anthropic's published outbound range to the dispatcher webhook",
+        type='CLOUD_ARMOR',
+        rules=dispatcher_policy_rules(enforce=enforce),
+        opts=child,
+    )
+    neg = gcp.compute.RegionNetworkEndpointGroup(
+        'themis-dispatcher-neg',
+        project=project,
+        region=region,
+        network_endpoint_type='SERVERLESS',
+        cloud_run=gcp.compute.RegionNetworkEndpointGroupCloudRunArgs(service=service.name),
+        opts=child,
+    )
+    backend = gcp.compute.BackendService(
+        'themis-dispatcher-backend',
+        project=project,
+        protocol='HTTPS',
+        load_balancing_scheme='EXTERNAL_MANAGED',
+        backends=[gcp.compute.BackendServiceBackendArgs(group=neg.id)],
+        security_policy=policy.self_link,
+        # Each entry names the Cloud Armor rule that admitted or denied the request.
+        log_config=gcp.compute.BackendServiceLogConfigArgs(enable=True, sample_rate=1.0),
+        opts=child,
+    )
+    return backend.id
+
+
+def dispatcher_policy_rules(*, enforce: bool) -> list[gcp.compute.SecurityPolicyRuleArgs]:
+    """The dispatcher's Cloud Armor rules: admit Anthropic's outbound range, deny every other source.
+
+    Args:
+        enforce: Whether the deny rule takes effect. Off, it runs in preview: the load-balancer log
+            records each request it would deny, and the request goes through.
+    """
+    return [
+        _source_rule(
+            'allow',
+            priority=1000,
+            ranges=[ANTHROPIC_OUTBOUND_RANGE],
+            description='Anthropic outbound range',
+            preview=False,
+        ),
+        _source_rule(
+            'deny(403)',
+            priority=DEFAULT_RULE_PRIORITY,
+            ranges=['*'],
+            description='Default deny',
+            preview=not enforce,
+        ),
+    ]
+
+
+def _source_rule(
+    action: str, *, priority: int, ranges: Sequence[str], description: str, preview: bool
+) -> gcp.compute.SecurityPolicyRuleArgs:
+    return gcp.compute.SecurityPolicyRuleArgs(
+        action=action,
+        priority=priority,
+        description=description,
+        preview=preview,
+        match=gcp.compute.SecurityPolicyRuleMatchArgs(
+            versioned_expr='SRC_IPS_V1',
+            config=gcp.compute.SecurityPolicyRuleMatchConfigArgs(src_ip_ranges=list(ranges)),
+        ),
+    )
 
 
 # The host uid and gid bwrap drops to, so the guest is a uid that owns nothing in the worker image rather than root

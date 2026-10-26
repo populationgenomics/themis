@@ -121,8 +121,20 @@ PR job can mutate cloud state — preview only, never apply.
   Artifact Registry by copy — **no rebuild** — and deploys. Full project isolation; prod never reads dev's registry.
 
 The deployables and their boundaries — boxed is inside our GCP project; orange marks a public endpoint, green
-internal-only (no public ingress). Auth labels each hop. Only two surfaces are publicly reachable: the web app behind
-IAP, and the dispatcher behind HMAC. The data-plane services are internal, reached from the sandbox.
+internal-only (no public ingress). Auth labels each hop. Only two surfaces are publicly reachable, and both sit behind
+the one external HTTPS load balancer: the web app behind IAP, and the dispatcher's webhook path. The data-plane services
+are internal, reached from the sandbox.
+
+Anthropic cannot present a GCP or IAP credential, so the dispatcher authenticates each webhook delivery by its HMAC
+signature. A Cloud Armor policy on the dispatcher's load-balancer backend runs before that check. It admits only
+Anthropic's [published outbound range](https://platform.claude.com/docs/en/api/ip-addresses), which Anthropic commits
+not to change without notice, and answers every other source with a 403. The dispatcher's Cloud Run ingress accepts only
+load-balancer traffic, so from the internet its run.app URL offers no way around the policy. Workloads in our own VPC
+can still reach that URL directly, and for them the HMAC signature is the only check. The point of the policy is
+exposure: an internet scanner never reaches the dispatcher's HTTP stack, so a flaw in that stack or its libraries that
+fires before the signature check is out of the scanner's reach. The range is shared by every Anthropic customer, which
+means a request from it says nothing about who sent it, so the HMAC signature remains the authentication. Anthropic
+publishes no outbound IPv6 range, and the load balancer's address is IPv4 only.
 
 ```mermaid
 flowchart TB
@@ -137,7 +149,7 @@ flowchart TB
   end
   browser -->|"IAP / HTTPS LB"| web
   web -->|"WIF Path B · sessions, events"| ma
-  ma -->|"HMAC · run started"| disp
+  ma -->|"HTTPS LB · Anthropic's range · HMAC · run started"| disp
   disp -->|"run job"| sandbox
   sandbox -->|"code mode · session token injected by the proxy"| svc
   web -->|"Cloud SQL IAM"| sql

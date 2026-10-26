@@ -151,7 +151,8 @@ class PublicService(_Capability):
     """Anyone on the internet may call one Cloud Run service, unauthenticated.
 
     Cloud Run's IAM gate is open (`allUsers`); whatever check the servicer applies to a request is the
-    only authentication there is.
+    only authentication there is. The service's ingress setting, and a load balancer in front of it, can
+    still narrow which sources reach it.
     """
 
     def __init__(

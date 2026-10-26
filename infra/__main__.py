@@ -432,6 +432,76 @@ session_token_key = sandbox.session_token_signing_key(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoKeyVersions/1')
+# Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
+# (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
+# internal load balancer — the guest has zero network, and the trusted worker reaches the internal services
+# over Direct VPC egress. (The session-token KMS key is the shared substrate created above.)
+anthropic_environment_key_secret = sandbox.environment_key_secret(
+    project=project,
+    region=region,
+    environment_key=anthropic_environment_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+anthropic_webhook_signing_key_secret = sandbox.webhook_signing_key_secret(
+    project=project,
+    region=region,
+    signing_key=anthropic_webhook_signing_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
+sandbox_job = sandbox.SandboxJob(
+    project=project,
+    region=region,
+    worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
+    network=services_net.network.id,
+    subnetwork=services_net.subnetwork.id,
+    hello_url=hello_service.url,
+    evidence_url=evidence_service.url,
+    sheaf_url=sheaf_service.url,
+    task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
+    trace_sample_ratio=trace_sample_ratio,
+    opts=pulumi.ResourceOptions(depends_on=[base, services_net, hello_service, evidence_service, sheaf_service]),
+)
+# The job SA invokes the services the worker reaches: the sheaf service its mirror of the Analysis repository
+# hydrates from and publishes to, and the hatch's forward targets. Every one is session-scoped, so the binding is
+# inert without the worker-held session token (§7); the job holds nothing on the sheaf bucket.
+for label, invoke_target in (
+    ('sheaf', sheaf_service.service_name),
+    ('hello', hello_service.service_name),
+    ('evidence', evidence_service.service_name),
+):
+    grants.ServiceInvoker(
+        'themis-sandbox',
+        member=grants.service_account(sandbox_job.service_account_email),
+        service=invoke_target,
+        project=project,
+        location=region,
+        target=label,
+        prior=grants.Prior(f'themis-sandbox-invokes-{label}'),
+    )
+dispatcher_service = sandbox.DispatcherService(
+    project=project,
+    region=region,
+    image=_image(_DISPATCHER_IMAGE_ENV, lambda: _live_service_image('themis-dispatcher')),
+    environment_id=anthropic_environment_id,
+    environment_key_secret_id=anthropic_environment_key_secret.secret_id,
+    webhook_signing_key_secret_id=anthropic_webhook_signing_key_secret.secret_id,
+    session_token_key_id=session_token_key.id,
+    sandbox_job_name=sandbox_job.job_name,
+    reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
+    # Preview until the load-balancer log shows every delivery from Anthropic's range
+    # (docs/runbooks/self-hosted-sandbox.md, "Webhook source allowlist").
+    enforce_source_range=False,
+    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
+)
+grants.SandboxSpawner(
+    'themis-dispatcher',
+    member=grants.service_account(dispatcher_service.service_account_email),
+    job=sandbox_job.job_name,
+    project=project,
+    location=region,
+    prior=grants.Prior('themis-dispatcher-runs-job'),
+    role_prior=grants.Prior('themis-sandbox-job-runner'),
+)
 site = web.WebService(
     project=project,
     region=region,
@@ -453,6 +523,8 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     trace_sample_ratio=trace_sample_ratio,
+    # Anthropic's webhook reaches the dispatcher through this load balancer, past the dispatcher's Cloud Armor policy.
+    routes=[web.Route(path=sandbox.DISPATCHER_WEBHOOK_PATH, backend_service=dispatcher_service.backend_service)],
     opts=pulumi.ResourceOptions(depends_on=[base, database, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
@@ -607,73 +679,6 @@ grants.AccountUser(
     account=convert_invoker.service_account_id,
     target='convert-invoker',
 )
-# Self-hosted sandbox: the Anthropic secrets, then the sandbox job and the dispatcher that runs it
-# (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
-# internal load balancer — the guest has zero network, and the trusted worker reaches the internal services
-# over Direct VPC egress. (The session-token KMS key is the shared substrate created above.)
-anthropic_environment_key_secret = sandbox.environment_key_secret(
-    project=project,
-    region=region,
-    environment_key=anthropic_environment_key,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
-anthropic_webhook_signing_key_secret = sandbox.webhook_signing_key_secret(
-    project=project,
-    region=region,
-    signing_key=anthropic_webhook_signing_key,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
-sandbox_job = sandbox.SandboxJob(
-    project=project,
-    region=region,
-    worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
-    network=services_net.network.id,
-    subnetwork=services_net.subnetwork.id,
-    hello_url=hello_service.url,
-    evidence_url=evidence_service.url,
-    sheaf_url=sheaf_service.url,
-    task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
-    trace_sample_ratio=trace_sample_ratio,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net, hello_service, evidence_service, sheaf_service]),
-)
-# The job SA invokes the services the worker reaches: the sheaf service its mirror of the Analysis repository
-# hydrates from and publishes to, and the hatch's forward targets. Every one is session-scoped, so the binding is
-# inert without the worker-held session token (§7); the job holds nothing on the sheaf bucket.
-for label, invoke_target in (
-    ('sheaf', sheaf_service.service_name),
-    ('hello', hello_service.service_name),
-    ('evidence', evidence_service.service_name),
-):
-    grants.ServiceInvoker(
-        'themis-sandbox',
-        member=grants.service_account(sandbox_job.service_account_email),
-        service=invoke_target,
-        project=project,
-        location=region,
-        target=label,
-        prior=grants.Prior(f'themis-sandbox-invokes-{label}'),
-    )
-dispatcher_service = sandbox.DispatcherService(
-    project=project,
-    region=region,
-    image=_image(_DISPATCHER_IMAGE_ENV, lambda: _live_service_image('themis-dispatcher')),
-    environment_id=anthropic_environment_id,
-    environment_key_secret_id=anthropic_environment_key_secret.secret_id,
-    webhook_signing_key_secret_id=anthropic_webhook_signing_key_secret.secret_id,
-    session_token_key_id=session_token_key.id,
-    sandbox_job_name=sandbox_job.job_name,
-    reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
-    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
-)
-grants.SandboxSpawner(
-    'themis-dispatcher',
-    member=grants.service_account(dispatcher_service.service_account_email),
-    job=sandbox_job.job_name,
-    project=project,
-    location=region,
-    prior=grants.Prior('themis-dispatcher-runs-job'),
-    role_prior=grants.Prior('themis-sandbox-job-runner'),
-)
 
 # The workspace-spend monitor (docs/design/cost-monitoring.md), beside the data plane rather than in it. The
 # exporter and the morning report are two Jobs from one image; the report reads the live image off the exporter's.
@@ -795,7 +800,7 @@ pulumi.export('anthropic_deploy_federation_rule_id', anthropic_deploy_federation
 pulumi.export('anthropic_deploy_service_account_id', anthropic_deploy_service_account_id)
 pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
-pulumi.export('dispatcher_url', dispatcher_service.url)
+pulumi.export('dispatcher_webhook_url', pulumi.Output.concat(site.url, sandbox.DISPATCHER_WEBHOOK_PATH))
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_bulk_queue', work_queues.bulk.name)

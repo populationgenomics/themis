@@ -159,8 +159,9 @@ dispatch → credential-derivation flow it described still stands — see §5 an
 ## 5. Dispatcher
 
 A minimal Cloud Run service (scale-to-zero); it reads the environment key from Secret Manager and is the only service
-that does. One public HMAC-verified webhook endpoint (Anthropic cannot present a GCP token — the same posture as the
-BFF's webhook receiver, wiring §4). On `session.status_run_started` it:
+that does. One HMAC-verified webhook endpoint, since Anthropic cannot present a GCP token. The endpoint is a path on the
+web load balancer, open only to Anthropic's published outbound range
+([`../design/spike-infrastructure.md`](../design/spike-infrastructure.md) §6). On `session.status_run_started` it:
 
 1. **Drain-polls the queue** via the SDK's low-level `work.poll` — which leaves the item *pending* and **does not ack**
    — rather than the high-level `work.poller`, whose every yielded item is already ack'd. Acking on claim would commit
