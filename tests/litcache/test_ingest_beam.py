@@ -19,6 +19,7 @@ import pathlib
 import threading
 import time
 import typing
+import urllib.parse
 from collections.abc import Callable, Iterator
 
 import apache_beam as beam
@@ -37,8 +38,9 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 
-from themis.litcache import crosswalk, enqueue, identity, ingest_beam, pipeline
+from themis.litcache import crosswalk, enqueue, identity, ingest_beam, openalex, pipeline
 from themis.litcache.models import litcache_pb2, work_pb2
+from themis.testing import openalex as fake_openalex
 
 _FIXTURES = pathlib.Path(__file__).parent.parent / 'fixtures' / 'litcache'
 _NONOA = _FIXTURES / 'nonoa'
@@ -95,7 +97,9 @@ def _resolve_handler(request: httpx2.Request) -> httpx2.Response:
         dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
         results = [
             {
+                'id': f'https://openalex.org/{doi}',
                 'doi': f'https://doi.org/{doi}',
+                'title': f'Synthetic {doi}',
                 'display_name': f'Synthetic {doi}',
                 'publication_date': '2020-01-01',
                 'ids': {},  # no pmid → resolves via OpenAlex's own record
@@ -192,6 +196,7 @@ def test_build_pipeline_rejects_non_positive_limit() -> None:
             conn_factory=_unused_conn,
             licence=_licence(),
             now=_NOW,
+            openalex_api_key_factory=_openalex_api_key,
             limit=0,
             ask=None,
         )
@@ -405,6 +410,10 @@ def _options() -> pipeline_options.PipelineOptions:
     return pipeline_options.PipelineOptions(['--direct_running_mode=in_memory'])
 
 
+def _openalex_api_key() -> openalex.ApiKey:
+    return fake_openalex.API_KEY
+
+
 def _run(
     token: str,
     conn_factory: Callable[[], pg8000.dbapi.Connection],
@@ -420,6 +429,7 @@ def _run(
             conn_factory=conn_factory,
             licence=_licence(),
             now=_NOW,
+            openalex_api_key_factory=_openalex_api_key,
             limit=limit,
             fetchers_factory=_no_fetchers,
             transport_factory=_resolve_transport,
@@ -499,6 +509,9 @@ def test_a_run_naming_targets_the_worker_cannot_carry_is_refused_before_it_start
     def _unused_conn() -> crosswalk.Connection:
         raise AssertionError('conn_factory must not be called when the targets are invalid')
 
+    def _unused_key() -> openalex.ApiKey:
+        raise AssertionError('openalex_api_key_factory must not be called when the targets are invalid')
+
     with pytest.raises(error):
         ingest_beam.build_pipeline(
             beam.Pipeline(),
@@ -506,6 +519,7 @@ def test_a_run_naming_targets_the_worker_cannot_carry_is_refused_before_it_start
             conn_factory=_unused_conn,
             licence=_licence(),
             now=_NOW,
+            openalex_api_key_factory=_unused_key,
             ask=ask,
         )
 
@@ -601,6 +615,7 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
                 now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_unresolvable_transport,
             )
@@ -633,6 +648,7 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
                 licence=_licence(),
                 now=_LATER,
                 ask=None,
+                openalex_api_key_factory=_openalex_api_key,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_unresolvable_transport,
             )
@@ -682,6 +698,7 @@ def test_seeds_sharing_a_claim_key_are_dead_lettered_apart(
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
                 now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_unresolvable_with_efetch_transport,
             )
@@ -714,7 +731,13 @@ def _drifting_openalex_transport() -> httpx2.MockTransport:
             flt = request.url.params.get('filter', '')
             dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
             results = [
-                {'doi': f'https://doi.org/{doi}', 'title': 'Drifted', 'ids': {}, 'publication_year': 'soon'}
+                {
+                    'id': f'https://openalex.org/{doi}',
+                    'doi': f'https://doi.org/{doi}',
+                    'title': 'Drifted',
+                    'ids': {},
+                    'publication_year': 'soon',
+                }
                 for doi in dois
             ]
             return httpx2.Response(
@@ -727,11 +750,11 @@ def _drifting_openalex_transport() -> httpx2.MockTransport:
     return httpx2.MockTransport(handler)
 
 
-def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
+def test_build_pipeline_dead_letters_a_record_its_reader_cannot_read(
     request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
 ) -> None:
-    # A paper whose OpenAlex record holds a value the mirror cannot hold under a declared key is
-    # dead-lettered as schema drift naming the key, and the run completes without a crosswalk
+    # A paper whose OpenAlex record holds a field a reader reads in a shape it cannot read is
+    # dead-lettered as schema drift naming the field, and the run completes without a crosswalk
     # connection.
     token = request.node.name
     gcs_bucket.blob('ingest/10.5555%2Fsynthetic.drift.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
@@ -746,6 +769,7 @@ def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
                 now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_drifting_openalex_transport,
             )
@@ -764,6 +788,63 @@ def test_build_pipeline_dead_letters_a_record_its_mirror_does_not_hold(
         assert rep.dead_lettered == 1
         assert rep.counters['paper_schema_drift'] == 1
         assert rep.counters['paper_unresolved'] == 0
+    finally:
+        del _BUCKETS[token]
+
+
+_AMBIGUOUS_DOI = '10.5555/synthetic.ambiguous'
+
+
+def _ambiguous_openalex_transport() -> httpx2.MockTransport:
+    """A transport where OpenAlex holds two works of one DOI, and idconv maps nothing."""
+    works = [fake_openalex.work(work_id=w, doi=_AMBIGUOUS_DOI) for w in ('W1', 'W2')]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == fake_openalex.HOST:
+            return fake_openalex.answer(works, request)
+        if 'idconv' in request.url.path:
+            return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
+        raise AssertionError(f'unexpected resolve request: {request.url}')
+
+    return httpx2.MockTransport(handler)
+
+
+def test_build_pipeline_dead_letters_a_paper_openalex_holds_two_works_of(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    # Taking either work could give the paper another work's record, so the paper is dead-lettered naming both.
+    token = request.node.name
+    stem = urllib.parse.quote(_AMBIGUOUS_DOI, safe='')
+    gcs_bucket.blob(f'ingest/{stem}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+    gcs_bucket.blob(f'ingest/{stem}.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _BUCKETS[token] = gcs_bucket
+    try:
+        with test_pipeline.TestPipeline(options=_options()) as root:
+            ingest_beam.build_pipeline(
+                root,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=_forbidden_conn,
+                licence=_licence(),
+                now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
+                ask=None,
+                fetchers_factory=_no_fetchers,
+                transport_factory=_ambiguous_openalex_transport,
+            )
+        result = root.result
+
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        reason = str(records[0]['reason'])
+        assert reason.startswith('ambiguous OpenAlex work: ')
+        assert 'openalex.org/W1' in reason
+        assert 'openalex.org/W2' in reason
+        assert _manifests(gcs_bucket) == []
+
+        rep = ingest_beam.report_run(
+            ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
+        )
+        assert rep.counters['paper_ambiguous_work'] == 1
     finally:
         del _BUCKETS[token]
 
@@ -787,6 +868,7 @@ def test_build_pipeline_dead_letters_a_record_failing_the_precondition(
                 conn_factory=_forbidden_conn,
                 licence=_licence(),
                 now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
                 fetchers_factory=_no_fetchers,
                 transport_factory=_precondition_failing_efetch_transport,
             )

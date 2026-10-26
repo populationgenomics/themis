@@ -13,7 +13,7 @@ import pytest
 
 from tools.litcache import run_local
 
-_REQUIRED = ['--scratch-bucket', 'scratch', '--limit', '1']
+_REQUIRED = ['--project', 'p', '--scratch-bucket', 'scratch', '--limit', '1']
 _PG = ['--pg-host', 'localhost', '--pg-user', 'u', '--pg-database', 'd']
 
 
@@ -45,4 +45,4 @@ def test_the_throwaway_path_needs_no_opt_in() -> None:
 )
 def test_rejects_out_of_range_values(bad: list[str]) -> None:
     with pytest.raises(SystemExit):
-        run_local._parse_args(['--scratch-bucket', 'scratch', '--limit', '1', *bad])
+        run_local._parse_args([*_REQUIRED, *bad])

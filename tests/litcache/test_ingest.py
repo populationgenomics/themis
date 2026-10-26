@@ -20,8 +20,19 @@ import pytest
 from google.cloud import storage as gcs
 from pubmed_proto import pubmed_pb2
 
-from themis.litcache import crosswalk, identity, ingest, outcome, paper_metadata, rebuild, resolve, writer
+from themis.litcache import (
+    crosswalk,
+    identity,
+    ingest,
+    metadata_fields,
+    outcome,
+    rebuild,
+    resolve,
+    sourced_metadata,
+    writer,
+)
 from themis.litcache.models import litcache_pb2
+from themis.testing import openalex as fake_openalex
 
 _PMID = identity.ExternalId(scheme='pmid', value='29089047')
 _DOI = identity.ExternalId(scheme='doi', value='10.1038/s41586-020-2649-2')
@@ -32,15 +43,16 @@ _NO_HTTP = typing.cast('httpx2.AsyncClient', None)
 
 
 def _metadata(title: str) -> bytes:
-    """The `metadata.pb` bytes a PubMed rung answers with: a record inside its envelope.
+    """The `metadata.pb` bytes a PubMed rung answers with: a record inside its `SourcedMetadata`.
 
-    The envelope, not the bare record — `writer.write_paper` keeps nothing else, so a bare
+    The `SourcedMetadata`, not the bare record — `writer.write_paper` keeps nothing else, so a bare
     `PubmedArticle` here would exercise a shape no rung of the ladder produces.
     """
     article = pubmed_pb2.PubmedArticle()
     article.medline_citation.article.article_title.value = title
-    return paper_metadata.to_canonical_bytes(
-        litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(article=article))
+    source = litcache_pb2.MetadataSource(pubmed=litcache_pb2.PubmedRecord(article=article))
+    return sourced_metadata.to_canonical_bytes(
+        litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     )
 
 
@@ -84,6 +96,7 @@ def _ingest(
             functools.partial(crosswalk.mint, conn),
             external_id,
             http_client=_NO_HTTP,
+            openalex_api_key=fake_openalex.API_KEY,
             resolve_metadata=resolve_metadata,
         )
     )
@@ -140,8 +153,8 @@ def test_the_manifest_carries_the_bibliographic_record_the_ladder_resolved(
     )
     assert result is not None
     metadata = gcs_bucket.blob(f'{writer.paper_dir(result.doc_id)}/metadata.pb').download_as_bytes()
-    envelope = paper_metadata.parse(metadata)
-    assert envelope.pubmed.article.medline_citation.article.article_title.value == 'Rare variant curation'
+    sourced = sourced_metadata.parse(metadata)
+    assert sourced.source.pubmed.article.medline_citation.article.article_title.value == 'Rare variant curation'
 
 
 def test_an_id_upstream_does_not_know_claims_nothing_and_writes_nothing(

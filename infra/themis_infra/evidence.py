@@ -19,6 +19,9 @@ It is also the conversion lane's producer (docs/design/evidence-fulltext.md), so
 on the queue, and `actAs` on the invoker service account. Both are the program's, beside the queue and
 the invoker themselves.
 
+An ingest looks the paper up in OpenAlex with the stack's OpenAlex API key, which Cloud Run mounts from
+Secret Manager as `THEMIS_LITERATURE_OPENALEX_API_KEY`; the runtime SA reads that one secret.
+
 Its caller is the web BFF — quote location for the document pane, plus some paper management. The BFF
 has no Direct VPC egress (it reaches GCS / Cloud SQL / Anthropic over Google APIs, not the services
 VPC), so an internal-ingress service would be unreachable from it. Ingress is therefore `ALL`, gated
@@ -37,7 +40,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants, sql
+from themis_infra import grants, secrets, sql
 
 # Crosswalk reads open unpooled Cloud SQL connections, as many per instance as its worker threads, so
 # the cap multiplies that against db-f1-micro's 25.
@@ -46,6 +49,17 @@ _MAX_INSTANCES = 2
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
+
+
+def _secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
+    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+        name=name,
+        value_source=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceArgs(
+            secret_key_ref=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
+                secret=secret_id, version='latest'
+            ),
+        ),
+    )
 
 
 class EvidenceService(pulumi.ComponentResource):
@@ -77,6 +91,7 @@ class EvidenceService(pulumi.ComponentResource):
         convert_queue_path: pulumi.Input[str],
         convert_worker_url: pulumi.Input[str],
         convert_invoker_sa_email: pulumi.Input[str],
+        openalex_api_key: secrets.ApiKeySecret,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
@@ -134,6 +149,15 @@ class EvidenceService(pulumi.ComponentResource):
         )
         self.db_user = db_user.name
 
+        openalex_reader = grants.SecretReader(
+            'themis-evidence',
+            member=member,
+            secret=openalex_api_key.secret.secret_id,
+            project=project,
+            target='openalex-api-key',
+            opts=child,
+        )
+
         service = gcp.cloudrunv2.Service(
             'themis-evidence-service',
             project=project,
@@ -190,6 +214,7 @@ class EvidenceService(pulumi.ComponentResource):
                             _env('THEMIS_LITERATURE_CONVERT_QUEUE', convert_queue_path),
                             _env('THEMIS_LITERATURE_CONVERT_WORKER_URL', convert_worker_url),
                             _env('THEMIS_LITERATURE_CONVERT_INVOKER_SA', convert_invoker_sa_email),
+                            _secret_env('THEMIS_LITERATURE_OPENALEX_API_KEY', openalex_api_key.secret.secret_id),
                             _env('THEMIS_VARIANT_BACKEND', 'live'),
                             _env('THEMIS_VEP_BACKEND', 'live'),
                             _env('THEMIS_GNOMAD_BACKEND', 'live'),
@@ -213,7 +238,11 @@ class EvidenceService(pulumi.ComponentResource):
                     )
                 ],
             ),
-            opts=child,
+            # Cloud Run resolves the mounted secret's `latest` when it deploys a revision: the version must
+            # exist and the SA must already read it.
+            opts=pulumi.ResourceOptions.merge(
+                child, pulumi.ResourceOptions(depends_on=[openalex_api_key.version, openalex_reader])
+            ),
         )
         self.service_name = service.name
         self.url = service.uri

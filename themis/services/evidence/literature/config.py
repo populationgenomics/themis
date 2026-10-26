@@ -9,6 +9,9 @@ factored, not an operational knob, and half of it offline is a state nobody depl
 full-text store is one bucket that several services read, so it travels under one name rather than an
 interface-scoped one; every ``THEMIS_LITERATURE_*`` value below it is this interface's alone.
 
+The live backend also requires ``THEMIS_LITERATURE_OPENALEX_API_KEY``, the key every OpenAlex request
+of an ingest carries, which Cloud Run mounts from Secret Manager.
+
 Two trios are all-or-nothing, and for the same reason: a half-configured capability fails per request
 instead of at deploy, so a partial set is a ``SystemExit``. Set together, the
 ``THEMIS_LITERATURE_CROSSWALK_*`` vars wire both halves of external-id handling — resolving an id and
@@ -31,7 +34,7 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage, tasks_v2
 
 from themis.common import sql
-from themis.litcache import enqueue
+from themis.litcache import enqueue, openalex
 from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import discovery as discovery_mod
@@ -50,6 +53,7 @@ _CONVERT_QUEUE_VAR = 'THEMIS_LITERATURE_CONVERT_QUEUE'
 _CONVERT_WORKER_URL_VAR = 'THEMIS_LITERATURE_CONVERT_WORKER_URL'
 _CONVERT_INVOKER_SA_VAR = 'THEMIS_LITERATURE_CONVERT_INVOKER_SA'
 _CONVERT_VARS = (_CONVERT_QUEUE_VAR, _CONVERT_WORKER_URL_VAR, _CONVERT_INVOKER_SA_VAR)
+_OPENALEX_API_KEY_VAR = 'THEMIS_LITERATURE_OPENALEX_API_KEY'
 
 # The seed document's sections, one per vocabulary: papers the store holds, and the index's records
 # and entities. Both are required: an absent section is a seed nobody finished writing, and
@@ -124,6 +128,7 @@ def _live_backend_from_env(deps: deps_mod.Deps) -> live_mod.LiveBackend:
     bucket_name = os.environ.get(_BUCKET_VAR)
     if not bucket_name:
         raise SystemExit(f'{_BUCKET_VAR} is required for the live backend (the litcache bucket)')
+    openalex_api_key = _openalex_api_key_from_env()
     client = storage.Client()
     deps.stack.callback(client.close)
     bucket = client.bucket(bucket_name)
@@ -140,10 +145,22 @@ def _live_backend_from_env(deps: deps_mod.Deps) -> live_mod.LiveBackend:
     store = litcache.Store(
         bucket,
         deps.http_client,
+        openalex_api_key=openalex_api_key,
         connect=_crosswalk_connect_from_env(deps.stack),
         enqueuer=_enqueuer_from_env(deps.stack),
     )
     return live_mod.LiveBackend(store, discovery_mod.Indexes(deps.http_client))
+
+
+def _openalex_api_key_from_env() -> openalex.ApiKey:
+    """The OpenAlex key ``THEMIS_LITERATURE_OPENALEX_API_KEY`` holds, or ``SystemExit`` naming the var alone."""
+    value = os.environ.get(_OPENALEX_API_KEY_VAR)
+    if value is None:
+        raise SystemExit(f'{_OPENALEX_API_KEY_VAR} is required for the live backend (the OpenAlex API key)')
+    try:
+        return openalex.ApiKey(value)
+    except ValueError as e:
+        raise SystemExit(f'{_OPENALEX_API_KEY_VAR} is malformed: {e}') from e
 
 
 def _crosswalk_connect_from_env(stack: contextlib.AsyncExitStack) -> Callable[[], sql.Connection] | None:

@@ -1996,15 +1996,15 @@ wheels = [
 
 [[package]]
 name = "litfetch"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
     { name = "httpx2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/1f/be0528001cee8d50b756562fc08f56c71625ee837cd66c651e932449ebc5/litfetch-0.4.0.tar.gz", hash = "sha256:304b3710d8acca96b50bedcf7a4fe4af3fd08beac0de6346c901f121e8b73f44", size = 62318, upload-time = "2026-09-02T07:38:09.685Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/18/9208a96d0a1e35cc9f0bc7ad01b68675f46f4cf9eeaf1d49e01e533e305d/litfetch-0.5.0.tar.gz", hash = "sha256:355be3aca322ba2d78f32c8d93e2c59d75fc819f03946026611a7945fb399445", size = 64140, upload-time = "2026-10-25T23:31:16.87Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/14/cba3728966bba67a28c16e05013348c949b5e29653e28074088dec542709/litfetch-0.4.0-py3-none-any.whl", hash = "sha256:66b03b15d609bddfa564de3d431f757f5edd53353e8ba45533a9346661117e6e", size = 46742, upload-time = "2026-09-02T07:38:08.344Z" },
+    { url = "https://files.pythonhosted.org/packages/70/9f/f675a48f344672158eadf39b91604dc8e9a94ce66e0ab61816d48a1904cd/litfetch-0.5.0-py3-none-any.whl", hash = "sha256:584814eed022899de99255da24f6cf08862abdcf106ec7e82748812a0adbbd8d", size = 47622, upload-time = "2026-10-25T23:31:15.281Z" },
 ]
 
 [[package]]
@@ -3888,6 +3888,7 @@ dataflow = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
@@ -3964,6 +3965,7 @@ lint = [
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "google-crc32c" },
@@ -4007,6 +4009,7 @@ litcache = [
     { name = "anthropic" },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
@@ -4126,6 +4129,7 @@ test = [
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "google-crc32c" },
@@ -4222,7 +4226,7 @@ convert-worker = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "litdown", specifier = "==0.7.0" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
@@ -4255,11 +4259,12 @@ dataflow = [
     { name = "apache-beam", extras = ["gcp"] },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -4286,7 +4291,7 @@ evidence = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "httpx2" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "lxml" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-instrumentation-grpc" },
@@ -4331,6 +4336,7 @@ lint = [
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "google-crc32c" },
@@ -4339,7 +4345,7 @@ lint = [
     { name = "grpcio-tools" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "lxml" },
     { name = "lxml-stubs" },
     { name = "markdown-it-py" },
@@ -4374,11 +4380,12 @@ litcache = [
     { name = "anthropic" },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "lxml" },
     { name = "pg8000" },
     { name = "pillow" },
@@ -4487,6 +4494,7 @@ test = [
     { name = "docling-core" },
     { name = "google-auth" },
     { name = "google-cloud-kms" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "google-crc32c" },
@@ -4495,7 +4503,7 @@ test = [
     { name = "grpcio-tools" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
-    { name = "litfetch", specifier = "==0.4.0" },
+    { name = "litfetch", specifier = "==0.5.0" },
     { name = "lxml" },
     { name = "markdown-it-py" },
     { name = "matplotlib" },

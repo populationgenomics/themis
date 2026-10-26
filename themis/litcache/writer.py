@@ -14,7 +14,7 @@ resolves to nothing is refused rather than stored.
 Layout written under `papers/{doc_id}/`:
 
     manifest.pb                         # the commit
-    metadata.pb                         # bibliographic (a PaperMetadata envelope), after the commit
+    metadata.pb                         # bibliographic (a SourcedMetadata), after the commit
     sources/{handle}/{hex}.{ext}        # raw source bytes, content-addressed
     renderings/{hex}.md                 # rendering markdown, keyed by its hash
     renderings/{hex}.docling.json       # structured docling output (converter=docling)
@@ -60,7 +60,7 @@ from google.cloud.storage import retry as gcs_retry
 from google.protobuf import timestamp_pb2
 
 from themis.common import storage
-from themis.litcache import paper_metadata, records
+from themis.litcache import records, sourced_metadata
 from themis.litcache.models import litcache_pb2
 
 # The layout's fixed names, for readers that list `papers/` rather than address one paper.
@@ -216,7 +216,7 @@ class PaperInput:
 
     `external_ids`, `claim_key`, `equivalence`, and `retraction` come from
     identity and the crosswalk mapped into the manifest shape; `metadata` is the
-    bibliographic `metadata.pb` bytes (a serialized `PaperMetadata` envelope
+    bibliographic `metadata.pb` bytes (a serialized `SourcedMetadata`
     carrying the resolving index's record). The writer adds only placement:
     content-addressed paths and hashes.
     """
@@ -344,8 +344,8 @@ def write_paper(bucket: gcs.Bucket, paper: PaperInput) -> WriteResult:
             holds, or carrying a `model` its converter does not take), two renderings
             with the same markdown hash, a source with an unknown media type, a blob
             with an unknown role or a name without an extension, a fetched file with no
-            capture time, or `metadata` that is not a `PaperMetadata` envelope meeting
-            its constraints (`paper_metadata.parse`). Joining a committed manifest, `metadata`
+            capture time, or `metadata` that is not a `SourcedMetadata` meeting
+            its constraints (`sourced_metadata.parse`). Joining a committed manifest, `metadata`
             is checked only when the ids let it be written (`fill_absent_metadata`).
         ConcurrentWriteError: Joining a committed manifest lost its generation race the whole
             retry budget (contention — retryable).
@@ -403,12 +403,12 @@ def fill_absent_metadata(
         manifest: The paper's committed manifest.
         external_ids: The identifiers `metadata` was resolved under: the ids the caller's
             paper claimed, as its manifest would record them.
-        metadata: The caller's `metadata.pb` bytes, a serialized `PaperMetadata` envelope.
+        metadata: The caller's `metadata.pb` bytes, a serialized `SourcedMetadata`.
 
     Raises:
         ValueError: If `manifest` names a `doc_id` other than its directory's, or `external_ids`
-            are the manifest's and `metadata` is not a `PaperMetadata` envelope meeting its
-            constraints (`paper_metadata.parse`).
+            are the manifest's and `metadata` is not a `SourcedMetadata` meeting its
+            constraints (`sourced_metadata.parse`).
     """
     if manifest.doc_id != doc_id:
         raise ValueError(f'manifest in {doc_id} names doc_id {manifest.doc_id!r}')
@@ -431,11 +431,11 @@ def write_metadata(bucket: gcs.Bucket, doc_id: str, metadata: bytes) -> None:
     Args:
         bucket: The cache bucket.
         doc_id: The paper whose record is written.
-        metadata: The `metadata.pb` bytes — a serialized `PaperMetadata` envelope.
+        metadata: The `metadata.pb` bytes — a serialized `SourcedMetadata`.
 
     Raises:
-        ValueError: If `metadata` is not a `PaperMetadata` envelope meeting its constraints
-            (`paper_metadata.parse`).
+        ValueError: If `metadata` is not a `SourcedMetadata` meeting its constraints
+            (`sourced_metadata.parse`).
     """
     _validate_metadata(metadata)
     bucket.blob(metadata_path(doc_id)).upload_from_string(metadata, retry=_RETRY_UNCONDITIONALLY)
@@ -897,4 +897,4 @@ def _write_files(bucket: gcs.Bucket, root: str, files: Sequence[FileInput]) -> l
 
 
 def _validate_metadata(metadata: bytes) -> None:
-    paper_metadata.parse(metadata)
+    sourced_metadata.parse(metadata)

@@ -17,7 +17,7 @@ import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
-from themis.litcache import records, writer
+from themis.litcache import metadata_fields, records, writer
 from themis.litcache.models import litcache_pb2
 
 _CREATED_AT = datetime.datetime(2026, 6, 25, tzinfo=datetime.UTC)
@@ -33,8 +33,9 @@ _XML_HASH = hashlib.sha256(_XML_BYTES).hexdigest()
 
 
 def _metadata(pmid: str = '29089047') -> bytes:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = pmid
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = pmid
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     return metadata.SerializeToString()
 
 
@@ -492,14 +493,15 @@ def test_blob_without_extension_fails_loud(gcs_bucket: gcs.Bucket) -> None:
 
 
 def test_invalid_metadata_proto_fails_loud(gcs_bucket: gcs.Bucket) -> None:
-    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
+    with pytest.raises(ValueError, match='not a valid SourcedMetadata'):
         writer.write_paper(gcs_bucket, _paper(metadata=b'\x08'))
 
 
 def test_metadata_with_no_record_fails_loud(gcs_bucket: gcs.Bucket) -> None:
-    # An envelope with no arm set is a corrupt blob, never a paper without metadata.
-    with pytest.raises(ValueError, match='no record set'):
-        writer.write_paper(gcs_bucket, _paper(metadata=litcache_pb2.PaperMetadata().SerializeToString()))
+    # A source record with no index's record is a corrupt blob, never a paper without metadata.
+    sourced = litcache_pb2.SourcedMetadata(metadata=litcache_pb2.Metadata(), source=litcache_pb2.MetadataSource())
+    with pytest.raises(ValueError, match='no index record set'):
+        writer.write_paper(gcs_bucket, _paper(metadata=sourced.SerializeToString()))
 
 
 def test_metadata_is_written_verbatim(gcs_bucket: gcs.Bucket) -> None:
@@ -510,7 +512,7 @@ def test_metadata_is_written_verbatim(gcs_bucket: gcs.Bucket) -> None:
 
 def test_invalid_metadata_leaves_no_artifact_behind(gcs_bucket: gcs.Bucket) -> None:
     # The metadata check runs before anything is written, so a paper it rejects has no directory.
-    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
+    with pytest.raises(ValueError, match='not a valid SourcedMetadata'):
         writer.write_paper(gcs_bucket, _paper(metadata=b'\x08'))
     assert not list(gcs_bucket.list_blobs(prefix=writer.paper_dir(_DOC_ID)))
 
@@ -537,7 +539,7 @@ def test_write_metadata_recreates_a_deleted_record(gcs_bucket: gcs.Bucket) -> No
 
 def test_write_metadata_rejects_an_invalid_record(gcs_bucket: gcs.Bucket) -> None:
     writer.write_paper(gcs_bucket, _paper())
-    with pytest.raises(ValueError, match='not a valid PaperMetadata'):
+    with pytest.raises(ValueError, match='not a valid SourcedMetadata'):
         writer.write_metadata(gcs_bucket, _DOC_ID, b'\x08')
     assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
 

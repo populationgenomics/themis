@@ -179,16 +179,15 @@ package/directory rules are excepted — see `buf.yaml`):
 Binary proto at rest exists for one property: **an older reader round-trips a newer writer's fields untouched.** Unknown
 fields (keyed by number + wire-type) are retained in the message's unknown-field set and re-serialized — a name-keyed
 text projection (proto-JSON, pbtxt) cannot do this. So a read-modify-write can't silently drop a field a newer component
-added. Two artifacts are modified in place, both path-addressed by a paper's uuid (blobs are immutable): the litcache
-manifest, and the paper's job log. The log is only appended to, by writing its old bytes followed by the new entries'
-encoding, so its rewrite decodes nothing
-([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). The move off the mirrors
-([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)) adds a third: the metadata fields of a
-litcache `metadata.pb`, which the fill of the metadata fields recomputes from the index's record beside them. The fill
-is bound by the same rules as the manifest. It rewrites the `SourcedMetadata` through the binary message, so a field it
-does not know is kept. It writes the record back with `ifGenerationMatch`, so when a concurrent ingest or refresh
-replaces the record, the fill loses the race and reads the record again rather than overwriting it. Safe RMW of the
-manifest requires, in order:
+added. Three artifacts are modified in place, each path-addressed by a paper's uuid (blobs are immutable): the litcache
+manifest, the paper's job log, and the metadata fields of a litcache `metadata.pb`. The log is only appended to, by
+writing its old bytes followed by the new entries' encoding, so its rewrite decodes nothing
+([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). The fill of the metadata
+fields recomputes them from the index's record beside them
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), and is bound by the same rules as
+the manifest. It rewrites the `SourcedMetadata` through the binary message, so a field it does not know is kept. It
+writes the record back with `ifGenerationMatch`, so when a concurrent ingest or refresh replaces the record, the fill
+loses the race and reads the record again rather than overwriting it. Safe RMW of the manifest requires, in order:
 
 1. **Preserve unknowns.** RMW goes through the binary proto message, whose unknown-field set survives
    parse→modify→serialize. Never RMW through a lossy typed projection (proto→JSON→proto drops unknowns).
@@ -214,9 +213,8 @@ The bucket-1-vs-3 axis is **re-derivability**, not "did we author a schema over 
 retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, never RMW — e.g. the index record in
 `metadata.pb`, re-fetched from PubMed's XML or Crossref's or OpenAlex's JSON); a cached per-request response we keep as
 received and cannot re-derive is bucket 3 (preserve the raw bytes, tolerant subset read). One part of `metadata.pb` is
-rewritten in place once the move off the mirrors lands: Themis's metadata fields, recomputed from the index record
-beside them under Read-modify-write and integrity above
-([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) says when).
+rewritten in place: Themis's metadata fields, recomputed from the index record beside them under Read-modify-write and
+integrity above ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 ## Generated upstream schemas
 
@@ -267,8 +265,8 @@ first-party, so building that ledger is ours to do. The refusal is right for eac
   [`pyproject.toml`](../../pyproject.toml)), and a sandbox Job keeps its image for up to four hours while the evidence
   service redeploys beneath it. A renumbered record sent to that guest decodes without error into the wrong fields, so a
   renumbering bump breaks a reader already in flight, as it would for any other rpc.
-- **PubMed's messages are at rest**: litcache's `metadata.pb` is a `PaperMetadata` envelope whose `pubmed` field carries
-  PubMed's own record, `PubmedArticle` or `PubmedBookArticle`
+- **PubMed's messages are at rest**: litcache's `metadata.pb` is a `SourcedMetadata` whose source record's `pubmed`
+  field carries PubMed's own record, `PubmedArticle` or `PubmedBookArticle`
   ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so a renumbering would corrupt
   every stored record: the schema's stability was load-bearing before any rpc embedded it, and the gate refusing an
   incompatible pin bump is the store's own constraint made visible.
@@ -276,12 +274,13 @@ first-party, so building that ledger is ours to do. The refusal is right for eac
 ## Upstream JSON held as text
 
 Some upstreams publish their records as JSON and publish no schema a generator can turn into an accurate proto. Crossref
-and OpenAlex are two such upstreams whose records Themis stores: litcache keeps each one's record of a paper in
-`PaperMetadata` ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Such a record is
-held as JSON text in a `string` field of the authored envelope: the value the upstream served, re-serialised from the
-parsed response with nothing dropped or renamed. The text parses back to a value equal to the one served, though not
-necessarily to the same bytes. Beside the text sits a reader for each upstream, which reads the fields Themis uses from
-that upstream's record and nothing else.
+and OpenAlex are two such upstreams whose records Themis stores: litcache keeps each one's record of a paper in the
+source record of its `SourcedMetadata`
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Such a record is held as JSON text
+in a `string` field of the authored message: the value the upstream served, re-serialised from the parsed response with
+nothing dropped or renamed. The text parses back to a value equal to the one served, though not necessarily to the same
+bytes. Beside the text sits a reader for each upstream, which reads the fields Themis uses from that upstream's record
+and nothing else.
 
 The reader fails loud on what it reads and ignores the rest. When a field every record of that upstream states is
 missing, or a field it reads has a shape the reader cannot read, the read raises, and at ingest the paper is
@@ -290,8 +289,7 @@ stays in the text, unread, and fails nothing. The metadata fields a consumer rea
 so the field names and shapes Themis depends on are spelled out in one place per upstream. An upstream vocabulary, such
 as a work's `type`, stays the string the upstream served; a value in a vocabulary Themis matches on, such as NLM's
 Publication Type for a work's `type`, is derived where those fields are filled. litcache holds its two such records this
-way, beside the mirror protos it is retiring
-([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+way ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 The text is a `string` rather than `bytes` because JSON is UTF-8 text, and protobuf checks UTF-8 on a `string` field, so
 the declared type says what the field holds and the runtime enforces it. The other ways of holding such a record each
@@ -307,11 +305,11 @@ lost on one fact:
   an integer above 2^53 changes value, and what a reader gets back is no longer the value served.
 
 `metadata.pb` stays in bucket 1. It is an authored binary proto whose index record is written once and re-derived
-wholesale from indexes that can be queried again, which is bucket 1's test (External data, above). Once the move off the
-mirrors lands, Themis's own metadata fields beside that record are recomputed from it and never edited by hand. The JSON
-text inside it is held the way bucket 3 holds a payload, as served and modelled only for the fields read, and its
-readers follow the same rule as bucket 3's. So the two buckets read upstream JSON alike. What separates them is still
-whether the artifact can be re-derived, which decides whether a change rewrites it or has to preserve it.
+wholesale from indexes that can be queried again, which is bucket 1's test (External data, above). Themis's own metadata
+fields beside that record are recomputed from it and never edited by hand. The JSON text inside it is held the way
+bucket 3 holds a payload, as served and modelled only for the fields read, and its readers follow the same rule as
+bucket 3's. So the two buckets read upstream JSON alike. What separates them is still whether the artifact can be
+re-derived, which decides whether a change rewrites it or has to preserve it.
 
 ## Schema evolution
 

@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import protovalidate
 import pytest
-from pubmed_proto import pubmed_pb2
 
-from themis.litcache import paper_metadata
-from themis.litcache.models import crossref_pb2, litcache_pb2, openalex_pb2
+from themis.litcache.models import litcache_pb2
 
 
 def _source(
@@ -67,101 +65,3 @@ def test_licensed_without_publisher_fails() -> None:
 def test_empty_revisions_fails() -> None:
     with pytest.raises(protovalidate.ValidationError):
         protovalidate.validate(_source(revisions=[]))
-
-
-def _journal_record() -> litcache_pb2.PubmedRecord:
-    return litcache_pb2.PubmedRecord(article=pubmed_pb2.PubmedArticle())
-
-
-_ENVELOPES_HOLDING_A_RECORD = [
-    litcache_pb2.PaperMetadata(pubmed=_journal_record()),
-    litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(book_article=pubmed_pb2.PubmedBookArticle())),
-    litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x')),
-    litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json='{"DOI": "10.1/x"}'),
-    litcache_pb2.PaperMetadata(
-        openalex=openalex_pb2.Work(id='https://openalex.org/W1'), openalex_json='{"id": "https://openalex.org/W1"}'
-    ),
-]
-_ENVELOPES_HOLDING_NO_RECORD = [
-    litcache_pb2.PaperMetadata(),
-    litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord()),
-]
-_ENVELOPES_HOLDING_TWO_INDEXES = [
-    litcache_pb2.PaperMetadata(pubmed=_journal_record(), crossref=crossref_pb2.Work(doi='10.1/x')),
-    litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}', openalex_json='{"id": "https://openalex.org/W1"}'),
-]
-_ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD = [
-    litcache_pb2.PaperMetadata(crossref_json=''),
-    litcache_pb2.PaperMetadata(openalex_json=''),
-]
-# Envelopes the proto's constraints accept and `paper_metadata.check` refuses on a rule of its own:
-# a JSON field set without its index's mirror, or holding text that is not a JSON object.
-_ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES = [
-    (litcache_pb2.PaperMetadata(crossref_json='{"DOI": "10.1/x"}'), 'without its mirror'),
-    (litcache_pb2.PaperMetadata(openalex_json='{"id": "https://openalex.org/W1"}'), 'without its mirror'),
-    (
-        litcache_pb2.PaperMetadata(crossref=crossref_pb2.Work(doi='10.1/x'), crossref_json='[]'),
-        'not a JSON object',
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    'envelope', _ENVELOPES_HOLDING_A_RECORD + [envelope for envelope, _ in _ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES]
-)
-def test_an_envelope_holding_a_record_is_valid(envelope: litcache_pb2.PaperMetadata) -> None:
-    protovalidate.validate(envelope)  # does not raise
-
-
-@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_NO_RECORD)
-def test_an_envelope_holding_no_record_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(envelope)
-
-
-@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_TWO_INDEXES)
-def test_an_envelope_holding_two_indexes_records_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(envelope)
-
-
-def test_every_envelope_field_belongs_to_one_index() -> None:
-    # The code check counts indexes through this map, so a field missing from it would escape the count.
-    mapped = [field for fields in paper_metadata.INDEX_FIELDS.values() for field in fields]
-    assert sorted(mapped) == sorted(f.name for f in litcache_pb2.PaperMetadata.DESCRIPTOR.fields)
-
-
-@pytest.mark.parametrize('envelope', _ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD)
-def test_an_empty_json_record_is_invalid(envelope: litcache_pb2.PaperMetadata) -> None:
-    with pytest.raises(protovalidate.ValidationError):
-        protovalidate.validate(envelope)
-
-
-@pytest.mark.parametrize(
-    'envelope',
-    _ENVELOPES_HOLDING_A_RECORD
-    + _ENVELOPES_HOLDING_NO_RECORD
-    + _ENVELOPES_HOLDING_TWO_INDEXES
-    + _ENVELOPES_HOLDING_AN_EMPTY_JSON_RECORD,
-)
-def test_the_code_check_agrees_with_the_declared_constraints(envelope: litcache_pb2.PaperMetadata) -> None:
-    # The proto declares the constraints; `paper_metadata.check` enforces them at the boundary in
-    # code, together with two rules of its own (exercised below). Over envelopes those rules leave
-    # alone, both must settle every envelope the same way, or the declaration and the enforcement
-    # have drifted.
-    try:
-        protovalidate.validate(envelope)
-    except protovalidate.ValidationError:
-        with pytest.raises(
-            ValueError, match=r'no record set|more than one index|neither of its kinds|not a JSON object'
-        ):
-            paper_metadata.check(envelope)
-    else:
-        paper_metadata.check(envelope)  # does not raise
-
-
-@pytest.mark.parametrize(('envelope', 'reason'), _ENVELOPES_ONLY_THE_CODE_CHECK_REFUSES)
-def test_the_code_check_refuses_what_its_own_rules_refuse(envelope: litcache_pb2.PaperMetadata, reason: str) -> None:
-    protovalidate.validate(envelope)  # the declared constraints accept it
-    with pytest.raises(ValueError, match=reason):
-        paper_metadata.check(envelope)

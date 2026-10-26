@@ -3,8 +3,6 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from pubmed_proto import pubmed_pb2 as _pubmed_pb2
-from themis.litcache.models import crossref_pb2 as _crossref_pb2
-from themis.litcache.models import openalex_pb2 as _openalex_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -262,20 +260,6 @@ class PubmedRecord(_message.Message):
     article: _pubmed_pb2.PubmedArticle
     book_article: _pubmed_pb2.PubmedBookArticle
     def __init__(self, article: _Optional[_Union[_pubmed_pb2.PubmedArticle, _Mapping]] = ..., book_article: _Optional[_Union[_pubmed_pb2.PubmedBookArticle, _Mapping]] = ...) -> None: ...
-
-class PaperMetadata(_message.Message):
-    __slots__ = ("pubmed", "crossref", "openalex", "crossref_json", "openalex_json")
-    PUBMED_FIELD_NUMBER: _ClassVar[int]
-    CROSSREF_FIELD_NUMBER: _ClassVar[int]
-    OPENALEX_FIELD_NUMBER: _ClassVar[int]
-    CROSSREF_JSON_FIELD_NUMBER: _ClassVar[int]
-    OPENALEX_JSON_FIELD_NUMBER: _ClassVar[int]
-    pubmed: PubmedRecord
-    crossref: _crossref_pb2.Work
-    openalex: _openalex_pb2.Work
-    crossref_json: str
-    openalex_json: str
-    def __init__(self, pubmed: _Optional[_Union[PubmedRecord, _Mapping]] = ..., crossref: _Optional[_Union[_crossref_pb2.Work, _Mapping]] = ..., openalex: _Optional[_Union[_openalex_pb2.Work, _Mapping]] = ..., crossref_json: _Optional[str] = ..., openalex_json: _Optional[str] = ...) -> None: ...
 
 class SourcedMetadata(_message.Message):
     __slots__ = ("metadata", "source")

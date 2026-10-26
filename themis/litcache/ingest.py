@@ -30,7 +30,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 import httpx2
 from google.cloud import storage as gcs
 
-from themis.litcache import crosswalk, identity, resolve, writer
+from themis.litcache import crosswalk, identity, openalex, resolve, writer
 from themis.litcache.models import litcache_pb2
 
 _logger = logging.getLogger(__name__)
@@ -105,6 +105,7 @@ async def ingest_unknown_paper(
     external_id: identity.ExternalId,
     *,
     http_client: httpx2.AsyncClient,
+    openalex_api_key: openalex.ApiKey,
     resolve_metadata: MetadataResolver = resolve.resolve_metadata,
 ) -> IngestResult | None:
     """Bring the paper `external_id` names into the corpus, if an upstream holds it.
@@ -119,8 +120,9 @@ async def ingest_unknown_paper(
         lookup: The crosswalk read, over a connection the caller owns.
         mint: The crosswalk mint, over a connection the caller owns.
         external_id: The id to ingest; its scheme must be in `RESOLVABLE_SCHEMES`.
-        http_client: The async HTTP client the metadata ladder issues its one call on (caller owns its
+        http_client: The async HTTP client the metadata ladder issues its calls on (caller owns its
             lifecycle).
+        openalex_api_key: The key the ladder's OpenAlex requests carry.
         resolve_metadata: The metadata ladder; defaults to `resolve.resolve_metadata`. Injected so
             tests run offline.
 
@@ -133,6 +135,9 @@ async def ingest_unknown_paper(
             for it, so a caller must filter rather than have it silently read as "no such paper".
             Permanent, and a caller's bug rather than a fact about the paper.
         UnstorableRecordError: If the resolved record is not one `writer.write_paper` will keep.
+            Permanent for that id.
+        efetch.RecordPreconditionError, upstream_record.SchemaDriftError, openalex.AmbiguousWorkError: If
+            an index holds a record of the paper this store cannot take (`resolve.resolve_metadata`).
             Permanent for that id.
         httpx2.HTTPError: On an upstream failure that is not a clean miss — transient, so it propagates
             rather than being recorded as a paper that does not exist.
@@ -148,6 +153,7 @@ async def ingest_unknown_paper(
             pmid=external_id.value if external_id.scheme == 'pmid' else None,
             doi=external_id.value if external_id.scheme == 'doi' else None,
             http_client=http_client,
+            openalex_api_key=openalex_api_key,
         )
     except resolve.MetadataUnresolvedError:
         return None

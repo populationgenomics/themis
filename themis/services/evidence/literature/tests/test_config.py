@@ -21,6 +21,8 @@ from themis.services.evidence.literature import live as live_mod
 from themis.services.evidence.tests import authz
 
 _BUCKET = 'a-bucket'
+_OPENALEX_API_KEY_VAR = 'THEMIS_LITERATURE_OPENALEX_API_KEY'
+_OPENALEX_API_KEY = 'an-openalex-key'
 _CROSSWALK_VARS = (
     'THEMIS_LITERATURE_CROSSWALK_INSTANCE',
     'THEMIS_LITERATURE_CROSSWALK_DATABASE',
@@ -90,6 +92,7 @@ class _FakeClient:
 def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
     monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', _BUCKET)
+    monkeypatch.setenv(_OPENALEX_API_KEY_VAR, _OPENALEX_API_KEY)
     for var in (*_CROSSWALK_VARS, *_CONVERT_VARS):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(config.storage, 'Client', lambda: client)
@@ -193,6 +196,21 @@ def test_the_live_selector_hands_its_client_to_the_stack(monkeypatch: pytest.Mon
         assert closed, 'the stack closed the client on unwind'
 
     asyncio.run(build())
+
+
+def test_live_backend_requires_the_openalex_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    monkeypatch.delenv(_OPENALEX_API_KEY_VAR)
+    with pytest.raises(SystemExit, match=_OPENALEX_API_KEY_VAR):
+        _from_env()
+
+
+def test_a_malformed_openalex_api_key_fails_at_startup_without_showing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    monkeypatch.setenv(_OPENALEX_API_KEY_VAR, f'{_OPENALEX_API_KEY}\n')
+    with pytest.raises(SystemExit, match=_OPENALEX_API_KEY_VAR) as caught:
+        _from_env()
+    assert _OPENALEX_API_KEY not in str(caught.value)
 
 
 def test_live_selector_fails_loud_on_an_unreadable_bucket(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,7 +13,7 @@ import hashlib
 import pytest
 from google.cloud import storage as gcs
 
-from themis.litcache import outcome, writer
+from themis.litcache import metadata_fields, outcome, writer
 from themis.litcache.models import litcache_pb2
 
 _DOC_ID = 'a1b20000-0000-4000-8000-000000000001'
@@ -48,8 +48,9 @@ def _rendering() -> writer.RenderingInput:
 
 
 def _metadata() -> bytes:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = '1'
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = '1'
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     return metadata.SerializeToString()
 
 

@@ -142,6 +142,7 @@ def render_report(report: IngestReport) -> str:
         f'  unresolved (dead-lettered): {report.counters.get("paper_unresolved", 0)}',
         f'  precondition failed (dead-lettered): {report.counters.get("paper_precondition_failed", 0)}',
         f'  schema drift (dead-lettered): {report.counters.get("paper_schema_drift", 0)}',
+        f'  ambiguous OpenAlex work (dead-lettered): {report.counters.get("paper_ambiguous_work", 0)}',
         f'  failed (dead-lettered): {report.counters.get("paper_failed", 0)}',
         f'  asked the worker for: {report.counters.get("paper_asked", 0)}',
         f'  already asked for: {report.counters.get("paper_already_asked", 0)}',

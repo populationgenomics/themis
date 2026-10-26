@@ -32,7 +32,7 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, joblog, ocr, work, writer
+from themis.litcache import anthropic_ocr, joblog, metadata_fields, ocr, work, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2, work_pb2
@@ -305,8 +305,9 @@ def _pdf_source() -> writer.SourceInput:
 
 
 def _write_pdf_paper(bucket: storage.Bucket) -> None:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = '29089047'
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = '29089047'
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     writer.write_paper(
         bucket,
         writer.PaperInput(

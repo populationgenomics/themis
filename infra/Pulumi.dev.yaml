@@ -69,4 +69,6 @@ config:
   themis:costFreshnessMinutes: "25"
   themis:anthropicAgentModelId:
     secure: v1:Tl2ehUoug22BUpA3:XXmvxhMSxrY2hXI5ej+Sb7waZosPfPybyZwryB4GAg==
+  themis:openalexApiKey:
+    secure: v1:5DdJLE9zKkP4ABsJ:+45Cks4XLJoeVGn/A4dgt7AKNjKquVG7Q4v9GNigOO8DeHOcqF8=
 encryptedkey: CiQA/ULBFfYDJS61pUB787l/Qu+QA9pFzNFSRaLPav6qpmmRgGcSSQDEj9vLseVFweRjjy01ICeH7b9oUPReXXfNlYA9QE1kDuj+gHR/ESbi1IWidwuSLlxzfxt/MVP16YPn+0ve42N9xqgHVlJUrcI=

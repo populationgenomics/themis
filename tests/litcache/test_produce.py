@@ -21,7 +21,7 @@ from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import ids
 
-from themis.litcache import joblog, oa, ocr, outcome, produce, work, writer
+from themis.litcache import joblog, metadata_fields, oa, ocr, outcome, produce, work, writer
 from themis.litcache.models import litcache_pb2, work_pb2
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
@@ -48,8 +48,9 @@ _OTHER = joblog.Attempt(
 
 
 def _metadata() -> bytes:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = '29089047'
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = '29089047'
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     return metadata.SerializeToString()
 
 

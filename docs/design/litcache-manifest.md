@@ -371,10 +371,8 @@ from. It is unrelated to two messages of the manifest with similar names: a `Sou
 revisions, and a `Record` is a derived artifact. The two parts are separate messages so that a consumer can be handed
 `Metadata` alone. A consumer handed the whole record could reach into the source record for whatever the metadata lacks,
 and each such reach is code that handles index records without knowing which index answered. Given `Metadata` alone, it
-cannot do that by accident; a reader that needs the source record is given it on purpose. Until the move off the mirrors
-(below) lands, `metadata.pb` holds the older `PaperMetadata` envelope, which carries the index's record alone, and
-Crossref's and OpenAlex's records also in hand-written protos of each index's keys, called *mirrors*. Here is a preprint
-that PubMed does not index, resolved through OpenAlex (values shortened):
+cannot do that by accident; a reader that needs the source record is given it on purpose. Here is a preprint that PubMed
+does not index, resolved through OpenAlex (values shortened):
 
 ```
 SourcedMetadata                                metadata.pb, binary proto
@@ -439,8 +437,8 @@ Every writer sends Themis's OpenAlex API key, which gives Themis a daily budget 
 shares one small daily budget among every caller behind an IP address, about a thousand requests in October 2026. The
 services of an environment reach OpenAlex through one address, so another caller could spend that budget, and every
 write would then fail until it resets. A request carries up to a hundred identifiers, so refreshing a store of 41,000
-papers costs about 450 requests. litfetch's DOI resolution, which the bulk ladder runs before OpenAlex, still asks
-OpenAlex without the key.
+papers costs about 450 requests. litfetch's DOI resolution, which the bulk ladder runs before OpenAlex, sends the key
+too.
 
 The obvious way to say in a proto which records may be set is a `oneof`, which also gives readers a generated accessor
 for the arm that is set. A `oneof` holds one arm at a time, so it cannot hold PubMed's record and OpenAlex's together; a
@@ -548,7 +546,6 @@ fills them then needs, after its deploy, a fill of the metadata fields: a run th
 record. The fill reads the records already stored, so it needs no network and touches nothing but `metadata.pb`, and the
 store already rewrites its manifests the same way
 ([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
-The fill arrives with the move off the mirrors (below), the change that first stores the fields.
 
 A reader coming from [`literature-evidence-layer.md`](literature-evidence-layer.md) will recognise the risk it names: a
 shape invented to be common across indexes carries only what it has a field for, bends an index's values to mean what
@@ -616,10 +613,11 @@ proband twice. The name is the profile's too, and can differ from the paper's by
 since most papers carry an OpenAlex record, OpenAlex reshaping a key the author reader reads fails the ingest of most
 papers, rather than only of the papers OpenAlex resolved.
 
-Where the source holds no OpenAlex record, the names and iDs are the ones the resolving record states. So the iD field
-holds OpenAlex's attribution for most papers, and the paper's own statement for the rest. Either way the iD is held in
-its bare form (`0000-0002-1825-0097`): PubMed states it bare, Crossref and OpenAlex as an `https://orcid.org/` URL. An
-iD whose check digit fails is left empty, as not stated; the record keeps what the index sent.
+Where the source holds no OpenAlex record, or OpenAlex's record names no author, the names and iDs are the ones the
+resolving record states. So the iD field holds OpenAlex's attribution for most papers, and the paper's own statement for
+the rest. Either way the iD is held in its bare form (`0000-0002-1825-0097`): PubMed states it bare, Crossref and
+OpenAlex as an `https://orcid.org/` URL. An iD whose check digit fails is left empty, as not stated; the record keeps
+what the index sent.
 
 A MeSH heading is NLM's controlled subject index for a paper: a descriptor, such as Breast Neoplasms (`D001943`),
 narrowed by qualifiers, such as genetics (`Q000235`), each marked as a major topic of the paper or not. PubMed's record
@@ -654,8 +652,7 @@ Journal Article at most. A triage that skipped every paper without Humans, or wi
 papers for what their index has not stated.
 
 The rule that fills the fields is not recorded beside them. A changed rule means another fill of every record, which
-reads only the records already stored and takes minutes, so nothing has to find the records an older rule filled. Until
-the move off the mirrors completes, the title a consumer reads is derived on read from the record.
+reads only the records already stored and takes minutes, so nothing has to find the records an older rule filled.
 
 **A source record with no index's record is corruption.** The constraint on which records are set is enforced where the
 record crosses a boundary: the writer validates `metadata.pb` before it writes, and a reader that parses one fails
@@ -683,8 +680,7 @@ record: it comes back with OpenAlex's record alone, or with none if OpenAlex has
 is brought up to a change by re-deriving it, not by rewriting stored bytes or teaching readers a second decoding, and
 Themis's own fields by recomputing them from those records. Three operator runs do that
 ([`reingest-literature-seed-corpus.md`](../runbooks/reingest-literature-seed-corpus.md)), and which one a change needs
-turns on what else has to change. Until the move off the mirrors (below) lands, the stored records carry no metadata
-fields, so only the refresh and the rebuild apply:
+turns on what else has to change:
 
 - A *metadata refresh* resolves a bibliographic record, through that ladder, for every committed paper that has no
   `metadata.pb`: efetch for a PMID, and litfetch's DOI resolution and then OpenAlex for the rest. It never touches a

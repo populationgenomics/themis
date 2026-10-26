@@ -1,18 +1,11 @@
 """Crossref: a DOI's work record, whole, for a paper PubMed does not index.
 
 When a paper has a DOI but no PMID, the efetch path finds nothing, so its bibliographic record
-comes from Crossref's `works` endpoint and is stored twice in the envelope: in the `crossref`
-field, in Crossref's own schema (`crossref.proto`, a mirror of the JSON) with every key the mirror
-does not declare dropped, and in `crossref_json` as JSON text with every key kept
-(`themis.litcache.mirror`). Two shapes the mirror's header names are wrapped before the mirror's
-parse:
-`date-parts`, an array of arrays, becomes one `DateParts` per inner array, less the trailing null
-Crossref states an unknown date with; `relation`, an object whose values are arrays, becomes a
-`RelationList` per key. A null element of any other array, which proto3-JSON cannot hold, is
-dropped.
-
-The DOI populates the manifest `ExternalIds`. The publisher is returned alongside, for the
-orchestrator to build the manifest's `Licensed` access when the paper is not free-to-read.
+comes from Crossref's `works` endpoint and is stored in the source record of `metadata.pb` as JSON
+text in `crossref_json`, every key kept (`themis.litcache.upstream_record`). `read_work` reads what
+ingest takes from it: the DOI, which populates the manifest `ExternalIds`, and the publisher,
+returned for the orchestrator to build the manifest's `Licensed` access when the paper is not
+free-to-read.
 """
 
 from __future__ import annotations
@@ -20,15 +13,16 @@ from __future__ import annotations
 import dataclasses
 import urllib.parse
 from collections.abc import Mapping
+from typing import NamedTuple
 
 import httpx2
 
 from themis.common import constants
-from themis.litcache import mirror, paper_metadata
-from themis.litcache.models import crossref_pb2, litcache_pb2
+from themis.litcache import metadata_fields, upstream_record
+from themis.litcache.models import litcache_pb2
 
 _CROSSREF_URL = 'https://api.crossref.org/works'
-INDEX = 'crossref'
+INDEX = upstream_record.Index.CROSSREF
 
 
 @dataclasses.dataclass(frozen=True)
@@ -36,71 +30,61 @@ class CrossrefResult:
     """The bibliographic outputs of resolving one DOI-only paper via Crossref.
 
     Attributes:
-        metadata: The canonical `metadata.pb` bytes (a `PaperMetadata` envelope with the work in
-            its `crossref` and `crossref_json` fields).
+        sourced: The work in its source record's `crossref_json` field, and the metadata filled from it
+            alone.
         external_ids: The cross-ids for the manifest (DOI only — Crossref carries no PMID/PMCID).
         publisher: The Crossref `publisher`, for the manifest `Licensed` access; `None` if absent.
     """
 
-    metadata: bytes
+    sourced: litcache_pb2.SourcedMetadata
     external_ids: litcache_pb2.ExternalIds
     publisher: str | None
 
 
-def wrap(document: Mapping[str, object]) -> dict[str, object]:
-    """Wrap a `works` message object into the shapes the mirror declares (see the module docstring).
+class WorkFields(NamedTuple):
+    """What ingest takes from a Crossref work.
 
-    Anything else passes through untouched, so a shape a declared field does not hold fails the
-    mirror's parse rather than being coerced here.
+    Attributes:
+        doi: The work's DOI, as Crossref states it.
+        publisher: The `publisher` as stated, or `None` when the work leaves it out, states it as
+            null or states it empty.
     """
-    wrapped = _wrap_dates(document)
-    relation = wrapped.get('relation')
-    if isinstance(relation, Mapping):
-        wrapped['relation'] = {kind: {'items': items} for kind, items in relation.items()}
-    return wrapped
+
+    doi: str
+    publisher: str | None
 
 
-def _wrap_dates(document: Mapping[str, object]) -> dict[str, object]:
-    return {
-        key: _wrap_date_parts(value) if key == 'date-parts' else _wrap_value(value) for key, value in document.items()
-    }
+type Work = upstream_record.Record[WorkFields]
 
 
-def _wrap_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        return _wrap_dates(value)
-    if isinstance(value, list):
-        return [_wrap_value(item) for item in value if item is not None]
-    return value
+def read_work(work: Mapping[str, object]) -> WorkFields:
+    """Read what ingest takes from a Crossref work (the `message` object of a works response).
 
-
-def _wrap_date_parts(value: object) -> object:
-    if not isinstance(value, list):
-        return value
-    return [{'parts': _without_trailing_nulls(inner)} if isinstance(inner, list) else inner for inner in value]
-
-
-def _without_trailing_nulls(parts: list[object]) -> list[object]:
-    # `[[null]]` is Crossref's unknown date; a null between stated parts is not a date, and stays
-    # for the mirror's parse to charge as drift rather than shifting the parts after it.
-    end = len(parts)
-    while end and parts[end - 1] is None:
-        end -= 1
-    return parts[:end]
-
-
-def parse_work(document: Mapping[str, object]) -> mirror.Loaded[crossref_pb2.Work]:
-    """Load a `works` message object into the mirror and serialise it as text.
+    Every other key is ignored.
 
     Raises:
-        mirror.SchemaDriftError: If a key the mirror declares holds a value of a shape its field
-            cannot hold, or the record holds a number standard JSON text cannot carry.
+        upstream_record.SchemaDriftError: If `DOI` is missing or empty, or `DOI` or `publisher` has a
+            shape this reader cannot read.
     """
-    return mirror.load(document, crossref_pb2.Work(), index=INDEX, wrap=wrap)
+    root = upstream_record.JsonObject.root(INDEX, work)
+    doi = root.required_str('DOI')
+    if not doi:
+        raise root.drift('DOI', 'is empty, where the DOI Crossref answers a DOI with is read')
+    return WorkFields(doi=doi, publisher=root.optional_str_or_null('publisher') or None)
+
+
+def parse_work(document: Mapping[str, object]) -> Work:
+    """Read a `works` message object's DOI and publisher, and serialise it as text.
+
+    Raises:
+        upstream_record.SchemaDriftError: If `read_work` cannot read a field it needs, or the work
+            holds a number standard JSON text cannot carry.
+    """
+    return upstream_record.load(INDEX, document, read_work)
 
 
 def from_crossref_work(document: Mapping[str, object]) -> CrossrefResult:
-    """Resolve a `works` message object to `metadata.pb` bytes + cross-ids + publisher.
+    """Resolve a `works` message object to its `SourcedMetadata` + cross-ids + publisher.
 
     Args:
         document: The `message` object of a Crossref `works` response.
@@ -109,19 +93,15 @@ def from_crossref_work(document: Mapping[str, object]) -> CrossrefResult:
         The `CrossrefResult`.
 
     Raises:
-        mirror.SchemaDriftError: If the mirror or the text cannot hold the record (`parse_work`).
-        ValueError: If the work states no DOI — the record Crossref answers a DOI with names it.
+        upstream_record.SchemaDriftError: If the work cannot be read or stored (`parse_work`), or a
+            metadata field cannot be read from it (`metadata_fields.fill`).
     """
-    loaded = parse_work(document)
-    work = loaded.work
-    if not work.doi:
-        raise ValueError('Crossref work states no DOI')
+    work = parse_work(document)
+    source = litcache_pb2.MetadataSource(crossref_json=work.text)
     return CrossrefResult(
-        metadata=paper_metadata.to_canonical_bytes(
-            litcache_pb2.PaperMetadata(crossref=work, crossref_json=loaded.text)
-        ),
-        external_ids=litcache_pb2.ExternalIds(doi=work.doi),
-        publisher=work.publisher if work.HasField('publisher') else None,
+        sourced=litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source),
+        external_ids=litcache_pb2.ExternalIds(doi=work.fields.doi),
+        publisher=work.fields.publisher,
     )
 
 
@@ -148,5 +128,5 @@ async def fetch_crossref(doi: str, *, http_client: httpx2.AsyncClient) -> Mappin
 
 
 async def resolve(doi: str, *, http_client: httpx2.AsyncClient) -> CrossrefResult:
-    """Resolve one DOI to `metadata.pb` + cross-ids + publisher via Crossref."""
+    """Resolve one DOI to its `SourcedMetadata` + cross-ids + publisher via Crossref."""
     return from_crossref_work(await fetch_crossref(doi, http_client=http_client))

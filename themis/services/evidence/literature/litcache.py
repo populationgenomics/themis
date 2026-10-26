@@ -6,7 +6,7 @@ GCS object for a rendering, the current PDF revision, or an associated file — 
 rendering's bytes itself, whole, in ranged reads. ``locate``/``validate`` run
 anchorite's quote-to-offset location over the rendering bytes — manifest +
 rendering only, never ``metadata.pb`` (that is read solely for ``describe_paper``'s title, decoded as
-the ``PaperMetadata`` envelope and titled by whichever index's record states one; its absence falls
+a ``SourcedMetadata`` and titled by its ``Metadata`` alone; its absence falls
 back rather than failing). ``validate`` is markdown-only and forgiving: a PDF-only
 paper is reported unknown-not-checked, never a false "not located".
 
@@ -51,11 +51,12 @@ from themis.litcache import (
     enqueue,
     identity,
     ingest,
-    mirror,
+    openalex,
     outcome,
-    paper_metadata,
     records,
     resolve,
+    sourced_metadata,
+    upstream_record,
     work,
     writer,
 )
@@ -113,10 +114,16 @@ def _denied_for_want_of_a_grant(error: Exception) -> bool:
 
 
 # Faults of one upstream record that no retry clears: a record failing the store's id precondition,
-# one its mirror does not fit, and one the writer refuses to keep. Each is typed where it is raised,
+# one with a field Themis cannot read or store, OpenAlex holding more than one work for the paper,
+# and a record the writer refuses to keep. Each is typed where it is raised,
 # so a bare `ValueError` — which a truncated JSON body raises on its way through the ladder — is left
 # to the broad catch below and answered as the outage it is.
-_UNINGESTABLE = (efetch.RecordPreconditionError, mirror.SchemaDriftError, ingest.UnstorableRecordError)
+_UNINGESTABLE = (
+    efetch.RecordPreconditionError,
+    upstream_record.SchemaDriftError,
+    openalex.AmbiguousWorkError,
+    ingest.UnstorableRecordError,
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,12 +142,14 @@ class Store:
         bucket: storage.Bucket,
         http_client: httpx2.AsyncClient,
         *,
+        openalex_api_key: openalex.ApiKey,
         connect: Callable[[], sql.Connection] | None = None,
         enqueuer: enqueue.Enqueuer | None = None,
         resolve_metadata: ingest.MetadataResolver = resolve.resolve_metadata,
     ) -> None:
         self._bucket = bucket
         self._http_client = http_client
+        self._openalex_api_key = openalex_api_key
         self._connect = connect
         self._enqueuer = enqueuer
         self._resolve_metadata = resolve_metadata
@@ -238,11 +247,11 @@ class Store:
     async def ingest_papers(self, external_ids: Sequence[str]) -> dict[str, str]:
         if self._connect is None:
             raise literature_backend.IngestNotConfiguredError('no crosswalk is configured')
-        # Serial, not gathered: each id costs one upstream metadata call, and PubMed and Crossref both
+        # Serial, not gathered: each id costs a call to its resolving index and one to OpenAlex, and all three
         # pace an unkeyed caller, so a fan-out buys latency back as 429s. The servicer's per-call bound
         # on how many papers one request may ingest is what keeps the serial cost answerable.
         # Folded on the crosswalk's own key, not byte-exactly, so two spellings of one DOI cost one
-        # upstream call — and every spelling the caller sent is answered with the paper that call
+        # resolution — and every spelling the caller sent is answered with the paper it
         # found, as `crosswalk.lookup` answers each of them on the read path.
         candidates: dict[str, list[str]] = {}
         for external_id in external_ids:
@@ -265,6 +274,7 @@ class Store:
                 self._mint,
                 external_id,
                 http_client=self._http_client,
+                openalex_api_key=self._openalex_api_key,
                 resolve_metadata=self._resolve_metadata,
             )
         except literature_backend.IngestNotConfiguredError:
@@ -574,12 +584,12 @@ def _title(metadata: bytes | None, manifest: litcache_pb2.Manifest, doc_id: str)
     """The bibliographic title, falling back to an external id then the doc_id if unavailable.
 
     Raises:
-        literature_backend.CorruptMetadataError: If ``metadata`` does not read as an envelope
-            meeting its constraints.
+        literature_backend.CorruptMetadataError: If ``metadata`` does not read as a
+            `SourcedMetadata` meeting its constraints.
     """
     if metadata is not None:
         try:
-            title = paper_metadata.title(paper_metadata.parse(metadata))
+            title = sourced_metadata.read_metadata(metadata).title
         except ValueError as e:
             raise literature_backend.CorruptMetadataError(f'{doc_id}: {e}') from e
         if title:

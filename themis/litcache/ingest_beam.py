@@ -25,9 +25,11 @@ mint) from inside the workers:
    `ingest_paper`. Per-paper failure is isolated, not fatal: a paper with no resolution
    (counted `paper_unresolved`), a paper whose record fails the store's precondition
    (counted `paper_precondition_failed`, the failed precondition recorded as the reason), a
-   paper whose index record does not fit its mirror (counted `paper_schema_drift`, the key
-   recorded as the reason) and a paper whose write half raises (counted `paper_failed`, the exception recorded as
-   the reason) are all dead-lettered under the run's own prefix (`dead_letter_paths`) and
+   paper whose index record cannot be read or stored (counted `paper_schema_drift`, the key
+   recorded as the reason), a paper OpenAlex holds more than one work for (counted
+   `paper_ambiguous_work`, the works recorded as the reason) and a paper whose write half
+   raises (counted `paper_failed`, the exception recorded as the reason) are all
+   dead-lettered under the run's own prefix (`dead_letter_paths`) and
    the run carries on — one bad paper never aborts a full-seed pass. `report_run`
    consolidates that run's records into one text file, so a re-run against the same
    bucket reports its own failures, not the history.
@@ -49,7 +51,7 @@ paper is committed, and the sweep asks for it.
 
 Per-stage counts are emitted as Beam metrics under `METRICS_NAMESPACE` (`papers_seen`,
 `doc_id_minted` / `doc_id_adopted`, `paper_written` / `paper_skipped`, `paper_unresolved` /
-`paper_precondition_failed` / `paper_schema_drift` / `paper_failed`, `paper_asked` /
+`paper_precondition_failed` / `paper_schema_drift` / `paper_ambiguous_work` / `paper_failed`, `paper_asked` /
 `paper_already_asked` / `paper_not_asked`).
 
 `report_run` is the post-run step (call after `wait_until_finish`): it builds and logs
@@ -86,7 +88,7 @@ from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 
 from themis.common import constants
-from themis.litcache import crosswalk, enqueue, identity, pipeline, produce, report, resolve
+from themis.litcache import crosswalk, enqueue, identity, openalex, pipeline, produce, report, resolve
 from themis.litcache.models import work_pb2
 
 _LOG = logging.getLogger(__name__)
@@ -106,6 +108,7 @@ _COUNTER_NAMES = (
     'paper_unresolved',
     'paper_precondition_failed',
     'paper_schema_drift',
+    'paper_ambiguous_work',
     'paper_failed',
     'paper_asked',
     'paper_already_asked',
@@ -152,6 +155,8 @@ FetchersFactory = Callable[[], Sequence[litfetch.Fetcher]]
 EnqueuerFactory = Callable[[], enqueue.Enqueuer]
 FileSourcesFactory = Callable[[], Sequence[litfetch.FileSource]]
 TransportFactory = Callable[[], httpx2.AsyncBaseTransport]
+# Read on the worker (`openalex_key.from_secret_manager`), so the key never travels in the pipeline graph.
+ApiKeyFactory = Callable[[], openalex.ApiKey]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -392,17 +397,20 @@ class _ResolveBatchFn(beam.DoFn):
     Runs `resolve.resolve_batch` over the `GroupByKey` group (it chunks the ids into
     per-call batches), emitting `(join_key, outcome)` for each paper it settles: a
     `ResolvedPaper`, a `RecordPreconditionFailure` for a record that fails the store's
-    precondition, or a `SchemaDriftFailure` for a record its mirror does not hold (an unresolved
-    paper is absent — the write stage dead-letters all three). The
-    HTTP transport is built per worker.
+    precondition, a `SchemaDriftFailure` for a record Themis cannot read or store, or an
+    `AmbiguousWorkFailure` for a paper OpenAlex holds more than one work for (an unresolved
+    paper is absent — the write stage dead-letters all four). The HTTP transport and the
+    OpenAlex API key are built per worker.
     """
 
-    def __init__(self, *, transport_factory: TransportFactory | None) -> None:
+    def __init__(self, *, transport_factory: TransportFactory | None, openalex_api_key_factory: ApiKeyFactory) -> None:
         self._transport_factory = transport_factory
+        self._openalex_api_key_factory = openalex_api_key_factory
 
     @override
     def setup(self) -> None:
         self._transport = self._transport_factory() if self._transport_factory is not None else None
+        self._openalex_api_key = self._openalex_api_key_factory()
 
     @override
     def process(self, batch: tuple[int, Iterable[resolve.ResolveRequest]]) -> Iterator[tuple[str, resolve.Outcome]]:
@@ -420,7 +428,9 @@ class _ResolveBatchFn(beam.DoFn):
             httpx2.AsyncClient(transport=self._transport) as client,
             litfetch.Session(client_factory=client_factory, contact=constants.CONTACT_EMAIL) as session,
         ):
-            return await resolve.resolve_batch(requests, http_client=client, session=session)
+            return await resolve.resolve_batch(
+                requests, http_client=client, session=session, openalex_api_key=self._openalex_api_key
+            )
 
 
 class _MintConnection:
@@ -513,7 +523,7 @@ class _WritePaperFn(beam.DoFn):
     `beam.utils.shared.Shared`), opened lazily on the first mint — a bundle of only
     unresolved papers never opens one. Counts `doc_id_minted`/`doc_id_adopted`,
     `paper_written`/`paper_skipped`, `paper_unresolved`/`paper_precondition_failed`/`paper_schema_drift`/
-    `paper_failed`.
+    `paper_ambiguous_work`/`paper_failed`.
     """
 
     def __init__(
@@ -545,6 +555,7 @@ class _WritePaperFn(beam.DoFn):
         self._unresolved = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_unresolved')
         self._precondition_failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_precondition_failed')
         self._schema_drift = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_schema_drift')
+        self._ambiguous_work = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_ambiguous_work')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
         self._asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_asked')
         self._already_asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_already_asked')
@@ -597,7 +608,13 @@ class _WritePaperFn(beam.DoFn):
         outcomes = [
             r
             for r in grouped['resolved']
-            if isinstance(r, resolve.ResolvedPaper | resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure)
+            if isinstance(
+                r,
+                resolve.ResolvedPaper
+                | resolve.RecordPreconditionFailure
+                | resolve.SchemaDriftFailure
+                | resolve.AmbiguousWorkFailure,
+            )
         ]
         outcome = outcomes[0] if outcomes else None
         for work in works:
@@ -614,6 +631,10 @@ class _WritePaperFn(beam.DoFn):
             if isinstance(outcome, resolve.SchemaDriftFailure):
                 self._dead_letter(work, reason=f'schema drift: {outcome.reason}')
                 self._schema_drift.inc()
+                continue
+            if isinstance(outcome, resolve.AmbiguousWorkFailure):
+                self._dead_letter(work, reason=f'ambiguous OpenAlex work: {outcome.reason}')
+                self._ambiguous_work.inc()
                 continue
             # Outside the handler, as in the identity stage: a failed seed read is transient
             # and worth Beam's retries, not a permanent dead-letter.
@@ -652,6 +673,7 @@ def build_pipeline(
     conn_factory: ConnFactory,
     licence: pipeline.LicenceFacts,
     now: datetime.datetime,
+    openalex_api_key_factory: ApiKeyFactory,
     seed_prefix: str = 'ingest/',
     limit: int | None = None,
     ask: WorkAsk | None,
@@ -675,6 +697,8 @@ def build_pipeline(
         licence: The non-OA-branch licence fallback (the OA branch reads its own from
             the fetched bytes).
         now: Timezone-aware capture/rendering timestamp (the job's logical time).
+        openalex_api_key_factory: Builds the key the resolve stage's OpenAlex requests
+            carry, once per worker.
         seed_prefix: The flat seed prefix to ingest.
         limit: Ingest only the first `limit` paired seed objects (in stem order) for
             a bounded run; `None` ingests every pair. Deterministic across runs.
@@ -724,7 +748,10 @@ def build_pipeline(
         works
         | 'ToResolveRequests' >> beam.Map(_to_resolve_request)
         | 'CollectForResolve' >> beam.GroupByKey()
-        | 'ResolveMetadata' >> beam.ParDo(_ResolveBatchFn(transport_factory=transport_factory))
+        | 'ResolveMetadata'
+        >> beam.ParDo(
+            _ResolveBatchFn(transport_factory=transport_factory, openalex_api_key_factory=openalex_api_key_factory)
+        )
     )
     return (
         {'work': works, 'resolved': resolved}
@@ -754,6 +781,7 @@ def run_ingestion(
     now: datetime.datetime,
     options: pipeline_options.PipelineOptions,
     ask: WorkAsk | None,
+    openalex_api_key_factory: ApiKeyFactory,
     seed_prefix: str = 'ingest/',
     limit: int | None = None,
 ) -> IngestionRun:
@@ -774,6 +802,8 @@ def run_ingestion(
         options: Beam pipeline options (runner, project, region, …).
         ask: What to ask the worker for, for each paper committed; None for a run into a bucket no
             worker reads.
+        openalex_api_key_factory: Builds the OpenAlex API key on each resolving worker
+            (`openalex_key.from_secret_manager` over the project holding it).
         seed_prefix: The flat seed prefix to ingest.
         limit: Ingest only the first `limit` paired seed objects (for a bounded run,
             e.g. on the DirectRunner); `None` ingests every pair.
@@ -789,6 +819,7 @@ def run_ingestion(
         conn_factory=conn_factory,
         licence=licence,
         now=now,
+        openalex_api_key_factory=openalex_api_key_factory,
         seed_prefix=seed_prefix,
         limit=limit,
         ask=ask,

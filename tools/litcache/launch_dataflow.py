@@ -35,7 +35,9 @@ read/write on the scratch bucket on every run shape — Dataflow ``staging``/``t
 there and the workers, not the submitter, read and write them; the staged shape also reads
 ``ingest/`` and writes ``papers/`` there. On the ``--direct`` shape it needs the same on
 ``--source-bucket``. (All granted out of band for a bounded run; baked into
-``IngestionRuntime`` for production.)
+``IngestionRuntime`` for production.) The workers read the OpenAlex API key themselves
+(`openalex_key`), as ``themis-ingest``, which ``IngestionRuntime`` grants `secretAccessor`
+on it; the key never travels in the submitted job.
 
 Example::
 
@@ -60,7 +62,7 @@ from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from google.cloud import storage as gcs
 
-from themis.litcache import cloudsql, enqueue, ingest_beam, pipeline, report
+from themis.litcache import cloudsql, enqueue, ingest_beam, openalex_key, pipeline, report
 from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger('litcache.launch_dataflow')
@@ -319,6 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         now=now,
         options=options,
         ask=_ask(args),
+        openalex_api_key_factory=functools.partial(openalex_key.from_secret_manager, args.target.project),
         seed_prefix=args.seed_prefix,
         limit=args.limit,
     )

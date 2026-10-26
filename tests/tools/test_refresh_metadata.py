@@ -13,7 +13,7 @@ from collections.abc import Sequence
 import pytest
 from google.cloud import storage as gcs
 
-from themis.litcache import resolve, writer
+from themis.litcache import metadata_fields, resolve, writer
 from themis.litcache.models import litcache_pb2
 from tools.litcache import refresh_metadata
 
@@ -49,8 +49,9 @@ def _commit_without_metadata(bucket: gcs.Bucket, doc_id: str, pmid: str) -> None
 
 
 def _metadata(pmid: str) -> bytes:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = pmid
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = pmid
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     return metadata.SerializeToString()
 
 
@@ -63,7 +64,7 @@ def test_dry_run_lists_the_due_paper_and_writes_nothing(
     async def never_called(_requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.ResolvedPaper]:
         raise AssertionError('a dry run must not resolve')
 
-    monkeypatch.setattr(refresh_metadata, '_resolve_live', never_called)
+    monkeypatch.setattr(refresh_metadata, '_live_resolver', lambda _project: never_called)
 
     code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored', '--dry-run'])
 
@@ -95,7 +96,7 @@ def test_a_resolver_miss_is_reported_and_exits_non_zero(
     async def nothing(_requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.ResolvedPaper]:
         return {}
 
-    monkeypatch.setattr(refresh_metadata, '_resolve_live', nothing)
+    monkeypatch.setattr(refresh_metadata, '_live_resolver', lambda _project: nothing)
 
     code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored'])
 
@@ -115,7 +116,7 @@ def test_a_complete_refresh_exits_zero(gcs_bucket: gcs.Bucket, monkeypatch: pyte
             for r in requests
         }
 
-    monkeypatch.setattr(refresh_metadata, '_resolve_live', one)
+    monkeypatch.setattr(refresh_metadata, '_live_resolver', lambda _project: one)
 
     code = refresh_metadata.main(['--project', 'cpg-themis-test', '--bucket', 'ignored'])
 

@@ -27,7 +27,17 @@ from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
 from themis.common import sql
-from themis.litcache import efetch, enqueue, ingest, mirror, paper_metadata, resolve, writer
+from themis.litcache import (
+    efetch,
+    enqueue,
+    ingest,
+    metadata_fields,
+    openalex,
+    resolve,
+    sourced_metadata,
+    upstream_record,
+    writer,
+)
 from themis.litcache import outcome as litcache_outcome
 from themis.litcache.models import litcache_pb2
 from themis.rpc import literature_pb2, literature_pb2_grpc
@@ -38,6 +48,7 @@ from themis.services.evidence.literature import live as live_mod
 from themis.services.evidence.literature import servicer as servicer_mod
 from themis.services.evidence.tests import authz
 from themis.testing import in_process_grpc
+from themis.testing import openalex as fake_openalex
 
 _DOC = '000006fa-e679-4f46-a052-8fb0e69f280c'
 _DOC_PENDING = '000006fa-e679-4f46-a052-8fb0e69f281d'  # a second paper: source, no rendering
@@ -91,28 +102,33 @@ def _rendering(from_source: str, converter: litcache_pb2.Converter) -> litcache_
     return litcache_pb2.Record(deps=[f'{from_source}rev'], created_at=_ts(_CAPTURED), rendering=construction)
 
 
+def _filled(source: litcache_pb2.MetadataSource) -> bytes:
+    """``metadata.pb`` as a writer stores it: the source record, and the metadata filled from it."""
+    sourced = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
+    return sourced_metadata.to_canonical_bytes(sourced)
+
+
 def _metadata(title: str) -> bytes:
     """A journal record's ``metadata.pb``: PubMed's field, in its journal arm."""
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.article.article_title.value = title
-    return metadata.SerializeToString()
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.article.article_title.value = title
+    return _filled(source)
 
 
 def _crossref_metadata(title: str) -> bytes:
-    """A Crossref-resolved paper's ``metadata.pb``: the envelope's ``crossref`` field alone."""
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.crossref.title.append(title)
-    return metadata.SerializeToString()
+    """A Crossref-resolved paper's ``metadata.pb``: the source record's ``crossref_json`` field."""
+    work = {'DOI': '10.1/x', 'title': [title]}
+    return _filled(litcache_pb2.MetadataSource(crossref_json=upstream_record.to_text(work)))
 
 
 def _book_metadata(*, chapter_title: str | None, book_title: str) -> bytes:
     """A book record's ``metadata.pb``: PubMed's field, in its book arm; ``chapter_title=None`` is a whole book."""
-    metadata = litcache_pb2.PaperMetadata()
-    document = metadata.pubmed.book_article.book_document
+    source = litcache_pb2.MetadataSource()
+    document = source.pubmed.book_article.book_document
     document.book.book_title.value = book_title
     if chapter_title is not None:
         document.article_title.value = chapter_title
-    return metadata.SerializeToString()
+    return _filled(source)
 
 
 def _seed_paper(
@@ -157,7 +173,7 @@ _NO_HTTP = typing.cast('httpx2.AsyncClient', None)
 
 
 def _store(bucket: storage.Bucket) -> litcache_store.Store:
-    return litcache_store.Store(bucket, _NO_HTTP)
+    return litcache_store.Store(bucket, _NO_HTTP, openalex_api_key=fake_openalex.API_KEY)
 
 
 def test_describe_prefers_markdown_when_xml_derived(gcs_bucket: storage.Bucket) -> None:
@@ -324,7 +340,7 @@ def test_describe_titles_a_bookshelf_chapter_by_its_chapter_title(gcs_bucket: st
 
 
 def test_describe_maps_a_corrupt_metadata_pb_to_internal(gcs_bucket: storage.Bucket) -> None:
-    # The writer validates every envelope it writes, so bytes that do not read as one are the store's
+    # The writer validates every `metadata.pb` it writes, so bytes that do not read as one are the store's
     # own fault — INTERNAL, not an UNKNOWN unexpected-exception, and not a paper without a title.
     _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=b'\xff\xff\xff')
     with pytest.raises(grpc.aio.AioRpcError) as exc:
@@ -347,10 +363,11 @@ def test_describe_titles_a_whole_book_record_by_its_book_title(gcs_bucket: stora
 
 
 def test_describe_fails_on_metadata_with_no_record(gcs_bucket: storage.Bucket) -> None:
-    # An envelope with no record set is a corrupt blob: the reader fails rather than reading it as a
+    # A source record with no index's record is a corrupt blob: the reader fails rather than reading it as a
     # paper without metadata (which would fall back to an external id and hide the corruption).
-    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=litcache_pb2.PaperMetadata().SerializeToString())
-    with pytest.raises(literature_backend.CorruptMetadataError, match='no record set'):
+    sourced = litcache_pb2.SourcedMetadata(metadata=litcache_pb2.Metadata(), source=litcache_pb2.MetadataSource())
+    _seed_paper(gcs_bucket, sources=[_xml_source()], metadata=sourced.SerializeToString())
+    with pytest.raises(literature_backend.CorruptMetadataError, match='no index record set'):
         asyncio.run(_store(gcs_bucket).describe_paper(_DOC))
 
 
@@ -384,7 +401,7 @@ def _run_over_grpc[T](
 
     async def run() -> T:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(_no_upstream)) as http_client:
-            store = litcache_store.Store(bucket, http_client)
+            store = litcache_store.Store(bucket, http_client, openalex_api_key=fake_openalex.API_KEY)
             backend = live_mod.LiveBackend(store, discovery_mod.Indexes(http_client))
             servicer = servicer_mod.Servicer(backend)
             async with in_process_grpc.serving(
@@ -742,7 +759,9 @@ class _FakeTasksClient:
 def _conversion_backend(client: _FakeTasksClient) -> litcache_store.Store:
     """A backend whose only reachable collaborator is the tasks client — the bucket is never touched."""
     enqueuer = enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', client), _CONVERT_TARGET)
-    return litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP, enqueuer=enqueuer)
+    return litcache_store.Store(
+        typing.cast('storage.Bucket', None), _NO_HTTP, openalex_api_key=fake_openalex.API_KEY, enqueuer=enqueuer
+    )
 
 
 def test_a_conversion_request_names_a_main_text_task_per_distinct_paper() -> None:
@@ -757,12 +776,16 @@ def test_a_conversion_request_names_a_main_text_task_per_distinct_paper() -> Non
 def test_an_empty_batch_reaches_no_queue() -> None:
     # Nothing to convert must not be an error even where no queue is wired, or a deployment without
     # the lane could not answer for a corpus that happens to be entirely settled.
-    backend = litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP)
+    backend = litcache_store.Store(
+        typing.cast('storage.Bucket', None), _NO_HTTP, openalex_api_key=fake_openalex.API_KEY
+    )
     asyncio.run(backend.request_conversions([]))
 
 
 def test_an_unwired_lane_is_a_permanent_condition() -> None:
-    backend = litcache_store.Store(typing.cast('storage.Bucket', None), _NO_HTTP)
+    backend = litcache_store.Store(
+        typing.cast('storage.Bucket', None), _NO_HTTP, openalex_api_key=fake_openalex.API_KEY
+    )
     with pytest.raises(literature_backend.ConversionNotConfiguredError):
         asyncio.run(backend.request_conversions([_DOC]))
 
@@ -903,6 +926,7 @@ def _store_over(resolver: ingest.MetadataResolver) -> litcache_store.Store:
     return litcache_store.Store(
         typing.cast('storage.Bucket', None),
         _NO_HTTP,
+        openalex_api_key=fake_openalex.API_KEY,
         connect=lambda: typing.cast('sql.Connection', None),
         resolve_metadata=resolver,
     )
@@ -912,10 +936,11 @@ def _store_over(resolver: ingest.MetadataResolver) -> litcache_store.Store:
     'error',
     [
         efetch.RecordPreconditionError('two Bookshelf accessions'),
-        mirror.SchemaDriftError('crossref', 'title: not an array'),
-        ingest.UnstorableRecordError('not a PaperMetadata envelope'),
+        upstream_record.SchemaDriftError(upstream_record.Index.CROSSREF, 'title: not an array'),
+        openalex.AmbiguousWorkError('pmid:29089047', ['https://openalex.org/W1', 'https://openalex.org/W2']),
+        ingest.UnstorableRecordError('not a SourcedMetadata'),
     ],
-    ids=['precondition', 'schema-drift', 'unstorable-record'],
+    ids=['precondition', 'schema-drift', 'ambiguous-openalex-work', 'unstorable-record'],
 )
 def test_a_record_the_store_cannot_hold_is_charged_to_its_own_id(
     error: Exception, caplog: pytest.LogCaptureFixture
@@ -981,6 +1006,65 @@ def test_an_upstream_that_did_not_answer_still_fails_the_whole_batch() -> None:
         asyncio.run(_store_over(_raising(error)).ingest_papers([_FRESH_DOI]))
 
 
+def _crossref_then_openalex(openalex_answer: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.MockTransport:
+    """Crossref answering any DOI with a minimal work, and OpenAlex answering as `openalex_answer` does."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == fake_openalex.HOST:
+            return openalex_answer(request)
+        assert request.url.host == 'api.crossref.org', request.url
+        doi = request.url.path.removeprefix('/works/')
+        return httpx2.Response(200, json={'message': {'DOI': doi, 'title': ['T'], 'publisher': 'X'}})
+
+    return httpx2.MockTransport(handler)
+
+
+def _ingest_through_the_ladder(transport: httpx2.MockTransport, external_id: str) -> dict[str, str]:
+    async def run() -> dict[str, str]:
+        async with httpx2.AsyncClient(transport=transport) as client:
+            store = litcache_store.Store(
+                typing.cast('storage.Bucket', None),
+                client,
+                openalex_api_key=fake_openalex.API_KEY,
+                connect=lambda: typing.cast('sql.Connection', None),
+            )
+            return await store.ingest_papers([external_id])
+
+    return asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    'outage',
+    [httpx2.Response(429), httpx2.Response(503), httpx2.ConnectError('unreachable')],
+    ids=['rate-limited', 'server-error', 'unreachable'],
+)
+def test_openalex_unreachable_fails_the_batch_as_an_outage(
+    outage: httpx2.Response | httpx2.ConnectError, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The paper must not be stored without OpenAlex's record of it, so the call fails as for a PubMed outage.
+    monkeypatch.setattr(openalex, '_RETRY_BASE_DELAY_SECONDS', 0)
+
+    def answer(_request: httpx2.Request) -> httpx2.Response:
+        if isinstance(outage, Exception):
+            raise outage
+        return outage
+
+    with pytest.raises(literature_backend.IngestUnavailableError) as excinfo:
+        _ingest_through_the_ladder(_crossref_then_openalex(answer), _FRESH_DOI)
+    # OpenAlex's failure, not the crosswalk this store has none of: the ladder never got as far as the write.
+    assert isinstance(excinfo.value.__cause__, httpx2.HTTPError)
+
+
+def test_a_paper_openalex_holds_two_works_of_is_charged_to_its_own_id(caplog: pytest.LogCaptureFixture) -> None:
+    doi = _FRESH_DOI.removeprefix('doi:')
+    works = [fake_openalex.work(work_id=w, doi=doi) for w in ('W1', 'W2')]
+    transport = _crossref_then_openalex(lambda request: fake_openalex.answer(works, request))
+    with caplog.at_level('WARNING', logger=litcache_store.__name__):
+        assert _ingest_through_the_ladder(transport, _FRESH_DOI) == {}
+    assert 'openalex.org/W1' in caplog.text
+    assert 'openalex.org/W2' in caplog.text
+
+
 def _resolving(known: Sequence[str]) -> ingest.MetadataResolver:
     """A metadata ladder that holds `known` (as `{scheme}:{value}` keys) and nothing else."""
 
@@ -992,11 +1076,9 @@ def _resolving(known: Sequence[str]) -> ingest.MetadataResolver:
         article.medline_citation.article.article_title.value = f'The paper behind {asked}'
         scheme, _, value = asked.partition(':')
         return resolve.ResolvedPaper(
-            # The envelope the real ladder answers with: `metadata.pb` is a `PaperMetadata`, and the
-            # writer keeps nothing else. A bare record here would exercise a shape no rung produces.
-            metadata=paper_metadata.to_canonical_bytes(
-                litcache_pb2.PaperMetadata(pubmed=litcache_pb2.PubmedRecord(article=article))
-            ),
+            # What the real ladder answers with: `metadata.pb` is a `SourcedMetadata`, and the writer
+            # keeps nothing else. A bare record here would exercise a shape no rung produces.
+            metadata=_filled(litcache_pb2.MetadataSource(pubmed=litcache_pb2.PubmedRecord(article=article))),
             external_ids=litcache_pb2.ExternalIds(**{scheme: value}),
             publisher=None,
         )
@@ -1020,6 +1102,7 @@ def _ingesting_store(
     return litcache_store.Store(
         bucket,
         _NO_HTTP,
+        openalex_api_key=fake_openalex.API_KEY,
         connect=connect,
         enqueuer=enqueuer,
         resolve_metadata=_resolving(known_upstream),
@@ -1095,13 +1178,19 @@ def test_an_unreachable_upstream_is_reported_as_transient_not_as_an_absent_paper
     async def resolve_metadata(**_kwargs: object) -> resolve.ResolvedPaper:
         raise httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(503, request=request))
 
-    backend = litcache_store.Store(gcs_bucket, _NO_HTTP, connect=crosswalk_connect, resolve_metadata=resolve_metadata)
+    backend = litcache_store.Store(
+        gcs_bucket,
+        _NO_HTTP,
+        openalex_api_key=fake_openalex.API_KEY,
+        connect=crosswalk_connect,
+        resolve_metadata=resolve_metadata,
+    )
     with pytest.raises(literature_backend.IngestUnavailableError):
         asyncio.run(backend.ingest_papers([_FRESH_DOI]))
 
 
 def test_ingesting_without_a_crosswalk_is_a_permanent_condition(gcs_bucket: storage.Bucket) -> None:
-    backend = litcache_store.Store(gcs_bucket, _NO_HTTP)
+    backend = litcache_store.Store(gcs_bucket, _NO_HTTP, openalex_api_key=fake_openalex.API_KEY)
     with pytest.raises(literature_backend.IngestNotConfiguredError):
         asyncio.run(backend.ingest_papers([_FRESH_DOI]))
 

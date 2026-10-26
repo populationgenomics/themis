@@ -19,7 +19,7 @@ import httpx2
 import pytest
 from lxml import etree
 
-from themis.litcache import efetch
+from themis.litcache import efetch, metadata_fields, sourced_metadata, upstream_record
 from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
@@ -63,8 +63,9 @@ def _book_under(pmid: bytes) -> bytes:
     return _BOOK_XML.replace(b'<PMID Version="1">30000010</PMID>', b'<PMID Version="1">' + pmid + b'</PMID>', 1)
 
 
-def _record(metadata: bytes) -> litcache_pb2.PaperMetadata:
-    return litcache_pb2.PaperMetadata.FromString(metadata)
+def _record(resolved: efetch.ResolvedMetadata) -> litcache_pb2.SourcedMetadata:
+    sourced_metadata.check(resolved.sourced)
+    return resolved.sourced
 
 
 def test_parse_response_validates_and_keys_by_pmid() -> None:
@@ -72,10 +73,10 @@ def test_parse_response_validates_and_keys_by_pmid() -> None:
 
     assert set(response.resolved) == {_PMID}
     assert response.precondition_failed == {}
-    # the metadata.pb bytes parse straight back to the envelope, the journal record in PubMed's field.
-    paper = _record(response.resolved[_PMID].metadata)
-    assert paper.pubmed.WhichOneof('kind') == 'article'
-    article = paper.pubmed.article
+    # a `SourcedMetadata` meeting its constraints, the journal record in PubMed's field.
+    paper = _record(response.resolved[_PMID])
+    assert paper.source.pubmed.WhichOneof('kind') == 'article'
+    article = paper.source.pubmed.article
     assert article.medline_citation.pmid.value == _PMID
     title = article.medline_citation.article.article_title.value
     assert 'Whole exome sequencing' in title
@@ -104,13 +105,13 @@ def test_parse_set_keys_each_record_kind_by_the_pmid_it_states() -> None:
     assert book.pubmed_book_data.publication_status == 'ppublish'
 
 
-def test_parse_response_resolves_a_book_record_in_the_envelopes_book_arm() -> None:
+def test_parse_response_resolves_a_book_record_in_the_book_arm() -> None:
     resolved = efetch.parse_response(_oa_set_with(_BOOK_XML)).resolved
 
     assert set(resolved) == {_PMID, _BOOK_PMID}
-    paper = _record(resolved[_BOOK_PMID].metadata)
-    assert paper.pubmed.WhichOneof('kind') == 'book_article'
-    assert paper.pubmed.book_article.book_document.article_title.value == 'A synthetic chapter'
+    paper = _record(resolved[_BOOK_PMID])
+    assert paper.source.pubmed.WhichOneof('kind') == 'book_article'
+    assert paper.source.pubmed.book_article.book_document.article_title.value == 'A synthetic chapter'
     # The accession is the chapter's own id, harvested beside the PMID; a book part has no PMCID.
     assert resolved[_BOOK_PMID].external_ids == litcache_pb2.ExternalIds(pmid=_BOOK_PMID, bookid=_BOOKID)
 
@@ -120,7 +121,7 @@ def test_a_whole_book_record_resolves_without_a_chapter_title() -> None:
     # the one the record carries.
     resolved = efetch.parse_response(_set(_BOOK_XML.replace(_CHAPTER_TITLE, b''))).resolved
 
-    document = _record(resolved[_BOOK_PMID].metadata).pubmed.book_article.book_document
+    document = _record(resolved[_BOOK_PMID]).source.pubmed.book_article.book_document
     assert not document.HasField('article_title')
     assert document.book.book_title.value == 'A synthetic review series'
     assert resolved[_BOOK_PMID].external_ids.bookid == _BOOKID
@@ -323,7 +324,7 @@ def test_live_efetch() -> None:
 
     resolved = asyncio.run(run()).resolved
     assert pmid in resolved
-    assert _record(resolved[pmid].metadata).pubmed.WhichOneof('kind') is not None
+    assert _record(resolved[pmid]).source.pubmed.WhichOneof('kind') is not None
 
 
 def _counting_handler(
@@ -399,3 +400,15 @@ def test_fetch_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(httpx2.HTTPStatusError):
         asyncio.run(run())
     assert len(calls) == 1
+
+
+def test_a_record_whose_metadata_cannot_be_filled_is_charged_to_its_pmid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fill(_source: litcache_pb2.MetadataSource) -> litcache_pb2.Metadata:
+        raise upstream_record.SchemaDriftError(upstream_record.Index.PUBMED, 'title is unreadable')
+
+    monkeypatch.setattr(metadata_fields, 'fill', fill)
+    parsed = efetch.parse_response(_EFETCH_XML.read_bytes())
+    assert parsed.resolved == {}
+    assert 'its metadata cannot be filled: title is unreadable' in parsed.precondition_failed['29089047']

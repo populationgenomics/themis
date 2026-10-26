@@ -48,7 +48,7 @@ screenshot = ["google-cloud-storage"]
 # task. litfetch/litdown/pubmed_proto are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.4.0", "litdown==0.7.0", "pubmed_proto==0.5.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -121,7 +121,7 @@ sheaf_service = ["grpcio", "grpcio-health-checking", "protobuf", { include-group
 # the record the DescribeVariant reply carries whole is the wheel's rather than this tree's reading.
 # google-cloud-tasks is the one write: MaybeIngestPapers enqueues a `/convert` task for each PENDING
 # paper it resolved, through litcache/enqueue.py behind the literature backend port.
-evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.4.0", "pubmed_proto==0.5.0", "clinvar_proto==0.2.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
+evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate", "httpx2", "lxml", "defusedxml", "google-cloud-storage", "google-cloud-tasks", "litfetch==0.5.0", "pubmed_proto==0.5.0", "clinvar_proto==0.2.0", "anchorite==0.5.1", { include-group = "session" }, { include-group = "cloudsql" }]
 # full-text convert worker (themis/services/convert_worker): the pushed Cloud Task /convert handler that
 # runs a paper's steps (litcache.produce.run) off the read request path. aiohttp is the HTTP server (as in
 # the dispatcher); the rest is produce's own closure — litfetch fetches the OA source, litdown converts
@@ -142,7 +142,7 @@ convert_worker = [
     "protobuf",
     "protovalidate",
     "requests",
-    "litfetch==0.4.0",
+    "litfetch==0.5.0",
     "litdown==0.7.0",
     "pubmed_proto==0.5.0",
     "anthropic",

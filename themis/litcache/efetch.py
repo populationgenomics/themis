@@ -6,23 +6,20 @@ pubmed_proto's generated converter turns each into its proto record directly:
 
     efetch XML → xml_converter (XML→proto) → PubmedArticle | PubmedBookArticle, keyed by PMID
 
-A trailing `DeleteCitation` names PMIDs whose records PubMed has withdrawn: nothing is indexed
-under them, and the set states so rather than leaving it to be noticed as an omission.
-`parse_set` is that parse, both kinds; `parse_response` is the store's view of it — each record
-as `metadata.pb` (a serialized `PaperMetadata` envelope, the record in its `pubmed` field in the
-arm of its kind) plus the cross-ids that fall out of the record's own id lists — DOI and PMCID for
-a journal record, the Bookshelf accession (and any DOI) for a book record — harvested into the
-litcache manifest's `ExternalIds` with no separate id-conversion call. A record that converts but whose id lists fail
-the store's precondition is charged to its own PMID, with the reason, so it costs its paper and
-not the batch it was fetched in. A paper with a DOI but no PubMed record is resolved from Crossref
-(`themis.litcache.crossref`) instead.
+A trailing `DeleteCitation` names PMIDs whose records PubMed has withdrawn: nothing is indexed under them, and the set
+states so rather than leaving it to be noticed as an omission. `parse_set` is that parse, both kinds; `parse_response`
+is the store's view of it — each record as a `SourcedMetadata` (the record in its `pubmed` field in the arm of its kind)
+plus the cross-ids that fall out of the record's own id lists — DOI and PMCID for a journal record, the Bookshelf
+accession (and any DOI) for a book record — harvested into the litcache manifest's `ExternalIds` with no separate
+id-conversion call. A record that converts but whose id lists fail the store's precondition is charged to its own PMID,
+with the reason, so it costs its paper and not the batch it was fetched in. A paper with a DOI but no PubMed record is
+resolved from Crossref (`themis.litcache.crossref`) instead.
 Batch-first: the id list is POSTed in the request body so one path serves any batch size
 (NCBI's GET path caps the inline `id=` list near 200 UIDs; POST has no such ceiling).
 """
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import re
 from collections.abc import Callable, Container, Sequence
@@ -33,16 +30,14 @@ import pubmed_proto
 from lxml import etree
 
 from themis.common import constants
-from themis.litcache import paper_metadata
+from themis.litcache import metadata_fields, transient, upstream_record
 from themis.litcache.models import litcache_pb2
 
 _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 # eutils etiquette: identify the tool + a contact for rate-limit/abuse follow-up.
 _TOOL = 'themis-litcache'
 
-# eutils returns transient 5xx/429 and drops connections under load; resolution runs the whole
-# corpus through one shard, so an unretried blip would abort the entire run. Retry with
-# exponential backoff (2s, 4s, 8s, 16s) before giving up.
+# eutils returns transient 5xx/429 and drops connections under load (`transient`): 2s, 4s, 8s, 16s.
 _MAX_FETCH_ATTEMPTS = 5
 _RETRY_BASE_DELAY_SECONDS = 2.0
 
@@ -77,12 +72,11 @@ class ResolvedMetadata:
     """The bibliographic outputs of resolving one paper.
 
     Attributes:
-        metadata: The canonical `metadata.pb` bytes (a serialized `PaperMetadata`
-            envelope, the record in its `pubmed` field).
+        sourced: The record in its source record's `pubmed` field, and the metadata filled from it alone.
         external_ids: The cross-ids harvested from the record, for the manifest.
     """
 
-    metadata: bytes
+    sourced: litcache_pb2.SourcedMetadata
     external_ids: litcache_pb2.ExternalIds
 
 
@@ -149,8 +143,13 @@ def _harvest_book_ids(book: pubmed_proto.pubmed_pb2.PubmedBookArticle) -> litcac
     return litcache_pb2.ExternalIds(doi=next(iter(dois), None), pmid=pmid, bookid=bookid)
 
 
-def _envelope(record: litcache_pb2.PubmedRecord) -> bytes:
-    return paper_metadata.to_canonical_bytes(litcache_pb2.PaperMetadata(pubmed=record))
+def _sourced(record: litcache_pb2.PubmedRecord) -> litcache_pb2.SourcedMetadata:
+    source = litcache_pb2.MetadataSource(pubmed=record)
+    try:
+        metadata = metadata_fields.fill(source)
+    except upstream_record.SchemaDriftError as e:
+        raise RecordPreconditionError(f'its metadata cannot be filled: {e.detail}') from e
+    return litcache_pb2.SourcedMetadata(metadata=metadata, source=source)
 
 
 async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attempts: int = _MAX_FETCH_ATTEMPTS) -> bytes:
@@ -174,8 +173,6 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attemp
     """
     if not pmids:
         raise ValueError('efetch.fetch requires at least one PMID')
-    if attempts < 1:
-        raise ValueError(f'attempts must be positive, got {attempts}')
     params = {
         'db': 'pubmed',
         'id': ','.join(pmids),
@@ -185,23 +182,10 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attemp
     }
     # POST the id list in the body: NCBI caps an inline `id=` list on a GET near 200
     # UIDs, but POST has no such ceiling, so one path serves any batch size.
-    for attempt in range(attempts):
-        try:
-            response = await http_client.post(_EFETCH_URL, data=params)
-            response.raise_for_status()
-            return response.content
-        except (httpx2.TransportError, httpx2.HTTPStatusError) as exc:
-            if not _is_retryable(exc) or attempt == attempts - 1:
-                raise
-        await asyncio.sleep(_RETRY_BASE_DELAY_SECONDS * 2**attempt)
-    raise AssertionError('unreachable: the retry loop returns or raises on the final attempt')
-
-
-def _is_retryable(exc: httpx2.TransportError | httpx2.HTTPStatusError) -> bool:
-    """Whether an efetch failure is transient: a transport error, HTTP 429, or 5xx."""
-    if isinstance(exc, httpx2.HTTPStatusError):
-        return exc.response.status_code == 429 or exc.response.status_code >= 500
-    return True
+    response = await transient.send(
+        lambda: http_client.post(_EFETCH_URL, data=params), attempts=attempts, base_delay=_RETRY_BASE_DELAY_SECONDS
+    )
+    return response.content
 
 
 class ParsedSet(NamedTuple):
@@ -304,37 +288,38 @@ class ParsedResponse(NamedTuple):
 def parse_response(xml: bytes) -> ParsedResponse:
     """Parse an efetch `PubmedArticleSet` into per-PMID resolved metadata (see `parse_set`).
 
-    A record of either kind resolves: its `metadata.pb` is the `PaperMetadata` envelope with the
-    record in its `pubmed` field, in the arm of its kind, and its cross-ids are the ones its own id lists state. A book
-    record that fails the store's precondition on its ids is charged to its PMID with the reason,
-    and the other records in the set resolve regardless.
+    A record of either kind resolves: its `SourcedMetadata` holds the
+    record in its `pubmed` field, in the arm of its kind, and its cross-ids are the ones its own id
+    lists state. A record that fails the store's precondition, a book record on its ids or any
+    record whose metadata cannot be filled, is charged to its PMID with the reason, and the
+    other records in the set resolve regardless.
 
     Raises:
         ValueError: As `parse_set` — the set does not read as one record per PMID.
     """
     parsed = parse_set(xml)
-    resolved = {
-        pmid: ResolvedMetadata(
-            metadata=_envelope(litcache_pb2.PubmedRecord(article=article)),
-            external_ids=_harvest_article_ids(article),
-        )
-        for pmid, article in parsed.articles.items()
-    }
+    resolved: dict[str, ResolvedMetadata] = {}
     precondition_failed: dict[str, str] = {}
-    for pmid, book in parsed.book_articles.items():
+    for pmid, article in parsed.articles.items():
         try:
-            external_ids = _harvest_book_ids(book)
+            resolved[pmid] = ResolvedMetadata(
+                sourced=_sourced(litcache_pb2.PubmedRecord(article=article)),
+                external_ids=_harvest_article_ids(article),
+            )
         except RecordPreconditionError as e:
             precondition_failed[pmid] = str(e)
-            continue
-        resolved[pmid] = ResolvedMetadata(
-            metadata=_envelope(litcache_pb2.PubmedRecord(book_article=book)),
-            external_ids=external_ids,
-        )
+    for pmid, book in parsed.book_articles.items():
+        try:
+            resolved[pmid] = ResolvedMetadata(
+                sourced=_sourced(litcache_pb2.PubmedRecord(book_article=book)),
+                external_ids=_harvest_book_ids(book),
+            )
+        except RecordPreconditionError as e:
+            precondition_failed[pmid] = str(e)
     return ParsedResponse(resolved=resolved, precondition_failed=precondition_failed)
 
 
 async def resolve(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> ParsedResponse:
-    """Resolve a batch of PMIDs to `metadata.pb` + cross-ids via efetch (see `parse_response`)."""
+    """Resolve a batch of PMIDs to their `SourcedMetadata` + cross-ids via efetch (see `parse_response`)."""
     xml = await fetch(pmids, http_client=http_client)
     return parse_response(xml)

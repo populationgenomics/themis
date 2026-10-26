@@ -13,8 +13,8 @@ identifiers make. `refresh` resolves the requests in chunks and writes each reco
 its chunk resolves. Nothing is skipped quietly — a manifest that cannot be read, one
 whose `doc_id` disagrees with its directory, one that names no identifier the resolver
 takes, a paper the resolver returns nothing for, and a paper it settles with a failure
-of its own (a record failing the store's precondition, a record its mirror does not
-hold) are each a `Failure` with its reason, and the caller decides what a non-empty
+of its own (a record failing the store's precondition, a record Themis cannot read or
+store) are each a `Failure` with its reason, and the caller decides what a non-empty
 failure list means.
 
 The prefix listed and the objects written are both the writer's layout, so the refresh
@@ -60,7 +60,7 @@ class Failure:
         reason: What stopped it — an unreadable manifest, a `doc_id` disagreeing with
             its directory, no resolvable identifier, a resolver miss, or the resolver's
             own failure for the paper: a record failing the store's precondition, or
-            one that does not fit its mirror.
+            one that cannot be read or stored.
     """
 
     doc_id: str
@@ -199,7 +199,7 @@ async def refresh(
     Requests are keyed by `doc_id`, so two papers sharing an identifier each receive
     a record. A paper present in the plan and absent from the resolver's result is a
     failure, never a silent skip; so is one the resolver settles with a failure of its
-    own — a record failing the store's precondition, or one its mirror does not hold —
+    own — a record failing the store's precondition, or one Themis cannot read or store —
     carrying that failure's reason. The due papers are resolved in chunks and each chunk
     written before the next is resolved: a resolver transport error propagates, the
     records written so far stay (each is valid on its own), and a re-run resumes with
@@ -217,7 +217,7 @@ async def refresh(
 
     Raises:
         ValueError: If `limit` or `chunk_size` is not positive, or the resolver returns
-            bytes that are not a `PaperMetadata` envelope meeting its constraints (a
+            bytes that are not a `SourcedMetadata` meeting its constraints (a
             resolver defect, not a per-paper condition).
         Exception: Whatever the resolver raises on transport failure propagates.
     """
@@ -240,7 +240,8 @@ async def refresh(
 
 
 def _failure_reason(
-    request: resolve.ResolveRequest, outcome: resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure | None
+    request: resolve.ResolveRequest,
+    outcome: resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure | resolve.AmbiguousWorkFailure | None,
 ) -> str:
     """Why the paper was not refreshed, worded as ingestion's dead letters word the same outcome."""
     match outcome:
@@ -250,6 +251,8 @@ def _failure_reason(
             return f'precondition failed: {reason}'
         case resolve.SchemaDriftFailure(reason=reason):
             return f'schema drift: {reason}'
+        case resolve.AmbiguousWorkFailure(reason=reason):
+            return f'ambiguous OpenAlex work: {reason}'
 
 
 def render_failures(failures: Iterable[Failure]) -> str:

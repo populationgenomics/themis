@@ -56,7 +56,7 @@ class IngestionRuntime(pulumi.ComponentResource):
             fulltext_bucket: The full-text store bucket name; the SA gets
                 object read/write on it (seed sources in, cache out).
             secret_accessors: Stable-label → Secret Manager `secret_id`; the SA
-                gets `secretAccessor` on each (e.g. the Semantic Scholar key).
+                gets `secretAccessor` on each (the Semantic Scholar and OpenAlex keys).
             opts: Resource options (dependency wiring).
         """
         super().__init__('themis:infra:IngestionRuntime', 'themis', None, opts)

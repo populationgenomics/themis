@@ -1,4 +1,4 @@
-"""The rules `SourcedMetadata`, `MetadataSource` and `Metadata` declare, as protovalidate applies them."""
+"""The rules `SourcedMetadata`, `MetadataSource` and `Metadata` declare, and the code check that enforces them."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import protovalidate
 import pytest
 from pubmed_proto import pubmed_pb2
 
+from themis.litcache import sourced_metadata
 from themis.litcache.models import litcache_pb2
 
 
@@ -130,6 +131,11 @@ _INVALID = [
         id='seven-digit-mesh-ui',
     ),
     pytest.param(
+        _sourced(litcache_pb2.MetadataSource(pubmed=_pubmed()), mesh_headings=(_heading('D001943', 'Q12'),)),
+        'string.pattern',
+        id='short-qualifier-ui',
+    ),
+    pytest.param(
         _sourced(litcache_pb2.MetadataSource(pubmed=_pubmed()), publication_types=('Case Reports', '')),
         'string.min_len',
         id='empty-publication-type',
@@ -151,3 +157,46 @@ def test_sourced_metadata_breaking_a_rule_is_invalid(sourced: litcache_pb2.Sourc
     with pytest.raises(protovalidate.ValidationError) as raised:
         protovalidate.validate(sourced)
     assert [violation.proto.rule_id for violation in raised.value.violations] == [rule_id]
+
+
+# Valid to protovalidate, refused by the code check on a rule of its own: a JSON record that is not a JSON object.
+_ONLY_THE_CODE_CHECK_REFUSES = [
+    _sourced(litcache_pb2.MetadataSource(crossref_json='[]'), title='T'),
+    _sourced(litcache_pb2.MetadataSource(openalex_json='"W1"'), title='T'),
+]
+
+
+@pytest.mark.parametrize('sourced', _ONLY_THE_CODE_CHECK_REFUSES)
+def test_a_json_record_that_is_not_an_object_is_refused_by_the_code_check_alone(
+    sourced: litcache_pb2.SourcedMetadata,
+) -> None:
+    protovalidate.validate(sourced)  # the proto can state only a minimum length
+    with pytest.raises(ValueError, match='not a JSON object'):
+        sourced_metadata.check(sourced)
+
+
+# Every way `sourced_metadata.check` refuses a record.
+_REFUSALS = (
+    r"no metadata|no source record|no index record set|both PubMed's and Crossref's|neither of its kinds"
+    r'|not a JSON object|an empty name|not a bare ORCID iD|not four digits|no descriptor|not a MeSH unique identifier'
+    r'|not a [DQ] term|an empty type'
+)
+
+
+@pytest.mark.parametrize('sourced', [*_VALID, *(param.values[0] for param in _INVALID)])
+def test_the_code_check_agrees_with_the_declared_constraints(sourced: litcache_pb2.SourcedMetadata) -> None:
+    # The proto declares the constraints; `sourced_metadata.check` enforces them at the boundary in code. Both must
+    # settle every record the same way, or the declaration and the enforcement have drifted.
+    try:
+        protovalidate.validate(sourced)
+    except protovalidate.ValidationError:
+        with pytest.raises(ValueError, match=_REFUSALS):
+            sourced_metadata.check(sourced)
+    else:
+        sourced_metadata.check(sourced)  # does not raise
+
+
+def test_every_source_record_field_is_one_index() -> None:
+    # The code check counts indexes through INDEX_FIELDS, so a field missing from it would escape the count.
+    declared = sorted(f.name for f in litcache_pb2.MetadataSource.DESCRIPTOR.fields)
+    assert sorted(sourced_metadata.INDEX_FIELDS.values()) == declared

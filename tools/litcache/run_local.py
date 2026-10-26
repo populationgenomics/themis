@@ -13,7 +13,9 @@ end-to-end without any Dataflow or Pulumi infrastructure. It:
    throwaway testcontainers instance the litcache migration is applied to;
 3. runs the ingestion on the DirectRunner and prints the diagnostics report.
 
-Auth is ambient GCS credentials (your ``gcloud`` ADC) — no IAM grants, no Cloud SQL.
+Auth is ambient GCS credentials (your ``gcloud`` ADC) — no IAM grants, no Cloud SQL. The
+OpenAlex API key is read from ``--project``'s Secret Manager under the same credentials
+(`openalex_key`), so they need `secretAccessor` on it.
 Metadata resolution and the OA ladder use their live defaults; resolution is batched,
 so the request rate is bounded by call count, not worker count. A paper that cannot be
 resolved or written is dead-lettered under ``diagnostics/dead_letters/`` and the run
@@ -23,11 +25,11 @@ delete the scratch bucket, or call ``themis.litcache.report.teardown_seed``.
 Example (throwaway Postgres needs the ``test`` group for testcontainers)::
 
     uv run --group dataflow --group test python -m tools.litcache.run_local \
-        --scratch-bucket cpg-themis-dev-litcache-scratch --limit 6
+        --project cpg-themis-dev --scratch-bucket cpg-themis-dev-litcache-scratch --limit 6
 
     # against an existing Postgres (schema already migrated; no testcontainers):
     uv run --group dataflow python -m tools.litcache.run_local \
-        --scratch-bucket cpg-themis-dev-litcache-scratch --limit 6 \
+        --project cpg-themis-dev --scratch-bucket cpg-themis-dev-litcache-scratch --limit 6 \
         --pg-host localhost --pg-user litcache --pg-database litcache --rebuild-crosswalk
 """
 
@@ -47,7 +49,7 @@ from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from google.cloud import storage as gcs
 
-from themis.litcache import crosswalk, ingest_beam, pipeline, rebuild, report
+from themis.litcache import crosswalk, ingest_beam, openalex_key, pipeline, rebuild, report
 from themis.litcache.models import litcache_pb2
 from themis.migrate import migrate
 
@@ -201,6 +203,7 @@ def _options(num_workers: int) -> pipeline_options.PipelineOptions:
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--project', required=True, help="GCP project whose Secret Manager holds OpenAlex's API key")
     parser.add_argument(
         '--scratch-bucket',
         required=True,
@@ -281,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             now=now,
             options=_options(args.direct_num_workers),
             ask=None,  # no worker reads the scratch bucket
+            openalex_api_key_factory=functools.partial(openalex_key.from_secret_manager, args.project),
             seed_prefix=args.seed_prefix,
             limit=args.limit,
         )

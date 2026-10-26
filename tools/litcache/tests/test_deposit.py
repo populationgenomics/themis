@@ -13,6 +13,7 @@ import contextlib
 import datetime
 import hashlib
 import io
+import json
 import pathlib
 import typing
 
@@ -22,8 +23,9 @@ import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
+from google.protobuf import json_format
 
-from themis.litcache import crosswalk, enqueue, paper_metadata, writer
+from themis.litcache import crosswalk, enqueue, sourced_metadata, writer
 from themis.litcache.models import litcache_pb2, work_pb2
 from tools.litcache import deposit
 
@@ -164,8 +166,7 @@ def test_manifest_ids_refuse_two_ids_of_one_scheme(ids: list[str]) -> None:
 
 
 def test_build_metadata_from_title_names_the_paper() -> None:
-    envelope = paper_metadata.parse(_metadata('The paper title'))
-    assert paper_metadata.title(envelope) == 'The paper title'
+    assert sourced_metadata.read_metadata(_metadata('The paper title')).title == 'The paper title'
 
 
 def test_build_metadata_rejects_an_empty_title() -> None:
@@ -180,10 +181,29 @@ def test_build_metadata_requires_exactly_one_of_title_or_file(tmp_path: pathlib.
         deposit._build_metadata(title='t', metadata_file=tmp_path / 'm.json')
 
 
-def test_build_metadata_rejects_an_envelope_with_no_record(tmp_path: pathlib.Path) -> None:
+@pytest.mark.parametrize('suffix', ['.json', '.pb'])
+def test_build_metadata_fills_from_a_metadata_file(tmp_path: pathlib.Path, suffix: str) -> None:
+    work = {
+        'title': ['The <i>BRCA1</i> gene'],
+        'author': [{'given': 'Jane', 'family': 'Doe'}],
+        'issued': {'date-parts': [[2020]]},
+    }
+    source = litcache_pb2.MetadataSource(crossref_json=json.dumps(work))
+    path = tmp_path / f'meta{suffix}'
+    if suffix == '.json':
+        path.write_text(json_format.MessageToJson(source), 'utf-8')
+    else:
+        path.write_bytes(source.SerializeToString())
+    metadata = sourced_metadata.read_metadata(deposit._build_metadata(title=None, metadata_file=path))
+    assert metadata.title == 'The BRCA1 gene'
+    assert [a.name for a in metadata.authors] == ['Jane Doe']
+    assert metadata.year == '2020'
+
+
+def test_build_metadata_rejects_a_source_with_no_record(tmp_path: pathlib.Path) -> None:
     empty = tmp_path / 'empty.json'
     empty.write_text('{}', 'utf-8')
-    with pytest.raises(deposit.DepositError, match=r'names no paper|no record'):
+    with pytest.raises(deposit.DepositError, match='no index record'):
         deposit._build_metadata(title=None, metadata_file=empty)
 
 

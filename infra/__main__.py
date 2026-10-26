@@ -70,6 +70,9 @@ enable_pr_screenshot_bucket = config.require_bool('enablePrScreenshotBucket')
 # Third-party ingestion key (no keyless/WIF path); the value is encrypted stack
 # config. Provisioned into Secret Manager below; its runtime reader lands later.
 semantic_scholar_api_key = config.require_secret('semanticScholarApiKey')
+# The OpenAlex API key every litcache lookup of a work sends; encrypted stack config, provisioned into Secret
+# Manager below and read by the evidence service and the Dataflow ingest workers.
+openalex_api_key = config.require_secret('openalexApiKey')
 # Anthropic worker credential for the self-hosted sandbox; encrypted stack config.
 anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
 # The webhook signing key (whsec_, encrypted config) the dispatcher verifies deliveries against, and the
@@ -265,6 +268,12 @@ convert_invoker = convert.ConversionInvoker(
     worker_service_name=convert_worker.service_name,
     opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
 )
+openalex = secrets.openalex_secret(
+    project=project,
+    region=region,
+    api_key=openalex_api_key,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 evidence_service = evidence.EvidenceService(
     project=project,
     region=region,
@@ -280,6 +289,7 @@ evidence_service = evidence.EvidenceService(
     convert_queue_path=convert_queue_path,
     convert_worker_url=convert_worker.url,
     convert_invoker_sa_email=convert_invoker.service_account_email,
+    openalex_api_key=openalex,
     opts=pulumi.ResourceOptions(
         depends_on=[base, database, services_net, fulltext, resources, convert_queue, convert_worker, convert_invoker]
     ),
@@ -544,8 +554,13 @@ ingestion = ingest.IngestionRuntime(
     subnetwork=ingest_net.subnetwork,
     sql_instance=database.instance,
     fulltext_bucket=fulltext.name,
-    secret_accessors={'semantic-scholar': semantic_scholar.secret_id},
-    opts=pulumi.ResourceOptions(depends_on=[base, database, fulltext, semantic_scholar, ingest_net]),
+    secret_accessors={
+        'semantic-scholar': semantic_scholar.secret.secret_id,
+        'openalex-api-key': openalex.secret.secret_id,
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[base, database, fulltext, semantic_scholar.version, openalex.version, ingest_net]
+    ),
 )
 # The hourly sweep asks for every paper on which a step has work, so a lost request is asked again. It runs the
 # worker's image, so it applies the worker's own step tests.
@@ -758,7 +773,8 @@ pulumi.export('evidence_sa_email', evidence_service.service_account_email)
 # litcache.crosswalk SELECT grant.
 pulumi.export('evidence_db_user', evidence_service.db_user)
 pulumi.export('clu_sa_email', automation_user.service_account_email)
-pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret_id)
+pulumi.export('semantic_scholar_secret_id', semantic_scholar.secret.secret_id)
+pulumi.export('openalex_secret_id', openalex.secret.secret_id)
 pulumi.export('ingest_sa_email', ingestion.service_account_email)
 pulumi.export('ingest_sa_unique_id', ingestion.service_account_unique_id)
 # The ingestion SA's DB login — the identity the Dataflow worker mints as.

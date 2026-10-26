@@ -34,6 +34,10 @@ _ADMITTED: Mapping[str, str] = {
         'MaveDB. Looks up published multiplexed-assay scores by variant URN or ClinGen allele id; '
         'submission is a separate authenticated surface we hold no credential for.'
     ),
+    'api.openalex.org': (
+        'OpenAlex. Looks up the works it holds for a PMID or DOI by a works filter; the API is read-only, '
+        'no parameter names a location it fetches, and corrections to its records go through a separate form.'
+    ),
     'cspec.genome.network': (
         'ClinGen Criteria Specification Registry. Reads rule sets and specification documents by '
         'identifier; the registry is authored through its own UI, not through this API.'

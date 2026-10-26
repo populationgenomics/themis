@@ -36,9 +36,9 @@ probes for its manifest ([`pipeline.ingest_paper`](../../themis/litcache/pipelin
 
 So a plain re-run over the whole seed is idempotent and, beside that missing-record fill, does one thing: it completes
 the papers that have no manifest — those dead-lettered last time (unresolved metadata, a record failing the store's
-precondition or its mirror, a write-half exception, an oversized pdf) and those a crash left claimed but uncommitted.
-Each is re-done under the `doc_id` its crosswalk row already holds. Nothing else changes — though a skip is not free:
-the write stage downloads a paper's seed json and pdf before it learns the manifest exists
+precondition, a record with a field its reader cannot read, a write-half exception, an oversized pdf) and those a crash
+left claimed but uncommitted. Each is re-done under the `doc_id` its crosswalk row already holds. Nothing else changes —
+though a skip is not free: the write stage downloads a paper's seed json and pdf before it learns the manifest exists
 ([`ingest_beam._WritePaperFn`](../../themis/litcache/ingest_beam.py)), so a full re-run still moves the whole seed.
 
 There is no flag that forces reprocessing. To redo a committed paper, remove its directory and re-run:
@@ -63,22 +63,43 @@ regenerated without re-converting
 ### Refreshing the bibliographic records
 
 To refresh the records and keep every conversion — the path for a change to the record itself, such as the
-`PaperMetadata` envelope — delete the `metadata.pb` objects and run
+`SourcedMetadata` itself — delete the `metadata.pb` objects and run
 [`refresh_metadata.py`](../../tools/litcache/refresh_metadata.py), which resolves every committed paper without one
 through the same batched ladder ingestion uses (efetch for a PMID; litfetch's DOI resolution, then OpenAlex, for the
-rest), in this process, with no Dataflow. Delete before you refresh, and as soon as the reader of the new shape is
-deployed: the evidence service's `describe_paper`
+rest), in this process, with no Dataflow. Delete before you refresh. When the reader of the new shape can still read the
+old one, delete as soon as it is deployed; when it cannot, as in the move off the mirrors below, delete before the
+deploy and again after its rollout. The evidence service's `describe_paper`
 ([`literature/litcache.py`](../../themis/services/evidence/literature/litcache.py)), the record's only reader, titles a
-paper with no `metadata.pb` by its DOI or PMID, but raises `CorruptMetadataError` on one that does not read as an
-envelope — and a pre-envelope record may instead decode as an envelope carrying nonsense. Until the refresh has
-finished, run no ingestion job built before the new record shape: its skip writes a missing record for any paper whose
-seed's ids are the manifest's, in the shape it was built with, and the refresh never replaces a record that exists. The
-bucket is versioned with a 30-day noncurrent window, so the deletion is recoverable for that long.
+paper with no `metadata.pb` by its DOI or PMID, but raises `CorruptMetadataError` on one that does not read as a
+`SourcedMetadata` — and a record written in an older shape may instead decode as one carrying nonsense. Until the
+refresh has finished, run no ingestion job built before the new record shape: its skip writes a missing record for any
+paper whose seed's ids are the manifest's, in the shape it was built with, and the refresh never replaces a record that
+exists. The bucket is versioned with a 30-day noncurrent window, so the deletion is recoverable for that long.
 
-An additive change to the envelope needs no such haste. A record written before the envelope gained a field stays
-readable without it, so the deletion can wait for a convenient hour, and between the deletion and the refresh
-`describe_paper` titles each paper by its DOI or PMID rather than failing. The JSON text stored beside the Crossref and
-OpenAlex mirrors is such a change: a record written before it holds the mirror alone, and the refresh gives it the text.
+An additive change to `SourcedMetadata` needs no such haste. A record written before it gained a field stays readable
+without it, so the deletion can wait for a convenient hour, and between the deletion and the refresh `describe_paper`
+titles each paper by its DOI or PMID rather than failing.
+
+The move off the mirrors is the other kind: a reader on the new code refuses a record written before it, a
+`PaperMetadata` rather than a `SourcedMetadata`, and the evidence service's on-demand ingest (`MaybeIngestPapers`) keeps
+writing records through the deploy, since nothing pauses it. So:
+
+1. Start no bulk ingest and no refresh, and delete every `metadata.pb`. Bulk ingest resumes only after step 4, and only
+   from a job built from the move, since an older job writes records in the old shape.
+1. Deploy, and wait for the rollout to finish.
+1. Delete every `metadata.pb` again, to remove any record the old revision's on-demand ingest wrote during the rollout.
+1. Run the refresh until it exits 0.
+1. Run `fill_metadata_fields --verify` (below): every record is in its final shape.
+
+Between a paper's deletion and the refresh reaching it, `describe_paper` titles it by its DOI or PMID. During the
+rollout neither revision reads the other's records: a record the old revision wrote fails to read on the new one until
+the second deletion, and a record the new revision wrote fails to read on the old one until the rollout finishes. The
+refresh rewrites PubMed's records as well, because pubmed-proto 0.4.0 escapes the markdown markers a record states
+literally and 0.3.0 did not.
+
+To roll back, redeploy the previous revision and wait for its rollout, delete every `metadata.pb`, then restore each
+record's generation from before step 1 (the 30-day noncurrent window). A paper first ingested during the move has no
+such generation; a refresh on the previous revision resolves it.
 
 ```sh
 gcloud storage rm "gs://$FULLTEXT/papers/**/metadata.pb"
@@ -99,11 +120,28 @@ and why, and the reasons are of two kinds. A transport failure ends the run with
 miss (`metadata unresolved`) can be litfetch's batched resolver abandoning a lookup it could not complete in time; both
 are re-run. The rest stay on the list however often it runs and are reviewed, not retried: a manifest with neither pmid
 nor doi (nothing to resolve on), an unreadable manifest, a record that fails the store's precondition
-(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record holding a value its mirror
-cannot hold under a key the mirror declares (`schema drift:`, repaired by changing that field of the mirror). A key the
-index adds causes it only if its value is a NaN or an infinite number, which standard JSON text cannot carry; otherwise
-the mirror drops the key, and the JSON text beside it keeps it. A miss that persists is a paper no index has a record
-for.
+(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record holding a field a reader
+reads in a shape it cannot read (`schema drift:`, repaired in that reader). A key the index adds causes it only if its
+value is a NaN or an infinite number, which standard JSON text cannot carry; otherwise no reader reads the key, and the
+JSON text keeps it. A miss that persists is a paper no index has a record for.
+
+### Filling the metadata fields
+
+Every record is written with its metadata fields (title, authors, year, container title and abstract) filled from the
+index record it holds. When the rule that fills them changes, run
+[`fill_metadata_fields.py`](../../tools/litcache/fill_metadata_fields.py) after the writers on the new rule are
+deployed: it refills each record from the record it already holds, so it needs no index and no deletion, and rewrites
+only the records whose fields differ.
+
+```sh
+uv run --group litcache python -m tools.litcache.fill_metadata_fields --project="$PROJECT" --dry-run
+uv run --group litcache python -m tools.litcache.fill_metadata_fields --project="$PROJECT"
+uv run --group litcache python -m tools.litcache.fill_metadata_fields --project="$PROJECT" --verify
+```
+
+A record is written back only if no writer replaced it since the tool read it, and a record a writer replaced is read
+again. A non-zero exit lists each paper it could not fill and why. Schema drift names the field a reader could not read,
+and is repaired in that reader. `--verify` passes when every record's fields are as the current rule fills them.
 
 A **full rebuild** is the same operation over the whole prefix — the path when the conversions themselves must change,
 since nothing regenerates a committed paper's sources or renderings in place. It is a destructive change to a stored
@@ -204,7 +242,7 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 It exercises everything the real run does — the image, the subnet, the SA, the Cloud SQL mint, live NCBI and OA egress —
 and stays cheap. Read the report it prints at the end: `counters` is the per-stage tally for this run (`papers_seen`
 should equal
-`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_failed`);
+`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_ambiguous_work + paper_failed`);
 `dead-lettered` is the count of records under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside
 it with a `reason` per paper; `no_text_layer` lists pdf-derived papers with no recoverable character layer, a
 data-quality signal rather than a failure. A second staged run reports every paper it wrote the first time as

@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 import pytest
 from google.cloud import storage as gcs
 
-from themis.litcache import refresh, resolve, writer
+from themis.litcache import metadata_fields, refresh, resolve, writer
 from themis.litcache.models import litcache_pb2
 
 _A = '1a000000-0000-4000-8000-000000000001'
@@ -24,8 +24,9 @@ _E = '5e000000-0000-4000-8000-000000000005'
 
 
 def _metadata(pmid: str) -> bytes:
-    metadata = litcache_pb2.PaperMetadata()
-    metadata.pubmed.article.medline_citation.pmid.value = pmid
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = pmid
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     return metadata.SerializeToString()
 
 
@@ -234,12 +235,14 @@ def test_refresh_reports_a_resolver_miss_and_still_refreshes_the_rest(gcs_bucket
 
 
 def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_bucket: gcs.Bucket) -> None:
-    """A record that exists but fails a precondition or its mirror is the resolver's failure, kept as one."""
+    """A record failing a precondition or its reader, or one OpenAlex holds two works of, is kept as a failure."""
     _commit(gcs_bucket, _A, pmid='1', metadata=None)
     _commit(gcs_bucket, _B, pmid='2', metadata=None)
+    _commit(gcs_bucket, _C, pmid='3', metadata=None)
     outcomes = {
         '1': resolve.RecordPreconditionFailure(reason='no article title'),
         '2': resolve.SchemaDriftFailure(reason='publication_year: not an integer'),
+        '3': resolve.AmbiguousWorkFailure(reason='OpenAlex holds 2 works for pmid:3: W1, W2'),
     }
 
     report = _run(gcs_bucket, _stub_resolver(outcomes))
@@ -248,9 +251,10 @@ def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_b
     assert {f.doc_id: f.reason for f in report.failures} == {
         _A: 'precondition failed: no article title',
         _B: 'schema drift: publication_year: not an integer',
+        _C: 'ambiguous OpenAlex work: OpenAlex holds 2 works for pmid:3: W1, W2',
     }
-    assert _read(gcs_bucket, writer.metadata_path(_A)) is None
-    assert _read(gcs_bucket, writer.metadata_path(_B)) is None
+    for doc_id in (_A, _B, _C):
+        assert _read(gcs_bucket, writer.metadata_path(doc_id)) is None
 
 
 def test_refresh_carries_plan_failures_into_its_report(gcs_bucket: gcs.Bucket) -> None:

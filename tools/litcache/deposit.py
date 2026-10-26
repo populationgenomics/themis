@@ -2,7 +2,7 @@ r"""Deposit a supplied paper (a held PDF) into the litcache full-text corpus.
 
 The deposit step of the supplied-literature runbook: a PDF handed to us, not fetched from a
 source, is placed in the corpus and transcribed. It mints (or reuses) the
-paper's `doc_id` in the crosswalk, wraps the PDF and a bibliographic envelope into a
+paper's `doc_id` in the crosswalk, wraps the PDF and its bibliographic record into a
 `writer.PaperInput`, and commits it with `writer.write_paper` — the same placement the Beam
 ingestion path uses. A paper already committed under the same ids gains the PDF as a source
 revision. Then it asks the full-text worker for the paper, naming the main-text target, on the
@@ -23,7 +23,7 @@ crosswalk connection is; infra grants it enqueue on the bulk queue and use of th
 invoker.
 
 Every input is explicit and fails loud: the licence is the depositor's assertion (no
-default), the metadata must name the paper (`paper_metadata.check`), and a file that is not
+default), the metadata must name the paper (`sourced_metadata.check`, and a title), and a file that is not
 a PDF, an id `identity` does not recognise, or a licence basis that is neither value each
 raises `DepositError` rather than a stack trace from inside a library.
 
@@ -42,6 +42,7 @@ import contextlib
 import dataclasses
 import datetime
 import hashlib
+import json
 import pathlib
 import sys
 from collections.abc import Sequence
@@ -51,10 +52,20 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 from google.cloud.sql import connector
-from google.protobuf import json_format
+from google.protobuf import json_format, message
 
 from themis.common import sql
-from themis.litcache import crosswalk, enqueue, identity, paper_metadata, pdf, work, writer
+from themis.litcache import (
+    crosswalk,
+    enqueue,
+    identity,
+    metadata_fields,
+    pdf,
+    sourced_metadata,
+    upstream_record,
+    work,
+    writer,
+)
 from themis.litcache.models import litcache_pb2, work_pb2
 from tools import clu
 
@@ -181,52 +192,54 @@ def _pdf_has_text_layer(pdf_bytes: bytes) -> bool:
 def _build_metadata(*, title: str | None, metadata_file: pathlib.Path | None) -> bytes:
     """Build the `metadata.pb` bytes from `--title` or `--metadata-file` (exactly one).
 
-    A `--title` wraps into a minimal Crossref record naming the paper; a `--metadata-file`
-    carries a fuller `PaperMetadata` (protobuf JSON `.json`, or serialized `.pb`). Either
-    way the envelope must carry an index record and state a title — an envelope naming no
-    paper is refused.
+    A `--title` wraps into a source record holding a minimal Crossref record naming the paper; a
+    `--metadata-file` carries a fuller `MetadataSource` (protobuf JSON `.json`, or serialized `.pb`).
+    Either way the `Metadata` is filled from that source record (`metadata_fields.fill`), as every
+    other writer fills it, and must state a title — metadata naming no paper is refused.
 
     Raises:
         DepositError: If neither or both inputs are given, the file cannot be parsed, or the
-            envelope carries no record or no title.
+            source record holds no index record, cannot be filled, or fills no title.
     """
     if title is not None and metadata_file is None:
-        envelope = litcache_pb2.PaperMetadata()
-        envelope.crossref.title.append(title)
+        source = litcache_pb2.MetadataSource(crossref_json=json.dumps({'title': [title]}))
     elif title is None and metadata_file is not None:
-        envelope = _load_metadata_file(metadata_file)
+        source = _load_metadata_file(metadata_file)
     else:
         raise DepositError('supply exactly one of --title or --metadata-file')
     try:
-        data = paper_metadata.to_canonical_bytes(envelope)
-    except ValueError as e:
+        sourced_metadata.check_source(source)
+        sourced = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
+        data = sourced_metadata.to_canonical_bytes(sourced)
+    except (ValueError, upstream_record.SchemaDriftError) as e:
         raise DepositError(f'metadata does not name the paper: {e}') from e
-    if not paper_metadata.title(envelope):
+    if not sourced.metadata.title:
         raise DepositError('metadata does not name the paper: its record states no title')
     return data
 
 
-def _load_metadata_file(path: pathlib.Path) -> litcache_pb2.PaperMetadata:
-    """Parse a `--metadata-file` into a `PaperMetadata`; `.json` is protobuf JSON, `.pb` is serialized.
+def _load_metadata_file(path: pathlib.Path) -> litcache_pb2.MetadataSource:
+    """Parse a `--metadata-file` into a `MetadataSource`; `.json` is protobuf JSON, `.pb` is serialized.
 
     Raises:
         DepositError: If the suffix is neither, or the contents do not parse as a
-            `PaperMetadata`.
+            `MetadataSource`.
     """
     data = path.read_bytes()
     suffix = path.suffix.lower()
+    source = litcache_pb2.MetadataSource()
     if suffix == '.json':
-        envelope = litcache_pb2.PaperMetadata()
         try:
-            json_format.Parse(data.decode('utf-8'), envelope)
+            json_format.Parse(data.decode('utf-8'), source)
         except (json_format.ParseError, UnicodeDecodeError) as e:
-            raise DepositError(f'--metadata-file {path} is not valid PaperMetadata JSON') from e
-        return envelope
+            raise DepositError(f'--metadata-file {path} is not valid MetadataSource JSON') from e
+        return source
     if suffix == '.pb':
         try:
-            return paper_metadata.parse(data)
-        except ValueError as e:
-            raise DepositError(f'--metadata-file {path} is not a valid PaperMetadata: {e}') from e
+            source.ParseFromString(data)
+        except message.DecodeError as e:
+            raise DepositError(f'--metadata-file {path} is not a valid MetadataSource') from e
+        return source
     raise DepositError(f'--metadata-file must be .json or .pb, not {suffix!r}')
 
 
@@ -338,7 +351,7 @@ def deposit(
         external_ids: The paper's scheme-qualified external ids (`doi:…`, `pmid:…`, …).
         licence: The depositor's asserted raw licence string.
         licence_basis: `LICENCE_BASIS_ARTIFACT` or `LICENCE_BASIS_ASSERTED`.
-        metadata: The `metadata.pb` bytes (a `PaperMetadata` envelope naming the paper).
+        metadata: The `metadata.pb` bytes (a `SourcedMetadata` naming the paper).
         now: Timezone-aware capture timestamp.
         enqueuer: The enqueuer on the bulk queue the request goes on.
 
@@ -472,7 +485,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         '--metadata-file',
         type=pathlib.Path,
-        help='a fuller PaperMetadata as protobuf JSON (.json) or serialized (.pb); use instead of --title',
+        help=(
+            'a fuller MetadataSource as protobuf JSON (.json) or serialized (.pb); use instead of --title. In JSON an '
+            'index record is a string holding its JSON: {"crossrefJson": "{\\"title\\": [\\"T\\"], ...}"}'
+        ),
     )
     parser.add_argument('--bucket', default=None, help='the corpus bucket (default: <project>-fulltext)')
     parser.add_argument(

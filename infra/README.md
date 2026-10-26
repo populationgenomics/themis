@@ -134,10 +134,12 @@ deploy, not just its own.
 - **Secrets** use the `gcpkms` provider (per-stack KMS key): the value goes in encrypted stack config
   (`pulumi config set --secret themis:<key>`), the program reads it with `config.require_secret(...)`, and — for a
   runtime credential — provisions it into Secret Manager (`themis_infra/secrets.py`) so the workload reads it there, not
-  from Pulumi config. First one landed: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret. A
-  credential a Google-managed service also holds for us — the Slack bot token, `themis:slackBotToken`, behind the spend
-  alerts' notification channel — goes to that resource's sensitive field directly as well as into Secret Manager
-  (`slack-bot-token`), which the morning report Job reads (`themis_infra/cost_report.py`).
+  from Pulumi config. It provisions two: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret, and
+  `themis:openalexApiKey` → `openalex-api-key`, which Cloud Run mounts into the evidence service and the Dataflow ingest
+  workers read directly (`themis/litcache/openalex_key.py`). A credential a Google-managed service also holds for us —
+  the Slack bot token, `themis:slackBotToken`, behind the spend alerts' notification channel — goes to that resource's
+  sensitive field directly as well as into Secret Manager (`slack-bot-token`), which the morning report Job reads
+  (`themis_infra/cost_report.py`).
 
 ## Config
 

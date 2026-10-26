@@ -17,7 +17,7 @@ import functools
 import json
 import pathlib
 import posixpath
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import httpx2
 import litfetch
@@ -26,8 +26,9 @@ import pytest
 from google.cloud import storage as gcs
 from litfetch import artifacts, ids
 
-from themis.litcache import crosswalk, pipeline, rebuild, resolve, writer
+from themis.litcache import crosswalk, metadata_fields, pipeline, rebuild, resolve, writer
 from themis.litcache.models import litcache_pb2
+from themis.testing import openalex as fake_openalex
 
 _FIXTURES = pathlib.Path(__file__).parent.parent / 'fixtures' / 'litcache'
 _NONOA = _FIXTURES / 'nonoa'
@@ -46,9 +47,10 @@ _BUCKET_KEY = '10.9999%2Fsynthetic.nonoa.json'
 # DOI key is otherwise fetchable and would hit the live litfetch ladder).
 _NO_OA: list[litfetch.Fetcher] = []
 # On the cross-paper-link path the write half adopts the canonical, whose manifest and record
-# exist, and returns before conversion; the record is a valid envelope that is never written.
-_LINK_RECORD = litcache_pb2.PaperMetadata()
-_LINK_RECORD.pubmed.article.medline_citation.pmid.value = '30000009'
+# exist, and returns before conversion; the record is a valid `SourcedMetadata` that is never written.
+_LINK_SOURCE = litcache_pb2.MetadataSource()
+_LINK_SOURCE.pubmed.article.medline_citation.pmid.value = '30000009'
+_LINK_RECORD = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(_LINK_SOURCE), source=_LINK_SOURCE)
 _UNUSED_RESOLVED = resolve.ResolvedPaper(
     metadata=_LINK_RECORD.SerializeToString(), external_ids=litcache_pb2.ExternalIds(), publisher=None
 )
@@ -108,17 +110,24 @@ def _bookshelf_fetcher(received: list[ids.ArticleIds]) -> _BodyFetcher:
     return _BodyFetcher(blob, name='europe_pmc_bookshelf', requires=frozenset({'bookid'}), received=received)
 
 
+def _holding_no_openalex_work(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.MockTransport:
+    """`handler` for the resolving index, and an OpenAlex that holds no work of any paper."""
+
+    def route(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == fake_openalex.HOST:
+            return fake_openalex.answer([], request)
+        return handler(request)
+
+    return httpx2.MockTransport(route)
+
+
 def _transport(body: bytes) -> httpx2.MockTransport:
-    """A transport serving one body for any request (metadata resolution: Crossref or efetch)."""
-
-    def handler(_request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, content=body)
-
-    return httpx2.MockTransport(handler)
+    """A transport serving one body for any metadata request (Crossref or efetch)."""
+    return _holding_no_openalex_work(lambda _request: httpx2.Response(200, content=body))
 
 
 # The non-OA fixture's DOI has no real Crossref record; a synthetic works message
-# stands in so metadata resolution (Crossref rung) produces a record the mirror holds.
+# stands in so metadata resolution (Crossref rung) produces a record its readers read.
 _NONOA_CROSSREF = json.dumps(
     {
         'message': {
@@ -153,7 +162,9 @@ def _resolve_paper(*, pmid: str | None, doi: str | None, transport: httpx2.MockT
 
     async def run() -> resolve.ResolvedPaper:
         async with httpx2.AsyncClient(transport=transport) as client:
-            return await resolve.resolve_metadata(pmid=pmid, doi=doi, http_client=client)
+            return await resolve.resolve_metadata(
+                pmid=pmid, doi=doi, http_client=client, openalex_api_key=fake_openalex.API_KEY
+            )
 
     return asyncio.run(run())
 
@@ -254,13 +265,13 @@ def test_ingests_a_nonoa_paper_end_to_end(conn: pg8000.dbapi.Connection, gcs_buc
     assert (
         gcs_bucket.blob(posixpath.join(paper_dir, pdf_path)).download_as_bytes() == (_NONOA / 'source.pdf').read_bytes()
     )
-    # metadata.pb is the resolved Crossref record, whole, in the envelope's crossref field — not a
-    # caller input.
+    # metadata.pb is the resolved Crossref record, whole, in the source record's crossref_json field, with its
+    # metadata fields filled — not a caller input.
     metadata_bytes = gcs_bucket.blob(posixpath.join(paper_dir, 'metadata.pb')).download_as_bytes()
-    paper = litcache_pb2.PaperMetadata.FromString(metadata_bytes)
-    assert paper.HasField('crossref')
-    assert not paper.HasField('pubmed')
-    assert paper.crossref.title[0] == 'Synthetic Non-OA Fixture'
+    paper = litcache_pb2.SourcedMetadata.FromString(metadata_bytes)
+    assert paper.source.HasField('crossref_json')
+    assert not paper.source.HasField('pubmed')
+    assert paper.metadata.title == 'Synthetic Non-OA Fixture'
     assert _doc_id_for(conn, 'doi:10.9999/synthetic.nonoa') == result.doc_id
 
 
@@ -292,8 +303,9 @@ def test_a_seed_reaching_the_doc_id_through_a_shared_id_fills_no_record(
         bucket_key='30000001.json', docling_json=json.dumps(docling).encode(), pdf=(_NONOA / 'source.pdf').read_bytes()
     )
     ident = pipeline.extract_identity(seed)
-    record = litcache_pb2.PaperMetadata()
-    record.pubmed.article.medline_citation.pmid.value = '30000001'
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = '30000001'
+    record = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
     resolved = resolve.ResolvedPaper(
         metadata=record.SerializeToString(), external_ids=litcache_pb2.ExternalIds(pmid='30000001'), publisher=None
     )
@@ -446,11 +458,11 @@ def test_ingests_a_bookshelf_chapter_via_the_xml_branch(conn: pg8000.dbapi.Conne
     assert _doc_id_for(conn, f'pmid:{_BOOK_PMID}') == result.doc_id
     assert _doc_id_for(conn, f'bookid:{_BOOKID}') == result.doc_id
 
-    # metadata.pb is PubMed's book record, in the book arm of the envelope's pubmed field.
+    # metadata.pb is PubMed's book record, in the book arm of the source record's pubmed field.
     metadata_bytes = gcs_bucket.blob(posixpath.join('papers', result.doc_id, 'metadata.pb')).download_as_bytes()
-    paper = litcache_pb2.PaperMetadata.FromString(metadata_bytes)
-    assert paper.pubmed.WhichOneof('kind') == 'book_article'
-    assert paper.pubmed.book_article.book_document.article_title.value == 'A synthetic chapter'
+    paper = litcache_pb2.SourcedMetadata.FromString(metadata_bytes)
+    assert paper.source.pubmed.WhichOneof('kind') == 'book_article'
+    assert paper.source.pubmed.book_article.book_document.article_title.value == 'A synthetic chapter'
 
     # The fetch bundle carried the resolved accession, which is what let the Bookshelf rung fire.
     assert received == [ids.ArticleIds(pmid=_BOOK_PMID, bookid=_BOOKID)]
@@ -568,7 +580,7 @@ def _crossref_echo_transport() -> httpx2.MockTransport:
         message = {'DOI': doi, 'title': ['Synthetic'], 'issued': {'date-parts': [[2020, 1, 1]]}, 'publisher': 'X'}
         return httpx2.Response(200, content=json.dumps({'message': message}).encode('utf-8'))
 
-    return httpx2.MockTransport(handler)
+    return _holding_no_openalex_work(handler)
 
 
 def _doi_seed(doi_key: str) -> pipeline.SeedObject:

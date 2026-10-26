@@ -10,12 +10,14 @@ record that exists.
 
 No Beam, no Dataflow, no Cloud SQL: the whole run is this process against GCS under
 ambient ADC (`gcloud`), plus live NCBI / Europe PMC / OpenAlex egress. The listing is one
-GCS call; only the due manifests are downloaded.
+GCS call; only the due manifests are downloaded. A live run reads the OpenAlex API key
+from ``--project``'s Secret Manager (`openalex_key`), so the caller needs `secretAccessor`
+on it.
 
 ``--dry-run`` prints the requests a run would make and writes nothing; it already reports
 the papers a run could not attempt (an unreadable manifest, a ``doc_id`` disagreeing with
 its directory, no pmid and no doi). A live run adds what the resolver settles against a
-paper: a miss, a record failing the store's precondition, a record its mirror does not hold.
+paper: a miss, a record failing the store's precondition, a record Themis cannot read or store.
 Any failure exits non-zero — the refresh is complete only when a run exits 0. Resolution is chunked
 and each chunk written before the next, so a transport failure loses nothing already
 written and a re-run resumes.
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import logging
 import sys
 from collections.abc import Sequence
@@ -39,7 +42,7 @@ import litfetch
 from google.cloud import storage as gcs
 
 from themis.common import constants
-from themis.litcache import refresh, resolve
+from themis.litcache import openalex, openalex_key, refresh, resolve
 
 
 def _open_bucket(name: str) -> gcs.Bucket:
@@ -47,18 +50,29 @@ def _open_bucket(name: str) -> gcs.Bucket:
     return gcs.Client().bucket(name)
 
 
-async def _resolve_live(requests: Sequence[resolve.ResolveRequest]) -> dict[str, resolve.Outcome]:
+async def _resolve_live(
+    requests: Sequence[resolve.ResolveRequest], *, openalex_api_key: openalex.ApiKey
+) -> dict[str, resolve.Outcome]:
     """`resolve.resolve_batch` over a live HTTP client and litfetch session, opened per call (the ingestion wiring)."""
     async with (
         httpx2.AsyncClient() as client,
         litfetch.Session(contact=constants.CONTACT_EMAIL) as session,
     ):
-        return await resolve.resolve_batch(requests, http_client=client, session=session)
+        return await resolve.resolve_batch(
+            requests, http_client=client, session=session, openalex_api_key=openalex_api_key
+        )
+
+
+def _live_resolver(project: str) -> refresh.Resolver:
+    """`_resolve_live` with the OpenAlex key `project`'s Secret Manager holds, read once for the whole run."""
+    return functools.partial(_resolve_live, openalex_api_key=openalex_key.from_secret_manager(project))
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--project', required=True, help='GCP project the store lives in')
+    parser.add_argument(
+        '--project', required=True, help="GCP project the store lives in, and whose Secret Manager holds OpenAlex's key"
+    )
     parser.add_argument(
         '--bucket', default=None, help='the litcache bucket holding papers/ (default: <project>-fulltext)'
     )
@@ -95,7 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         return _dry_run(bucket, limit=args.limit)
 
-    report = asyncio.run(refresh.refresh(bucket, _resolve_live, limit=args.limit))
+    report = asyncio.run(refresh.refresh(bucket, _live_resolver(args.project), limit=args.limit))
     print(
         f'{report.manifests} manifest(s) under gs://{bucket.name}/papers/; {len(report.refreshed)} metadata.pb written'
     )

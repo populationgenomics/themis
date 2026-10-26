@@ -48,12 +48,12 @@ the docling json *is* the extracted full text.
   needs no live fetch. Redistributable as the article's CC-BY record.
 - `crossref.json` — the Crossref `works` response for DOI
   `10.1186/s13073-017-0482-5` (`api.crossref.org/works/<doi>`). Deterministic input
-  for S11b-2 (the record loaded into the Crossref mirror and kept as JSON text); the
+  for S11b-2 (the record kept as JSON text, its DOI and metadata fields read); the
   response carries no PMID, so it exercises the DOI-only path.
   Crossref metadata is CC0, so redistributable.
 - `openalex.json` — the OpenAlex `works` response for the same DOI
   (`api.openalex.org/works?filter=doi:<doi>`), one result. Deterministic input for the
-  OpenAlex mirror and the record's JSON text; the work states the paper's PMID and PMCID.
+  OpenAlex readers and the record's JSON text; the work states the paper's PMID and PMCID.
   OpenAlex data is CC0.
 
 ### `nonoa/` — synthetic non-OA paper
@@ -103,7 +103,7 @@ halves are synthetic and share the accession `NBK900001` under PMID `30000010`:
 - `efetch.xml` — a `PubmedArticleSet` holding one `PubmedBookArticle`, structurally
   complete in the DTD's element order (the converter reads a record whole or not
   at all). The accession sits in the document's own id list, where PubMed states
-  it. Input for the efetch parse (book arm of the `PaperMetadata` envelope, the
+  it. Input for the efetch parse (book arm of the `pubmed` field of the metadata's source record, the
   harvested `bookid`), the resolver's PMID rung, and the pipeline's Bookshelf
   ingestion.
 - `chapter.xml` — the chapter's BITS `<book-part-wrapper>` as Europe PMC's

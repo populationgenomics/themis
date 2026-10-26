@@ -55,9 +55,9 @@ class MissingRenderingBlobError(Exception):
 
 
 class CorruptMetadataError(Exception):
-    """The paper's ``metadata.pb`` does not read as a ``PaperMetadata`` envelope meeting its constraints — INTERNAL.
+    """The paper's ``metadata.pb`` does not read as a ``SourcedMetadata`` meeting its constraints — INTERNAL.
 
-    The writer validates every envelope it writes, so bytes that fail to read are the store's own
+    The writer validates every `metadata.pb` it writes, so bytes that fail to read are the store's own
     fault. An absent ``metadata.pb`` is a paper without metadata and never raises this.
     """
 
