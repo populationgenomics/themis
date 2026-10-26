@@ -1,4 +1,4 @@
-"""Per-environment baseline: enabled GCP services, the image registry, log retention.
+"""Per-environment baseline: enabled GCP services, the image registry, log retention, IAP's service agent.
 
 What every Themis service in an environment needs before it can be created —
 the GCP APIs the program calls, and the Artifact Registry repository its images
@@ -11,6 +11,10 @@ not of any one service. The window is set to match the audit-log bucket rather
 than the 30-day default, so a question asked months later about what a service
 sent upstream (`docs/design/security.md`, the timing residual) can still be
 answered from the record.
+
+IAP's service agent is here because every IAP-protected resource in the project calls
+Cloud Run as that one identity: the web service, and each operator backend in front of
+a data-plane service (`operator_ingress.py`).
 """
 
 from __future__ import annotations
@@ -53,6 +57,8 @@ class Baseline(pulumi.ComponentResource):
             pushed to and deployed from.
         image_prefix: Host/path prefix for images in `image_registry`, e.g.
             `australia-southeast1-docker.pkg.dev/<project>/themis`.
+        iap_service_agent: The IAM member IAP calls Cloud Run as. A service IAP fronts grants it
+            `run.invoker`; without that IAP answers "The IAP service account is not provisioned".
     """
 
     def __init__(
@@ -104,4 +110,17 @@ class Baseline(pulumi.ComponentResource):
             opts=services_ready,
         )
 
-        self.register_outputs({'image_prefix': self.image_prefix})
+        # Provisions the agent, as `gcloud beta services identity create --service=iap.googleapis.com` does.
+        iap_identity = gcp.projects.ServiceIdentity(
+            'themis-iap-identity',
+            project=project,
+            service='iap.googleapis.com',
+            opts=pulumi.ResourceOptions(
+                parent=self,
+                depends_on=services,
+                aliases=[pulumi.Alias(parent=pulumi.create_urn('themis', 'themis:infra:WebService'))],
+            ),
+        )
+        self.iap_service_agent = iap_identity.member
+
+        self.register_outputs({'image_prefix': self.image_prefix, 'iap_service_agent': self.iap_service_agent})

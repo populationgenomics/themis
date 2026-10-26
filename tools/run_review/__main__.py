@@ -34,7 +34,7 @@ from tools import clone_analysis
 import anthropic
 from google.auth import exceptions as google_auth_exceptions
 
-from tools import clu, clu_database, session_token, stack, web_app
+from tools import clu, clu_database, operator_path, session_token, stack, web_app
 from tools.run_review import rounds
 from tools.run_review.run import provenance, runner, sessions
 from tools.run_review.variant_classification import reference, render, scenario
@@ -336,10 +336,16 @@ def _clone(project: str, service_account: str) -> Callable[[str, pathlib.Path], 
                 destination,
                 project=project,
                 service_url=None,
+                origin=None,
                 service_account=service_account,
                 key_version=None,
             )
-        except (clone_analysis.CloneError, session_token.TokenError, clu.GoogleCallError) as e:
+        except (
+            clone_analysis.CloneError,
+            session_token.TokenError,
+            clu.GoogleCallError,
+            operator_path.TargetError,
+        ) as e:
             raise runner.CloneError(str(e)) from e
 
     return clone

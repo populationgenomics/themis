@@ -5,7 +5,7 @@ same-project VPC or from a Google event source such as Cloud Tasks. A `run.app` 
 so a Cloud Run workload reaches the service only with Direct VPC egress on the services network for all traffic.
 An invoker grant to any other caller is a call Cloud Run refuses before IAM. Two invokers arrive another way, through
 the load balancer, and only where the ingress admits it: IAP's service agent, and the public invoker of a named
-exception, the dispatcher, which `test_dispatcher_edge.py` holds to its own controls.
+exception, which `test_public_ingress.py` holds to its own controls.
 """
 
 from __future__ import annotations

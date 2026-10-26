@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import json
+import time
 import typing
 from collections.abc import Awaitable
 
 import grpc.aio
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from google.auth import crypt as google_crypt
 from google.auth import exceptions as google_auth_exceptions
+from google.auth import jwt as google_jwt
 
 from themis.clients.auth import caller as caller_mod
 
@@ -54,29 +62,98 @@ def test_a_non_bearer_authorization_is_no_token() -> None:
     assert _run(verify(_ctx((('authorization', 'Bearer'),)))) is None
 
 
-def test_cloud_run_verifier_reads_a_verified_email(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        caller_mod.google_id_token,
-        'verify_oauth2_token',
-        lambda *_a, **_k: {'email': 'sa@x', 'email_verified': True},
+class _FakeResponse:
+    def __init__(self, status: int = 200, headers: dict[str, str] | None = None, data: bytes = b'{}') -> None:
+        self.status = status
+        self.headers = headers or {}
+        self.data = data
+
+
+_AUDIENCE = 'https://themis-sheaf-123456789.australia-southeast1.run.app'
+_KEY_ID = 'test-key'
+
+
+@pytest.fixture(scope='module')
+def google_key() -> tuple[str, str]:
+    """An RSA key standing in for one of Google's ID-token signing keys: (private key PEM, certificate PEM)."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, 'test')])
+    now = datetime.datetime.now(datetime.UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
     )
-    verify = caller_mod.cloud_run_caller_verifier()
-    assert _run(verify(_ctx(_bearer('good')))) == 'sa@x'
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    return private_pem, certificate.public_bytes(serialization.Encoding.PEM).decode()
 
 
-def test_cloud_run_verifier_leaves_the_audience_unconstrained(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Constraining it would tie the service to its own URL for no admission gain: any account can mint
-    # a token for any audience, so reach is decided by the verified account, and Cloud Run has already
-    # refused a token minted for another service.
-    seen: list[tuple[tuple[object, ...], dict[str, object]]] = []
+@pytest.fixture
+def google_certs(monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str]) -> None:
+    """Serve the stand-in key as Google's certificate set to the verifier's transport."""
+    body = json.dumps({_KEY_ID: google_key[1]}).encode()
 
-    def verify_oauth2_token(*args: object, **kwargs: object) -> dict[str, object]:
-        seen.append((args[2:], kwargs))
-        return {'email': 'sa@x', 'email_verified': True}
+    class _Transport:
+        def __call__(self, _url: str, **_k: object) -> _FakeResponse:
+            return _FakeResponse(headers={'cache-control': 'max-age=600'}, data=body)
 
-    monkeypatch.setattr(caller_mod.google_id_token, 'verify_oauth2_token', verify_oauth2_token)
-    assert _run(caller_mod.cloud_run_caller_verifier()(_ctx(_bearer('good')))) == 'sa@x'
-    assert seen == [((), {})], seen
+    monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _Transport)
+
+
+def _id_token(google_key: tuple[str, str], *, audience: str, email_verified: bool = True) -> str:
+    now = int(time.time())
+    claims = {
+        'iss': 'https://accounts.google.com',
+        'aud': audience,
+        'email': 'sa@x',
+        'email_verified': email_verified,
+        'iat': now,
+        'exp': now + 600,
+    }
+    signer = google_crypt.RSASigner.from_string(google_key[0], key_id=_KEY_ID)
+    return google_jwt.encode(signer, claims).decode()
+
+
+@pytest.mark.usefixtures('google_certs')
+def test_cloud_run_verifier_reads_the_email_of_a_token_for_its_audience(google_key: tuple[str, str]) -> None:
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    assert _run(verify(_ctx(_bearer(_id_token(google_key, audience=_AUDIENCE))))) == 'sa@x'
+
+
+@pytest.mark.usefixtures('google_certs')
+@pytest.mark.parametrize(
+    'audience',
+    [
+        'https://unrelated-audience.invalid',
+        # The same service's other run.app URL: Cloud Run admits it, this service does not.
+        'https://themis-sheaf-abcdefghij-ts.a.run.app',
+        f'{_AUDIENCE}/',
+    ],
+)
+def test_cloud_run_verifier_declines_a_token_for_another_audience(google_key: tuple[str, str], audience: str) -> None:
+    # Behind the load balancer's IAP, Cloud Run admits IAP's service agent and never looks at this token.
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    assert _run(verify(_ctx(_bearer(_id_token(google_key, audience=audience))))) is None
+
+
+@pytest.mark.usefixtures('google_certs')
+def test_cloud_run_verifier_declines_an_unverified_email(google_key: tuple[str, str]) -> None:
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    token = _id_token(google_key, audience=_AUDIENCE, email_verified=False)
+    assert _run(verify(_ctx(_bearer(token)))) is None
+
+
+@pytest.mark.parametrize('audience', ['', 'themis-sheaf', 'http://themis-sheaf.run.app'])
+def test_cloud_run_verifier_takes_only_an_https_audience(audience: str) -> None:
+    with pytest.raises(ValueError, match='https://'):
+        caller_mod.cloud_run_caller_verifier(audience)
 
 
 def test_cloud_run_verifier_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,15 +161,8 @@ def test_cloud_run_verifier_fails_closed(monkeypatch: pytest.MonkeyPatch) -> Non
         raise google_auth_exceptions.GoogleAuthError('bad token')
 
     monkeypatch.setattr(caller_mod.google_id_token, 'verify_oauth2_token', _raise)
-    verify = caller_mod.cloud_run_caller_verifier()
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
     assert _run(verify(_ctx(_bearer('forged')))) is None
-    # An unverified email is not an identity either.
-    monkeypatch.setattr(
-        caller_mod.google_id_token,
-        'verify_oauth2_token',
-        lambda *_a, **_k: {'email': 'sa@x', 'email_verified': False},
-    )
-    assert _run(verify(_ctx(_bearer('good')))) is None
     # An absent bearer never reaches verification.
     assert _run(verify(_ctx())) is None
 
@@ -102,16 +172,9 @@ def test_a_certificate_fetch_failure_propagates_rather_than_declining(monkeypatc
         raise google_auth_exceptions.TransportError('certs unreachable')
 
     monkeypatch.setattr(caller_mod.google_id_token, 'verify_oauth2_token', _unreachable)
-    verify = caller_mod.cloud_run_caller_verifier()
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
     with pytest.raises(google_auth_exceptions.TransportError):
         _run(verify(_ctx(_bearer('good'))))
-
-
-class _FakeResponse:
-    def __init__(self, status: int = 200, headers: dict[str, str] | None = None, data: bytes = b'{}') -> None:
-        self.status = status
-        self.headers = headers or {}
-        self.data = data
 
 
 def test_the_caching_transport_fetches_once_per_max_age(monkeypatch: pytest.MonkeyPatch) -> None:

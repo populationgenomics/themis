@@ -397,8 +397,8 @@ class SandboxJob(pulumi.ComponentResource):
     session token (injected per-execution by the dispatcher's ``jobs.run``, never baked) — and runs every
     ``shell`` command inside a postern bubblewrap sandbox, so no untrusted code shares the container.
 
-    Direct VPC egress on the shared services network reaches the internal-ingress hello service; the
-    IAM-gated evidence and sheaf services are reached the same way. There is no dedicated sandbox VPC and no
+    Direct VPC egress on the shared services network reaches the internal-ingress hello, evidence and sheaf
+    services. There is no dedicated sandbox VPC and no
     egress firewall — the guest has zero network regardless, so containment rests on that rather than on
     shaping the trusted worker's egress.
 

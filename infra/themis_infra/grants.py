@@ -895,6 +895,49 @@ class IapAccessor(_Capability):
         self.register_outputs({})
 
 
+class IapBackendAccessor(_Capability):
+    """May pass IAP on one load-balancer backend service, and so call the Cloud Run service behind it.
+
+    The holder presents a JWT it signs itself; IAP then calls the service as its own service agent. For a
+    data-plane service that is the whole of the network gate, and the service still verifies the holder's
+    own ID token and admits it per rpc.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        backend_service: pulumi.Input[str],
+        project: str,
+        target: str,
+        prior: Prior | None = None,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        """Grant `member` IAP access on the backend service named `backend_service`.
+
+        Args:
+            holder: A slug for the holder, for resource names (`themis-clu`).
+            member: The holder's IAM member string.
+            backend_service: The global backend service's name.
+            project: The GCP project.
+            target: A slug for the service behind the backend, for resource names (`evidence`).
+            prior: Where the binding lived before it joined this capability, if it did.
+            opts: Resource options (dependency wiring).
+        """
+        name = f'{holder}-passes-iap-to-{target}'
+        super().__init__(name, opts)
+        gcp.iap.WebBackendServiceIamMember(
+            name,
+            project=project,
+            web_backend_service=backend_service,
+            role='roles/iap.httpsResourceAccessor',
+            member=member,
+            opts=self._binding(prior),
+        )
+        self.register_outputs({})
+
+
 class DeployAccountBuilder(_Capability):
     """The CI deploy account may create and manage every kind of resource the program declares.
 

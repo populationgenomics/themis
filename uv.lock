@@ -4175,6 +4175,7 @@ tools-sheaf = [
     { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "pyyaml" },
     { name = "requests" },
 ]
 tracing = [
@@ -4540,6 +4541,7 @@ tools-sheaf = [
     { name = "opentelemetry-instrumentation-grpc" },
     { name = "pg8000" },
     { name = "protobuf" },
+    { name = "pyyaml" },
     { name = "requests" },
 ]
 tracing = [

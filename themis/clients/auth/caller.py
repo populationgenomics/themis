@@ -3,9 +3,13 @@
 Internal calls authenticate with Cloud Run's IAM: the caller presents a Google-signed ID token in the
 ``authorization`` metadata, Cloud Run admits the call only if that identity holds ``run.invoker``, and
 then forwards the header to the container unchanged. Re-verifying it here — signature, issuer,
-``email_verified`` — is what makes the calling service account knowable server-side at all
+audience, ``email_verified`` — is what makes the calling service account knowable server-side at all
 (rpc-authorization.md, Appendix). A ``CallerVerifier`` is that step; the Cloud Run one is the live
 verifier, and a fixture verifier stands in offline.
+
+The audience is checked here because Cloud Run's own check does not cover every path in. A call
+through the load balancer's IAP reaches Cloud Run as IAP's service agent, which is what Cloud Run
+admits, and the caller's ``authorization`` header passes through unexamined.
 
 A verifier yields ``None`` for a token that declines — absent, malformed, forged, expired, or issued by
 another issuer — and raises for a failure that is not a decline: Google's signing certificates could not
@@ -115,15 +119,22 @@ def _ttl(headers: Mapping[str, str]) -> float:
     return float(match.group(1)) if match else _DEFAULT_CERTS_TTL_SECONDS
 
 
-def cloud_run_caller_verifier() -> CallerVerifier:
+def cloud_run_caller_verifier(audience: str) -> CallerVerifier:
     """Build a ``CallerVerifier`` that reads the calling account from the forwarded ID token.
 
-    Verification checks Google's signature, issuer and expiry, then reads the ``email`` claim, and
-    only if ``email_verified`` is set. The token's audience is not checked: Cloud Run admits a call
-    only for a token minted for this service, and an audience is not a credential — any account can
-    mint a token for any audience, so what the call may reach is decided by the verified account
-    against the principals the rpc admits, never by the audience it names.
+    Verification checks Google's signature, issuer, expiry and audience, then reads the ``email``
+    claim, and only if ``email_verified`` is set. A token minted for any other audience declines, so a
+    token an account minted to call one service cannot be replayed against another.
+
+    Args:
+        audience: The audience a token must name: this service's own ``https://`` URL, the one its
+            callers mint for.
+
+    Raises:
+        ValueError: If ``audience`` is not an ``https://`` URL.
     """
+    if not audience.startswith('https://'):
+        raise ValueError(f"an ID-token audience is the service's https:// URL, got {audience!r}")
     request = _CachingRequest()
 
     async def verify_caller(context: grpc.aio.ServicerContext) -> str | None:
@@ -133,7 +144,7 @@ def cloud_run_caller_verifier() -> CallerVerifier:
         try:
             # google-auth's verification is blocking (the certificate fetch, when the cache misses); keep
             # it off the event loop.
-            claims = await asyncio.to_thread(google_id_token.verify_oauth2_token, token, request)
+            claims = await asyncio.to_thread(google_id_token.verify_oauth2_token, token, request, audience)
         except google_auth_exceptions.TransportError:
             raise  # the certificates could not be fetched: not a decline
         except (ValueError, google_auth_exceptions.GoogleAuthError):

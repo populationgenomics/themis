@@ -17,19 +17,15 @@ from __future__ import annotations
 import http
 import threading
 
-import google.auth
 import google.auth.exceptions
-import google.auth.iam
-import google.auth.jwt
 import requests
 from google.auth.transport import requests as google_auth_requests
 from google.protobuf import message
 
 from themis.workbench.models import workbench_pb2
 from themis.workbench.rpc import workbench_pb2 as workbench_rpc_pb2
-from tools import stack
+from tools import clu, stack
 
-_CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
 _SERVICE = workbench_rpc_pb2.DESCRIPTOR.services_by_name['Workbench'].full_name
 _TIMEOUT_S = 60
 _PROTO = 'application/proto'
@@ -97,14 +93,8 @@ class Workbench:
             raise ValueError(f'the app origin must be https, since every request carries a bearer: {app_origin!r}')
         self._origin = app_origin.rstrip('/')
         self._service_account = service_account
-        # The wildcard: an `aud` of the bare origin admits `/` alone, and IAP answers 401 on every rpc path.
+        self._credentials = clu.iap_jwt_credentials(service_account, self._origin)
         self._audience = f'{self._origin}/*'
-        source, _project = google.auth.default(scopes=[_CLOUD_PLATFORM_SCOPE])
-        signer = google.auth.iam.Signer(google_auth_requests.Request(), source, service_account)
-        # One hour, the library's default lifetime, is IAP's ceiling.
-        self._credentials = google.auth.jwt.Credentials(
-            signer=signer, issuer=service_account, subject=service_account, audience=self._audience
-        )
         self._lock = threading.Lock()
 
     def list_projects(self) -> workbench_pb2.ListProjectsResponse:

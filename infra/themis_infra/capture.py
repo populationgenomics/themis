@@ -47,6 +47,7 @@ _TARGET_INPUT = {
     'gcp:serviceaccount/iAMMember:IAMMember': 'serviceAccountId',
     'gcp:compute/subnetworkIAMMember:SubnetworkIAMMember': 'subnetwork',
     'gcp:iap/webCloudRunServiceIamMember:WebCloudRunServiceIamMember': 'cloudRunServiceName',
+    'gcp:iap/webBackendServiceIamMember:WebBackendServiceIamMember': 'webBackendService',
     'gcp:projects/iAMMember:IAMMember': 'project',
     'gcp:artifactregistry/repositoryIamMember:RepositoryIamMember': 'repository',
 }
@@ -182,6 +183,44 @@ def dev_stack_config() -> dict[str, str]:
 def urn_type_chain(urn: str) -> list[str]:
     """The URN's type segment split on `$`: the immediate parent's type, then the resource's own."""
     return urn.split('::')[2].split('$')
+
+
+Registration = mocks.MockMonitor.ResourceRegistration
+NEG_TYPE = 'gcp:compute/regionNetworkEndpointGroup:RegionNetworkEndpointGroup'
+BACKEND_TYPE = 'gcp:compute/backendService:BackendService'
+SECURITY_POLICY_TYPE = 'gcp:compute/securityPolicy:SecurityPolicy'
+
+
+def of_type(program: Capture, type_: str) -> list[Registration]:
+    """Every resource of the provider type `type_` the program registered."""
+    return [registration for urn, registration in program.resources.items() if urn_type_chain(urn)[-1] == type_]
+
+
+def fronted_services(program: Capture, backend: Registration) -> set[str]:
+    """The Cloud Run services behind a backend service's serverless NEGs, by name."""
+    groups = {entry['group'] for entry in backend.state.get('backends', [])}
+    return {
+        str(neg.state['cloudRun']['service'])
+        for neg in of_type(program, NEG_TYPE)
+        if neg.id in groups and 'cloudRun' in neg.state
+    }
+
+
+def backends_fronting(program: Capture, service: str) -> list[Registration]:
+    """The backend services whose serverless NEG points at the Cloud Run service `service`."""
+    return [backend for backend in of_type(program, BACKEND_TYPE) if service in fronted_services(program, backend)]
+
+
+def security_policy(program: Capture, backend: Registration) -> Registration | None:
+    """The Cloud Armor policy attached to a backend service, or None when it has none."""
+    if 'securityPolicy' not in backend.state:
+        return None
+    (policy,) = [
+        policy
+        for policy in of_type(program, SECURITY_POLICY_TYPE)
+        if policy.state['self_link'] == backend.state['securityPolicy']
+    ]
+    return policy
 
 
 def _bindings(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> list[Binding]:

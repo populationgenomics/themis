@@ -3,8 +3,13 @@
 A bucket of sheaf repositories, a runtime SA holding `roles/storage.objectUser` on it, and an HTTP/2
 gRPC service running the `gcs` backend over it — every repository's keys at the bucket root under the
 repository's name — and resolving each request's session through the auth service at `THEMIS_AUTH_URL`.
-Ingress is `ALL`, gated by IAM: the invoker bindings are the program's (`infra/__main__.py`), one per
-caller, and default-deny refuses any other. What the service needs of its host, and why: sheaf-service.md § Deployment.
+Ingress admits internal traffic and the load balancer only: the web BFF and the sandbox worker call the
+`run.app` URL over the services VPC, and an operator reaches the program's IAP-gated
+`operator_ingress.OperatorBackend` on the web load balancer. The invoker bindings are the program's
+(`infra/__main__.py`), one per caller, and default-deny refuses any other. The service checks the audience
+of every caller's ID token itself, against the URL `cloud_run.service_url` builds, because behind IAP
+Cloud Run admits IAP's service agent and not the caller. What the service needs of its host, and why:
+sheaf-service.md § Deployment.
 
 The three ceilings the servicer enforces, and how long a pack URL it signs lives, are this module's
 constants — deployment configuration — and the memory limit and per-instance concurrency are sized
@@ -33,6 +38,9 @@ _PACK_URL_LIFETIME_SECONDS = 5 * 60
 _REQUEST_TIMEOUT = '1800s'
 _MAX_INSTANCES = 10
 _SERVICE_NAME = 'themis-sheaf'
+# The gRPC service the image serves, as its proto names it: the load balancer routes its methods to the operator
+# backend.
+GRPC_SERVICES = ('themis.rpc.sheaf.Sheaf',)
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -40,15 +48,15 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
 
 
 class SheafService(pulumi.ComponentResource):
-    """Cloud Run sheaf service (IAM-gated ingress) over a bucket of sheaf repositories of its own.
+    """Cloud Run sheaf service (internal and load-balancer ingress) over a bucket of sheaf repositories of its own.
 
     Attributes:
         repository_bucket: The bucket's name — what the workbench downloads a repository's packs from.
         service_account_email: The runtime SA's email — the `run.invoker` member on the auth service,
             the object-user on the repository bucket, and the account pack URLs are signed as.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
-        url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for: the one
-            `cloud_run.service_url` builds, resolving once Cloud Run reports serving the service at it.
+        url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for. It
+            resolves once Cloud Run reports serving the service at it.
     """
 
     def __init__(
@@ -135,14 +143,17 @@ class SheafService(pulumi.ComponentResource):
 
         grants.SelfSigner('themis-sheaf', account=service_account, opts=child)
 
+        url = cloud_run.service_url(name=_SERVICE_NAME, project_number=project_number, region=region)
+
         service = gcp.cloudrunv2.Service(
             'themis-sheaf-service',
             project=project,
             name=_SERVICE_NAME,
             location=region,
             deletion_protection=False,
-            # IAM-gated public ingress; each caller's `run.invoker` is granted in the program.
-            ingress='INGRESS_TRAFFIC_ALL',
+            # Callers on the services VPC, and operators through the load balancer's IAP; each caller's
+            # `run.invoker` is granted in the program.
+            ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
@@ -178,6 +189,7 @@ class SheafService(pulumi.ComponentResource):
                             _env('THEMIS_AUTH_URL', auth_url),
                             # completes a Caller's account id into the email the verifier yields
                             _env('THEMIS_GCP_PROJECT', project),
+                            _env('THEMIS_ID_TOKEN_AUDIENCE', url),
                             _env('THEMIS_SHEAF_BACKEND', 'gcs'),
                             _env('THEMIS_SHEAF_BUCKET', repositories.name),
                             _env('THEMIS_SHEAF_MAX_PUBLISH_BYTES', str(_MAX_PUBLISH_BYTES)),
@@ -200,9 +212,7 @@ class SheafService(pulumi.ComponentResource):
             opts=child,
         )
         self.service_name = service.name
-        self.url = cloud_run.reported_url(
-            service, cloud_run.service_url(name=_SERVICE_NAME, project_number=project_number, region=region)
-        )
+        self.url = cloud_run.reported_url(service, url)
         self.register_outputs(
             {
                 'repository_bucket': self.repository_bucket,

@@ -25,7 +25,7 @@ from themis.clients.sheaf import store as remote_mod
 from themis.sheaf import refdoc
 from themis.sheaf.tests import conftest as sheaf_conftest
 from themis.sheaf.wire import protect, server
-from tools import clone_analysis, session_token, sheaf_remote
+from tools import clone_analysis, operator_path, session_token, sheaf_remote
 
 ANALYSIS_ID = 'an_test'
 TOKEN = 'derived-session-token'  # noqa: S105 — a stand-in, not a credential
@@ -72,12 +72,12 @@ def _stand_in(
         *,
         analysis_id: str,
         token_file: pathlib.Path,
-        service_url: str,
+        target: operator_path.Target,
         service_account: str,
         port: int,
         root: pathlib.Path,
     ) -> Iterator[server.SheafGitServer]:
-        del service_url, service_account
+        del target, service_account
         assert analysis_id == ANALYSIS_ID
         assert port == 0
         seams.token_files.append(token_file)
@@ -102,6 +102,7 @@ def _clone(destination: pathlib.Path) -> None:
         destination,
         project='p',
         service_url='https://sheaf.example',
+        origin='https://themis.example',
         service_account='clu@example.iam.gserviceaccount.com',
         key_version=None,
     )

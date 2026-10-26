@@ -66,6 +66,7 @@ VIEWS = (
                 'AccountUser',
                 'SelfSigner',
                 'IapAccessor',
+                'IapBackendAccessor',
             }
         ),
         direction='TB',
@@ -175,6 +176,8 @@ def _target(binding: capture.Binding, project: str) -> _Node:
             return _Node(_WORKLOAD, target)
         case 'AccountImpersonator' | 'FederatedImpersonator' | 'AccountUser' | 'SelfSigner':
             return _account_target(target)
+        case 'IapBackendAccessor':
+            return _Node(_RESOURCE, f'IAP backend {target}')
         case 'TaskEnqueuer':
             return _Node(_RESOURCE, f'queue {target}')
         case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'PublicObjectReader':

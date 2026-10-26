@@ -13,8 +13,7 @@ probed by Cloud Run without credentials.
 What is verified and what is trusted: the account is verified, by Google's signature on the token; the
 claim is trusted, because the account is trusted to make it, and is checked only for being one the
 account has a member for. Several outcomes are not denials and are surfaced as what they are: a caller
-whose ID token does not verify is ``UNAUTHENTICATED``, since Cloud Run admits no call without a valid
-token and one this service cannot re-verify is a deployment fault or a broken guarantee; a claim the
+whose ID token does not verify, or names another audience, is ``UNAUTHENTICATED``; a claim the
 callee cannot honour — one that does not decode, one naming nothing, one naming a session and carrying
 no token, or a self claim (or no claim) from an account that has no self-acting member — is
 ``INTERNAL``, a caller-side fault. A session token that does not resolve is a denial whatever the claim:
@@ -143,13 +142,15 @@ def gated_server(
 
 AUTHORIZER_VAR = 'THEMIS_AUTHORIZER_BACKEND'
 PROJECT_VAR = 'THEMIS_GCP_PROJECT'
+AUDIENCE_VAR = 'THEMIS_ID_TOKEN_AUDIENCE'
 
 
 def authorizer_from_env(*, fixture_contexts_var: str, fixture_callers_var: str) -> Authorizer:
     """The ``Authorizer`` a data-plane image builds from its environment, or ``SystemExit``.
 
     ``THEMIS_AUTHORIZER_BACKEND`` selects it: ``http`` resolves sessions through the auth service at
-    ``THEMIS_AUTH_URL`` and verifies callers from the ID token Cloud Run forwards; ``fixture`` resolves
+    ``THEMIS_AUTH_URL`` and verifies callers from the ID token Cloud Run forwards, which must name
+    ``THEMIS_ID_TOKEN_AUDIENCE``, the service's own URL; ``fixture`` resolves
     against the JSON map in ``fixture_contexts_var`` (bearer -> binding) and treats the bearers in
     ``fixture_callers_var`` (bearer -> email) as verified. ``THEMIS_GCP_PROJECT`` completes each
     ``Caller``'s account id into the email the verifier yields. The two fixture variables are the image's
@@ -166,7 +167,13 @@ def authorizer_from_env(*, fixture_contexts_var: str, fixture_callers_var: str) 
     if backend not in ('http', 'fixture'):
         raise SystemExit(f'unsupported {AUTHORIZER_VAR} {backend!r} (expected "http" or "fixture")')
     if backend == 'http':
-        verify_caller = caller_mod.cloud_run_caller_verifier()
+        audience = os.environ.get(AUDIENCE_VAR)
+        if not audience:
+            raise SystemExit(f'{AUDIENCE_VAR} is required for the http authorizer: the URL callers mint ID tokens for')
+        try:
+            verify_caller = caller_mod.cloud_run_caller_verifier(audience)
+        except ValueError as e:
+            raise SystemExit(f'{AUDIENCE_VAR}: {e}') from e
     else:
         verify_caller = caller_mod.fixture_caller_verifier_from_json(
             os.environ.get(fixture_callers_var), var_name=fixture_callers_var

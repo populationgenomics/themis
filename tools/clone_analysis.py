@@ -43,7 +43,7 @@ from google.auth import exceptions
 
 from themis.sheaf import refdoc
 from themis.sheaf.wire import protect
-from tools import clu, session_token, sheaf_remote
+from tools import clu, operator_path, session_token, sheaf_remote
 
 # `git clone` takes these by default: branches as remote-tracking refs, and tags.
 _CLONED_BY_DEFAULT = ('refs/heads/', 'refs/tags/')
@@ -90,10 +90,11 @@ def clone_analysis(
     *,
     project: str,
     service_url: str | None,
+    origin: str | None,
     service_account: str,
     key_version: str | None,
 ) -> None:
-    """Clone `analysis_id`'s repository into `destination` over the sheaf service at `service_url`.
+    """Clone `analysis_id`'s repository into `destination` over the sheaf service, through the load balancer's IAP.
 
     The token file and the bare mirror live in one temporary directory that only the caller can
     read, deleted with both when the clone ends, on success, failure or interrupt alike.
@@ -102,8 +103,10 @@ def clone_analysis(
         analysis_id: The Analysis whose repository to clone.
         destination: Where to clone to: absent, or an empty directory.
         project: The environment's GCP project.
-        service_url: The sheaf service's `https://` URL, or None to read it from the Cloud Run Admin API.
-        service_account: The account the token derivation and the bearer act as.
+        service_url: The sheaf service's `https://` URL its ID tokens name, or None to read it from the Cloud
+            Run Admin API.
+        origin: The environment's `https://` origin the calls go through, or None for the stack's domain.
+        service_account: The account the token derivation and the bearers act as.
         key_version: The signing key version, or None for the one on the environment's key ring.
 
     Raises:
@@ -111,14 +114,19 @@ def clone_analysis(
         session_token.TokenError: If the Analysis does not exist, or the key ring holds anything but one
             MAC key.
         SystemExit: If `git` is not on PATH.
-        clu.GoogleCallError: If the service URL cannot be read, the key ring cannot be listed, or an
-            identity token cannot be minted.
+        clu.GoogleCallError: If the service URL cannot be read, the key ring cannot be listed, or a
+            token cannot be minted.
+        operator_path.TargetError: If no single stack names `project`, or it sets no domain.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
     if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
         raise CloneError(f'{destination} exists and is not an empty directory; name a new or empty one')
     git = clu.resolve_binary('git')
-    service_url = service_url or clu.run_service_url(sheaf_remote.SERVICE, project=project)
+    target = operator_path.Target(
+        origin=origin or operator_path.origin(project),
+        service_url=service_url or clu.run_service_url(sheaf_remote.SERVICE, project=project),
+        grpc_service=sheaf_remote.GRPC_SERVICE,
+    )
     # mkdtemp creates the directory readable, writable and searchable by its owner alone.
     scratch = pathlib.Path(tempfile.mkdtemp(prefix='clone-analysis-'))
     try:
@@ -132,7 +140,7 @@ def clone_analysis(
         with sheaf_remote.serving(
             analysis_id=analysis_id,
             token_file=token_file,
-            service_url=service_url,
+            target=target,
             service_account=service_account,
             port=0,
             root=scratch / 'mirror',
@@ -187,7 +195,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         '--service-url',
         default=None,
-        help=f'the sheaf service URL (default: looked up in Cloud Run for {sheaf_remote.SERVICE} in --project)',
+        help=(
+            f'the sheaf service URL its ID tokens name (default: looked up in Cloud Run for {sheaf_remote.SERVICE} '
+            'in --project)'
+        ),
+    )
+    parser.add_argument(
+        '--origin',
+        default=None,
+        help="the environment's https origin, the load balancer the calls go through (default: --project's domain)",
     )
     parser.add_argument(
         '--key-version',
@@ -199,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
         dest='impersonate',
         metavar='SERVICE_ACCOUNT',
         default=None,
-        help='derive the token and mint the identity token as this service account (default: themis-clu in --project)',
+        help='derive the session token and mint the bearers as this service account (default: themis-clu in --project)',
     )
     args = parser.parse_args(argv)
     # These unwind like Ctrl-C, so the server stops and the token is deleted whichever ends the run.
@@ -212,10 +228,17 @@ def main(argv: list[str] | None = None) -> None:
             args.destination,
             project=args.project,
             service_url=args.service_url,
+            origin=args.origin,
             service_account=service_account,
             key_version=args.key_version,
         )
-    except (CloneError, session_token.TokenError, clu.GoogleCallError, exceptions.DefaultCredentialsError) as exc:
+    except (
+        CloneError,
+        session_token.TokenError,
+        clu.GoogleCallError,
+        exceptions.DefaultCredentialsError,
+        operator_path.TargetError,
+    ) as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:
         print('interrupted', file=sys.stderr)

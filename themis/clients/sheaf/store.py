@@ -14,7 +14,9 @@ a token must not be. The file is `{"session_token": "...", "calling_as": "..."}`
 the `CallingAs` name the caller claims on every call (rpc-authorization.md): the worker calls as
 itself within the session, a developer as themself — with an optional `"bearer"`, an ID token for the
 service's Cloud Run URL, for a caller that minted one itself rather than running as a service account
-that can. It is re-read on every call, so a refreshed token is picked up.
+that can. A caller outside the services VPC reaches the service through the load balancer's IAP and adds
+`"proxy_bearer"`, the JWT IAP admits, sent as `proxy-authorization`; IAP consumes it and passes the bearer
+through. It is re-read on every call, so a refreshed token is picked up.
 """
 
 from __future__ import annotations
@@ -77,18 +79,32 @@ Metadata = claim_mod.Metadata
 
 @dataclasses.dataclass(frozen=True)
 class Credentials:
-    """What one call presents: the session, what the caller calls as, and the ID token when it minted its own."""
+    """What one call presents: the session, what the caller calls as, its own ID token, and IAP's JWT.
+
+    The two tokens are each present only for a caller that minted its own; a proxy bearer only beside a bearer.
+
+    Raises:
+        ValueError: If there is a proxy bearer and no bearer: IAP would admit a call that carries no identity
+            the service can verify.
+    """
 
     # No repr: a pytest diff or a stray log line must not print a credential.
     session_token: str = dataclasses.field(repr=False)
     bearer: str | None = dataclasses.field(repr=False)
     calling_as: sandbox_options_pb2.CallingAs
+    proxy_bearer: str | None = dataclasses.field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.proxy_bearer is not None and self.bearer is None:
+            raise ValueError('a proxy bearer is sent beside a bearer, never alone')
 
     def metadata(self) -> Metadata:
-        """The call metadata carrying these credentials: the claim, and the bearer when there is one."""
+        """The call metadata carrying these credentials: the claim, and each bearer there is."""
         pairs = list(claim_mod.metadata_for(self.calling_as, self.session_token))
         if self.bearer is not None:
             pairs.append(('authorization', f'Bearer {self.bearer}'))
+        if self.proxy_bearer is not None:
+            pairs.append(('proxy-authorization', f'Bearer {self.proxy_bearer}'))
         return tuple(pairs)
 
 
@@ -98,8 +114,9 @@ def read_credentials(path: pathlib.Path) -> Credentials:
     Raises:
         CredentialsUnusable: If the file cannot be read, is readable by anyone but its owner, or is
             not a JSON object of `session_token`, `calling_as` (a `CallingAs` name other than
-            unspecified) and an optional `bearer`, each a non-empty string, and nothing else — a
-            misspelt key would otherwise send a call without the credential it meant to carry.
+            unspecified), an optional `bearer` and an optional `proxy_bearer` beside it, each a
+            non-empty string, and nothing else — a misspelt key would otherwise send a call without
+            the credential it meant to carry.
     """
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
@@ -112,17 +129,25 @@ def read_credentials(path: pathlib.Path) -> Credentials:
         raise errors.CredentialsUnusable(f'{path}: not JSON: {exc}') from exc
     if not isinstance(payload, dict):
         raise errors.CredentialsUnusable(f'{path}: a token file is a JSON object')
-    unknown = set(payload) - {'session_token', 'calling_as', 'bearer'}
+    unknown = set(payload) - {'session_token', 'calling_as', 'bearer', 'proxy_bearer'}
     if unknown:
         raise errors.CredentialsUnusable(f'{path}: unexpected keys {sorted(unknown)}')
     session_token = payload.get('session_token')
     if not isinstance(session_token, str) or not session_token:
         raise errors.CredentialsUnusable(f'{path}: session_token must be a non-empty string')
     calling_as = _calling_as(path, payload.get('calling_as'))
-    bearer = payload.get('bearer')
-    if bearer is not None and (not isinstance(bearer, str) or not bearer):
-        raise errors.CredentialsUnusable(f'{path}: bearer, when present, must be a non-empty string')
-    return Credentials(session_token=session_token, bearer=bearer, calling_as=calling_as)
+    bearer = _optional_token(path, payload, 'bearer')
+    proxy_bearer = _optional_token(path, payload, 'proxy_bearer')
+    if proxy_bearer is not None and bearer is None:
+        raise errors.CredentialsUnusable(f'{path}: proxy_bearer is sent beside a bearer, never alone')
+    return Credentials(session_token=session_token, bearer=bearer, calling_as=calling_as, proxy_bearer=proxy_bearer)
+
+
+def _optional_token(path: pathlib.Path, payload: dict[str, object], key: str) -> str | None:
+    token = payload.get(key)
+    if token is not None and (not isinstance(token, str) or not token):
+        raise errors.CredentialsUnusable(f'{path}: {key}, when present, must be a non-empty string')
+    return token
 
 
 def _calling_as(path: pathlib.Path, name: object) -> sandbox_options_pb2.CallingAs:
@@ -149,6 +174,8 @@ def write_credentials(path: pathlib.Path, credentials: Credentials) -> None:
     }
     if credentials.bearer is not None:
         payload['bearer'] = credentials.bearer
+    if credentials.proxy_bearer is not None:
+        payload['proxy_bearer'] = credentials.proxy_bearer
     staging = path.with_name(f'.{path.name}.{os.getpid()}')
     staging.unlink(missing_ok=True)
     # O_EXCL: the staging file is created here with this mode, never reopened with an older one.
@@ -199,7 +226,9 @@ def _requests(message: sheaf_pb2.PublishIntent, packs: Sequence[bytes]) -> Itera
 
 
 def _channel(target: str, *, self_minted: bool) -> grpc.Channel:
-    """A channel to `target`: TLS to a Cloud Run URL, plain to a loopback `host:port` a test serves on.
+    """A channel to `target`: TLS to an `https://` URL, plain to a loopback `host:port` a test serves on.
+
+    The URL is the service's Cloud Run URL from the services VPC, or the load balancer's origin from outside it.
 
     Over TLS the ID token is either in the token file — the caller minted it, so the channel carries
     only TLS and each call adds it — or minted from the metadata server by the channel's own
@@ -239,7 +268,8 @@ class RemoteStore(store_mod.Repository):
         """Open a store over the service at `target`, presenting the credentials in `token_file`.
 
         Args:
-            target: The service's `https://` URL, or a loopback `host:port` for an in-process server.
+            target: The service's `https://` URL, the load balancer's `https://` origin for a token file
+                carrying a proxy bearer, or a loopback `host:port` for an in-process server.
             token_file: The JSON token file; see the module docstring for its shape. Made absolute,
                 since the hook that rebuilds this store from the descriptor runs in another directory.
             repo: The repository's name in paths and messages.
@@ -251,7 +281,9 @@ class RemoteStore(store_mod.Repository):
         self.repo = repo.strip('/')
         self.target = target
         self.token_file = token_file.absolute()
-        self._self_minted = read_credentials(self.token_file).bearer is not None
+        credentials = read_credentials(self.token_file)
+        self._self_minted = credentials.bearer is not None
+        self._proxied = credentials.proxy_bearer is not None
         self._channel = _channel(target, self_minted=self._self_minted)
         self._stub = sheaf_pb2_grpc.SheafStub(self._channel)
 
@@ -291,14 +323,16 @@ class RemoteStore(store_mod.Repository):
         """This call's credentials, read afresh.
 
         Raises:
-            CredentialsUnusable: If the file cannot be read, or has gained or lost its bearer since the
-                channel was built — the channel's credentials were chosen on that, and a call would go
-                out with the wrong ones.
+            CredentialsUnusable: If the file cannot be read, or has gained or lost a bearer since the
+                channel was built — the channel's credentials, and the host it dials, were chosen on
+                that, and a call would go out with the wrong ones.
         """
         credentials = read_credentials(self.token_file)
-        if (credentials.bearer is not None) != self._self_minted:
+        if (credentials.bearer is not None) != self._self_minted or (
+            credentials.proxy_bearer is not None
+        ) != self._proxied:
             raise errors.CredentialsUnusable(
-                f'{self.token_file}: the bearer appeared or vanished since the store was opened'
+                f'{self.token_file}: a bearer appeared or vanished since the store was opened'
             )
         return credentials.metadata()
 

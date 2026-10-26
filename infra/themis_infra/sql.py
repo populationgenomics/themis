@@ -102,6 +102,9 @@ class CloudSqlDatabase(pulumi.ComponentResource):
                 ip_configuration=gcp.sql.DatabaseInstanceSettingsIpConfigurationArgs(
                     ipv4_enabled=True,
                 ),
+                # Refuses any connection that is not a Cloud SQL connector's or the Auth Proxy's,
+                # whatever network it comes from.
+                connector_enforcement='REQUIRED',
             ),
             # protect: refuse a Pulumi-layer destroy/replace (defense-in-depth with
             # the two deletion_protection flags above). ignore_changes:

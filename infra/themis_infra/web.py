@@ -3,12 +3,13 @@
 Provisions the public web surface for one environment — a Cloud Run service with
 IAP enabled on it, and the external Application Load Balancer that fronts it
 (serverless NEG, Google-managed TLS certificate, HTTP→HTTPS redirect). The load
-balancer also carries the `Route`s other components hand it, each an exact path
-sent to that component's own backend service. Identical across environments; all
-per-environment values arrive as constructor arguments.
+balancer also carries the routes other components hand it, each sent to that
+component's own backend service: a `Route` is one exact path, a `GrpcRoute` every
+method of one gRPC service. Identical across environments; all per-environment
+values arrive as constructor arguments.
 
-The web tier attaches to the services network with Direct VPC egress, so its calls to the
-evidence and sheaf services arrive over the VPC.
+The web tier attaches to the services network with Direct VPC egress, because the
+evidence and sheaf services it calls take only internal traffic.
 
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
@@ -19,6 +20,7 @@ resolves, the managed certificate stays PROVISIONING.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Sequence
 
 import pulumi
@@ -56,6 +58,66 @@ class Route:
     def __post_init__(self) -> None:
         if not self.path.startswith('/') or any(char in self.path for char in '*?#'):
             raise ValueError(f'route path {self.path!r} must be an exact path starting with /')
+
+    @property
+    def url_map_path(self) -> str:
+        """The path as the URL map's path rule matches it."""
+        return self.path
+
+
+# `<package>.<Service>`: lower-case dotted package segments, then one capitalised service segment.
+_GRPC_SERVICE = re.compile(r'[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\.[A-Z][A-Za-z0-9]*')
+
+
+@dataclasses.dataclass(frozen=True)
+class GrpcRoute:
+    """Every method of one gRPC service on the web hostname, sent to another backend service.
+
+    A gRPC call's path is `/<package>.<Service>/<Method>`, so the route matches the prefix `/<package>.<Service>/`
+    and nothing outside it. A path under the prefix that names no method of the service still reaches the backend,
+    which answers `UNIMPLEMENTED`. As with `Route`, the backend service brings its own access control.
+
+    Attributes:
+        service: The fully-qualified gRPC service name the proto declares (`themis.rpc.sheaf.Sheaf`).
+        backend_service: The id of the global backend service the service's methods are sent to.
+    """
+
+    service: str
+    backend_service: pulumi.Input[str]
+
+    def __post_init__(self) -> None:
+        if not _GRPC_SERVICE.fullmatch(self.service):
+            raise ValueError(
+                f'gRPC route {self.service!r} must be a fully-qualified gRPC service name (themis.rpc.sheaf.Sheaf)'
+            )
+
+    @property
+    def prefix(self) -> str:
+        """The path prefix every method of the service shares."""
+        return f'/{self.service}/'
+
+    @property
+    def url_map_path(self) -> str:
+        """The prefix as the URL map's path rule matches it: a trailing wildcard."""
+        return f'{self.prefix}*'
+
+
+def check_routes(routes: Sequence[Route | GrpcRoute]) -> None:
+    """Raise unless each route matches paths no other route matches.
+
+    The URL map sends a request to its longest matching path rule, so an exact path under a gRPC route's prefix
+    would take that one method away from the gRPC route's backend, and with it that backend's access control.
+
+    Raises:
+        ValueError: If two routes share a path, or an exact path falls under a gRPC route's prefix.
+    """
+    paths = [route.url_map_path for route in routes]
+    if len(set(paths)) != len(paths):
+        raise ValueError(f'duplicate route paths: {sorted(paths)}')
+    prefixes = tuple(route.prefix for route in routes if isinstance(route, GrpcRoute))
+    shadowed = sorted(route.path for route in routes if isinstance(route, Route) and route.path.startswith(prefixes))
+    if shadowed:
+        raise ValueError(f'exact route paths under a gRPC route prefix: {shadowed}')
 
 
 class WebService(pulumi.ComponentResource):
@@ -102,9 +164,10 @@ class WebService(pulumi.ComponentResource):
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
         trace_sample_ratio: float,
+        iap_service_agent: pulumi.Input[str],
         vpc_network: pulumi.Input[str],
         vpc_subnetwork: pulumi.Input[str],
-        routes: Sequence[Route],
+        routes: Sequence[Route | GrpcRoute],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:WebService', 'themis', None, opts)
@@ -179,8 +242,8 @@ class WebService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=_MAX_INSTANCES
                 ),
-                # Direct VPC egress on the services network, all traffic, so the BFF's calls to the evidence and
-                # sheaf services arrive over the VPC (services_network.py).
+                # Direct VPC egress on the services network, all traffic, so the evidence and sheaf services
+                # admit the BFF's calls at their run.app URLs (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
@@ -237,27 +300,14 @@ class WebService(pulumi.ComponentResource):
             opts=child,
         )
 
-        # IAP invokes Cloud Run as its own service agent (the
-        # `X-Serverless-Authorization` flow), so that agent must exist and hold
-        # run.invoker on the service — otherwise IAP returns "The IAP service
-        # account is not provisioned". `ServiceIdentity` provisions the agent
-        # (equivalent to `gcloud beta services identity create
-        # --service=iap.googleapis.com`); iap.googleapis.com is enabled by the
-        # baseline this component depends on.
-        iap_agent = gcp.projects.ServiceIdentity(
-            'themis-iap-identity',
-            project=project,
-            service='iap.googleapis.com',
-            opts=child,
-        )
-
-        # Identity gate: only the IAP service agent may invoke — not allUsers.
+        # Identity gate: IAP invokes Cloud Run as its service agent (the
+        # `X-Serverless-Authorization` flow), and only that agent may invoke — not allUsers.
         # With ingress locked to the LB (above), a request that reaches the
         # service must still authenticate as this agent, closing the
         # unauthenticated internal-VPC path that ingress alone leaves open.
         grants.ServiceInvoker(
             'iap-service-agent',
-            member=iap_agent.member,
+            member=iap_service_agent,
             service=self._service.name,
             project=project,
             location=region,
@@ -294,7 +344,7 @@ class WebService(pulumi.ComponentResource):
         project: str,
         region: str,
         domain: str,
-        routes: Sequence[Route],
+        routes: Sequence[Route | GrpcRoute],
         child: pulumi.ResourceOptions,
     ) -> pulumi.Output[str]:
         """Build the external HTTPS load balancer chain.
@@ -341,9 +391,7 @@ class WebService(pulumi.ComponentResource):
             managed=gcp.compute.ManagedSslCertificateManagedArgs(domains=[domain]),
             opts=child,
         )
-        paths = [route.path for route in routes]
-        if len(set(paths)) != len(paths):
-            raise ValueError(f'duplicate route paths: {sorted(paths)}')
+        check_routes(routes)
         url_map = gcp.compute.URLMap(
             f'{name}-urlmap',
             project=project,
@@ -356,7 +404,9 @@ class WebService(pulumi.ComponentResource):
                     name='routes',
                     default_service=backend.id,
                     path_rules=[
-                        gcp.compute.URLMapPathMatcherPathRuleArgs(paths=[route.path], service=route.backend_service)
+                        gcp.compute.URLMapPathMatcherPathRuleArgs(
+                            paths=[route.url_map_path], service=route.backend_service
+                        )
                         for route in routes
                     ],
                 )

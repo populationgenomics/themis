@@ -214,8 +214,9 @@ test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
-# response) and the cloudsql group reads the Analysis's session id.
-tools_sheaf = ["google-cloud-kms", "google-crc32c", { include-group = "session" }, { include-group = "sheaf" }, { include-group = "cloudsql" }]
+# response) and the cloudsql group reads the Analysis's session id; pyyaml reads the environment's domain,
+# the load balancer the calls go through, from the Pulumi stack file (tools/operator_path.py).
+tools_sheaf = ["google-cloud-kms", "google-crc32c", "pyyaml", { include-group = "session" }, { include-group = "sheaf" }, { include-group = "cloudsql" }]
 # run-review loop harness (tools/run_review): anthropic reads a run's session and event log and the agent's records;
 # google-auth signs the IAP JWT the web app's rpcs are called with (tools/web_app.py) and requests carries them;
 # pyyaml reads the app's domain from the Pulumi stack file; protobuf and protovalidate decode the stored rows and check

@@ -29,6 +29,7 @@ from themis_infra import (
     hello,
     ingest,
     ingest_network,
+    operator_ingress,
     sandbox,
     screenshots,
     secrets,
@@ -199,8 +200,8 @@ auth_service = auth.AuthService(
     trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
-# The web tier and the data-plane services attach here (Direct VPC egress): the data-plane services reach the
-# internal-ingress auth service over it, and the sandbox worker hello.
+# Every caller of an internal-ingress service attaches here (Direct VPC egress): the data-plane services reach auth
+# over it, the web tier evidence and sheaf, and the sandbox worker hello, evidence and sheaf.
 services_net = services_network.ServicesNetwork(
     project=project,
     region=region,
@@ -507,6 +508,25 @@ grants.SandboxSpawner(
     prior=grants.Prior('themis-dispatcher-runs-job'),
     role_prior=grants.Prior('themis-sandbox-job-runner'),
 )
+# How an operator reaches the data-plane services from a laptop: their gRPC methods on the web load balancer, each
+# service behind an IAP-enabled backend that admits only the accessors granted below.
+operator_backends = {
+    label: operator_ingress.OperatorBackend(
+        f'themis-{label}',
+        project=project,
+        region=region,
+        service=service.service_name,
+        target=label,
+        iap_service_agent=base.iap_service_agent,
+        opts=pulumi.ResourceOptions(depends_on=[base, service]),
+    )
+    for label, service in (('evidence', evidence_service), ('sheaf', sheaf_service))
+}
+operator_routes = [
+    web.GrpcRoute(service=grpc_service, backend_service=operator_backends[label].backend_service)
+    for label, grpc_services in (('evidence', evidence.GRPC_SERVICES), ('sheaf', sheaf.GRPC_SERVICES))
+    for grpc_service in grpc_services
+]
 site = web.WebService(
     project=project,
     region=region,
@@ -528,10 +548,14 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     trace_sample_ratio=trace_sample_ratio,
+    iap_service_agent=base.iap_service_agent,
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
     # Anthropic's webhook reaches the dispatcher through this load balancer, past the dispatcher's Cloud Armor policy.
-    routes=[web.Route(path=sandbox.DISPATCHER_WEBHOOK_PATH, backend_service=dispatcher_service.backend_service)],
+    routes=[
+        web.Route(path=sandbox.DISPATCHER_WEBHOOK_PATH, backend_service=dispatcher_service.backend_service),
+        *operator_routes,
+    ],
     opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
@@ -588,26 +612,17 @@ grants.ServiceInvoker(
     target='sheaf',
 )
 # themis-clu, by hand: the corpus, the sheaf protocol, and — where the stack allows it — any live
-# session. The convert worker has no binding because nothing has needed to drive a conversion by hand,
-# not because it is withheld.
-grants.ServiceInvoker(
-    'themis-clu',
-    member=automation_user.member,
-    service=evidence_service.service_name,
-    project=project,
-    location=region,
-    target='evidence',
-    prior=grants.Prior('themis-clu-invokes-evidence'),
-)
-grants.ServiceInvoker(
-    'themis-clu',
-    member=automation_user.member,
-    service=sheaf_service.service_name,
-    project=project,
-    location=region,
-    target='sheaf',
-    prior=grants.Prior('themis-clu-invokes-sheaf'),
-)
+# session. It passes IAP on each operator backend, and IAP calls the service as its own agent, so the
+# account holds no invoker binding. The convert worker has no operator backend because nothing has
+# needed to drive a conversion by hand, not because it is withheld.
+for label, backend in operator_backends.items():
+    grants.IapBackendAccessor(
+        'themis-clu',
+        member=automation_user.member,
+        backend_service=backend.backend_service_name,
+        project=project,
+        target=label,
+    )
 if clu_derives_session_tokens:
     grants.SessionBearerDeriver(
         'themis-clu',

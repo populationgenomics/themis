@@ -28,7 +28,7 @@ def _worker_template(program: capture.Capture) -> dict[str, object]:
     return template
 
 
-def test_the_worker_admits_only_its_own_projects_queues(program: capture.Capture) -> None:
+def test_every_queue_can_reach_the_internal_only_worker(program: capture.Capture) -> None:
     # Cloud Tasks counts as internal traffic only from the worker's own project and only on the default
     # run.app URL, so a queue elsewhere or a disabled default URL would leave every task undeliverable.
     worker = _of_type(program, _SERVICE_TYPE)[_WORKER]

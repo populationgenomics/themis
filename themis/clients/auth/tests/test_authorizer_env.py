@@ -59,8 +59,29 @@ def test_an_unknown_selector_is_refused_by_name(monkeypatch: pytest.MonkeyPatch)
         _build()
 
 
+_AUDIENCE = 'https://themis-sheaf-123456789.australia-southeast1.run.app'
+
+
 def test_the_http_authorizer_needs_the_auth_service_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    _seed(monkeypatch, THEMIS_AUTHORIZER_BACKEND='http')
+    _seed(monkeypatch, THEMIS_AUTHORIZER_BACKEND='http', THEMIS_ID_TOKEN_AUDIENCE=_AUDIENCE)
     monkeypatch.delenv('THEMIS_AUTH_URL', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_AUTH_URL'):
+        _build()
+
+
+def test_the_http_authorizer_needs_the_id_token_audience(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed(monkeypatch, THEMIS_AUTHORIZER_BACKEND='http', THEMIS_AUTH_URL='https://auth.example')
+    monkeypatch.delenv('THEMIS_ID_TOKEN_AUDIENCE', raising=False)
+    with pytest.raises(SystemExit, match='THEMIS_ID_TOKEN_AUDIENCE'):
+        _build()
+
+
+def test_the_http_authorizer_refuses_an_audience_that_is_not_an_https_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed(
+        monkeypatch,
+        THEMIS_AUTHORIZER_BACKEND='http',
+        THEMIS_AUTH_URL='https://auth.example',
+        THEMIS_ID_TOKEN_AUDIENCE='themis-sheaf',
+    )
+    with pytest.raises(SystemExit, match='THEMIS_ID_TOKEN_AUDIENCE'):
         _build()

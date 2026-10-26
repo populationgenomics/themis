@@ -1,7 +1,8 @@
 """The automation identity: the account a person or a script acts as to reach a deployed service.
 
-The services are IAM-gated Cloud Run, which admits an ID token whose `aud` is the service's own URL.
-A user credential cannot mint one — `gcloud auth print-identity-token --audiences=...` refuses
+A data-plane service admits an ID token whose `aud` is the service's own URL, and an operator reaches
+it from a laptop through the web load balancer's IAP, which admits a JWT signed by an accessor account.
+A user credential can produce neither — `gcloud auth print-identity-token --audiences=...` refuses
 anything but a service account — so anything not already running as a service account impersonates
 this one: a person at a terminal, a local script, a one-off job.
 
@@ -13,7 +14,7 @@ this one: a person at a terminal, a local script, a one-off job.
 an impersonated token carries only when asked for (rpc-authorization.md).
 
 The group holds `serviceAccountTokenCreator` on the account and nothing else; the account holds the
-invoker bindings. That edge is the stable one: what a person can reach changes by editing this
+IAP accessor bindings. That edge is the stable one: what a person can reach changes by editing this
 account's grants, never by adding another binding that names people.
 """
 

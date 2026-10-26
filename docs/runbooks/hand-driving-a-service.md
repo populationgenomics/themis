@@ -1,61 +1,66 @@
 # Reaching a deployed Themis environment by hand
 
-The backend services are IAM-gated Cloud Run. Reaching one from a terminal is not a matter of credentials you already
-have: Cloud Run admits an ID token whose `aud` is the service's own URL, and a user credential cannot produce one.
-`gcloud auth print-identity-token --audiences=…` refuses anything that is not a service account. Impersonation is the
-way across.
+The backend services take traffic only from inside the project, so a terminal reaches them through the environment's
+load balancer, where each one sits behind IAP. Every call carries two tokens. IAP checks a JWT that an account signs for
+the environment's domain, and the service then checks an ID token whose `aud` is the service's own URL. A user
+credential can produce neither: `gcloud auth print-identity-token --audiences=…` refuses anything that is not a service
+account. Impersonation is the way across.
 
-The `themis-clu` group may impersonate the `themis-clu` service account, which holds the invoker bindings. Membership
-lives in `cpg-infrastructure-private`.
+The `themis-clu` group may impersonate the `themis-clu` service account, which is the one account IAP admits in front of
+the backend services. Membership lives in `cpg-infrastructure-private`.
 
 The tools in this runbook need one login, your own application-default credentials from
 `gcloud auth application-default login`, not an impersonated one. They impersonate the account through `google-auth` and
 run no `gcloud` command, so the CLI's own login, which expires on its own schedule, plays no part in them. The `gcloud`
-commands below are for calling a service by hand.
+commands below are for calling the web app by hand.
 
-## Mint a token and call a service
+## Call a backend service
 
-```bash
-SERVICE_URL=$(gcloud run services describe themis-evidence \
-  --region=australia-southeast1 --project=cpg-themis-dev --format='value(status.url)')
-CLU=themis-clu@cpg-themis-dev.iam.gserviceaccount.com
-
-TOKEN=$(gcloud auth print-identity-token \
-  --impersonate-service-account="$CLU" --audiences="$SERVICE_URL" --include-email)
-```
-
-`--include-email` is not optional: the gate on every data-plane service verifies the caller from the token's `email`
-claim, and an impersonated token carries it only when asked. Without it every rpc answers `UNAUTHENTICATED` with "the
-caller presented no ID token this service can verify", while Cloud Run's own IAM check, which does not need the claim,
-still passes.
-
-The services speak gRPC, so the token goes on the call as `authorization: Bearer $TOKEN` metadata over a TLS channel to
-`<host>:443` — not as an HTTP header on a REST request. `grpcurl` needs the proto tree, since no service registers
-reflection; the shorter path is the generated stub:
+`tools.operator_path` mints both tokens as the account and keeps them fresh, and builds a channel to the load balancer
+whose every call carries them. The services speak gRPC and register no reflection, so the generated stub is the shortest
+path. Calling the evidence service's literature interface looks like this:
 
 ```python
 import grpc
 from themis.rpc import literature_pb2, literature_pb2_grpc
+from tools import clu, operator_path
 
-channel = grpc.secure_channel(f'{host}:443', grpc.ssl_channel_credentials())
-stub = literature_pb2_grpc.LiteratureStub(channel)
-stub.PollFullTexts(
-    literature_pb2.PollFullTextsRequest(doc_ids=[doc_id]),
-    metadata=(('authorization', f'Bearer {token}'),),
-)
+project = 'cpg-themis-dev'
+target = operator_path.lookup('themis-evidence', 'themis.rpc.literature.Literature', project=project)
+tokens = operator_path.Tokens(target, clu.service_account(project))
+stub = literature_pb2_grpc.LiteratureStub(operator_path.channel(tokens))
+try:
+    stub.PollFullTexts(literature_pb2.PollFullTextsRequest(doc_ids=[doc_id]), timeout=60)
+except grpc.RpcError as e:
+    print(operator_path.explain(e, tokens))
 ```
+
+Run it with `uv run --group tools_sheaf --group evidence python`. The target names the environment's domain, read from
+its stack file, as the host the channel dials. It also names the service's URL, read from Cloud Run, as the audience of
+the ID token. That URL is the one built from the service's name, the project number and the region
+(`https://themis-evidence-<number>.australia-southeast1.run.app`). The service refuses a token minted for its other,
+hashed URL, even though Cloud Run accepts both.
+
+The two tokens travel as gRPC metadata. The JWT goes in `proxy-authorization: Bearer …`; its `aud` is the domain's
+origin with the path wildcard, and IAP consumes it. The ID token goes in `authorization: Bearer …`; IAP passes it
+through untouched, and the service verifies the caller from it. The ID token has to carry the account's `email` claim,
+which an impersonated token carries only when asked (`clu.identity_token` asks). Without the claim every rpc answers
+`UNAUTHENTICATED` with "the caller presented no ID token this service can verify".
 
 ## The web app, behind IAP
 
-Same account, different audience. IAP does not take a service URL as an OIDC audience, but it accepts a second token
-type: a JWT the account signs itself, whose `aud` is the app's own URL. Nothing has to be registered for it — no OAuth
-client, no allowlist — and `iss`/`sub` carry the email the app authorizes on, so no extra flag is needed.
+The app takes the same JWT IAP checks in front of the backend services, sent in `Authorization` here, since the app
+needs no second token. IAP does not take a service URL as an OIDC audience, but it accepts this second token type: a JWT
+the account signs itself, whose `aud` is the app's own URL. Nothing has to be registered for it — no OAuth client, no
+allowlist — and `iss`/`sub` carry the email the app authorizes on, so no extra flag is needed. `tools.web_app` signs it
+the same way `tools.operator_path` does.
 
 Use the path wildcard. An `aud` of the exact URL admits that one URL only, so `https://…/` reaches `/` and gets a `401`
 on every API path.
 
 ```bash
 APP=https://themis-dev.populationgenomics.org.au
+CLU=themis-clu@cpg-themis-dev.iam.gserviceaccount.com
 NOW=$(date +%s)
 printf '{"iss":"%s","sub":"%s","aud":"%s/*","iat":%s,"exp":%s}' \
   "$CLU" "$CLU" "$APP" "$NOW" "$((NOW + 600))" > /tmp/iap-jwt.json
@@ -76,8 +81,7 @@ from the status alone, which is why they are named here.
 The app authorizes on the email in the IAP assertion, and that email is the account's rather than yours — so a call
 lands on the Projects `project_members` names `themis-clu@…` against, not the ones you see in a browser, and an
 otherwise-correct call answers empty until such a row exists. The app's logs attribute the call to the account; which
-person made it is in the signing's delegation chain in Cloud Audit Logs, logged as `signJwt` rather than the
-`generateIdToken` the service calls above produce.
+person made it is in the signing's delegation chain in Cloud Audit Logs, logged as `signJwt`.
 
 ## The database
 
@@ -113,11 +117,11 @@ uv run --group tools_sheaf python -m tools.clone_analysis --analysis-id "$ANALYS
 ```
 
 The tool derives the Analysis's session token into a file in a private temporary directory. It then serves a loopback
-git remote in the same process, which presents that token on every call together with an ID token for the service,
-minted as `themis-clu`. It clones through the remote, stops it, and deletes the temporary directory with the token in
-it. The clone has the default branch checked out and every branch under `origin/`. It also holds the tags, and the refs
-that pushes and sheaf itself write outside branches and tags, under their own names. One of them, `refs/sheaf/reflog`,
-gains a commit on every publish, and that commit's message names each ref the publish moved.
+git remote in the same process, which presents that token on every call together with the two tokens above, minted as
+`themis-clu`, through the load balancer. It clones through the remote, stops it, and deletes the temporary directory
+with the token in it. The clone has the default branch checked out and every branch under `origin/`. It also holds the
+tags, and the refs that pushes and sheaf itself write outside branches and tags, under their own names. One of them,
+`refs/sheaf/reflog`, gains a commit on every publish, and that commit's message names each ref the publish moved.
 `git log --first-parent refs/sheaf/reflog` lists the publishes newest first, down to the root entry sheaf writes when
 the repository is created ([`sheaf.md`](../design/sheaf.md#the-reflog-ref-says-what-was-current)).
 
@@ -132,32 +136,41 @@ git clone http://127.0.0.1:<port>/"$ANALYSIS"        # or `git remote set-url or
 
 The port is printed by the second step. Deriving the token reads the Analysis's session id from the database and
 MAC-signs it through the session-token KMS key, both as `themis-clu`. The account therefore needs
-`cloudkms.signerVerifier` on that key besides the database login, and `run.invoker` on the sheaf service for the remote.
-Both grants land with the sheaf deploy, and until they do the tools fail with the KMS or gRPC error as is. The signing
-grant is a decision, not a convenience: whoever can sign can derive any Analysis's session token, the credential that
-scopes the sandbox's every call. `tools.sheaf_remote` keeps the ID token fresh in the token file while it runs and
-removes it on Ctrl-C. Every read goes through `ReadRefDoc` and `FetchPack` and every push through `Publish`, so a push
-refused by the service reads back in the hook's wording, as it would for the sandbox worker. The token is only ever in
-that file; it is never on the command line or in the environment.
+`cloudkms.signerVerifier` on that key besides the database login, and IAP access on the sheaf service's backend for the
+remote. The signing grant is a decision, not a convenience: whoever can sign can derive any Analysis's session token,
+the credential that scopes the sandbox's every call. `tools.sheaf_remote` keeps both tokens fresh in the token file
+while it runs and removes them on Ctrl-C. Every read goes through `ReadRefDoc` and `FetchPack` and every push through
+`Publish`, so a push refused by the service reads back in the hook's wording, as it would for the sandbox worker. The
+token is only ever in that file; it is never on the command line or in the environment.
 
 ## What it can reach
 
-`themis-clu` holds `run.invoker` on the evidence and sheaf services, IAP access on the web app, and a database login
-with the migrator's rights. Where the stack opts in (`themis:cluDerivesSessionTokens`, on in dev) it also holds
-`signerVerifier` on the session-token MAC key: the bearer of any live session is `HMAC(key, session_id)`
-(`themis.clients.auth.derive`), and the login reads every `session_id`, so the account can act as any live session
-against a session-scoped service such as `themis-sheaf`. Each of these is a named capability in the Pulumi program
-(`infra/themis_infra/grants.py`); the account's grants are the `themis-clu` call sites there. The MAC call needs an
-access token as the account, not the ID token above (`tools.clu.impersonated` builds one from your own login), and the
-key version, `pulumi stack output session_token_signing_key` plus `/cryptoKeyVersions/1`.
+`themis-clu` passes IAP in front of the evidence and sheaf services and the web app, and holds a database login with the
+migrator's rights. Where the stack opts in (`themis:cluDerivesSessionTokens`, on in dev) it also holds `signerVerifier`
+on the session-token MAC key: the bearer of any live session is `HMAC(key, session_id)` (`themis.clients.auth.derive`),
+and the login reads every `session_id`, so the account can act as any live session against a session-scoped service such
+as `themis-sheaf`. Each of these is a named capability in the Pulumi program (`infra/themis_infra/grants.py`); the
+account's grants are the `themis-clu` call sites there. The MAC call needs an access token as the account, not the ID
+token above (`tools.clu.impersonated` builds one from your own login), and the key version,
+`pulumi stack output session_token_signing_key` plus `/cryptoKeyVersions/1`.
 
 The convert worker is not among them, for want of a reason rather than on principle: nothing has needed to drive a
-conversion by hand yet, and doing it locally against a scratch bucket is the better first move anyway. Adding it is a
-one-line binding alongside the evidence one.
+conversion by hand yet, and doing it locally against a scratch bucket is the better first move anyway. The worker takes
+internal traffic only, so adding it would also open its ingress to the load balancer, beside an operator backend for the
+worker and the account's IAP access on it.
 
 ## When a call is refused
 
-`PERMISSION_DENIED` with no detail is the usual shape, and it has three causes worth separating: the caller is not in
-the group; the token's audience is not this service's URL (a token minted for one service is useless against another);
-or the account has no `run.invoker` on the service being called. The impersonation itself is logged as `generateIdToken`
-with its delegation chain, so Cloud Audit Logs answer "did the mint succeed, and as whom" before you start guessing.
+IAP refuses a call before the service sees it, and grpc-python reports that as `UNKNOWN: Stream removed`, the status a
+dropped connection gets too. `operator_path.explain` tells the two apart by asking IAP directly with a plain HTTPS
+request carrying the same JWT, and returns IAP's answer when it refuses. A `401` is the token refused: its body names
+the check, and `Audience specified does not match requested endpoint` means an `aud` that is not the domain's origin
+with the wildcard. A `403` is the account refused, for want of IAP access on that service's backend, which in practice
+means the call was not made as `themis-clu`. `tools.sheaf_remote` asks the same question when a sync fails `UNKNOWN`,
+and logs the answer.
+
+Once IAP has let the call through, the service answers in gRPC statuses of its own. `UNAUTHENTICATED` means the ID token
+did not verify: its `aud` is not the service's built URL (a token minted for one service is useless against another), or
+it lacks the email claim. `PERMISSION_DENIED` is the rpc's own rule declining the caller. The impersonation is logged in
+Cloud Audit Logs with its delegation chain, as `generateIdToken` for the ID token and `signBlob` for the IAP token the
+tools sign, so "did the mint succeed, and as whom" has an answer before you start guessing.

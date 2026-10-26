@@ -1,7 +1,7 @@
 """The automation identity a laptop tool drives a deployed environment as, and how it gets there.
 
-`themis-clu` is the service account the `themis-clu` group may impersonate; it holds the invoker
-bindings, the database login and the grants a tool needs, so a person never needs any of them
+`themis-clu` is the service account the `themis-clu` group may impersonate; it holds IAP access in
+front of the data-plane services, the database login and the grants a tool needs, so a person never needs any of them
 directly (`docs/runbooks/hand-driving-a-service.md`). Every road to it starts at the caller's own
 application-default login (`gcloud auth application-default login`): impersonated credentials for a
 client library, an ID token minted from them for a Cloud Run service, which a user credential cannot
@@ -15,6 +15,7 @@ import re
 import shutil
 
 import google.auth
+import google.auth.iam
 import requests
 from google.auth import credentials as credentials_mod
 from google.auth import exceptions, impersonated_credentials, jwt
@@ -139,11 +140,10 @@ def identity_token(service_account: str, audience: str) -> str:
 def run_service_url(service: str, *, project: str) -> str:
     """The URL of the Cloud Run `service` its ID tokens name, read through the Cloud Run Admin API as the caller.
 
-    Cloud Run serves a service at two URLs and admits an ID token for either. The data-plane services are
-    called at the one built from the service's name, the project number and the region
-    (`infra/themis_infra/cloud_run.py`), so that is the one returned. The caller's own login reads it, not
-    `themis-clu`: the account holds no `run.services.get`, and reading a URL is no reason to widen what it
-    can do.
+    Cloud Run serves a service at two URLs. A data-plane service accepts an ID token only for the one built
+    from its name, the project number and the region (`infra/themis_infra/cloud_run.py`), so that is the one
+    returned. The caller's own login reads it, not `themis-clu`: the account holds no `run.services.get`, and
+    reading a URL is no reason to widen what it can do.
 
     Raises:
         GoogleCallError: If the service cannot be read, or reports no such URL.
@@ -163,6 +163,22 @@ def run_service_url(service: str, *, project: str) -> str:
             f'https://{service}-<project number>.{REGION}.run.app: {urls!r}'
         )
     return matching[0]
+
+
+def iap_jwt_credentials(service_account: str, origin: str) -> jwt.Credentials:
+    """Credentials for a JWT that IAP in front of `origin` admits, signed as `service_account` through IAM.
+
+    The `aud` is the origin with the path wildcard: an `aud` of the bare origin admits `/` alone, and IAP
+    answers 401 on every other path. `iss` and `sub` are the account, which IAP checks the accessor binding
+    against. One hour, the library's default lifetime, is IAP's ceiling.
+
+    Raises:
+        google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
+    """
+    signer = google.auth.iam.Signer(auth_requests.Request(), caller_credentials(quota_project=None), service_account)
+    return jwt.Credentials(
+        signer=signer, issuer=service_account, subject=service_account, audience=f'{origin.rstrip("/")}/*'
+    )
 
 
 def _get_json(credentials: credentials_mod.Credentials, url: str, *, purpose: str) -> dict[str, object]:
