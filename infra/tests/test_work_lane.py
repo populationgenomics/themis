@@ -26,6 +26,18 @@ def _worker_template(program: capture.Capture) -> dict[str, object]:
     return template
 
 
+def test_the_worker_admits_only_its_own_projects_queues(program: capture.Capture) -> None:
+    # Cloud Tasks counts as internal traffic only from the worker's own project and only on the default
+    # run.app URL, so a queue elsewhere or a disabled default URL would leave every task undeliverable.
+    worker = _of_type(program, _SERVICE_TYPE)[_WORKER]
+    queues = _of_type(program, _QUEUE_TYPE)
+
+    assert queues
+    assert {q['project'] for q in queues.values()} == {worker['project']}
+    assert not worker.get('defaultUriDisabled')
+    assert worker['ingress'] == 'INGRESS_TRAFFIC_INTERNAL_ONLY'
+
+
 def test_the_worker_has_an_instance_for_every_request_the_queues_dispatch_at_once(program: capture.Capture) -> None:
     # One request per instance: fewer instances than dispatches would let a full bulk queue take the
     # instance an interactive request needs. Every queue in the program delivers to this worker.

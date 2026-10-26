@@ -13,7 +13,7 @@ program's, since neither a queue nor the invoker knows its caller.
 - `WorkQueues` — the interactive and bulk Cloud Tasks queues. Their concurrency caps are capacity
   limits: they protect the worker's memory and pace its calls out, and do not bound spend; bounded
   retries stop a request that keeps failing.
-- `ConvertWorker` — the worker Cloud Run service (IAM-gated, require-auth) and its runtime SA
+- `ConvertWorker` — the worker Cloud Run service (internal ingress, require-auth) and its runtime SA
   (object read/write on the litcache bucket; the Claude API by workload identity federation; each
   transcription's token counts to Cloud Monitoring through the Telemetry API).
 - `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
@@ -102,7 +102,7 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
 
 
 class ConvertWorker(pulumi.ComponentResource):
-    """The convert worker Cloud Run service (IAM-gated ingress) and its runtime SA.
+    """The convert worker Cloud Run service (internal ingress, IAM-gated) and its runtime SA.
 
     Attributes:
         service_account_email: The runtime SA's email — object read/write on the litcache bucket, and
@@ -164,10 +164,10 @@ class ConvertWorker(pulumi.ComponentResource):
             name='themis-convert-worker',
             location=region,
             deletion_protection=False,
-            # Public ingress so Cloud Tasks reaches the run.app URL with its OIDC token; IAM require-auth
-            # (no invoker binding here — only ConversionInvoker's SA gets run.invoker) makes Cloud Run's
-            # default-deny refuse everything else.
-            ingress='INGRESS_TRAFFIC_ALL',
+            # Cloud Tasks in the same project pushing to the run.app URL counts as internal traffic. IAM
+            # require-auth still applies: only ConversionInvoker's SA holds run.invoker, so the task must
+            # carry its OIDC token.
+            ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
                 # One request per instance, so the queues together never need more instances than they dispatch at
