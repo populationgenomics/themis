@@ -25,6 +25,9 @@ config:
   # The fraction of requests traced to Cloud Trace (docs/runbooks/reading-a-request-trace.md). Every request on
   # dev: its traffic is a handful of people.
   themis:traceSampleRatio: "1.0"
+  # Whether the full-text sweep runs on its schedule; unscheduled, it runs only by hand. A pass's main-text requests
+  # pay for transcriptions, which `python -m themis.litcache.sweep --dry-run` counts.
+  themis:workSweepScheduled: "false"
   # The project's only public-read bucket, for PR review images. Opt-in per stack:
   # an environment that doesn't review code has no reason to expose one.
   themis:enablePrScreenshotBucket: "true"

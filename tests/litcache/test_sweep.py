@@ -109,6 +109,18 @@ def test_a_transcription_refused_at_the_spend_limit_is_asked_for_again() -> None
     assert request == work_pb2.WorkRequest(doc_id=_doc_id(1), targets=[work.MAIN_TEXT_TARGET])
 
 
+def test_a_free_only_pass_asks_a_paper_awaiting_its_main_text_only_for_its_free_steps() -> None:
+    request = sweep.request_for(_manifest(1), work_pb2.JobLog(), now=_NOW, deadline=_DEADLINE, free_only=True)
+
+    assert request == work_pb2.WorkRequest(doc_id=_doc_id(1))
+
+
+def test_a_free_only_pass_leaves_a_paper_whose_only_work_spends() -> None:
+    log = work_pb2.JobLog(entries=[_settled(produce.XML_STEP)])
+
+    assert sweep.request_for(_manifest(1), log, now=_NOW, deadline=_DEADLINE, free_only=True) is None
+
+
 def test_a_pass_is_named_for_the_minute_it_started_in_utc() -> None:
     later = datetime.datetime(2026, 10, 22, 2, 0, 59, tzinfo=datetime.timezone(datetime.timedelta(hours=11)))
 
@@ -133,9 +145,25 @@ def _commit(bucket: gcs.Bucket, manifest: litcache_pb2.Manifest) -> None:
     bucket.blob(writer.manifest_path(manifest.doc_id)).upload_from_string(manifest.SerializeToString())
 
 
-def _sweep(bucket: gcs.Bucket, client: _TasksClient) -> sweep.SweepReport:
+def _sweep(bucket: gcs.Bucket, client: _TasksClient, *, free_only: bool = False) -> sweep.SweepReport:
     enqueuer = enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', client), _TARGET)
-    return sweep.sweep(bucket, enqueuer, now=_NOW, deadline=_DEADLINE)
+    return sweep.sweep(bucket, enqueuer, now=_NOW, deadline=_DEADLINE, free_only=free_only)
+
+
+def _commit_each_kind_of_paper(bucket: gcs.Bucket) -> None:
+    _commit(bucket, _manifest(1, text=True))  # free work: the XML step
+    _commit(bucket, _manifest(2))  # its main text, with free work too
+    _commit(bucket, _manifest(3))
+    joblog.append(bucket, _doc_id(3), [_settled(produce.XML_STEP)])  # its main text, and no free work
+    _commit(bucket, _manifest(4, text=True))
+    joblog.append(bucket, _doc_id(4), [_settled(produce.XML_STEP)])  # nothing left
+    _commit(bucket, _manifest(5, pdf=False))
+    joblog.append(bucket, _doc_id(5), [_settled(produce.XML_STEP), _settled(produce.LOCATE_STEP)])  # its marker
+    bucket.blob(writer.manifest_path(_doc_id(6))).upload_from_string(b'\xff\xff\xff')  # unreadable
+
+
+def _task_names(client: _TasksClient) -> list[str]:
+    return sorted(t.name.rsplit('/', 1)[1] for t in client.tasks)
 
 
 def test_a_pass_asks_for_each_paper_with_work_under_its_own_name(gcs_bucket: gcs.Bucket) -> None:
@@ -203,6 +231,41 @@ def test_a_paper_whose_marker_was_never_written_is_asked_for(gcs_bucket: gcs.Buc
 
     assert _sweep(gcs_bucket, client) == sweep.SweepReport(papers=2, asked=1)
     assert client.tasks[0].name.endswith(f'/{_doc_id(1)}--sweep-20261021T1500')
+
+
+def test_a_free_only_pass_asks_no_paper_for_its_main_text(gcs_bucket: gcs.Bucket) -> None:
+    _commit_each_kind_of_paper(gcs_bucket)
+    client = _TasksClient()
+
+    report = _sweep(gcs_bucket, client, free_only=True)
+
+    assert report == sweep.SweepReport(papers=6, asked=3, unreadable=1)
+    assert _task_names(client) == [f'{_doc_id(n)}--sweep-20261021T1500' for n in (1, 2, 5)]
+
+
+@pytest.mark.parametrize('free_only', [False, True])
+def test_a_survey_counts_what_the_same_pass_asks(gcs_bucket: gcs.Bucket, free_only: bool) -> None:
+    _commit_each_kind_of_paper(gcs_bucket)
+    client = _TasksClient()
+
+    result = sweep.survey(gcs_bucket, now=_NOW, deadline=_DEADLINE, free_only=free_only)
+    report = _sweep(gcs_bucket, client, free_only=free_only)
+
+    assert result.papers == report.papers
+    assert result.unreadable == report.unreadable
+    assert result.main_text + result.free == report.asked
+    assert result.main_text == sum(work.MAIN_TEXT_TARGET in name for name in _task_names(client))
+
+
+def test_a_survey_counts_a_spending_step_only_on_papers_asked_for_their_main_text(gcs_bucket: gcs.Bucket) -> None:
+    _commit_each_kind_of_paper(gcs_bucket)
+
+    scheduled = sweep.survey(gcs_bucket, now=_NOW, deadline=_DEADLINE)
+    free_only = sweep.survey(gcs_bucket, now=_NOW, deadline=_DEADLINE, free_only=True)
+
+    assert scheduled.work[produce.TRANSCRIPTION_STEP] == 2  # papers 2 and 3; paper 1's text is met
+    assert free_only.work[produce.TRANSCRIPTION_STEP] == 0
+    assert free_only.work[produce.XML_STEP] == scheduled.work[produce.XML_STEP] == 2
 
 
 def test_a_pdf_deposited_for_a_paper_written_off_is_asked_for_its_main_text() -> None:

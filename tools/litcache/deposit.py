@@ -403,7 +403,7 @@ def deposit(
     except api_exceptions.GoogleAPIError as e:
         raise DepositError(
             f'{doc_id} is deposited, but the worker could not be asked for it ({e}); '
-            're-run the deposit to ask again, or the hourly sweep will'
+            're-run the deposit to ask again, or the next sweep pass will'
         ) from e
     return DepositResult(doc_id=doc_id, minted=minted, written=result.written, manifest=result.manifest, asked=asked)
 

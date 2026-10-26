@@ -13,18 +13,21 @@ own pass (`enqueue.task_id`):
 It decides with the worker's own step tests (`produce.outstanding`), so the two cannot disagree about
 what a paper still needs. A paper it cannot read is counted and passed over, so one corrupt object does
 not starve the papers listed after it. Run as `python -m themis.litcache.sweep`, by a Cloud Run job on a
-schedule.
+schedule or by hand. `--free-only` asks no paper for its main text, so the pass runs only the free steps
+and spends nothing; `--dry-run` reads every paper and counts what a pass would ask, asking nothing.
 """
 
 from __future__ import annotations
 
+import argparse
+import collections
 import concurrent.futures
 import dataclasses
 import datetime
 import logging
 import os
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 
 import protovalidate
 from google.api_core import exceptions as api_exceptions
@@ -64,10 +67,41 @@ class SweepReport:
     unreadable: int = 0
 
 
+@dataclasses.dataclass
+class Survey:
+    """What a pass would ask, read without asking.
+
+    Attributes:
+        papers: Papers read.
+        main_text: Papers a pass would ask for their main text: the papers a transcription may be paid for on.
+        free: Papers a pass would ask for with no target, which run only the free steps; a paper whose
+            terminal marker was never written among them.
+        unreadable: Papers a pass would pass over, as `SweepReport.unreadable` counts them.
+        work: Papers on which each step has work now and the pass's request would run it, by step
+            (`produce.would_run`). Work outstanding, not a forecast: one step's output changes what the next
+            finds, so `main_text`, not the transcription's count, bounds the transcriptions a pass may pay for.
+    """
+
+    papers: int = 0
+    main_text: int = 0
+    free: int = 0
+    unreadable: int = 0
+    work: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
+
+
 @dataclasses.dataclass(frozen=True)
 class _Paper:
     manifest: litcache_pb2.Manifest
     log: work_pb2.JobLog
+
+
+@dataclasses.dataclass(frozen=True)
+class _Decision:
+    """What a pass asks for one paper. `paper` is None for a paper passed over, and `request` for one not asked for."""
+
+    doc_id: str
+    paper: _Paper | None
+    request: work_pb2.WorkRequest | None
 
 
 def sweep_pass(now: datetime.datetime) -> str:
@@ -76,11 +110,19 @@ def sweep_pass(now: datetime.datetime) -> str:
 
 
 def request_for(
-    manifest: litcache_pb2.Manifest, log: work_pb2.JobLog, *, now: datetime.datetime, deadline: datetime.timedelta
+    manifest: litcache_pb2.Manifest,
+    log: work_pb2.JobLog,
+    *,
+    now: datetime.datetime,
+    deadline: datetime.timedelta,
+    free_only: bool = False,
 ) -> work_pb2.WorkRequest | None:
-    """What the sweep asks for `manifest`'s paper, or None when no step has work for it."""
+    """What the sweep asks for `manifest`'s paper, or None when no step it may ask for has work.
+
+    Under `free_only` it names no target, so the worker runs only the free steps.
+    """
     outstanding = produce.outstanding(manifest, log, now=now, deadline=deadline)
-    if outstanding.main_text:
+    if outstanding.main_text and not free_only:
         return work_pb2.WorkRequest(doc_id=manifest.doc_id, targets=[work.MAIN_TEXT_TARGET])
     if outstanding.free:
         return work_pb2.WorkRequest(doc_id=manifest.doc_id)
@@ -106,10 +148,16 @@ def _read(bucket: gcs.Bucket, doc_id: str) -> _Paper | str:
     return _Paper(manifest, log)
 
 
+def _papers(bucket: gcs.Bucket) -> Iterator[tuple[str, _Paper | str]]:
+    doc_ids = list(_committed_papers(bucket))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_READ_WORKERS) as pool:
+        yield from zip(doc_ids, pool.map(lambda d: _read(bucket, d), doc_ids), strict=True)
+
+
 def _request(
-    bucket: gcs.Bucket, paper: _Paper, *, now: datetime.datetime, deadline: datetime.timedelta
+    bucket: gcs.Bucket, paper: _Paper, *, now: datetime.datetime, deadline: datetime.timedelta, free_only: bool
 ) -> work_pb2.WorkRequest | None:
-    request = request_for(paper.manifest, paper.log, now=now, deadline=deadline)
+    request = request_for(paper.manifest, paper.log, now=now, deadline=deadline, free_only=free_only)
     if request is not None or not produce.awaits_marker(paper.manifest, paper.log):
         return request
     if outcome.read_outcome(bucket, paper.manifest.doc_id) is not None:
@@ -118,12 +166,34 @@ def _request(
     return work_pb2.WorkRequest(doc_id=paper.manifest.doc_id)
 
 
+def _decisions(
+    bucket: gcs.Bucket, *, now: datetime.datetime, deadline: datetime.timedelta, free_only: bool
+) -> Iterator[_Decision]:
+    """Each committed paper, and what a pass started at `now` asks for it: `sweep` asks, `survey` counts."""
+    name = sweep_pass(now)
+    for doc_id, paper in _papers(bucket):
+        if isinstance(paper, str):
+            _LOG.error('passing over %s: %s', doc_id, paper)
+            yield _Decision(doc_id, None, None)
+            continue
+        request = _request(bucket, paper, now=now, deadline=deadline, free_only=free_only)
+        if request is not None:
+            try:
+                enqueue.task_id(request, sweep_pass=name)
+            except protovalidate.ValidationError as e:
+                _LOG.error('passing over %s: its request breaks its constraints: %s', doc_id, e)
+                yield _Decision(doc_id, None, None)
+                continue
+        yield _Decision(doc_id, paper, request)
+
+
 def sweep(
     bucket: gcs.Bucket,
     enqueuer: enqueue.Enqueuer,
     *,
     now: datetime.datetime,
     deadline: datetime.timedelta = work.DISPATCH_DEADLINE,
+    free_only: bool = False,
 ) -> SweepReport:
     """Read every committed paper, and ask for each one on which a step has work.
 
@@ -132,6 +202,7 @@ def sweep(
         enqueuer: The enqueuer on the bulk queue.
         now: When the pass started: its name, and the time begun attempts' ages are read against.
         deadline: The dispatch deadline, past which a begun attempt has been killed.
+        free_only: Ask no paper for its main text, so the pass spends nothing.
 
     Returns:
         What the pass did.
@@ -143,34 +214,65 @@ def sweep(
     """
     report = SweepReport()
     name = sweep_pass(now)
-    doc_ids = list(_committed_papers(bucket))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_READ_WORKERS) as pool:
-        for doc_id, paper in zip(doc_ids, pool.map(lambda d: _read(bucket, d), doc_ids), strict=True):
-            report.papers += 1
-            if isinstance(paper, str):
-                _LOG.error('passing over %s: %s', doc_id, paper)
-                report.unreadable += 1
-                continue
-            request = _request(bucket, paper, now=now, deadline=deadline)
-            if request is None:
-                continue
-            try:
-                created = enqueuer.enqueue(request, sweep_pass=name)
-            except protovalidate.ValidationError as e:
-                _LOG.error('passing over %s: its request breaks its constraints: %s', doc_id, e)
-                report.unreadable += 1
-                continue
-            except _REFUSED_FOR_EVERY_REQUEST:
-                raise
-            except api_exceptions.GoogleAPIError as e:
-                _LOG.warning('could not ask for %s: %r', doc_id, e)
-                report.not_asked += 1
-                continue
-            if created:
-                report.asked += 1
-            else:
-                report.already_asked += 1
+    for decision in _decisions(bucket, now=now, deadline=deadline, free_only=free_only):
+        report.papers += 1
+        if decision.paper is None:
+            report.unreadable += 1
+            continue
+        if decision.request is None:
+            continue
+        try:
+            created = enqueuer.enqueue(decision.request, sweep_pass=name)
+        except _REFUSED_FOR_EVERY_REQUEST:
+            raise
+        except api_exceptions.GoogleAPIError as e:
+            _LOG.warning('could not ask for %s: %r', decision.doc_id, e)
+            report.not_asked += 1
+            continue
+        if created:
+            report.asked += 1
+        else:
+            report.already_asked += 1
     return report
+
+
+def survey(
+    bucket: gcs.Bucket,
+    *,
+    now: datetime.datetime,
+    deadline: datetime.timedelta = work.DISPATCH_DEADLINE,
+    free_only: bool = False,
+) -> Survey:
+    """Read every committed paper, and count what a pass started at `now` would ask, asking nothing.
+
+    Args:
+        bucket: The store.
+        now: As `sweep` takes it.
+        deadline: As `sweep` takes it.
+        free_only: As `sweep` takes it.
+
+    Returns:
+        What the pass would ask.
+
+    Raises:
+        google.api_core.exceptions.GoogleAPIError: If the store cannot be read.
+    """
+    result = Survey()
+    for decision in _decisions(bucket, now=now, deadline=deadline, free_only=free_only):
+        result.papers += 1
+        if decision.paper is None:
+            result.unreadable += 1
+            continue
+        request = decision.request
+        if request is None:
+            continue
+        paper = decision.paper
+        result.work.update(produce.would_run(request.targets, paper.manifest, paper.log, now=now, deadline=deadline))
+        if request.targets:
+            result.main_text += 1
+        else:
+            result.free += 1
+    return result
 
 
 def _require(name: str) -> str:
@@ -180,16 +282,31 @@ def _require(name: str) -> str:
     return value
 
 
-def main(clock: Callable[[], datetime.datetime] = lambda: datetime.datetime.now(datetime.UTC)) -> int:
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--free-only', action='store_true', help='ask no paper for its main text: spend nothing')
+    parser.add_argument('--dry-run', action='store_true', help='count what the pass would ask; ask nothing')
+    return parser.parse_args(argv)
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    clock: Callable[[], datetime.datetime] = lambda: datetime.datetime.now(datetime.UTC),
+) -> int:
     """Run one pass over the store the environment names; return the exit status."""
+    args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    bucket = gcs.Client().bucket(_require('THEMIS_FULLTEXT_BUCKET'))
+    if args.dry_run:
+        result = survey(bucket, now=clock(), free_only=args.free_only)
+        _LOG.info('sweep, dry run: %s', result)
+        return 1 if result.unreadable else 0
     target = enqueue.ConversionTarget(
         queue_path=_require('THEMIS_WORK_BULK_QUEUE'),
         worker_url=_require('THEMIS_WORK_WORKER_URL'),
         invoker_service_account_email=_require('THEMIS_WORK_INVOKER_SA_EMAIL'),
     )
-    bucket = gcs.Client().bucket(_require('THEMIS_FULLTEXT_BUCKET'))
-    report = sweep(bucket, enqueue.Enqueuer(tasks_v2.CloudTasksClient(), target), now=clock())
+    report = sweep(bucket, enqueue.Enqueuer(tasks_v2.CloudTasksClient(), target), now=clock(), free_only=args.free_only)
     _LOG.info('sweep: %s', report)
     # A request that could not be created waits for the next pass, and an unreadable paper for a person; failing the
     # job surfaces either.

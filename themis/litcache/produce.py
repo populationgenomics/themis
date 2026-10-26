@@ -529,6 +529,11 @@ def _step_has_work(
     return verdict in (joblog.Verdict.WORK, joblog.Verdict.SPENT, joblog.Verdict.BEGUN)
 
 
+def _runs(step: _Step, reached: Collection[str]) -> bool:
+    """Whether a request reaching `reached` runs `step` when it has work: a reached step, or any free one."""
+    return step.name in reached or not step.spends
+
+
 def _has_work(run: _Run, step: _Step, manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> bool:
     return _step_has_work(step, manifest, log, attempt=run.attempt, now=run.now(), deadline=run.deadline)
 
@@ -569,6 +574,30 @@ def outstanding(
     )
 
 
+def would_run(
+    targets: Collection[str],
+    manifest: litcache_pb2.Manifest,
+    log: work_pb2.JobLog,
+    *,
+    now: datetime.datetime,
+    deadline: datetime.timedelta,
+) -> frozenset[str]:
+    """The steps with work that a request naming `targets` would run on the paper as it stands.
+
+    One step's output can change what a later one finds: XML found leaves the transcription without work, and a
+    PDF located gives it some.
+
+    Raises:
+        UnknownTargetError: If a target is neither a step nor the main text.
+    """
+    reached = reach(targets, manifest)
+    return frozenset(
+        step.name
+        for step in STEPS
+        if _runs(step, reached) and _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline)
+    )
+
+
 def _read_manifest(bucket: gcs.Bucket, doc_id: str) -> litcache_pb2.Manifest:
     try:
         return litcache_pb2.Manifest.FromString(bucket.blob(writer.manifest_path(doc_id)).download_as_bytes())
@@ -587,9 +616,7 @@ def _next_step(
     log = joblog.read(run.bucket, run.doc_id)
     reached = reach(targets, manifest)
     with_work = [
-        step
-        for step in STEPS
-        if step.name not in ran and (step.name in reached or not step.spends) and _has_work(run, step, manifest, log)
+        step for step in STEPS if step.name not in ran and _runs(step, reached) and _has_work(run, step, manifest, log)
     ]
     return next((s for s in with_work if s.name in reached), next(iter(with_work), None))
 

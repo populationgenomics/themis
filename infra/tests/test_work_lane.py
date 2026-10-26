@@ -9,7 +9,9 @@ from themis_infra import capture
 
 _QUEUE_TYPE = 'gcp:cloudtasks/queue:Queue'
 _SERVICE_TYPE = 'gcp:cloudrunv2/service:Service'
+_SCHEDULER_TYPE = 'gcp:cloudscheduler/job:Job'
 _WORKER = 'themis-convert-worker'
+_SWEEP_SCHEDULE = 'themis-work-sweep-schedule'
 
 
 def _of_type(program: capture.Capture, resource_type: str) -> dict[str, dict[str, object]]:
@@ -57,3 +59,10 @@ def test_the_worker_runs_a_request_as_long_as_a_task_may_take(program: capture.C
 
     assert timeout.endswith('s')
     assert datetime.timedelta(seconds=int(timeout.removesuffix('s'))) == work.DISPATCH_DEADLINE
+
+
+def test_the_sweep_runs_on_its_schedule_only_where_the_stack_says_so(program: capture.Capture) -> None:
+    # A pass can ask for paid transcriptions across the corpus, so an unscheduled stack's schedule is paused.
+    scheduled = capture.dev_stack_config()['themis:workSweepScheduled'] == 'true'
+
+    assert _of_type(program, _SCHEDULER_TYPE)[_SWEEP_SCHEDULE]['paused'] is not scheduled

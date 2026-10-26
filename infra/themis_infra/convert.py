@@ -18,7 +18,7 @@ program's, since neither a queue nor the invoker knows its caller.
   transcription's token counts to Cloud Monitoring through the Telemetry API).
 - `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
   and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
-- `WorkSweep` — the hourly sweep: a Cloud Run job on the worker's image that reads every paper and
+- `WorkSweep` — the scheduled sweep: a Cloud Run job on the worker's image that reads every paper and
   asks, on the bulk queue, for each one on which a step has work (`themis.litcache.sweep`).
 """
 
@@ -44,8 +44,9 @@ _MAX_BACKOFF = '600s'
 # each task (`themis.litcache.work.DISPATCH_DEADLINE`). Equal, so neither side abandons a request the
 # other is still running, and the job log reads a begun attempt older than this as dead.
 _REQUEST_TIMEOUT = '1800s'
-# The sweep runs hourly: a lost or refused request waits at most this long to be asked again.
-_SWEEP_SCHEDULE = '0 * * * *'
+# Every six hours: a lost or refused request waits at most this long to be asked again. A pass asks again for every
+# paper still waiting in the queue, so a shorter period multiplies a backlog's tasks.
+_SWEEP_SCHEDULE = '0 */6 * * *'
 # One pass reads every manifest and job log; generous against a corpus in the tens of thousands.
 _SWEEP_TIMEOUT = '3000s'
 
@@ -307,7 +308,8 @@ class WorkSweep(pulumi.ComponentResource):
 
     The job runs the worker's image, so it applies the worker's own step tests. Its identity reads the
     store, puts tasks on the bulk queue, and acts as the conversion invoker the tasks name; a scheduler
-    identity of its own may only start the job.
+    identity of its own may only start the job. An unscheduled sweep is the same job with its schedule paused, run by
+    hand (`gcloud run jobs execute`).
     """
 
     def __init__(
@@ -321,6 +323,7 @@ class WorkSweep(pulumi.ComponentResource):
         worker_url: pulumi.Input[str],
         invoker_service_account_id: pulumi.Input[str],
         invoker_service_account_email: pulumi.Input[str],
+        scheduled: bool,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:WorkSweep', 'themis', None, opts)
@@ -365,7 +368,7 @@ class WorkSweep(pulumi.ComponentResource):
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=service_account.email,
                     timeout=_SWEEP_TIMEOUT,
-                    # The next pass is an hour away, and asks for the same papers.
+                    # A failed pass is not retried: the next one, scheduled or by hand, asks for the same papers.
                     max_retries=0,
                     containers=[
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
@@ -413,12 +416,13 @@ class WorkSweep(pulumi.ComponentResource):
             opts=child,
         )
         gcp.cloudscheduler.Job(
-            'themis-work-sweep-hourly',
+            'themis-work-sweep-schedule',
             project=project,
             region=region,
-            name='themis-work-sweep-hourly',
+            name='themis-work-sweep-schedule',
             schedule=_SWEEP_SCHEDULE,
             time_zone='Etc/UTC',
+            paused=not scheduled,
             http_target=gcp.cloudscheduler.JobHttpTargetArgs(
                 uri=pulumi.Output.format(
                     'https://run.googleapis.com/v2/projects/{0}/locations/{1}/jobs/{2}:run', project, region, job.name

@@ -122,6 +122,9 @@ clu_derives_session_tokens = config.require_bool('cluDerivesSessionTokens')
 # The fraction of requests the web tier and the services behind it trace to Cloud Trace, one decision per
 # trace (themis/telemetry/tracing.py). Required, not defaulted: tracing is billed per span, so a stack decides.
 trace_sample_ratio = config.require_float('traceSampleRatio')
+# Whether the full-text sweep runs on its schedule. Required, not defaulted: a pass can ask for paid transcriptions
+# across the whole corpus, so a stack decides.
+work_sweep_scheduled = config.require_bool('workSweepScheduled')
 if not 0 <= trace_sample_ratio <= 1:
     raise ValueError(f'themis:traceSampleRatio must be from 0 to 1, got {trace_sample_ratio}')
 
@@ -636,7 +639,7 @@ ingestion = ingest.IngestionRuntime(
         depends_on=[base, database, fulltext, semantic_scholar.version, openalex.version, ingest_net]
     ),
 )
-# The hourly sweep asks for every paper on which a step has work, so a lost request is asked again. It runs the
+# The scheduled sweep asks for every paper on which a step has work, so a lost request is asked again. It runs the
 # worker's image, so it applies the worker's own step tests.
 work_sweep = convert.WorkSweep(
     project=project,
@@ -647,6 +650,7 @@ work_sweep = convert.WorkSweep(
     worker_url=convert_worker.url,
     invoker_service_account_id=convert_invoker.service_account_id,
     invoker_service_account_email=convert_invoker.service_account_email,
+    scheduled=work_sweep_scheduled,
     opts=pulumi.ResourceOptions(depends_on=[base, fulltext, work_queues, convert_worker, convert_invoker]),
 )
 # An operator's deposit of a PDF asks the worker for the paper's main text, as themis-clu.
