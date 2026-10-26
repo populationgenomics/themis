@@ -418,23 +418,26 @@ flowchart TD
     X -- "work names no PMID, or<br/>PubMed's P names another DOI" --> OA["stored: OpenAlex's record alone"]
     E --> C{"OpenAlex lookup: by PMID,<br/>then by DOI on a miss"}
     D --> C
-    C -- "one work" --> B["stored: resolving record,<br/>OpenAlex's beside it"]
+    C -- "one work, or of several<br/>the only one naming a PMID" --> B["stored: resolving record,<br/>OpenAlex's beside it"]
     C -- "no work, or the DOI's<br/>work names another PMID" --> R["stored: resolving record alone"]
-    C -- "several works" --> DL["dead-lettered, naming them"]
+    C -- "several works, not one<br/>alone naming a PMID" --> DL["dead-lettered, naming them"]
     C -- "OpenAlex down" --> F["write fails; the caller retries"]
 ```
 
 The lookup does not always find one work. When OpenAlex cannot be reached or answers with a server error, the write
 fails, as it does when the resolving index cannot be reached, and the writer's caller retries it; no paper is stored
 without the OpenAlex record it should carry. When OpenAlex holds no work for the paper's PMID or DOI, the paper is
-stored with its resolving index's record alone. When OpenAlex holds more than one work for the identifier, the paper is
-dead-lettered, naming the works, because taking either could give the paper another work's authors. A DOI lookup also
-matches a work by the DOI of one of its locations, which is how a preprint OpenAlex merged into its published version
-comes back; such a work gives the paper its record and authors, nothing else, since its PMID, PMCID and publisher are
-the published version's. A response that cannot be an answer to the lookup, such as a work stating none of the
-identifiers asked for, fails the whole lookup, and with it a bulk run, as a malformed efetch response does. A list of
-works names at most a work's first 100 authors, where a consortium paper can have over a thousand, so a work listed with
-100 is fetched again on its own and stored whole.
+stored with its resolving index's record alone. A DOI lookup also matches a work by the DOI of one of its locations,
+which is how a preprint OpenAlex merged into its published version comes back; such a work gives the paper its record
+and authors, nothing else, since its PMID, PMCID and publisher are the published version's, and a work stating the DOI
+as its own is taken ahead of it. OpenAlex also holds copies of one article as works of their own: a university
+repository's copy of a journal paper comes back with the journal's DOI and title but no PMID, beside the journal's work,
+which states one. So when more than one work answers the identifier, the one stating a PMID is taken if it is the only
+one; otherwise the paper is dead-lettered, naming the works, because taking either could give the paper another work's
+authors. A response that cannot be an answer to the lookup, such as a work stating none of the identifiers asked for,
+fails the whole lookup, and with it a bulk run, as a malformed efetch response does. A list of works names at most a
+work's first 100 authors, where a consortium paper can have over a thousand, so a work listed with 100 is fetched again
+on its own and stored whole.
 
 Every writer sends Themis's OpenAlex API key, which gives Themis a daily budget of its own. Without a key, OpenAlex
 shares one small daily budget among every caller behind an IP address, about a thousand requests in October 2026. The
@@ -711,8 +714,8 @@ puts on a destructive change: its failing window costs nothing real.
 [The move off the mirrors](#the-move-off-the-mirrors) is such a change, and sets out when the condition holds and how
 the steps keep that window empty. A refresh fetches each record again, as its index states it at the time of the refresh
 rather than at ingest. A paper the index no longer resolves comes out of a refresh with no `metadata.pb`, and so does a
-paper OpenAlex holds more than one work for, or one whose OpenAlex record has drifted in a field the reader reads.
-`DescribePaper` then titles each by its DOI or PMID.
+paper OpenAlex holds several works for, not one of them alone stating a PMID, or one whose OpenAlex record has drifted
+in a field the reader reads. `DescribePaper` then titles each by its DOI or PMID.
 
 Changing what a field means in place is never open. Protobuf bytes carry field numbers and wire types, not names or
 meanings, so a record written before the change would decode without error into the new meaning.

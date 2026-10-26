@@ -980,6 +980,17 @@ def test_a_doi_litfetch_abandoned_whose_openalex_work_states_no_pmid_is_openalex
     assert upstream_record.parse_text(source.openalex_json) == work
 
 
+def test_a_doi_openalex_holds_as_a_journal_work_and_a_repository_copy_resolves_through_pubmed() -> None:
+    journal = _work_beside()
+    repository_copy = _stating_no_pmid(_work_beside(work_id='W4226282752'))
+    paper = _resolved(_litfetch_abandons([repository_copy, journal]), 'k')
+
+    source = _record(paper.metadata).source
+    assert source.HasField('pubmed')
+    assert upstream_record.parse_text(source.openalex_json) == journal
+    assert paper.external_ids.pmid == _PMID
+
+
 def test_a_paper_openalex_resolved_holds_its_record_alone() -> None:
     handler = _doi_handler(idconv_pmc=False)
     resolved = _resolve_batch(

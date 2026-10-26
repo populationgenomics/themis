@@ -912,6 +912,68 @@ def test_two_works_stating_a_doi_alike_make_it_ambiguous(works: list[dict[str, o
         found.answer(_PREPRINT)
 
 
+_JOURNAL_DOI = '10.1161/CIRCRESAHA.120.318141'
+# The journal's work of a paper, and a university repository's copy of it OpenAlex holds as a work of its own.
+_JOURNAL = fake_openalex.work(work_id='W3215247046', pmid='34809444', doi=_JOURNAL_DOI)
+_REPOSITORY_COPY = fake_openalex.work(work_id='W4226282752', doi=_JOURNAL_DOI)
+
+
+@pytest.mark.parametrize(
+    'works', [[_JOURNAL, _REPOSITORY_COPY], [_REPOSITORY_COPY, _JOURNAL]], ids=['journal-first', 'copy-first']
+)
+def test_of_two_works_of_a_doi_the_only_one_stating_a_pmid_answers_it(works: list[dict[str, object]]) -> None:
+    answer = _find(openalex.Scheme.DOI, [_JOURNAL_DOI], _holding(*works)).answer(_JOURNAL_DOI)
+    assert answer is not None
+    assert answer.work.record == _JOURNAL
+    assert openalex.stated_pmid(answer) == '34809444'
+
+
+@pytest.mark.parametrize(
+    'works',
+    [
+        pytest.param(
+            [_REPOSITORY_COPY, fake_openalex.work(work_id='W7212047067', doi=_JOURNAL_DOI)], id='neither-states-one'
+        ),
+        pytest.param(
+            [_JOURNAL, fake_openalex.work(work_id='W7212047067', pmid='33597769', doi=_JOURNAL_DOI)],
+            id='both-state-one',
+        ),
+    ],
+)
+def test_two_works_of_a_doi_not_one_alone_stating_a_pmid_make_it_ambiguous(works: list[dict[str, object]]) -> None:
+    found = _find(openalex.Scheme.DOI, [_JOURNAL_DOI], _holding(*works))
+    with pytest.raises(openalex.AmbiguousWorkError) as excinfo:
+        found.answer(_JOURNAL_DOI)
+    assert excinfo.value.work_ids == tuple(str(work['id']) for work in works)
+
+
+def test_a_work_stating_a_doi_as_its_own_without_a_pmid_answers_it_ahead_of_one_stating_a_pmid_on_a_location() -> None:
+    own = _work(_PREPRINT, ids={'openalex': 'https://openalex.org/W1'})
+    found = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [_merged(_PUBLISHED, _PREPRINT), own])
+    answer = found.answer(_PREPRINT)
+    assert answer is not None
+    assert answer.work.record == own
+    assert openalex.stated_pmid(answer) is None
+
+
+def test_of_two_works_stating_a_doi_on_a_location_the_one_stating_a_pmid_answers_it_claiming_none() -> None:
+    copy = _merged('10.1/copy', _PREPRINT) | {'ids': {'openalex': 'https://openalex.org/W1'}}
+    published = _merged(_PUBLISHED, _PREPRINT)
+    answer = openalex.read_results(openalex.Scheme.DOI, [_PREPRINT], [copy, published]).answer(_PREPRINT)
+    assert answer is not None
+    assert answer.by_location
+    assert answer.work.record == published
+    assert openalex.stated_pmid(answer) is None  # the PMID settled which work answers; it is not the paper's
+
+
+def test_a_pmid_that_cannot_be_read_while_settling_which_work_answers_is_charged_to_the_identifier() -> None:
+    unreadable = _work(_DOI_A, id='https://openalex.org/W1', ids={'pmid': 'not a PubMed URL'})
+    found = openalex.read_results(openalex.Scheme.DOI, [_DOI_A, _DOI_B], [unreadable, _work(_DOI_A), _work(_DOI_B)])
+    with pytest.raises(upstream_record.SchemaDriftError, match='pmid'):
+        found.answer(_DOI_A)
+    assert found.answer(_DOI_B) is not None
+
+
 @pytest.mark.parametrize('locations', [None, []], ids=['null', 'empty'])
 def test_a_doi_lookup_reads_a_work_without_locations_by_its_own_doi(locations: list[object] | None) -> None:
     found = openalex.read_results(openalex.Scheme.DOI, ['10.1/a'], [_work('10.1/a', locations=locations)])

@@ -11,16 +11,16 @@ list cuts at 100: a work served with 100 is fetched again on its own. A DOI hold
 since the filter grammar splits on both, so it is looked up alone at `/works/doi:{doi}`, which serves its work whole.
 
 Each identifier asked has one of four answers (`Found.answer`): one work; none, the caller's "not in OpenAlex", never
-invented; more than one, an `AmbiguousWorkError` naming the works, since taking either could give the paper another
-work's record; or a work this reader cannot read or store, a `SchemaDriftError` charged to that identifier alone. A
-failure to reach OpenAlex, past a few retries, propagates from `find` as httpx2 raises it, and so does a work that
-cannot be charged to one identifier, since no answer in its batch can then be trusted. `find` reads of a work only the
-identifier it was looked up by: for a DOI, its own and its locations' (`read_results`). A work that states a DOI only
-on a location, the published version a preprint was merged into, answers that DOI with its record and authors,
-nothing else (`Answer.by_location`). A work found by DOI is also read for the PMID it states (`stated_pmid`),
-which tells whether it is the work of a paper PubMed resolved or routes a DOI to PubMed. `read_answer` reads the
-cross-ids (`pmid`, `pmcid`, bare from their URL forms) and publisher ingest takes from the work of a paper OpenAlex
-resolved.
+invented; more than one with none answering alone (`read_results`), an `AmbiguousWorkError` naming the works, since
+taking either could give the paper another work's record; or a work this reader cannot read or store, a
+`SchemaDriftError` charged to that identifier alone. A failure to reach OpenAlex, past a few retries, propagates from
+`find` as httpx2 raises it, and so does a work that cannot be charged to one identifier, since no answer in its batch
+can then be trusted. `find` reads of a work only the identifier it was looked up by: for a DOI, its own and its
+locations' (`read_results`). A work that states a DOI only on a location, the published version a preprint was merged
+into, answers that DOI with its record and authors, nothing else (`Answer.by_location`). A work found by DOI is also
+read for the PMID it states (`stated_pmid`), which tells whether it is the work of a paper PubMed resolved or routes a
+DOI to PubMed. `read_answer` reads the cross-ids (`pmid`, `pmcid`, bare from their URL forms) and publisher ingest takes
+from the work of a paper OpenAlex resolved.
 
 Every request carries the caller's API key (`ApiKey`) as the `api_key` query parameter. The key never reaches a log or
 an error message: a failure escapes `fetch_page` with the key's value replaced in its message, request and response, and
@@ -155,7 +155,9 @@ class Scheme(enum.StrEnum):
 
 
 class AmbiguousWorkError(Exception):
-    """OpenAlex holds more than one work for an identifier, so none of them can be taken as the paper's.
+    """OpenAlex holds more than one work for an identifier and none answers it alone (`read_results`).
+
+    None of them can then be taken as the paper's.
 
     Attributes:
         identifier: The identifier, as `scheme:value`.
@@ -190,10 +192,12 @@ class Found(NamedTuple):
 
     Attributes:
         scheme: The scheme the identifiers were looked up by.
-        answers: Each identifier OpenAlex holds exactly one work for, with that work.
-        ambiguous: Each identifier OpenAlex holds more than one work for, with their OpenAlex ids.
-        drifted: Each identifier whose one work could not be read or stored, or that a work whose locations could not
-            be read may state (`read_results`), with the message naming the field
+        answers: Each identifier with the one work answering it (`read_results`).
+        ambiguous: Each identifier OpenAlex holds more than one work for with none answering it alone
+            (`read_results`), with the OpenAlex ids of the works of the kind that would answer it.
+        drifted: Each identifier whose answering work could not be read or stored, whose works could not be read to
+            settle which answers it, or that a work whose locations could not be read may state (`read_results`), with
+            the message naming the field
             (`upstream_record.SchemaDriftError.detail`).
     """
 
@@ -203,10 +207,10 @@ class Found(NamedTuple):
     drifted: dict[str, str]
 
     def answer(self, identifier: str) -> Answer | None:
-        """The one work OpenAlex holds for `identifier`, or `None` when it holds none.
+        """The one work answering `identifier`, or `None` when OpenAlex holds none.
 
         Raises:
-            AmbiguousWorkError: If OpenAlex holds more than one work for it.
+            AmbiguousWorkError: If OpenAlex holds more than one work for it and none answers it alone.
             upstream_record.SchemaDriftError: If its work could not be read or stored.
         """
         k = key(self.scheme, identifier)
@@ -484,7 +488,11 @@ def read_results(scheme: Scheme, identifiers: Sequence[str], results: Sequence[M
     A work answers every asked identifier it states. A DOI filter matches a work by the DOI of any of its locations as
     well as its own, so a preprint OpenAlex has merged into its published version is answered by that work, as an
     `Answer.by_location`. A work stating an identifier as its own answers it ahead of the works stating it only on a
-    location; two works stating it alike, both as their own or both only on a location, make it ambiguous.
+    location. Of several works stating it alike, both as their own or both only on a location, the one stating a PMID
+    answers when it is the only one: OpenAlex holds a repository's copy of a journal article, with its DOI and title
+    and no PMID, as a work of its own. Otherwise the identifier is ambiguous. A work answering by location gives no
+    identifiers (`stated_pmid`), so its PMID only settles which work answers. A PMID lookup's works all state it, so
+    several of them stay ambiguous.
 
     A work whose locations cannot be read still answers its own DOI, which no location can outrank. Its locations may
     state any other DOI asked that no work states as its own, so each of those is charged the drift rather than read as
@@ -525,15 +533,28 @@ def read_results(scheme: Scheme, identifiers: Sequence[str], results: Sequence[M
         by_location = k not in own
         candidates = located[k] if by_location else own[k]
         try:
-            if len(candidates) > 1:
+            answering = _answering(candidates)
+            if answering is None:
                 found.ambiguous[k] = [
                     upstream_record.JsonObject.root(INDEX, c.work).required_str('id') for c in candidates
                 ]
             else:
-                found.answers[k] = Answer(work=parse_work(candidates[0].work), by_location=by_location)
+                found.answers[k] = Answer(work=parse_work(answering.work), by_location=by_location)
         except upstream_record.SchemaDriftError as e:
             found.drifted[k] = e.detail
     return found
+
+
+def _answering(candidates: Sequence[_Stated]) -> _Stated | None:
+    """The one of `candidates`, works stating an identifier alike, that answers it, or `None` when none does alone.
+
+    Raises:
+        upstream_record.SchemaDriftError: If a candidate's stated `ids.pmid` is not a PubMed article URL.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+    stating_pmid = [c for c in candidates if _stated_pmid(c.work) is not None]
+    return stating_pmid[0] if len(stating_pmid) == 1 else None
 
 
 def stated_pmid(answer: Answer) -> str | None:
@@ -603,7 +624,8 @@ async def find(
     between them) leaves another unserved, so the lookup fails rather than miss it. A failure that cannot be charged to
     one identifier fails the whole lookup too: a work stating none of the identifiers asked, one whose `id` or own
     identifier cannot be read, or one whose locations cannot be read when no identifier asked can be charged
-    (`read_results`).
+    (`read_results`). Of several works for an identifier, the one stating a PMID answers it when it is the only one,
+    the others taken as copies of it (`read_results`); otherwise the identifier is ambiguous.
 
     Args:
         scheme: The filter the identifiers are values of.
