@@ -87,11 +87,11 @@ service-to-service behaviour, and not the same as IAP, which consumes the caller
 identity header. The confirmation and its source are in the Appendix.) Without it there would be no verified caller to
 authorize on at all.
 
-An internal call can therefore carry credentials that do different jobs. The ID token is **reachability**: it clears
-Cloud Run's invoker gate, but any identity granted `run.invoker` can mint one, so on its own it says nothing about which
-data the call is for. The session token is **scope**: the callee resolves it to one Analysis, and what the call may
-touch follows from that. An approval token, described below, is **entitlement**: it says a named person agreed to this
-call drawing on what is theirs.
+An internal call can therefore carry credentials that do different jobs. The ID token is **reachability**: on an
+internal call it clears Cloud Run's invoker gate, but any identity granted `run.invoker` can mint one, so on its own it
+says nothing about which data the call is for. The session token is **scope**: the callee resolves it to one Analysis,
+and what the call may touch follows from that. An approval token, described below, is **entitlement**: it says a named
+person agreed to this call drawing on what is theirs.
 
 The web tier is already in the first position: the browser's paper-content pane reaches the literature service directly,
 over a gRPC client presenting the web tier's own ID token and no session token (the live adapter at
@@ -204,14 +204,16 @@ default, but it would be a second statement of who may call, able to disagree wi
 one is an admission drawn too wide, which is fixed by narrowing it.
 
 Fail-closed governs a single call the same way, in two stages. Verifying the caller comes first, before any context
-exists, and a call whose ID token the service cannot verify is denied outright, on no arm: Cloud Run admits no call
-without a valid token, so one the service cannot re-verify is a deployment fault — the audience set wrong — or a broken
-guarantee, and neither yields a caller. That is why `caller` is never absent from a context. Within a built context, an
-arm that cannot decide declines: a verified caller the rpc does not name is no admission, and a claim naming a session
-that does not resolve is denied whatever the caller — the call would be attributed wrongly or not at all, and a handler
-that finds no session on its context then knows the claim named none. Admission is reached only by an arm affirmatively
-matching. A failure that is not a decline — the auth service being unreachable, say — propagates as the failure it is,
-because reading an outage as "no session" would turn an incident into a silent policy decision.
+exists, and a call whose ID token the service cannot verify is denied outright, on no arm. A token can fail here after
+Cloud Run let the call in: behind the load balancer's IAP, Cloud Run admits IAP's service agent and passes the caller's
+token through unexamined, so the service checks the token's audience against its own URL itself
+([`security.md`](security.md#ingress-from-the-public-internet)). Neither a forged token nor one minted for another
+service yields a caller. That is why `caller` is never absent from a context. Within a built context, an arm that cannot
+decide declines: a verified caller the rpc does not name is no admission, and a claim naming a session that does not
+resolve is denied whatever the caller — the call would be attributed wrongly or not at all, and a handler that finds no
+session on its context then knows the claim named none. Admission is reached only by an arm affirmatively matching. A
+failure that is not a decline — the auth service being unreachable, say — propagates as the failure it is, because
+reading an outage as "no session" would turn an incident into a silent policy decision.
 
 ### Default-deny is enforced at the interceptor, over the whole server
 
@@ -344,12 +346,12 @@ A read carries no admission code at all — its admission is in the proto and it
 corpus read does do is hand the context to the port, which resolves the view from it; that is the masking seam, present
 on every read from the start, and not an admission decision. It selects the whole corpus today.
 
-`CALLER_CLU` is `themis-clu`, the account a maintainer impersonates to call a backend by hand: it holds `run.invoker` on
+`CALLER_CLU` is `themis-clu`, the account a maintainer impersonates to call a backend by hand: it passes IAP in front of
 the evidence service already, and unnamed it would be refused every literature rpc the moment they gain admissions.
 Where a stack also lets it derive session bearers, it can satisfy the session arm as any live session, as the web tier
 and the dispatcher can everywhere — the property of session minting stated under Background, not one its admission adds.
-Whether it may reach a given environment's service at all stays IAM's question, decided by `run.invoker`, not the
-contract's.
+Whether it may reach a given environment's service at all stays IAM's question, decided by its IAP access on the
+service's load-balancer backend, not the contract's.
 
 The producer's admission replaces a narrower gate. That gate resolved a session only at the enqueue step and then
 discarded the binding, so a batch with nothing to enqueue was answered without any token, and no spend could be

@@ -70,8 +70,9 @@ synthetic-only.
 ### 4. Secret inventory + rotation
 
 OIDC/IAM-first (see [`deployment.md`](deployment.md)): Anthropic API via WIF, Cloud SQL via IAM auth, GCP via the
-workload SA. A secret is stored only where there is **no WIF path** — currently just the optional **Semantic Scholar API
-key** (raises the litcache id-resolver's rate limit; not strictly required).
+workload SA. A secret is stored only where there is **no WIF path**: the **OpenAlex API key** (OpenAlex meters keyless
+callers, so every litcache lookup of a work sends it) and the optional **Semantic Scholar API key** (raises the litcache
+id-resolver's rate limit; not strictly required).
 
 No DB password (IAM auth), no Anthropic key (WIF), no app session key (the app trusts the IAP JWT per request,
 stateless). IAP's own browser path likewise needs none — it uses a Google-managed OAuth client.
@@ -114,32 +115,31 @@ PR job can mutate cloud state — preview only, never apply.
   image — deploying to **cpg-themis-dev**.
 - **Separate Cloud Run services, sized and scaled independently** (distinct images and identities): the **web app**
   (`themis-web` — the IAP-fronted UI/BFF) and the **internal gRPC services** (the agent's data plane, holding the
-  GCP/Cloud SQL identity — §8), which carry no public endpoint. The self-hosted phase (§8) adds the **sandbox worker**
-  (runs in our infra with controlled egress) with its credential-proxy sidecar, and the **dispatcher** that starts it.
-  Agent and environment definitions are version-controlled YAML applied via the **`ant` CLI** (control plane).
+  GCP/Cloud SQL identity — §8), whose only public route is an operator path behind IAP. The self-hosted phase (§8) adds
+  the **sandbox worker** (runs in our infra with controlled egress) with its credential-proxy sidecar, and the
+  **dispatcher** that starts it. Agent and environment definitions are version-controlled YAML applied via the **`ant`
+  CLI** (control plane).
 - Prod (later): a **gated GitHub Environment** (required approval) promotes the *same validated image* into prod's
   Artifact Registry by copy — **no rebuild** — and deploys. Full project isolation; prod never reads dev's registry.
 
-The deployables and their boundaries — boxed is inside our GCP project; orange marks a public endpoint, green
-internal-only (no public ingress). Auth labels each hop. Only two surfaces are publicly reachable, and both sit behind
-the one external HTTPS load balancer: the web app behind IAP, and the dispatcher's webhook path. The data-plane services
-are internal, reached from the sandbox.
+The deployables and their boundaries: boxed is inside our GCP project, orange marks a Cloud Run service with a public
+route, and green marks one without. Auth labels each hop. Every public route to a service sits behind the one external
+HTTPS load balancer, and every one but the dispatcher's webhook passes IAP. The web app is behind IAP for the people who
+use it. The data-plane services take traffic from the sandbox and the web app over the services VPC, and from a
+maintainer on a laptop through the load balancer, where IAP admits the automation account `themis-clu` alone. The rule
+and its exceptions, which also include a public bucket and the database's public address, are
+[`security.md`](security.md#ingress-from-the-public-internet)'s.
 
 Anthropic cannot present a GCP or IAP credential, so the dispatcher authenticates each webhook delivery by its HMAC
-signature. A Cloud Armor policy on the dispatcher's load-balancer backend runs before that check. It admits only
-Anthropic's [published outbound range](https://platform.claude.com/docs/en/api/ip-addresses), which Anthropic commits
-not to change without notice, and answers every other source with a 403. The dispatcher's Cloud Run ingress accepts only
-load-balancer traffic, so from the internet its run.app URL offers no way around the policy. Workloads in our own VPC
-can still reach that URL directly, and for them the HMAC signature is the only check. The point of the policy is
-exposure: an internet scanner never reaches the dispatcher's HTTP stack, so a flaw in that stack or its libraries that
-fires before the signature check is out of the scanner's reach. The range is shared by every Anthropic customer, which
-means a request from it says nothing about who sent it, so the HMAC signature remains the authentication. Anthropic
-publishes no outbound IPv6 range, and the load balancer's address is IPv4 only.
+signature, behind a Cloud Armor policy that admits only Anthropic's
+[published outbound range](https://platform.claude.com/docs/en/api/ip-addresses)
+([`security.md`](security.md#the-sandbox-dispatchers-webhook)).
 
 ```mermaid
 flowchart TB
   browser["Curator browser"]
   ma["Anthropic Managed Agents · external"]
+  operator["Maintainer laptop · automation account"]
   subgraph gcp["GCP project · cpg-themis-dev"]
     web["web app · Cloud Run (themis-web)<br/>BFF<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
     disp["dispatcher · Cloud Run<br/>HMAC webhook front"]
@@ -152,13 +152,15 @@ flowchart TB
   ma -->|"HTTPS LB · Anthropic's range · HMAC · run started"| disp
   disp -->|"run job"| sandbox
   sandbox -->|"code mode · session token injected by the proxy"| svc
+  web -->|"services VPC · own ID token"| svc
+  operator -->|"HTTPS LB · IAP · ID token"| svc
   web -->|"Cloud SQL IAM"| sql
   svc -->|"Cloud SQL IAM"| sql
 
   classDef public fill:#ffe8cc,stroke:#d9480f,color:#000
   classDef internal fill:#d3f9d8,stroke:#2b8a3e,color:#000
-  class web,disp public
-  class svc,sandbox,sql internal
+  class web,disp,svc public
+  class sandbox,sql internal
 ```
 
 ### 7. Local dev environment

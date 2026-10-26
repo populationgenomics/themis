@@ -29,9 +29,9 @@ map: the order of the hops, and which doc decides each. It states no mechanism t
    observation
 1. **Steer** — a curator interjection is the BFF's `Steer` method, which sends a `user.message` to the same session. →
    [`conversation-view.md`](conversation-view.md)
-1. **Session end** — Anthropic's delivery is HMAC-verified by the dispatcher, the only public non-IAP surface; the
-   durable trace is materialized from one `events.list` read. → [`frontend-framework.md`](frontend-framework.md)
-   §Durable trace
+1. **Session end** — Anthropic's delivery is HMAC-verified by the dispatcher, the one service the internet reaches
+   without IAP in front of it ([`security.md`](security.md#the-sandbox-dispatchers-webhook)); the durable trace is
+   materialized from one `events.list` read. → [`frontend-framework.md`](frontend-framework.md) §Durable trace
 
 **Identity split.** Anthropic runs the loop and holds no credential of ours beyond the session it was created with. The
 BFF holds the Anthropic identity and a display-scoped Cloud SQL identity. The internal services hold the write identity

@@ -312,11 +312,13 @@ deployed revision.
 The service code PR ships the servicer running offline. The Pulumi Cloud Run deploy is a **separate stacked PR** — infra
 review (IAM, secrets, Cloud Run) is a distinct concern from the service code; see [`deployment.md`](deployment.md) and
 the repo's `infra/*` PRs. The Cloud Run service runs **HTTP/2 end to end** (gRPC needs it), with a gRPC startup probe
-and IAM. Its ingress is as narrow as its callers allow: internal-only where every caller reaches it over the services
-VPC, public-but-IAM-gated where one cannot — the web BFF has no VPC egress, so an internal-ingress service is
-unreachable from it. Sequencing for a DB-backed service: infra attaches the service SA as a Cloud SQL DB user (connect +
-authenticate only), while the table DDL and read/write grants are the **migrate runner's** job — a separate follow-up.
-Do not define shared tables inside a single service's PR.
+and IAM. It takes no traffic from the internet directly. Every caller in the project reaches it over the services VPC,
+so its ingress is internal-only; where a maintainer also calls it by hand, the ingress adds the load balancer, and the
+service gets an operator backend behind IAP that admits only the automation account
+([`security.md`](security.md#ingress-from-the-public-internet)). A service that verifies its callers is told its own URL
+as the audience their ID tokens must name. Sequencing for a DB-backed service: infra attaches the service SA as a Cloud
+SQL DB user (connect + authenticate only), while the table DDL and read/write grants are the **migrate runner's** job —
+a separate follow-up. Do not define shared tables inside a single service's PR.
 
 ## Checklist
 

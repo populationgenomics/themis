@@ -282,8 +282,10 @@ seedable git store would have nothing to seed it with. What the service needs of
   holds `run.invoker` on the service and nothing on the bucket.
 - **Signing:** pack URLs are signed through IAM `signBlob`, so the service's identity holds `serviceAccountTokenCreator`
   on itself. The bucket carries a CORS rule that admits the workbench's origin, for the browser's downloads.
-- **Ingress:** IAM-gated public — `run.invoker` granted per caller, default-deny otherwise — because two of its callers
-  have no path onto the services VPC: the BFF, and a person driving the protocol by hand through the automation user.
+- **Ingress:** internal and load balancer only. The BFF and the sandbox worker reach the service over the services VPC,
+  each holding `run.invoker`; a person driving the protocol by hand reaches it through the load balancer's IAP as the
+  automation account ([`security.md`](security.md#ingress-from-the-public-internet)). Either way the service verifies
+  the caller's ID token against its own URL.
 - **Size:** chunks are sized under gRPC's default 4 MiB message limit. A publish's declared total, and the ref count and
   document size it would leave, are bounded by per-deployment ceilings and refused with `RESOURCE_EXHAUSTED` beyond
   them; the value is deployment configuration, and the ceiling exists because the bytes are whatever the guest pushed

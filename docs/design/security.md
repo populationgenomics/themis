@@ -3,17 +3,22 @@
 **Status:** current **Related:** [`frontend-framework.md`](frontend-framework.md) (§Auth — the web request-auth
 chokepoint), [`sandbox-worker.md`](sandbox-worker.md) (the hatch the sandboxed agent's calls leave through),
 [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the condition an rpc meets before the agent may call it),
-[`workspace-model.md`](workspace-model.md) (cross-Project default-deny), [`../PRODUCT.md`](../PRODUCT.md) §9 (security
-posture this implements)
+[`workspace-model.md`](workspace-model.md) (cross-Project default-deny), [`pr-screenshots.md`](pr-screenshots.md) (the
+one public bucket), [`spike-infrastructure.md`](spike-infrastructure.md) §6 (the deployables diagram),
+[`../PRODUCT.md`](../PRODUCT.md) §9 (security posture this implements)
 
 ## Overview
 
-Cross-cutting security rules, distinct from the per-area docs that own each mechanism. Two, each stated once here rather
+Cross-cutting security rules, distinct from the per-area docs that own each mechanism. Each is stated once here rather
 than re-argued per area:
 
 - **Every critical security check runs at a single default-on chokepoint** — never as a step each call site opts into.
 - **An outbound request carrying untrusted text is an exfiltration channel when the untrusted side can influence where
   the bytes go, or can read them back later** — not merely because untrusted text crossed the perimeter.
+- **A request from the public internet passes IAP before it reaches anything Themis runs**, unless it is bound for a
+  named exception that carries controls of its own. IAP is Google's identity-aware proxy: it refuses a request that
+  carries no Google identity it admits, so a flaw in our code that fires before our own authentication is out of an
+  anonymous attacker's reach.
 
 ## Background
 
@@ -29,6 +34,11 @@ NCBI or VariantValidator with the caller's identifier in it. If every such hop c
 the lethal trifecta ([`../PRODUCT.md`](../PRODUCT.md) §9), the trifecta would close on the product's first feature, and
 "this is an exfiltration channel" would carry no information. What has to be decided, once, is which hops an attacker
 can actually get data out through.
+
+The third rule is about the other direction: what a request from the internet reaches before anyone has checked who sent
+it. Every Themis service authenticates its callers, but a request is parsed by the framework, its libraries and the
+authentication code itself before that check can finish. A flaw in any of them that fires on an unauthenticated request
+is open to every scanner on the internet, and such flaws keep being found in the stack the web tier runs on.
 
 ## Design
 
@@ -158,6 +168,161 @@ make cannot leak. Where a source publishes in bulk, a periodic refresh into our 
 — ClinGen's validity and dosage tables, GenCC and PanelApp are read from that copy, so no caller's text reaches those
 hosts at all. Only what cannot be mirrored is queried live, against the admitted set.
 
+### Ingress from the public internet
+
+The question is which requests from the internet may reach a Themis process at all. The rule is that a request from the
+internet passes IAP before it reaches anything Themis runs, unless its destination is one of the exceptions listed
+below.
+
+The obvious answer is that each service authenticates its own callers, and every one already does. Cloud Run checks a
+caller's ID token against the service's invoker bindings. The web tier verifies IAP's signed assertion, the dispatcher
+verifies an HMAC signature, and the data-plane interceptor verifies the calling account again
+([`rpc-authorization.md`](rpc-authorization.md)). What this gets right is where the check sits: at the resource, as the
+chokepoint rule above asks. What it leaves open differs by service.
+
+On the web tier it leaves open everything a request touches before the app's own check completes. CVE-2025-29927 let one
+request header skip Next.js middleware, which is where many apps authenticate. CVE-2025-55182, disclosed in December
+2025, was remote code execution in React Server Components, triggered by a single unauthenticated request. The web tier
+runs on both frameworks. With IAP in front, neither flaw is open to an anonymous scanner, because Google's proxy refuses
+a request that carries no admitted Google identity before it reaches our container.
+
+On the data-plane services, Cloud Run's invoker check already runs before any of our code, so the gap is a different
+one. If their ingress were open to the internet, an ID token taken from the web tier or the sandbox could be replayed
+from the attacker's own machine until it expired. The data-plane services therefore take traffic only from inside the
+project and from the load balancer, and their one route from the internet passes IAP like the web tier's.
+
+IAP admits a request only from a principal holding IAP access on the resource it fronts, and the accessors differ
+between the web tier and the data-plane services. On the web tier they are the people who use the app, which can be as
+wide as any signed-in Google account, where the app's own access list decides what each account sees. There IAP turns an
+anonymous attacker into one who must hold a Google account, but it does not narrow the attacker to our users. On the
+data-plane services the one accessor is the automation account `themis-clu`, which a maintainer acts as by impersonating
+it; who may do so is a group membership
+([`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)). No person calls evidence or sheaf in
+normal use: the web tier and the sandbox worker call them from inside the project, and only a maintainer driving a
+service by hand comes from outside.
+
+```mermaid
+flowchart LR
+  internet["the internet"] -->|HTTPS| lb["external load balancer<br/>the environment's domain"]
+  lb -->|"every other path"| web["themis-web<br/>IAP on the Cloud Run service<br/>admits the app's users"]
+  lb -->|"/themis.rpc.literature.Literature/*<br/>one prefix per gRPC service"| opev["operator backend<br/>IAP on the backend<br/>admits themis-clu"]
+  lb -->|"/themis.rpc.sheaf.Sheaf/*"| opsh["operator backend<br/>IAP on the backend<br/>admits themis-clu"]
+  lb -->|"/webhooks/anthropic"| armor["dispatcher backend<br/>Cloud Armor admits 160.79.104.0/21"]
+  opev --> evidence["themis-evidence"]
+  opsh --> sheaf["themis-sheaf"]
+  armor --> disp["themis-dispatcher<br/>verifies the HMAC"]
+    subgraph vpc["services VPC"]
+    job["sandbox job"]
+  end
+  web -->|"services VPC: run.app URL, own ID token"| evidence
+  web -->|"services VPC: run.app URL, own ID token"| sheaf
+  job -->|"run.app URL, own ID token"| evidence
+  job -->|"run.app URL, own ID token"| sheaf
+```
+
+Callers in the project reach a data-plane service at its `run.app` URL over the services VPC, presenting their own ID
+token, which Cloud Run checks against the invoker bindings. The web tier joins that VPC for this, with all of its
+outbound traffic routed through it. Routing only private address ranges through the VPC would not do: a `run.app` URL
+resolves to Google's public addresses, so the call would leave by the public path, and Cloud Run counts a request as
+internal only when it arrives over a VPC in the project. Routing everything has two costs. The web tier can now reach
+internal-only services it has no business calling, such as the hello service, at the network level; their invoker
+bindings, which do not name the web tier, still refuse it. And its calls to Anthropic go through the VPC's NAT gateway,
+which bills each gigabyte it carries and which every such call then depends on. Google warns that a new instance on this
+kind of egress can wait for its first outbound connections, but on the development deployment in October 2026, joining
+the VPC added at most two seconds to the web tier's cold start, and the first request after it read the database in
+about 30 ms.
+
+A maintainer on a laptop goes through the load balancer instead. A Cloud Run service can serve several gRPC services, as
+evidence does. The load balancer sends the method paths, `/<package>.<Service>/…`, of each of them to one backend for
+that Cloud Run service, its operator backend, which has IAP enabled on it. The load balancer ends a request to such a
+backend after 60 minutes, which bounds the longest stream a maintainer can hold open. The call carries two tokens, both
+minted as the automation account:
+
+```mermaid
+sequenceDiagram
+  participant tool as laptop tool (as themis-clu)
+  participant iap as load balancer + IAP
+  participant run as Cloud Run (themis-sheaf)
+  participant app as sheaf container
+  tool->>iap: POST /themis.rpc.sheaf.Sheaf/ReadRefDoc<br/>proxy-authorization: JWT, aud https://domain/*<br/>authorization: ID token, aud = sheaf's run.app URL
+  iap->>iap: verify the JWT, check themis-clu holds IAP access on the backend
+  iap->>run: X-Serverless-Authorization: the IAP service agent's token<br/>authorization: passed through untouched
+  run->>run: invoker check on the IAP service agent
+  run->>app: authorization: the operator's ID token
+  app->>app: verify signature, email and audience
+```
+
+The ID token in `authorization` is why each data-plane service checks its audience itself. IAP calls Cloud Run as its
+own service agent, so Cloud Run's invoker check admits the agent, and the caller's ID token reaches the container
+without Cloud Run examining it. Without the service's own check, a token minted for another audience passes: on dev, a
+token the automation account minted for `https://unrelated-audience.invalid` was accepted through IAP. Each service
+refuses a token minted for anything but its own URL, which the deployment hands it at startup, and a service that is not
+told its URL fails to start. Of the two URLs Cloud Run serves a service at, it is the one built from the service's name,
+the project number and the region, because that one is known before the service exists.
+
+A project has one IAP service agent, and it holds the invoker role on evidence and sheaf, so whoever passes any IAP gate
+in front of those services reaches them. The program therefore allows IAP in two places only: on each data-plane
+service's operator backend, which admits only the automation account, and on the web tier's Cloud Run service. The check
+below holds the program to both. An IAP grant made by hand at the project level would pass every operator backend at
+once, and nothing in the program can see it.
+
+#### The exceptions
+
+The internet reaches these without IAP, because IAP cannot sit in front of them, and each has controls that take its
+place.
+
+##### The sandbox dispatcher's webhook
+
+Anthropic notifies the dispatcher by webhook when a session needs a sandbox, and Anthropic cannot present a Google
+identity, so IAP would refuse every delivery. The dispatcher authenticates each delivery by its HMAC signature
+([`sandbox-worker.md`](sandbox-worker.md)). In front of that check, a Cloud Armor policy on the dispatcher's
+load-balancer backend admits only Anthropic's published outbound range, `160.79.104.0/21`, and denies every other
+source; Anthropic commits not to change the range without notice, and publishes no IPv6 range, which the load balancer's
+IPv4-only address matches. The service takes only internal and load-balancer traffic, so from the internet its `run.app`
+URL offers no way around the policy; a workload inside our VPC can still reach that URL, and for it the signature is the
+only check. The range is shared by every Anthropic customer, which means a request from it says nothing about who sent
+it: the policy keeps scanners away from the dispatcher's HTTP stack, and the signature stays the authentication
+([`spike-infrastructure.md`](spike-infrastructure.md) §6, the deployables diagram).
+
+##### The PR screenshots bucket
+
+A pull request that changes a rendered surface links screenshots, and GitHub fetches each image anonymously through its
+image proxy, so the objects have to be readable without credentials. Anyone may read an object by its name, and nobody
+may list the bucket. Each name is the SHA-256 of the image's content, so a name cannot be guessed, and every image is a
+capture of the app running against fixture data. Only an environment that opts in has the bucket
+([`pr-screenshots.md`](pr-screenshots.md)).
+
+##### Cloud SQL's public IP
+
+The database instance has a public address, because some of its clients are on no network the services share: the laptop
+tools and the CI migrate step have no VPC, and the Dataflow ingestion workers run on a network of their own. A private
+address would put each of them on the database's VPC. The public address takes no direct connection. The instance lists
+no authorized networks, so its firewall refuses every client, and it requires the Cloud SQL connectors, so it refuses a
+connection that does not arrive through one. A connector authenticates to the Cloud SQL Admin API, which issues it a
+short-lived client certificate only if its principal holds `cloudsql.client`, and then logs in with IAM database
+authentication. So the first check on this path is an IAM decision that Google makes, which is the role IAP plays on the
+others.
+
+#### Scope
+
+The rule covers the routes by which a request reaches a process we run. A signed URL is outside it: the sheaf service
+and the web tier hand out time-limited URLs to objects in our buckets, and Cloud Storage checks the signature before it
+serves a byte, with no Themis code on the path. The Dataflow workers' external addresses are outside it too, because no
+firewall rule admits a connection to them from outside their own subnet.
+
+#### The check
+
+The rule is enforced by [`infra/tests/test_public_ingress.py`](../../infra/tests/test_public_ingress.py), which runs the
+Pulumi program under mocks and reads every resource it declares. It holds each route in from the internet to the rule
+above, and each exception to the controls its section names; each test is named for the property it checks. The
+exceptions are a list beside the test in the infra code, each entry pointing at its section above, so adding one is a
+reviewed edit to the code and to this doc.
+
+Infrastructure code has no runtime seam to put a gate in, so this test is the mechanical rule that the chokepoint
+section asks for where no such seam exists. It reads resources by kind, whichever module declares them, so a new
+service, bucket or backend is held to the rule without anyone remembering to add it. It sees the program and not the
+project, so a service or a grant created by hand in the console is outside it.
+
 ### Where the rules land
 
 - **Web request auth** — a proxy default-deny perimeter plus a shared, request-scoped accessor that re-verifies the IAP
@@ -178,6 +343,7 @@ hosts at all. Only what cannot be mirrored is queried live, against the admitted
 - **Service egress** — the internal services' VPC is deliberately not sealed, so what an exposed rpc dials is bounded by
   its own code and not by a network policy. The evidence image's shared HTTP client is that bound: it admits only the
   hosts [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) records a determination for.
+- **Public ingress** passes IAP or is a named exception with controls of its own, held by the program's tests (above).
 - **Cross-Project data** — default-deny sharing; case-level content never crosses Project boundaries implicitly. Owned
   by [`workspace-model.md`](workspace-model.md) and [`../PRODUCT.md`](../PRODUCT.md) §7.
 
@@ -199,6 +365,15 @@ hosts at all. Only what cannot be mirrored is queried live, against the admitted
   dial). Not rejected — a real second layer, and the one that would survive an adapter losing destination-fixedness. It
   is not the authority: the request is legitimate to an allowlisted host either way, so the code-side property is what
   decides. Worth its own design when the upstream set stops being a handful of public databases.
+- **Cloud Run IAM alone on the data plane, with ingress open to the internet.** It is simpler: there is no load-balancer
+  hop and no second token, and a maintainer calls the `run.app` URL directly. It lost for the reasons the data-plane
+  paragraph above gives: a credential leaked from any caller would work from anywhere.
+- **IAP on the data-plane Cloud Run services themselves**, as the web tier has it. It needs no load-balancer backend per
+  service. It lost because IAP on a Cloud Run service gates every path to it, the `run.app` URL included, so the web
+  tier and the sandbox worker would have to pass IAP too, with IAP tokens of their own, on every internal call.
+- **A VPN or a bastion host for maintainers.** It would leave the data plane with no public route at all. It lost
+  because it is another system to run and to keep patched, while IAP gives the same per-account gate and needs no
+  network of our own.
 
 ## Open questions
 

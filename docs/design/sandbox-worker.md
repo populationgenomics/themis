@@ -116,7 +116,7 @@ flowchart TB
     end
 
     worker -->|"calls directly (no proxy)"| anthropic["Anthropic API"]
-    mirror <-->|"ReadRefDoc · FetchPack · Publish<br/>(session token, from a file the hook reads)"| sheaf["themis-sheaf<br/>(IAM-gated ingress)"]
+    mirror <-->|"ReadRefDoc · FetchPack · Publish<br/>(session token, from a file the hook reads)"| sheaf["themis-sheaf<br/>(internal ingress)"]
     hatch -->|"forwards the allowlisted rpcs<br/>(session-token injected)"| upstreams["the agent-exposed services"]
 ```
 
@@ -142,7 +142,7 @@ The table below is the consequence, kept because each absence is a decision a re
 | A reverse proxy in front of Anthropic, with a path allowlist                                      | Only a sandbox that reaches Anthropic through an injector needs one. The trusted worker calls Anthropic directly, and the guest reaches nothing.                                                          |
 | A gRPC forwarding sidecar                                                                         | The forwarders run in the trusted process, on a socket the guest cannot leave.                                                                                                                            |
 | A separate container running the SDK's worker                                                     | The session loop runs in the trusted process, with `shell` as the sandboxed replacement for `bash`.                                                                                                       |
-| Custom ID-token audiences on the internal services                                                | With no load-balancer hostname in front of them, each service's audience is its own URL.                                                                                                                  |
+| Custom ID-token audiences on the internal services                                                | The worker dials each service at its own URL and mints for it. A maintainer's call through the load balancer carries a token for the same URL, which IAP passes through, so no second audience is needed. |
 
 The worker has ordinary egress: a NAT route to Anthropic, and a private path onto the services network for the
 internal-ingress services. Only the *guest* has no network at all.
