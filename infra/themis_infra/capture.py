@@ -2,9 +2,9 @@
 
 One run of `infra/__main__.py` against the dev stack's config with every opt-in switched on, no cloud
 access, yielding every resource the program registers plus two derived views: each IAM binding as
-(capability, member, role, target), and each Cloud Run workload with the service account it runs as.
-The exhaustiveness test and the grants diagram both read from here, so the two cannot disagree about
-what the program does.
+(capability, member, role, target), and each Cloud Run workload with the service account it runs as,
+its ingress, and the networks it egresses on. The exhaustiveness test and the grants diagram both read
+from here, so the two cannot disagree about what the program does.
 
 The mocks synthesise the outputs the program reads off resources it creates. A service account's email
 follows GCP's form, `<account_id>@<project>.iam.gserviceaccount.com`, so two accounts that share a
@@ -69,13 +69,17 @@ class Binding(NamedTuple):
 
 
 class Workload(NamedTuple):
-    """A Cloud Run service or job and the service account it runs as."""
+    """A Cloud Run service or job, the service account it runs as, and its network edges."""
 
     kind: str
     """`service` or `job`."""
     name: str
     service_account: str
     """The runtime SA's email."""
+    ingress: str | None
+    """A service's ingress setting; None for a job, which takes no requests."""
+    all_traffic_networks: frozenset[str]
+    """The networks it has Direct VPC egress on for all traffic, by id."""
 
 
 class Capture(NamedTuple):
@@ -111,6 +115,9 @@ class _Mocks(mocks.Mocks):
             'member': f'serviceAccount:{email}',
             'unique_id': f'{args.name}-unique-id',
             'uri': f'https://{args.name}.run.app',
+            # Cloud Run's two URLs for a service: the hashed one `uri` names, and the one built from the
+            # service's name, the project number and the region.
+            'urls': [f'https://{name}-123456789.{args.inputs.get("location")}.run.app', f'https://{args.name}.run.app'],
             'self_link': f'https://mock/{args.name}',
             'generated_id': 1,
             'connection_name': f'project:region:{args.name}',
@@ -202,16 +209,40 @@ def _bindings(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> l
     return bindings
 
 
+def _all_traffic_networks(template: dict[str, object]) -> frozenset[str]:
+    """The networks a workload template has Direct VPC egress on for all traffic, by id."""
+    vpc_access = template.get('vpcAccess')
+    # Cloud Run's default egress is private ranges only, which sends a public-hostname call off the VPC.
+    if not isinstance(vpc_access, dict) or vpc_access.get('egress') != 'ALL_TRAFFIC':
+        return frozenset()
+    return frozenset(
+        str(interface['network']) for interface in vpc_access.get('networkInterfaces', []) if 'network' in interface
+    )
+
+
 def _workloads(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> list[Workload]:
     workloads = []
     for urn, registration in resources.items():
         type_ = urn_type_chain(urn)[-1]
         state = registration.state
         if type_ == _SERVICE_TYPE:
-            workloads.append(Workload('service', str(state['name']), str(state['template']['serviceAccount'])))
+            template = state['template']
+            workloads.append(
+                Workload(
+                    'service',
+                    str(state['name']),
+                    str(template['serviceAccount']),
+                    str(state['ingress']),
+                    _all_traffic_networks(template),
+                )
+            )
         elif type_ == _JOB_TYPE:
-            account = state['template']['template']['serviceAccount']
-            workloads.append(Workload('job', str(state['name']), str(account)))
+            template = state['template']['template']
+            workloads.append(
+                Workload(
+                    'job', str(state['name']), str(template['serviceAccount']), None, _all_traffic_networks(template)
+                )
+            )
     return workloads
 
 

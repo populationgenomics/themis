@@ -11,6 +11,7 @@ mint itself, and `cloud-sql-proxy`'s own impersonation. The `gcloud` CLI's login
 from __future__ import annotations
 
 import http
+import re
 import shutil
 
 import google.auth
@@ -136,13 +137,16 @@ def identity_token(service_account: str, audience: str) -> str:
 
 
 def run_service_url(service: str, *, project: str) -> str:
-    """The URL of the Cloud Run `service`, read through the Cloud Run Admin API as the caller.
+    """The URL of the Cloud Run `service` its ID tokens name, read through the Cloud Run Admin API as the caller.
 
-    The caller's own login reads it, not `themis-clu`: the account holds invoke on the services but
-    not `run.services.get`, and reading a URL is no reason to widen what it can do.
+    Cloud Run serves a service at two URLs and admits an ID token for either. The data-plane services are
+    called at the one built from the service's name, the project number and the region
+    (`infra/themis_infra/cloud_run.py`), so that is the one returned. The caller's own login reads it, not
+    `themis-clu`: the account holds no `run.services.get`, and reading a URL is no reason to widen what it
+    can do.
 
     Raises:
-        GoogleCallError: If the service cannot be read, or reports no https URL.
+        GoogleCallError: If the service cannot be read, or reports no such URL.
         google.auth.exceptions.DefaultCredentialsError: If there is no application-default login.
     """
     resource = _get_json(
@@ -150,10 +154,15 @@ def run_service_url(service: str, *, project: str) -> str:
         _RUN_SERVICE_URL.format(project=project, region=REGION, service=service),
         purpose=f'read the Cloud Run service {service} in {project}',
     )
-    url = resource.get('uri')
-    if not isinstance(url, str) or not url.startswith('https://'):
-        raise GoogleCallError(f'the Cloud Run service {service} in {project} reports no https URL: {url!r}')
-    return url
+    urls = resource.get('urls')
+    built = re.compile(rf'https://{re.escape(service)}-[0-9]+\.{re.escape(REGION)}\.run\.app')
+    matching = [url for url in urls if isinstance(url, str) and built.fullmatch(url)] if isinstance(urls, list) else []
+    if len(matching) != 1:
+        raise GoogleCallError(
+            f'the Cloud Run service {service} in {project} reports no single URL of the form '
+            f'https://{service}-<project number>.{REGION}.run.app: {urls!r}'
+        )
+    return matching[0]
 
 
 def _get_json(credentials: credentials_mod.Credentials, url: str, *, purpose: str) -> dict[str, object]:

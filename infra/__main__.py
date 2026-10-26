@@ -199,7 +199,8 @@ auth_service = auth.AuthService(
     trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
-# The internal services attach here (Direct VPC egress) to reach the internal-ingress auth service (§7).
+# The web tier and the data-plane services attach here (Direct VPC egress): the data-plane services reach the
+# internal-ingress auth service over it, and the sandbox worker hello.
 services_net = services_network.ServicesNetwork(
     project=project,
     region=region,
@@ -217,6 +218,7 @@ hello_service = hello.HelloService(
 # The workspace repository's storage protocol, over a bucket of repositories of its own (sheaf-service.md).
 sheaf_service = sheaf.SheafService(
     project=project,
+    project_number=project_number,
     region=region,
     image=_image(_SHEAF_IMAGE_ENV, lambda: _live_service_image('themis-sheaf')),
     auth_url=auth_service.url,
@@ -279,6 +281,7 @@ openalex = secrets.openalex_secret(
 )
 evidence_service = evidence.EvidenceService(
     project=project,
+    project_number=project_number,
     region=region,
     image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
     auth_url=auth_service.url,
@@ -525,9 +528,11 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     trace_sample_ratio=trace_sample_ratio,
+    vpc_network=services_net.network.id,
+    vpc_subnetwork=services_net.subnetwork.id,
     # Anthropic's webhook reaches the dispatcher through this load balancer, past the dispatcher's Cloud Armor policy.
     routes=[web.Route(path=sandbox.DISPATCHER_WEBHOOK_PATH, backend_service=dispatcher_service.backend_service)],
-    opts=pulumi.ResourceOptions(depends_on=[base, database, sheaf_service]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, sheaf_service]),
 )
 # Who may pass IAP to reach the web app: the access group in a browser, and the automation account
 # anything programmatic impersonates.

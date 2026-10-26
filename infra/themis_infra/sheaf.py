@@ -18,7 +18,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants, storage
+from themis_infra import cloud_run, grants, storage
 
 # What a caller may publish in one call, and what a publish may leave behind. The document ceiling sits
 # under gRPC's default 4 MiB message limit, since `ReadRefDoc` returns the document in one message.
@@ -32,6 +32,7 @@ _PACK_URL_LIFETIME_SECONDS = 5 * 60
 # 300 s default would cut that upload off.
 _REQUEST_TIMEOUT = '1800s'
 _MAX_INSTANCES = 10
+_SERVICE_NAME = 'themis-sheaf'
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
@@ -46,13 +47,15 @@ class SheafService(pulumi.ComponentResource):
         service_account_email: The runtime SA's email — the `run.invoker` member on the auth service,
             the object-user on the repository bucket, and the account pack URLs are signed as.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
-        url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for.
+        url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for: the one
+            `cloud_run.service_url` builds, resolving once Cloud Run reports serving the service at it.
     """
 
     def __init__(
         self,
         *,
         project: str,
+        project_number: str,
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
@@ -135,7 +138,7 @@ class SheafService(pulumi.ComponentResource):
         service = gcp.cloudrunv2.Service(
             'themis-sheaf-service',
             project=project,
-            name='themis-sheaf',
+            name=_SERVICE_NAME,
             location=region,
             deletion_protection=False,
             # IAM-gated public ingress; each caller's `run.invoker` is granted in the program.
@@ -197,7 +200,9 @@ class SheafService(pulumi.ComponentResource):
             opts=child,
         )
         self.service_name = service.name
-        self.url = service.uri
+        self.url = cloud_run.reported_url(
+            service, cloud_run.service_url(name=_SERVICE_NAME, project_number=project_number, region=region)
+        )
         self.register_outputs(
             {
                 'repository_bucket': self.repository_bucket,

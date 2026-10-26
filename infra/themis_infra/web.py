@@ -7,6 +7,9 @@ balancer also carries the `Route`s other components hand it, each an exact path
 sent to that component's own backend service. Identical across environments; all
 per-environment values arrive as constructor arguments.
 
+The web tier attaches to the services network with Direct VPC egress, so its calls to the
+evidence and sheaf services arrive over the VPC.
+
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
 hostname's A record is added out of band (see ../README.md). Until the record
@@ -99,6 +102,8 @@ class WebService(pulumi.ComponentResource):
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
         trace_sample_ratio: float,
+        vpc_network: pulumi.Input[str],
+        vpc_subnetwork: pulumi.Input[str],
         routes: Sequence[Route],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
@@ -173,6 +178,16 @@ class WebService(pulumi.ComponentResource):
                 # Scale to zero — idle cost ≈ 0 at this traffic level.
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                ),
+                # Direct VPC egress on the services network, all traffic, so the BFF's calls to the evidence and
+                # sheaf services arrive over the VPC (services_network.py).
+                vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
+                    network_interfaces=[
+                        gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
+                            network=vpc_network, subnetwork=vpc_subnetwork
+                        )
+                    ],
+                    egress='ALL_TRAFFIC',
                 ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(

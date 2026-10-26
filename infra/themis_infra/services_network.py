@@ -1,19 +1,19 @@
-"""The internal data-plane services' shared egress VPC (docs/design/services.md).
+"""The shared egress VPC of the web tier and the data-plane services (docs/design/services.md).
 
-The internal services (hello, sheaf, evidence, and the genomics/compute services to come) resolve every request's
-session through the auth service, which is internal-ingress. A Cloud Run service egresses to the public
-internet by default, so a caller with no VPC attachment reaches auth's public front end and is rejected
-before IAM — internal ingress admits only traffic that arrives over a same-project VPC. This module
-provisions that VPC: the services attach to it with Direct VPC egress (all traffic, so the public-hostname
-run.app call to auth traverses the VPC and is delivered internally), while the subnet's Private Google
-Access keeps their Google-API traffic (GCS, logging) on the private path.
+The auth and hello services admit only internal traffic: a request counts only if it arrives over a same-project
+VPC. A Cloud Run workload egresses to the public internet by default, so a caller with no VPC attachment reaches
+the service's public front end and is rejected before IAM. This module provisions that VPC. The hello, sheaf and
+evidence services attach to it because they call auth, and the sandbox Job because it calls hello. The web tier
+attaches so that its calls to evidence and sheaf arrive over the VPC too. Each attaches with Direct VPC egress for
+all traffic, so a call to a public run.app hostname traverses the VPC and is delivered internally, while the
+subnet's Private Google Access keeps Google-API traffic (GCS, logging) on the private path.
 
 This VPC is deliberately not sealed. The egress boundary is the sandbox guest's empty network namespace
-(postern) — the untrusted code reaches the outside world only through the hatch, never directly. The
-trusted services on this network may reach the public internet: the sandbox worker calls Anthropic
-directly (sandbox-worker.md §"One trusted process, not two containers"), so a Cloud NAT gives it a
-SNAT route out. Internal-ingress services stay on the private path (subnet PGA); only non-Google
-public egress uses the NAT.
+(postern): the untrusted code reaches the outside world only through the hatch, never directly. The
+trusted workloads on this network may reach the public internet: the sandbox worker
+(sandbox-worker.md §"One trusted process, not two containers") and the web tier call Anthropic directly,
+and the evidence service its public upstream hosts, so a Cloud NAT gives them a SNAT route out. Google
+APIs and Cloud Run stay on the private path (subnet PGA); only non-Google public egress uses the NAT.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ _SERVICES_SUBNET_CIDR = '10.92.0.0/24'
 
 
 class ServicesNetwork(pulumi.ComponentResource):
-    """The internal services' egress VPC and Private-Google-Access subnet.
+    """The egress VPC and Private-Google-Access subnet of the web tier and the data-plane services.
 
     Attributes:
-        network: The VPC the internal services attach to (Direct VPC egress).
+        network: The VPC they attach to (Direct VPC egress).
         subnetwork: The regional subnet their instances draw egress addresses from.
     """
 
@@ -62,9 +62,7 @@ class ServicesNetwork(pulumi.ComponentResource):
             private_ip_google_access=True,
             opts=child,
         )
-        # The sandbox worker (Direct VPC egress on this network) calls Anthropic directly — a public
-        # endpoint no private path covers. Cloud NAT gives it a SNAT route out; internal-ingress services
-        # keep reaching auth/GCS on the private path (subnet PGA), so only non-Google public egress NATs.
+        # The SNAT route for public endpoints no private path covers (Anthropic, evidence's upstreams).
         router = gcp.compute.Router(
             'themis-services', project=project, region=region, network=self.network.id, opts=child
         )

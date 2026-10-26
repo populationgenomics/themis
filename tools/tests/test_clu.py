@@ -101,17 +101,30 @@ def _response(status: int, body: str) -> requests.Response:
     return response
 
 
-def test_the_service_url_is_the_services_uri(answers: list[requests.Response | requests.RequestException]) -> None:
-    answers.append(_response(200, json.dumps({'name': 'themis-sheaf', 'uri': 'https://sheaf.example.run.app'})))
-    assert clu.run_service_url('themis-sheaf', project='p') == 'https://sheaf.example.run.app'
+_BUILT_URL = 'https://themis-sheaf-123456789.australia-southeast1.run.app'
+_HASHED_URL = 'https://themis-sheaf-abcdefghij-ts.a.run.app'
+
+
+def test_the_service_url_is_the_one_built_from_its_name(
+    answers: list[requests.Response | requests.RequestException],
+) -> None:
+    # The hashed URL is the `uri`; the services accept ID tokens only for the built one.
+    answers.append(_response(200, json.dumps({'uri': _HASHED_URL, 'urls': [_BUILT_URL, _HASHED_URL]})))
+    assert clu.run_service_url('themis-sheaf', project='p') == _BUILT_URL
 
 
 @pytest.mark.parametrize(
     ('status', 'body', 'match'),
     [
-        (200, json.dumps({'uri': 'http://sheaf.example.run.app'}), 'no https URL'),
-        (200, json.dumps({'name': 'themis-sheaf'}), 'no https URL'),
-        (200, json.dumps({'uri': 7}), 'no https URL'),
+        (200, json.dumps({'uri': _HASHED_URL, 'urls': [_HASHED_URL]}), 'no single URL'),
+        (200, json.dumps({'urls': ['http://themis-sheaf-123456789.australia-southeast1.run.app']}), 'no single URL'),
+        (
+            200,
+            json.dumps({'urls': ['https://themis-sheaf-evil-123456789.australia-southeast1.run.app']}),
+            'no single URL',
+        ),
+        (200, json.dumps({'name': 'themis-sheaf'}), 'no single URL'),
+        (200, json.dumps({'urls': 7}), 'no single URL'),
         (200, '<html>', 'not JSON'),
         (200, '[]', 'not a JSON object'),
         (403, '{"error": {"message": "denied"}}', 'HTTP 403.*denied'),

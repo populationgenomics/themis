@@ -22,13 +22,12 @@ the invoker themselves.
 An ingest looks the paper up in OpenAlex with the stack's OpenAlex API key, which Cloud Run mounts from
 Secret Manager as `THEMIS_LITERATURE_OPENALEX_API_KEY`; the runtime SA reads that one secret.
 
-Its caller is the web BFF — quote location for the document pane, plus some paper management. The BFF
-has no Direct VPC egress (it reaches GCS / Cloud SQL / Anthropic over Google APIs, not the services
-VPC), so an internal-ingress service would be unreachable from it. Ingress is therefore `ALL`, gated
-by IAM: `run.invoker` is granted per caller in the program (`infra/__main__.py`) — the web SA, and the
-`clu` automation user that reads the corpus by hand — and an unauthenticated request is refused (Cloud
-Run default-deny, no other member). The web SA also holds object-viewer on the fulltext bucket — the
-BFF serves the resolved object.
+Its callers are the web BFF (quote location for the document pane, plus some paper management) and the
+sandbox worker, both over the services VPC, and the `clu` automation user, which reads the corpus by hand
+from a terminal. A terminal has no path onto the services VPC, so ingress is `ALL`, gated by IAM:
+`run.invoker` is granted per caller in the program (`infra/__main__.py`), and an unauthenticated request
+is refused (Cloud Run default-deny, no other member). The web SA also holds object-viewer on the fulltext
+bucket, because the BFF serves the resolved object.
 
 IAM is per-service, not per-rpc, so a `run.invoker` member reaches every interface on the deployment:
 the web SA is granted invoke for the document pane's literature calls and reaches every other
@@ -40,7 +39,9 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants, secrets, sql
+from themis_infra import cloud_run, grants, secrets, sql
+
+_SERVICE_NAME = 'themis-evidence'
 
 # Crosswalk reads open unpooled Cloud SQL connections, as many per instance as its worker threads, so
 # the cap multiplies that against db-f1-micro's 25.
@@ -71,13 +72,15 @@ class EvidenceService(pulumi.ComponentResource):
         db_user: The runtime SA's Cloud SQL IAM DB-user login — the subject of the crosswalk's table
             grants, `SELECT` and `INSERT`, fed to the migrate runner as `EVIDENCE_DB_USER`.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
-        url: The service's ``run.app`` URL — what a caller dials, and the audience its ID token names.
+        url: The service's ``run.app`` URL — what a caller dials, and the audience its ID token names: the one
+            `cloud_run.service_url` builds, resolving once Cloud Run reports serving the service at it.
     """
 
     def __init__(
         self,
         *,
         project: str,
+        project_number: str,
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
@@ -161,12 +164,11 @@ class EvidenceService(pulumi.ComponentResource):
         service = gcp.cloudrunv2.Service(
             'themis-evidence-service',
             project=project,
-            name='themis-evidence',
+            name=_SERVICE_NAME,
             location=region,
             deletion_protection=False,
-            # IAM-gated public ingress: the BFF (no VPC egress) reaches the run.app URL with an ID
-            # token. The invoker bindings are not in this component — each caller gets `run.invoker`
-            # in the program (`infra/__main__.py`); default-deny refuses any other.
+            # IAM-gated public ingress, since the clu automation user calls from off the VPC. Each caller's
+            # `run.invoker` is granted in the program (`infra/__main__.py`); default-deny refuses any other.
             ingress='INGRESS_TRAFFIC_ALL',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
@@ -245,7 +247,9 @@ class EvidenceService(pulumi.ComponentResource):
             ),
         )
         self.service_name = service.name
-        self.url = service.uri
+        self.url = cloud_run.reported_url(
+            service, cloud_run.service_url(name=_SERVICE_NAME, project_number=project_number, region=region)
+        )
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
