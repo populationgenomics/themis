@@ -31,6 +31,10 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     proxyClientMaxBodySize: PROXY_BODY_MAX_BYTES,
+    // Off: the preload requires every route's module in sequence without yielding to I/O, so the
+    // server reads no request, the startup probe's included, until all have loaded. A route's module
+    // loads on its first request instead.
+    preloadEntriesOnStart: false,
   },
   // X-Frame-Options only, for browsers that read it and not `frame-ancestors`. The policy itself is
   // minted per request (src/lib/csp.ts), and a second Content-Security-Policy header here would be
