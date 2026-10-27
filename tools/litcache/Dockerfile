@@ -7,7 +7,7 @@
 # litcache runtime + the Cloud SQL connector) is installed there rather than in a venv the
 # bootloader would not see. litcache source is provided on PYTHONPATH (the workspace root is
 # not installed as a package, matching the other service images).
-FROM apache/beam_python3.13_sdk:2.70.0 AS beam
+FROM apache/beam_python3.13_sdk:2.77.0 AS beam
 
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \

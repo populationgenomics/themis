@@ -75,7 +75,9 @@ def workload_resource(
         SERVICE_NAME: service_name,
         **(attributes or {}),
     }
-    resource = detected.merge(resources.Resource.create(explicit))
+    # Not `Resource.create`: its default detectors add a random per-process `service.instance.id`,
+    # which would satisfy the instance check below for any workload.
+    resource = detected.merge(resources.Resource(explicit))
     for label, candidates in (('location', _LOCATION_ATTRIBUTES), ('instance', _INSTANCE_ATTRIBUTES)):
         if not any(resource.attributes.get(candidate) for candidate in candidates):
             raise ResourceError(

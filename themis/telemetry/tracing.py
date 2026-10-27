@@ -74,8 +74,10 @@ def workload_resource(
     detected = resources.Resource.get_empty()
     for detector in detectors:
         detected = detected.merge(detector.detect())
+    # Not `Resource.create`: its default detectors add a random per-process `service.instance.id`,
+    # which would take precedence over the detected instance.
     return detected.merge(
-        resources.Resource.create({telemetry_api.GCP_PROJECT_ID: project, resources.SERVICE_NAME: service_name})
+        resources.Resource({telemetry_api.GCP_PROJECT_ID: project, resources.SERVICE_NAME: service_name})
     )
 
 
