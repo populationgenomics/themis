@@ -46,8 +46,10 @@ mirrors Claude.ai's shape (PRODUCT §7).
 
 ## Web-tier architecture
 
-A **single Cloud Run service** (Next.js `standalone` output), scale-to-zero; the 1–2 s cold start on the first request
-after an idle gap is acceptable, and active polling keeps the instance warm through a working session. **No standing
+A **single Cloud Run service** (Next.js `standalone` output), scale-to-zero. The first request after an idle gap waits
+for a cold start, about 5–7 s end to end on the development deployment in October 2026, which is acceptable; active
+polling keeps the instance warm through a working session. The cold start stays that short only while the startup probe
+checks every second and the server loads its cloud SDKs once per process rather than once per route. **No standing
 background worker.**
 
 ### Session observation — no held connection
