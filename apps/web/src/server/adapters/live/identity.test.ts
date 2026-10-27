@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import * as crypto from "node:crypto";
-import { OAuth2Client } from "google-auth-library";
+import { type gaxios, OAuth2Client } from "google-auth-library";
 import { UnauthenticatedError } from "../../errors";
 import { loadIapConfig } from "./config";
-import { IapVerifier } from "./identity";
+import { freshSeconds, IapVerifier } from "./identity";
 
 // The verifier's real signature, issuer and audience checks, against a key the test
 // holds in place of IAP's published ones.
@@ -119,6 +119,130 @@ describe("IapVerifier", () => {
     await expect(verifier.assertedEmail(new Headers())).rejects.toBeInstanceOf(
       UnauthenticatedError,
     );
+  });
+});
+
+/** A key source that counts its fetches and answers each with the test's key under `headers`, or
+ *  fails the fetches `failing` names (1-based). */
+class CountingKeyClient extends OAuth2Client {
+  fetches = 0;
+
+  constructor(
+    private readonly headers?: Record<string, string>,
+    private readonly failing: ReadonlySet<number> = new Set(),
+  ) {
+    super();
+  }
+
+  override async getIapPublicKeys(): Promise<{
+    pubkeys: Record<string, string>;
+    res?: gaxios.GaxiosResponse<void>;
+  }> {
+    this.fetches += 1;
+    if (this.failing.has(this.fetches)) throw new Error("gstatic unreachable");
+    const pem = keys.publicKey.export({ type: "spki", format: "pem" });
+    const res =
+      this.headers &&
+      (Object.assign(new Response(null, { headers: this.headers }), {
+        data: undefined,
+      }) as gaxios.GaxiosResponse<void>);
+    return { pubkeys: { [KID]: pem.toString() }, res };
+  }
+}
+
+describe("IapVerifier's keys", () => {
+  test("are reused while the response keeps them fresh, and fetched once it does not", async () => {
+    const start = Date.now();
+    const client = new CountingKeyClient({
+      "cache-control": "public, max-age=3000",
+      age: "1000",
+    });
+    const cached = new IapVerifier(CONFIG, client);
+    try {
+      await cached.assertedEmail(carrying(assertion({})));
+      setSystemTime(start + 1_999_000);
+      await cached.assertedEmail(carrying(assertion({})));
+      expect(client.fetches).toBe(1);
+      setSystemTime(start + 2_001_000);
+      await cached.assertedEmail(carrying(assertion({})));
+      expect(client.fetches).toBe(2);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("are not reused when the response holds no keys", async () => {
+    class EmptyKeyClient extends CountingKeyClient {
+      override async getIapPublicKeys() {
+        const fetched = await super.getIapPublicKeys();
+        return { ...fetched, pubkeys: {} };
+      }
+    }
+    const client = new EmptyKeyClient({ "cache-control": "max-age=3000" });
+    const verifier = new IapVerifier(CONFIG, client);
+    await expect(verifier.warm()).rejects.toThrow("not a non-empty map");
+    await expect(verifier.warm()).rejects.toThrow("not a non-empty map");
+    expect(client.fetches).toBe(2);
+  });
+
+  test.each([
+    ["states no max-age", { "cache-control": "no-cache" }],
+    [
+      "has spent its max-age in a cache",
+      { "cache-control": "max-age=60", age: "60" },
+    ],
+    ["carries no headers", undefined],
+  ])("are fetched anew when the response %s", async (_, headers) => {
+    const client = new CountingKeyClient(headers);
+    const uncached = new IapVerifier(CONFIG, client);
+    await uncached.assertedEmail(carrying(assertion({})));
+    await uncached.assertedEmail(carrying(assertion({})));
+    expect(client.fetches).toBe(2);
+  });
+
+  test("are fetched once for concurrent requests", async () => {
+    const client = new CountingKeyClient();
+    const verifier = new IapVerifier(CONFIG, client);
+    await Promise.all([
+      verifier.assertedEmail(carrying(assertion({}))),
+      verifier.assertedEmail(carrying(assertion({}))),
+    ]);
+    expect(client.fetches).toBe(1);
+  });
+
+  test("are fetched again after a failed fetch", async () => {
+    const client = new CountingKeyClient(
+      { "cache-control": "max-age=3000" },
+      new Set([1]),
+    );
+    const verifier = new IapVerifier(CONFIG, client);
+    await expect(verifier.warm()).rejects.toThrow("gstatic unreachable");
+    expect(await verifier.assertedEmail(carrying(assertion({})))).toBe(
+      "curator@example.org",
+    );
+    expect(client.fetches).toBe(2);
+  });
+
+  test("warmed, serve the first request without a fetch", async () => {
+    const client = new CountingKeyClient({ "cache-control": "max-age=3000" });
+    const verifier = new IapVerifier(CONFIG, client);
+    await verifier.warm();
+    await verifier.assertedEmail(carrying(assertion({})));
+    expect(client.fetches).toBe(1);
+  });
+});
+
+describe("freshSeconds", () => {
+  test.each([
+    [{ "cache-control": "public, max-age=3000" }, 3000],
+    [{ "cache-control": "public, max-age=3000", age: "132" }, 2868],
+    [{ "cache-control": "max-age=60, must-revalidate", age: "90" }, 0],
+    [{ "cache-control": "s-maxage=60" }, undefined],
+    [{ "cache-control": "no-store" }, undefined],
+    [{}, undefined],
+    [{ "cache-control": "max-age=60", age: "soon" }, undefined],
+  ])("reads %j as %p", (headers, expected) => {
+    expect(freshSeconds(new Headers(headers))).toBe(expected);
   });
 });
 
