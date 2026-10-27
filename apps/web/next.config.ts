@@ -13,6 +13,22 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/dev/widgets": ["src/widgets/examples/*/*.txtpb"],
   },
+  // Loaded from node_modules at run time instead of bundled. Turbopack copies a bundled package into
+  // each route group's server chunk and the proxy's, so every group would read and compile it again;
+  // an external one a process loads once. Lists the cloud SDKs and the protobuf and Connect runtime
+  // the server imports directly; their own dependencies load with them.
+  serverExternalPackages: [
+    "@anthropic-ai/sdk",
+    "@bufbuild/protobuf",
+    "@bufbuild/protovalidate",
+    "@connectrpc/connect",
+    "@connectrpc/connect-node",
+    "@connectrpc/validate",
+    "@google-cloud/cloud-sql-connector",
+    "@google-cloud/kms",
+    "@google-cloud/storage",
+    "google-auth-library",
+  ],
   experimental: {
     proxyClientMaxBodySize: PROXY_BODY_MAX_BYTES,
   },
