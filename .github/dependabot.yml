@@ -1,0 +1,48 @@
+# Every cooldown mirrors the 7-day exclude-newer in pyproject.toml, which Dependabot does not read.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # The == pins in pyproject.toml are deliberate; only the lock moves.
+    versioning-strategy: lockfile-only
+    groups:
+      uv:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /apps/web
+      - /themis/services/*
+      - /themis/services/evidence/gene_disease
+      - /tools/litcache
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # A Python minor moves with requires-python, uv.lock and the Beam SDK image.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Must match the apache-beam version in uv.lock; bumped together with it.
+      - dependency-name: apache/beam_python3.13_sdk
+      # Must match setup-web's bun-version and @types/bun; bumped together with them.
+      - dependency-name: oven/bun
+    groups:
+      docker:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]

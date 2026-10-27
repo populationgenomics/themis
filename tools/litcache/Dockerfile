@@ -9,7 +9,9 @@
 # not installed as a package, matching the other service images).
 FROM apache/beam_python3.13_sdk:2.77.0 AS beam
 
-FROM python:3.13-slim-bookworm AS base
+# A named stage rather than `COPY --from=<image>`: Dependabot updates images on FROM lines only.
+FROM ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d AS uv
+FROM python:3.13.15-slim-bookworm@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26 AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 # ca-certificates, plus the RHEL-canonical bundle path native libcurl clients probe (the
@@ -28,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m compileall -q /usr/local/lib/python3.13
 
 FROM base AS build
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 # The locked dataflow deps as a flat requirements file, project excluded (litcache source is
@@ -41,7 +43,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 # uv is bind-mounted, not copied: the installer has no business in the shipped worker.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=from=ghcr.io/astral-sh/uv:0.11.16,source=/uv,target=/usr/local/bin/uv \
+    --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     uv pip install --system -r /tmp/requirements.txt
 # The SDK harness bootstrapper Dataflow execs to start the worker (must match the SDK
 # version installed above).

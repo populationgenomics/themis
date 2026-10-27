@@ -5,7 +5,7 @@
 # service at it. Cloud Run injects $PORT and expects the container to listen on it —
 # Next's standalone server.js honours PORT and HOSTNAME.
 # Same Bun as CI (.github/actions/setup-web) and @types/bun.
-FROM oven/bun:1.4.2 AS base
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # deps: install from the committed lockfile (bunfig.toml carries the age gate).

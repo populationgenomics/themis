@@ -5,7 +5,9 @@
 # themis/rpc stubs ship in the image. Dependencies come from the committed uv.lock via
 # `uv sync --locked --group sheaf_service` — the same age-gated lock the rest of the repo uses.
 # Cloud Run injects $PORT; __main__ binds [::]:$PORT and serves gRPC over HTTP/2.
-FROM python:3.13-slim-bookworm AS base
+# A named stage rather than `COPY --from=<image>`: Dependabot updates images on FROM lines only.
+FROM ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d AS uv
+FROM python:3.13.15-slim-bookworm@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26 AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 # The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
@@ -15,7 +17,7 @@ RUN python -m compileall -q /usr/local/lib/python3.13
 # build: install the locked sheaf_service group into /app/.venv with a pinned uv. The root
 # project is virtual (no [build-system]), so uv sync installs deps only.
 FROM base AS build
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 ENV UV_PYTHON_DOWNLOADS=0 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
