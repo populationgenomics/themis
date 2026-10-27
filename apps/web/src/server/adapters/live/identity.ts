@@ -67,11 +67,6 @@ export class IapVerifier implements UserIdentity {
     return email;
   }
 
-  /** Fetch IAP's published keys ahead of the first request that needs them. */
-  async warm(): Promise<void> {
-    await this.publicKeys();
-  }
-
   /** IAP's published keys, reused for as long as the response's own headers keep them fresh; the
    *  client fetches them anew on every call. Concurrent callers share one fetch. */
   private publicKeys(): Promise<PublicKeys> {

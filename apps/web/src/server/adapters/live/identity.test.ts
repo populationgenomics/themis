@@ -180,8 +180,12 @@ describe("IapVerifier's keys", () => {
     }
     const client = new EmptyKeyClient({ "cache-control": "max-age=3000" });
     const verifier = new IapVerifier(CONFIG, client);
-    await expect(verifier.warm()).rejects.toThrow("not a non-empty map");
-    await expect(verifier.warm()).rejects.toThrow("not a non-empty map");
+    await expect(
+      verifier.assertedEmail(carrying(assertion({}))),
+    ).rejects.toThrow("not a non-empty map");
+    await expect(
+      verifier.assertedEmail(carrying(assertion({}))),
+    ).rejects.toThrow("not a non-empty map");
     expect(client.fetches).toBe(2);
   });
 
@@ -216,19 +220,13 @@ describe("IapVerifier's keys", () => {
       new Set([1]),
     );
     const verifier = new IapVerifier(CONFIG, client);
-    await expect(verifier.warm()).rejects.toThrow("gstatic unreachable");
+    await expect(
+      verifier.assertedEmail(carrying(assertion({}))),
+    ).rejects.toThrow("gstatic unreachable");
     expect(await verifier.assertedEmail(carrying(assertion({})))).toBe(
       "curator@example.org",
     );
     expect(client.fetches).toBe(2);
-  });
-
-  test("warmed, serve the first request without a fetch", async () => {
-    const client = new CountingKeyClient({ "cache-control": "max-age=3000" });
-    const verifier = new IapVerifier(CONFIG, client);
-    await verifier.warm();
-    await verifier.assertedEmail(carrying(assertion({})));
-    expect(client.fetches).toBe(1);
   });
 });
 
