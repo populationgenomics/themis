@@ -8,6 +8,9 @@
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 # build: install the locked evidence group into /app/.venv with a pinned uv. The root project is
 # virtual (no [build-system]), so uv sync installs deps only.
@@ -33,6 +36,8 @@ COPY themis/rpc ./themis/rpc
 COPY themis/evidence/models ./themis/evidence/models
 COPY themis/svcv4 ./themis/svcv4
 COPY themis/services/evidence ./themis/services/evidence
+# -x skips the venv's site-packages, which uv compiled at install.
+RUN python -m compileall -q -x /site-packages/ /app
 # Run unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime, no chown.
 RUN useradd --system --uid 10001 app
 USER app

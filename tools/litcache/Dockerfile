@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/pki/tls/certs \
     && ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 FROM base AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
@@ -47,6 +50,7 @@ COPY themis/common /app/themis/common
 COPY themis/litcache /app/themis/litcache
 # The generated protovalidate stubs the litcache proto imports (a repo-root package).
 COPY buf /app/buf
+RUN python -m compileall -q /app
 ENV PYTHONPATH=/app
 # Fail the build (not a live worker) if the pipeline's imports are unsatisfiable.
 RUN python -c "import apache_beam, themis.litcache.ingest_beam, themis.litcache.cloudsql"

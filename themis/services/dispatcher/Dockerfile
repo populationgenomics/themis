@@ -9,6 +9,9 @@
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 FROM base AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
@@ -28,6 +31,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
 COPY themis/clients/work_queue ./themis/clients/work_queue
 COPY themis/clients/auth ./themis/clients/auth
 COPY themis/services/dispatcher ./themis/services/dispatcher
+# -x skips the venv's site-packages, which uv compiled at install.
+RUN python -m compileall -q -x /site-packages/ /app
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime,
 # so no chown is needed.
 RUN useradd --system --uid 10001 app

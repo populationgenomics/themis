@@ -12,6 +12,9 @@
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 # --- worker deps: postern[grpc] + anthropic + the internal-service client, from the committed lock. ---
 FROM base AS build
@@ -79,9 +82,9 @@ COPY themis/services/sandbox_worker/guest/services.py themis/services/sandbox_wo
 COPY themis/services/sandbox_worker/guest/file_tool.py /usr/local/lib/python3.13/site-packages/themis/agent/
 RUN touch /usr/local/lib/python3.13/site-packages/themis/__init__.py \
     /usr/local/lib/python3.13/site-packages/themis/agent/__init__.py
-# The base image ships the standard library without bytecode and the rootfs is bound read-only, so every guest
-# launch that ran Python would recompile what it imports; the copied modules above have none either.
-RUN python -m compileall -q /usr/local/lib/python3.13
+# The modules copied above ship without bytecode and the rootfs is bound read-only, so every guest launch that ran
+# Python would recompile what it imports; the base stage compiled the standard library.
+RUN python -m compileall -q /usr/local/lib/python3.13/site-packages
 
 # --- assemble: bubblewrap + the mirror's git + the worker venv + the themis subtrees + the guest rootfs. ---
 FROM base AS runtime
@@ -113,6 +116,8 @@ COPY themis/widgets ./themis/widgets
 COPY themis/svcv4/models ./themis/svcv4/models
 COPY buf ./buf
 COPY themis/services/sandbox_worker ./themis/services/sandbox_worker
+# -x skips the venv's site-packages, which uv compiled at install.
+RUN python -m compileall -q -x /site-packages/ /app
 # Import the worker and the hook's store at build time, so a module the COPY set misses, or a wheel the locked
 # group lacks, fails the build rather than the first session. The hook imports under this interpreter too.
 RUN python -c 'import themis.services.sandbox_worker.worker, themis.clients.sheaf.store, themis.sheaf.wire.hook, themis.services.sandbox_worker.widget_check'

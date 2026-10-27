@@ -8,6 +8,9 @@
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 # build: install the locked auth group into /app/.venv with a pinned uv. The root
 # project is virtual (no [build-system]), so uv sync installs deps only.
@@ -32,6 +35,8 @@ COPY themis/rpc ./themis/rpc
 COPY themis/common/__init__.py themis/common/sql.py themis/common/sql_pool.py ./themis/common/
 COPY themis/telemetry ./themis/telemetry
 COPY themis/services/auth ./themis/services/auth
+# -x skips the venv's site-packages, which uv compiled at install.
+RUN python -m compileall -q -x /site-packages/ /app
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime,
 # so no chown is needed.
 RUN useradd --system --uid 10001 app

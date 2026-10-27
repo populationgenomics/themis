@@ -8,6 +8,9 @@
 FROM python:3.13-slim-bookworm AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+# The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
+# its own; each image compiles its /app tree the same way after its last COPY.
+RUN python -m compileall -q /usr/local/lib/python3.13
 
 FROM base AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
@@ -45,6 +48,8 @@ COPY themis/clients/id_token.py ./themis/clients/id_token.py
 # the P/LP classification terms and gold-star range, the gene-disease validity classes.
 COPY themis/svcv4 ./themis/svcv4
 COPY themis/services/evidence ./themis/services/evidence
+# -x skips the venv's site-packages, which uv compiled at install.
+RUN python -m compileall -q -x /site-packages/ /app
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # deployed revision crash-loops, since nothing else imports the image's own tree.
 RUN python -c 'import themis.services.evidence.__main__'
