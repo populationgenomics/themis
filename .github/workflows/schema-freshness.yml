@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # buf: exports the protos + deps for protoc, and drives buf lint / breaking. No remote
       # plugins — codegen is grpcio-tools' protoc (Python) + the app's local protoc-gen-es (TS).
       - uses: bufbuild/buf-setup-action@v1
@@ -25,7 +25,7 @@ jobs:
           # No default token: the release lookup that resolves the download URL would go out
           # anonymous, against a per-IP rate limit shared across the hosted runner pool.
           github_token: ${{ github.token }}
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       # Bun + apps/web deps: the protobuf-es pass uses the app's local protoc-gen-es plugin.

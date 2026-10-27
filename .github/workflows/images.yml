@@ -18,7 +18,7 @@ jobs:
     outputs:
       images: ${{ steps.read.outputs.images }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: read
         run: |
           IMAGES="$(jq -c . .github/images.json)"
@@ -41,7 +41,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Bound as env, not interpolated: `${{ }}` is substituted before bash parses the
       # script, so a manifest value would otherwise be shell rather than an argument.
       - run: docker build -f "$DOCKERFILE" "$CONTEXT"

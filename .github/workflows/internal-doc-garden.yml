@@ -29,7 +29,7 @@ jobs:
           owner: populationgenomics
           repositories: themis-internal
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Full history so the agent can read `git log` when judging whether a
           # "coming soon" note is stale. persist-credentials: false keeps any
@@ -135,7 +135,7 @@ jobs:
       # mdformat is not run by the agent, but the PR's lint gate runs the same
       # hook and rejects unformatted docs. Set up uv and cache the hook env so
       # the format step below is a fast, config-pinned pass.
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - uses: actions/cache@v6

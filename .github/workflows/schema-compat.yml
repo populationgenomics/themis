@@ -21,10 +21,10 @@ jobs:
     steps:
       # Full history: the gate diffs the committed artifact against its baseline
       # commit (the PR base tip, or HEAD^ on a push to main).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       # Baseline = the released line. For a PR that is the base branch tip; on a

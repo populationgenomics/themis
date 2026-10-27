@@ -33,7 +33,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-web
       - run: bun run build
       # The transcription checks that need no capture. The verbatim ones read the calculator page and
