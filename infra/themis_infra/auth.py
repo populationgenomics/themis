@@ -110,6 +110,11 @@ class AuthService(pulumi.ComponentResource):
                                 name='THEMIS_TRACE_SAMPLE_RATIO', value=str(trace_sample_ratio)
                             ),
                         ],
+                        resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
+                            # Setting `resources` at all deploys cpuIdle false unless it is stated.
+                            cpu_idle=True,
+                            startup_cpu_boost=True,
+                        ),
                         # Serve gRPC: a named `h2c` port makes Cloud Run speak HTTP/2 cleartext
                         # to the container (TLS terminated at the ingress), and the startup probe
                         # checks the grpc.health.v1 service the server registers.

@@ -261,6 +261,7 @@ class WebService(pulumi.ComponentResource):
                             # A set `resources` flips cpu_idle's default to false; nothing here runs
                             # between requests, so CPU stays request-billed.
                             cpu_idle=True,
+                            startup_cpu_boost=True,
                         ),
                         envs=[
                             _env('THEMIS_BACKEND', 'live'),

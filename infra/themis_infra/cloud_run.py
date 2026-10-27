@@ -13,6 +13,11 @@ request is slower than the timeout (the web tier loads its proxy on its first re
 passes too. Every service is probed each second instead, for a budget of attempts that covers its slowest
 start. On the web tier an attempt that times out still runs to completion in the server, so the next one
 finds the proxy loaded.
+
+A service on an interactive request's path, whose start is most of what the person waits for when it is cold
+(web, sheaf, auth, evidence), also sets `startup_cpu_boost`: Cloud Run gives a 1-vCPU instance 2 vCPUs while
+it starts and for 10 s after, billed at the boosted rate for that time. A service whose callers wait on much
+longer work (a sandbox job, a conversion) does not.
 """
 
 from __future__ import annotations

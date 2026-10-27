@@ -216,6 +216,7 @@ class EvidenceService(pulumi.ComponentResource):
                             # A set `resources` flips cpu_idle's default to false; nothing here runs
                             # between requests, so CPU stays request-billed.
                             cpu_idle=True,
+                            startup_cpu_boost=True,
                         ),
                         envs=[
                             # Image-wide: the auth interceptor gating every rpc resolves sessions over

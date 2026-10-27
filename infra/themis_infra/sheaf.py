@@ -183,6 +183,7 @@ class SheafService(pulumi.ComponentResource):
                             # a container with no resources block gets true.
                             cpu_idle=True,
                             limits={'cpu': '1', 'memory': '2Gi'},
+                            startup_cpu_boost=True,
                         ),
                         envs=[
                             _env('THEMIS_AUTHORIZER_BACKEND', 'http'),
